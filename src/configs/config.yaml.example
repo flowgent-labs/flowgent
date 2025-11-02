@@ -1,0 +1,56 @@
+# Security Bot 配置文件示例
+# 复制此文件到 /etc/security-bot/config.yaml 并填写实际值
+
+# 配置的 Repositories 列表
+repos:
+  - full_name: "org/service-a"
+    dev_branch: "dev"
+    service_name: "service-a"
+    scan_types:
+      - sast
+      - dast
+      - foss
+
+  - full_name: "org/service-b"
+    dev_branch: "develop"
+    service_name: "service-b"
+    scan_types:
+      - cont
+      - sonar
+
+# MCP 服务器配置
+mcp:
+  # Git 操作服务器 (当前：GitHub EE, 未来可切换到 GitLab)
+  git_server: git
+
+  # 扫描集成服务器 (CI 扫描系统集成)
+  scanner_server: scanner
+
+  # 报告解析服务器 (各类扫描报告解析)
+  parser_server: parser
+
+  # 修复方案服务器 (SonatypeIQ/Web 搜索等)
+  fixer_server: fixer
+
+  # 测试执行服务器 (当前：Maven/Cucumber, 未来可切换到 Gradle/npm/pytest)
+  test_server: test
+
+# GitHub 配置 (仅用于凭证，实际操作通过 MCP)
+github:
+  token_secret_name: github-token
+  default_branch: master
+
+# GKE 配置 (部署验证)
+gke:
+  cluster: dev-cluster
+  zone: us-central1-c
+  project_id: my-project
+  namespace: dev
+
+# 测试配置
+test:
+  workspace: /workspace
+  cucumber_profile: cucumber-integration
+
+# 扫描间隔 (小时)
+scan_interval_hours: 1

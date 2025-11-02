@@ -1,0 +1,67 @@
+version: "3.8"
+services:
+  sonatypeiq-postgres:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
+    container_name: sonatypeiq_postgres
+    environment:
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_PORT_NUMBER=5432
+      - POSTGRESQL_USERNAME=nexusiq
+      - POSTGRESQL_PASSWORD=iqpass2024
+      - POSTGRESQL_DATABASE=nexusiq
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_WAL_LEVEL=replica
+      - POSTGRESQL_STATEMENT_TIMEOUT=60000
+      - POSTGRESQL_USERNAME_CONNECTION_LIMIT=100
+      - POSTGRESQL_POSTGRES_CONNECTION_LIMIT=100
+      - POSTGRESQL_TIMEZONE=Asia/Shanghai
+      - TZ=Asia/Shanghai
+    volumes:
+      - sonatypeiq_postgres_data:/bitnami/postgresql
+    ports:
+      - "25432:5432"
+    networks:
+      - sonatypeiq-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexusiq -d nexusiq"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  sonatype-iq:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/sonatype_nexus-iq-server:1.199.1
+    container_name: sonatypeiq
+    depends_on:
+      sonatypeiq-postgres:
+        condition: service_healthy
+    environment:
+      IQ_SERVER_PORT: 8070
+      IQ_SERVER_JDBC_URL: "jdbc:postgresql://sonatypeiq-postgres:5432/nexusiq"
+      IQ_SERVER_JDBC_USER: nexusiq
+      IQ_SERVER_JDBC_PASSWORD: iqpass2024
+      INSTALL4J_ADD_VM_PARAMS: "-Xms1g -Xmx2g -XX:+UnlockExperimentalVMOptions"
+    volumes:
+      - sonatypeiq_data:/sonatype-work
+      - sonatypeiq_work:/tmp/work
+    ports:
+      - "8070:8070"
+    networks:
+      - sonatypeiq-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u admin:admin123 http://localhost:8070/api/status -H 'Content-Type: application/json' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+
+networks:
+  sonatypeiq-net:
+    driver: bridge
+
+volumes:
+  sonatypeiq_postgres_data:
+    name: sonarqube_postgres_data
+  sonatypeiq_data:
+    name: sonatypeiq_data
+  sonatypeiq_work:
+    name: sonatypeiq_work

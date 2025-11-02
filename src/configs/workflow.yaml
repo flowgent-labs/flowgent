@@ -1,0 +1,26 @@
+toolsets:
+  github_ops:
+    - name: create_pr
+      type: mcp
+      params:
+        repo: "my/project"
+
+agentsets:
+  dev:
+    id: dev_agent
+    model: google/gemini-pro
+    system_prompt: "You are a developer."
+    toolrefs: ["github_ops"]
+
+workflows:
+  security_fix:
+    - type: sequential
+      tasks:
+        - type: agent
+          agent_ref: dev
+          params:
+            prompt: "Fix CVE-2023-0001"
+        - type: review_board
+          agent_ref: dev
+          params:
+            prompt: "Review the fixes."
