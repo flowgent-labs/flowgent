@@ -1,39 +1,48 @@
 .PHONY: build build-bot build-mcp clean test
 
-# 构建所有
+# Build all
 build: build-bot build-mcp
 
-# 构建 Bot 主程序
+# Build Bot main program
 build-bot:
-	go build -o bin/cyberbot \
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/cyberbot \
 		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		./src/cmd/cyberbot
 
-# 构建 MCP Server
-build-mcp:
-	go build -o bin/mcp-server-cyberflows ./src/cmd/mcp-server-cyberflows
+# Build all MCP Servers
+build-mcp: build-mcp-github build-mcp-test build-mcp-sonarqube build-mcp-sonatypeiq build-mcp-agent
 
-# 清理
+build-mcp-github:
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-github ./src/cmd/mcp-server-github
+
+build-mcp-test:
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-test ./src/cmd/mcp-server-test
+
+build-mcp-sonarqube:
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-sonarqube ./src/cmd/mcp-server-sonarqube
+
+build-mcp-sonatypeiq:
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-sonatypeiq ./src/cmd/mcp-server-sonatypeiq
+
+build-mcp-agent:
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/cyberbot-agent ./src/cmd/agent
+
+# Clean
 clean:
 	rm -rf bin/
 
-# 运行测试
+# Run tests
 test:
-	go test ./...
+	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go test -v ./...
 
-# 格式化代码
+# Format code
 fmt:
 	go fmt ./...
 
-# 安装到系统
-install: build
-	cp bin/cyberbot /usr/local/bin/
-	cp bin/mcp-server-cyberflows /usr/local/bin/
-
-# Docker 构建
+# Docker build
 docker-build:
 	docker build -t cyberbot/cve-auto-fix:latest .
 
-# 开发模式运行
+# Dev mode
 dev: build-bot
 	./bin/cyberbot --config src/configs/config.yaml.example

@@ -4,6 +4,16 @@ toolsets:
       type: mcp
       params:
         repo: "my/project"
+  http_fetch:
+    - name: fetch_api
+      type: http
+      params:
+        url: "https://api.example.com"
+  db_upsert:
+    - name: bulk_upsert
+      type: postgres
+      params:
+        table: "warehouse"
 
 agentsets:
   dev:
@@ -11,16 +21,81 @@ agentsets:
     model: google/gemini-pro
     system_prompt: "You are a developer."
     toolrefs: ["github_ops"]
+  discover:
+    id: discover_agent
+    model: google/gemini-pro
+    system_prompt: "You discover security issues from scan results."
+    toolrefs: ["http_fetch"]
+  alpha_build_test:
+    id: build_test_alpha
+    model: google/gemini-pro
+    system_prompt: "You fix build/test failures including Nexus blocked dependencies."
+  alpha_cyberflow:
+    id: cyberflow_alpha
+    model: google/gemini-pro
+    system_prompt: "You fix DAST/SAST/CONT vulnerabilities."
+  alpha_foss:
+    id: foss_alpha
+    model: google/gemini-pro
+    system_prompt: "You fix FOSS dependency vulnerabilities."
+  alpha_code_quality:
+    id: code_quality_alpha
+    model: google/gemini-pro
+    system_prompt: "You fix SonarQube code quality issues."
 
 workflows:
   security_fix:
     - type: sequential
       tasks:
         - type: agent
-          agent_ref: dev
+          agent_ref: discover
           params:
-            prompt: "Fix CVE-2023-0001"
+            repo: "org/project"
+            commit_sha: ""
+        - type: parallel
+          tasks:
+            - type: agent
+              agent_ref: alpha_build_test
+              params:
+                issue_type: "build-test"
+            - type: agent
+              agent_ref: alpha_foss
+              params:
+                issue_type: "foss"
+            - type: agent
+              agent_ref: alpha_code_quality
+              params:
+                issue_type: "codestyle"
         - type: review_board
           agent_ref: dev
           params:
             prompt: "Review the fixes."
+            max_rounds: 3
+            threshold_pct: 50
+
+  etl_pipeline:
+    - type: agent
+      agent_ref: extract_data
+      params:
+        url: "https://api.erp.com/inventory"
+    - type: parallel
+      tasks:
+        - type: agent
+          agent_ref: data_cleanser
+          params:
+            instructions: "Remove duplicates, normalize timestamps"
+        - type: agent
+          agent_ref: geo_enricher
+          params:
+            tools: ["geo_ip_mcp"]
+    - type: sequential
+      tasks:
+        - type: tool
+          tool_ref: postgres_bulk_upsert
+        - type: tool
+          tool_ref: s3_object_append
+
+autonomy:
+  enabled: true
+  server_port: 8080
+  allowed_callers: ["project-manager-agent", "dev-bot"]

@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  sonatypenexus3:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/sonatype_nexus3:3.91.1
+    container_name: sonatypenexus3
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 655350
+        hard: 655350
+    mem_limit: 3G
+    memswap_limit: 3G
+    environment:
+      - INSTALL4J_ADD_VM_PARAMS=-Xms1g -Xmx2g -XX:MaxRAMPercentage=75.0 -XX:MaxDirectMemorySize=1g -XX:+AlwaysPreTouch
+      - NEXUS_CONTEXT=/
+    ports:
+      - "28081:8081"
+    networks:
+      - nexus3-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+networks:
+  nexus3-net:
+    driver: bridge
