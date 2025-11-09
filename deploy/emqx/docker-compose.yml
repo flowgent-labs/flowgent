@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  emqx1:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/emqx_emqx:5.5.0-elixir-amd64
+    container_name: emqx1
+    restart: unless-stopped
+    ports:
+      - "18083:18083"
+      - "1883:1883"
+      - "8083:8083"
+      - "8084:8084"
+      - "8883:8883"
+    networks:
+      - emqx-net
+    volumes:
+      - emqx_data:/opt/emqx/data
+networks:
+  emqx-net:
+    driver: bridge
+volumes:
+  emqx_data:
+    name: emqx_data
