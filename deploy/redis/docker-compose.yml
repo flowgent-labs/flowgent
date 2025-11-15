@@ -1,0 +1,162 @@
+version: '3'
+
+networks:
+  redis_cluster_net:
+    name: redis_cluster_net
+    driver: bridge
+
+services:
+  redis-node-0:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    volumes:
+      - redis-cluster_data-0:/bitnami/redis/data
+    environment:
+      - 'BITNAMI_DEBUG=true'
+      - 'REDIS_LOGLEVEL=debug'
+      - 'REDIS_PASSWORD=bitnami'
+      - 'REDIS_NODES=redis-node-0:6379 redis-node-1:6380 redis-node-2:6381 redis-node-3:7379 redis-node-4:7380 redis-node-5:7381'
+      - 'REDIS_PORT_NUMBER=6379'
+      - 'REDIS_MASTER_PORT_NUMBER=6379'
+      - 'REDIS_CLUSTER_ANNOUNCE_PORT=6379'
+      - 'REDIS_CLUSTER_ANNOUNCE_BUS_PORT=16379'
+      - 'REDIS_CLUSTER_ANNOUNCE_IP=172.29.235.101'
+      - 'REDIS_CLUSTER_DYNAMIC_IPS=no'
+    restart: unless-stopped
+    networks:
+      redis_cluster_net:
+    ports:
+      - '6379:6379'
+      - '16379:16379'
+
+  redis-node-1:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    volumes:
+      - redis-cluster_data-1:/bitnami/redis/data
+    environment:
+      - 'BITNAMI_DEBUG=true'
+      - 'REDIS_LOGLEVEL=debug'
+      - 'REDIS_PASSWORD=bitnami'
+      - 'REDIS_NODES=redis-node-0:6379 redis-node-1:6380 redis-node-2:6381 redis-node-3:7379 redis-node-4:7380 redis-node-5:7381'
+      - 'REDIS_PORT_NUMBER=6380'
+      - 'REDIS_MASTER_PORT_NUMBER=6380'
+      - 'REDIS_CLUSTER_ANNOUNCE_PORT=6380'
+      - 'REDIS_CLUSTER_ANNOUNCE_BUS_PORT=16380'
+      - 'REDIS_CLUSTER_ANNOUNCE_IP=172.29.235.101'
+      - 'REDIS_CLUSTER_DYNAMIC_IPS=no'
+    restart: unless-stopped
+    networks:
+      redis_cluster_net:
+    ports:
+      - '6380:6380'
+      - '16380:16380'
+
+  redis-node-2:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    volumes:
+      - redis-cluster_data-2:/bitnami/redis/data
+    environment:
+      - 'BITNAMI_DEBUG=true'
+      - 'REDIS_LOGLEVEL=debug'
+      - 'REDIS_PASSWORD=bitnami'
+      - 'REDIS_NODES=redis-node-0:6379 redis-node-1:6380 redis-node-2:6381 redis-node-3:7379 redis-node-4:7380 redis-node-5:7381'
+      - 'REDIS_PORT_NUMBER=6381'
+      - 'REDIS_MASTER_PORT_NUMBER=6381'
+      - 'REDIS_CLUSTER_ANNOUNCE_PORT=6381'
+      - 'REDIS_CLUSTER_ANNOUNCE_BUS_PORT=16381'
+      - 'REDIS_CLUSTER_ANNOUNCE_IP=172.29.235.101'
+      - 'REDIS_CLUSTER_DYNAMIC_IPS=no'
+    restart: unless-stopped
+    networks:
+      redis_cluster_net:
+    ports:
+      - '6381:6381'
+      - '16381:16381'
+
+  redis-node-3:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    volumes:
+      - redis-cluster_data-3:/bitnami/redis/data
+    environment:
+      - 'BITNAMI_DEBUG=true'
+      - 'REDIS_LOGLEVEL=debug'
+      - 'REDIS_PASSWORD=bitnami'
+      - 'REDIS_NODES=redis-node-0:6379 redis-node-1:6380 redis-node-2:6381 redis-node-3:7379 redis-node-4:7380 redis-node-5:7381'
+      - 'REDIS_PORT_NUMBER=7379'
+      - 'REDIS_MASTER_PORT_NUMBER=7379'
+      - 'REDIS_CLUSTER_ANNOUNCE_PORT=7379'
+      - 'REDIS_CLUSTER_ANNOUNCE_BUS_PORT=17379'
+      - 'REDIS_CLUSTER_ANNOUNCE_IP=172.29.235.101'
+      - 'REDIS_CLUSTER_DYNAMIC_IPS=no'
+    restart: unless-stopped
+    networks:
+      redis_cluster_net:
+    ports:
+      - '7379:7379'
+      - '17379:17379'
+
+  redis-node-4:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    volumes:
+      - redis-cluster_data-4:/bitnami/redis/data
+    environment:
+      - 'BITNAMI_DEBUG=true'
+      - 'REDIS_LOGLEVEL=debug'
+      - 'REDIS_PASSWORD=bitnami'
+      - 'REDIS_NODES=redis-node-0:6379 redis-node-1:6380 redis-node-2:6381 redis-node-3:7379 redis-node-4:7380 redis-node-5:7381'
+      - 'REDIS_PORT_NUMBER=7380'
+      - 'REDIS_MASTER_PORT_NUMBER=7380'
+      - 'REDIS_CLUSTER_ANNOUNCE_PORT=7380'
+      - 'REDIS_CLUSTER_ANNOUNCE_BUS_PORT=17380'
+      - 'REDIS_CLUSTER_ANNOUNCE_IP=172.29.235.101'
+      - 'REDIS_CLUSTER_DYNAMIC_IPS=no'
+    restart: unless-stopped
+    networks:
+      redis_cluster_net:
+    ports:
+      - '7380:7380'
+      - '17380:17380'
+
+  redis-node-5:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    volumes:
+      - redis-cluster_data-5:/bitnami/redis/data
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+    environment:
+      - 'BITNAMI_DEBUG=true'
+      - 'REDIS_LOGLEVEL=debug'
+      - 'REDIS_PASSWORD=bitnami'
+      - 'REDIS_NODES=redis-node-0:6379 redis-node-1:6380 redis-node-2:6381 redis-node-3:7379 redis-node-4:7380 redis-node-5:7381'
+      - 'REDIS_PORT_NUMBER=7381'
+      - 'REDIS_MASTER_PORT_NUMBER=7381'
+      - 'REDIS_CLUSTER_ANNOUNCE_PORT=7381'
+      - 'REDIS_CLUSTER_ANNOUNCE_BUS_PORT=17381'
+      - 'REDIS_CLUSTER_ANNOUNCE_IP=172.29.235.101'
+      - 'REDIS_CLUSTER_DYNAMIC_IPS=no'
+      - 'REDISCLI_AUTH=bitnami'
+      - 'REDIS_CLUSTER_REPLICAS=1'
+      - 'REDIS_CLUSTER_CREATOR=yes'
+    restart: unless-stopped
+    networks:
+      redis_cluster_net:
+    ports:
+      - '7381:7381'
+      - '17381:17381'
+
+volumes:
+  redis-cluster_data-0:
+    driver: local
+  redis-cluster_data-1:
+    driver: local
+  redis-cluster_data-2:
+    driver: local
+  redis-cluster_data-3:
+    driver: local
+  redis-cluster_data-4:
+    driver: local
+  redis-cluster_data-5:
+    driver: local
