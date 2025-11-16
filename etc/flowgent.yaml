@@ -1,0 +1,270 @@
+service-name: flowgent
+
+server:
+  host: 0.0.0.0
+  port: 9999
+  context-path: "/"
+  shutdown-timeout: 15s
+  max-body-bytes: 10485760
+  read-timeout: 30s
+  write-timeout: 60s
+
+mgmt:
+  enabled: true
+  host: 0.0.0.0
+  port: 9991
+  pperf:
+    enabled: true
+    server-bind: "0.0.0.0:6669"
+  # Notice: More OTEL custom configuration use to env: OTEL_SPAN_xxx
+  otel:
+    enabled: true
+    endpoint: "http://localhost:4317"
+    protocol: grpc # Optional: http/protobuf,http/json,grpc
+    timeout: 10000
+
+logging:
+  mode: JSON # Options: HUMAN|JSON
+  level: DEBUG
+
+auth:
+  jwt-validity-ak: 3600
+  jwt-validity-rk: 86400
+  jwt-algorithm: "ES256"
+  jwt-private-key: "<YOUR_PRIVATE_KEY>"
+  jwt-public-key: "<YOUR_PUBLIC_KEY>"
+  anonymous-paths:
+    - "/public/**"
+    - "/static/**"
+    - "/_/healthz"
+    - "/_/healthz/**"
+    - "/swagger-ui/**"
+  oidc:
+    enabled: false
+    client-id: "<YOUR_OIDC_CLIENT_ID>"
+    issue-url: "https://iam.wl4g.com/realms/master"
+    redirect-url: "http://wl4g.local:10000/serve/auth/callback/oidc"
+    scope: "openid profile email"
+  github:
+    enabled: true
+    auth-url: "https://github.com/login/oauth/authorize"
+    token-url: "https://github.com/login/oauth/access_token"
+    redirect-url: "http://wl4g.local:10000/serve/auth/callback/github"
+    scope: "user"
+    user-info-url: "https://api.github.com/user"
+
+cache:
+  provider: Redis # Memory|Redis Cluster
+  memory:
+    initial-capacity: 32
+    max-capacity: 65535
+    ttl: 3600000
+    eviction-policy: LRU
+  redis:
+    nodes: ["redis://127.0.0.1:6379"]
+    username: "default"
+    password: "bitnami"
+    connection-timeout: 3000
+    response-timeout: 6000
+    retries: 1
+    max-retry-wait: 65536
+    min-retry-wait: 1280
+    read-from-replica: true
+
+appdb:
+  type: "POSTGRE" # SQLITE|POSTGRE
+  sqlite:
+    dir: "~/.flowgent/sqlite"
+  postgres:
+    host: "127.0.0.1"
+    port: 5432
+    database: "flowgent"
+    schema: "public"
+    username: postgres
+    password: "changeit"
+    min-connections: 2
+    max-connections: 20
+    use-ssl: false
+
+llm:
+  # Default timeout for LLM API calls
+  request-timeout: 120s
+  # Rate limiting: max requests per minute per provider
+  rate-limit:
+    bailian-codeplan: 60
+  providers:
+    bailian-codeplan:
+      endpoint: https://coding.dashscope.aliyuncs.com/apps/xxxx
+      credentials:
+        api-key: sk-xxxx
+        #api-key-file: /path/to/.credentials
+      models:
+        - name: qwen3.6-plus
+          temperature: 0.3
+          topk: 5
+          modalities:
+            input: [text]
+            output: [text]
+          thinking:
+            enabled: true
+            budget-tokens: 8192
+
+        - name: qwen3.5-coder
+          temperature: 0.3
+          topk: 5
+          modalities:
+            input: [text]
+            output: [text]
+          thinking:
+            enabled: true
+            budget-tokens: 8192
+
+orchestration:
+  max-concurrent-flows: 10
+  flow-execution-timeout: 30m
+  max-node-retries: 3
+  mcps:
+    - name: github
+      enabled: true
+      type: local
+      command: ["sh", "-c", "/bin/github-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        #MCP_UPSTREAM_TOKEN: Xxx
+        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
+
+    - name: sonarqube
+      enabled: true
+      type: local
+      command: ["sh", "-c", "/bin/sonarqube-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        #MCP_UPSTREAM_TOKEN: Xxx
+        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
+
+    - name: sonatype-iq
+      enabled: true
+      type: local
+      command: ["sh", "-c", "/bin/sonatype-iq-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        #MCP_UPSTREAM_TOKEN: Xxx
+        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
+        
+    - name: sonatype-nexus3
+      enabled: true
+      type: local
+      command: ["sh", "-c", "/bin/sonatype-nexus3-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        #MCP_UPSTREAM_TOKEN: Xxx
+        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
+
+  agents:
+    - name: supervisor
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are a senior autonomous orchestration controller.
+        You must optimize workflow execution while ensuring safety, correctness, and auditability.
+      instruction: |-
+        You may:
+        - redirect flow
+        - request retry
+        - inject additional review
+        - abort unsafe execution
+
+        You MUST NOT:
+        - execute tools directly
+        - modify system outside workflow
+        - generate unstructured output
+
+        Output STRICT JSON:
+        {
+          "action": "continue|redirect|retry|inject|abort",
+          "target": "node-id",
+          "reason": "string"
+        }
+
+    - name: issue-detector
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are a senior DevSecOps expert specializing in SAST/DAST/FOSS analysis.
+      instruction: |-
+        You MUST:
+        - Parse scan results
+        - Normalize issues
+        - Deduplicate
+        - Assign severity
+
+        You MUST NOT:
+        - Generate fixes
+        - Output free text
+
+        Output STRICT JSON:
+        {
+          "issues": [
+            {
+              "id": "string",
+              "repo": "string",
+              "severity": "high|medium|low",
+              "type": "sast|dast|dependency",
+              "file": "string",
+              "description": "string"
+            }
+          ]
+        }
+
+    - name: fixer-agent
+      model: bailian-codeplan/qwen3.5-coder
+      soul: |-
+        You are a secure coding expert.
+      instruction: |-
+        You MUST fix vulnerabilities safely.
+        You MUST NOT break business logic.
+
+        Output STRICT JSON:
+        {
+          "patches": [
+            {
+              "file": "string",
+              "patch": "diff content"
+            }
+          ]
+        }
+
+    - name: security-reviewer
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are a strict security reviewer.
+      instruction: |-
+        Output JSON:
+        {
+          "decision": true|false,
+          "confidence": 0-1,
+          "risk_level": "low|medium|high",
+          "reason": "string"
+        }
+
+    - name: quality-reviewer
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are a code quality reviewer.
+
+    - name: arch-reviewer
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are an architecture reviewer.
+
+    - name: git-agent
+      model: bailian-codeplan/qwen3.5-coder
+      soul: |-
+        You handle git operations.
+
+  agentflows:
+    static:
+      enabled: true
+      refresh: 1m
+      paths:
+        - sample-security-autonomy-fixer.yaml
+    standard:
+      enabled: false  # DB-backed agentflows (UI drag-and-drop)
