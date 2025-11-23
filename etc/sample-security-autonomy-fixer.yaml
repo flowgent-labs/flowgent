@@ -1,14 +1,14 @@
 version: "1.0"
 id: security-autonomy-fixer
 description: |
-  Simulates a complete developer remediation workflow for security vulnerabilities:
+  Simulates a complete developer remediation agentflow for security vulnerabilities:
   1. DISCOVERY — Fetches the latest commit for each target repository and runs
      three independent scans: SonarQube (SAST/DAST), Sonatype IQ (FOSS dependency
      vulnerabilities), and Sonatype Nexus3 (artifact-level compliance). This mirrors
      a developer who runs local scans before opening a PR.
   2. ANALYZE — An LLM agent (issue-detector) parses, normalizes, deduplicates, and
      assigns severity to all findings, just as a developer would triage scan reports.
-  3. FIX — For each issue, a sub-workflow (sub-fix) delegates to a fixer-agent to
+  3. FIX — For each issue, a sub-agentflow (sub-fix) delegates to a fixer-agent to
      analyze the root cause and generate a secure patch, without breaking business
      logic. Nested map nodes allow parallel processing of multiple issues per repo.
   4. REVIEW — Three independent agents (security, quality, architecture) review the
@@ -17,7 +17,7 @@ description: |
      team consensus before merging risky changes.
   6. SUPERVISOR — A supervisor agent monitors execution for safety, with bounded
      retries, node injection limits, and the ability to abort unsafe runs.
-  7. CONDITIONAL — Based on the vote outcome, the workflow either proceeds to human
+  7. CONDITIONAL — Based on the vote outcome, the agentflow either proceeds to human
      approval or loops back to re-generate fixes.
   8. HUMAN APPROVAL — An async approval gate (24h timeout) ensures a real developer
      signs off before any code is pushed.
@@ -113,8 +113,8 @@ nodes:
       type: map
       source: "${item.issues}"
       node:
-        type: workflow
-        workflow: sub/sub-fix.yaml
+        type: agentflow
+        agentflow: sub/sub-fix.yaml
 	
   # ┌─────────────────────────────────────────────────┐
   # PHASE 4: REVIEW - Multi-agent review              │
@@ -134,8 +134,8 @@ nodes:
   # ┌─────────────────────────────────────────────────┐
   # PHASE 5: VOTE - Deterministic vote                │
   # └─────────────────────────────────────────────────┘
-  - id: vote
-    type: vote
+  - id: tribunal
+    type: tribunal
     strategy:
       type: majority
     input:
@@ -161,7 +161,7 @@ nodes:
   # └─────────────────────────────────────────────────┘
   - id: approved
     type: condition
-    expression: "${vote.decision == true}"
+    expression: "${tribunal.decision == true}"
 	
   # ┌─────────────────────────────────────────────────┐
   # PHASE 8: HUMAN - Approval gate                    │
@@ -212,7 +212,7 @@ nodes:
     type: agent
     agent: issue-detector
     input:
-      workflow_id: "${vars.workflow_id}"
+      agentflow_id: "${vars.agentflow_id}"
       run_id: "${vars.run_id}"
       issues_found: "${aggregate-issues.results}"
       pr_links: "${create-pr.pr_url}"
@@ -273,12 +273,12 @@ edges:
   - { from: generate-fixes, to: review-arch }
 	
   # Review → Vote
-  - { from: review-sec, to: vote }
-  - { from: review-quality, to: vote }
-  - { from: review-arch, to: vote }
+  - { from: review-sec, to: tribunal }
+  - { from: review-quality, to: tribunal }
+  - { from: review-arch, to: tribunal }
 	
   # Vote → Supervisor → Condition
-  - { from: vote, to: supervisor-check }
+  - { from: tribunal, to: supervisor-check }
   - { from: supervisor-check, to: approved }
 	
   # Condition → Human (if approved) or back to fix

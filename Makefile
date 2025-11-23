@@ -1,31 +1,34 @@
-.PHONY: build build-bot build-mcp clean test
+.PHONY: build build-server build-mcp clean test fmt
 
 # Build all
-build: build-bot build-mcp
+build: build-server build-mcp
 
-# Build Bot main program
-build-bot:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/cyberbot \
+# Build main server
+build-server:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent-server \
 		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./src/cmd/cyberbot
+		./src/cmd/server
 
-# Build all MCP Servers
-build-mcp: build-mcp-github build-mcp-test build-mcp-sonarqube build-mcp-sonatypeiq build-mcp-agent
+# Build A2A agent server
+build-agent:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent-agent \
+		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		./src/cmd/agent
+
+# Build all MCP servers
+build-mcp: build-mcp-github build-mcp-test build-mcp-sonarqube build-mcp-sonatypeiq
 
 build-mcp-github:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-github ./src/cmd/mcp-server-github
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-github ./src/cmd/mcp-server-github
 
 build-mcp-test:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-test ./src/cmd/mcp-server-test
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-test ./src/cmd/mcp-server-test
 
 build-mcp-sonarqube:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-sonarqube ./src/cmd/mcp-server-sonarqube
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonarqube ./src/cmd/mcp-server-sonarqube
 
 build-mcp-sonatypeiq:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/mcp-server-sonatypeiq ./src/cmd/mcp-server-sonatypeiq
-
-build-mcp-agent:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go build -o bin/cyberbot-agent ./src/cmd/agent
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonatypeiq ./src/cmd/mcp-server-sonatypeiq
 
 # Clean
 clean:
@@ -33,16 +36,12 @@ clean:
 
 # Run tests
 test:
-	GOPROXY=https://goproxy.cn,direct GONOSUMCHECK='*' go test -v ./...
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go test -count=1 -timeout 120s ./src/... ./tests/...
 
-# Format code
+# Format
 fmt:
-	go fmt ./...
+	go fmt ./src/... ./tests/...
 
 # Docker build
 docker-build:
-	docker build -t cyberbot/cve-auto-fix:latest .
-
-# Dev mode
-dev: build-bot
-	./bin/cyberbot --config src/configs/config.yaml.example
+	docker build -t flowgent/flowgent:latest .

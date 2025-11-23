@@ -1,0 +1,87 @@
+openapi: "3.1.0"
+info:
+  title: Flowgent AgentFlow Orchestration API
+  version: "1.0.0"
+  description: Autonomous agentflow orchestration engine with DAG execution, human approval, and AI agent orchestration.
+servers:
+  - url: /api/v1
+paths:
+  /agentflows:
+    get:
+      summary: List agentflow definitions
+      operationId: listAgentFlows
+      responses:
+        '200': { description: AgentFlow definitions }
+  /agentflows/trigger:
+    post:
+      summary: Trigger an agentflow
+      operationId: triggerAgentFlow
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentflow_id]
+              properties:
+                agentflow_id: { type: string }
+                vars: { type: object }
+      responses:
+        '200': { description: AgentFlow triggered }
+  /runs:
+    get:
+      summary: List agentflow runs
+      parameters:
+        - name: agentflow_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: List of agentflow runs }
+  /runs/{id}:
+    get:
+      summary: Get agentflow run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: AgentFlow run details }
+  /runs/{run_id}/tasks:
+    get:
+      summary: Get task runs for an agentflow run
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Task runs }
+  /webhooks/{provider}:
+    post:
+      summary: Receive webhook event
+      parameters:
+        - name: provider
+          in: path
+          schema: { type: string }
+      responses:
+        '200': { description: Webhook processed }
+  /human/{token}/approve:
+    post:
+      summary: Approve human task
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Approved }
+  /human/{token}/reject:
+    post:
+      summary: Reject human task
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Rejected }

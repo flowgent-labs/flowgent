@@ -1077,7 +1077,7 @@ workflow:
 
 另外 k8s 分布式模式依赖的 mqtt 中间件已启动好，请确保真实跑通如上场景（分别在 memory queue 和 emqx mqtt queue 模式下）
 
-root@k8sm1:~/cyberbot/deploy/emqx# dcp logs -f
+root@k8sm1:~/flowgent/deploy/emqx# dcp logs -f
 
 > Executing external compose provider "/usr/bin/docker-compose". Please refer to the documentation for details. <<<<
 > 
@@ -1099,13 +1099,11 @@ emqx1    | EMQX 5.5.0 is running now!
 
 1，其中 pg和 SQLite也是分别对应生产分布式模式和all in one 模式，且除了系统user role等数据存储，还要包括 rag agents的memory记忆，请按这个要求具体实现(同样代码要求还是高内聚低耦合)
 
-2，请当前cyberbot 系统本身，也应该支持传统 swagger oas3.1 APIs，以及应支持使用 google 官方 a2a  go sdk 构建 server接口，以供企业内部其他 AI Agents系统自主调用，请按要求具体实现(同样代码要求还是高内聚低耦合)
+2，请当前flowgent 系统本身，也应该支持传统 swagger oas3.1 APIs，以及应支持使用 google 官方 a2a  go sdk 构建 server接口，以供企业内部其他 AI Agents系统自主调用，请按要求具体实现(同样代码要求还是高内聚低耦合)
 
 3，请你继续按要求仔细review并迭代10次，然后生成本次代码实现的工作进度md，以用于后续其他agent审查和持续工作其他模块
 
 4，另外请导包路径请干掉 cve-auto-fix，这是我要跑的真实应用案例orchestration 配置(layer2)，而这里要你优先实现的是通用layer1
-
-5，请确保路径中不能有重复单词啊？[如github.com/cyberbot/cyberbot/src/internal/](http://xn--github-hh4k.com/cyberbot/cyberbot/src/internal/)     
 
 6，请review迭代100次充分理解透，确保etc/CyberBot.yaml中所有配置项真实且正确实现(这是经过精心设计过的配置(基础设置都是通用web相关的，其实些基础配置来自另一个rust项目的基础通用web部分框架代码，你可参考 /root/sigbot-core/src 翻译为go通用基础代码)，不应该存在未使用的配置)
 

@@ -13,7 +13,7 @@ mgmt:
   enabled: true
   host: 0.0.0.0
   port: 9991
-  pperf:
+  pprof:
     enabled: true
     server-bind: "0.0.0.0:6669"
   # Notice: More OTEL custom configuration use to env: OTEL_SPAN_xxx
@@ -34,6 +34,7 @@ auth:
   jwt-private-key: "<YOUR_PRIVATE_KEY>"
   jwt-public-key: "<YOUR_PUBLIC_KEY>"
   anonymous-paths:
+        - sample-autotest-generation.yaml
     - "/public/**"
     - "/static/**"
     - "/_/healthz"
@@ -71,7 +72,7 @@ cache:
     min-retry-wait: 1280
     read-from-replica: true
 
-appdb:
+storage:
   type: "POSTGRE" # SQLITE|POSTGRE
   sqlite:
     dir: "~/.flowgent/sqlite"
@@ -160,12 +161,22 @@ orchestration:
         #MCP_UPSTREAM_TOKEN: Xxx
         MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
 
+    - name: confluence
+      enabled: true
+      type: local
+      command: ["sh", "-c", "/bin/confluence-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        CONFLUENCE_BASE_URL: "https://your-domain.atlassian.net/wiki"
+        CONFLUENCE_API_TOKEN: "<YOUR_ATLASSIAN_API_TOKEN>"
+        CONFLUENCE_USER_EMAIL: "<YOUR_EMAIL>"
+
   agents:
     - name: supervisor
       model: bailian-codeplan/qwen3.6-plus
       soul: |-
         You are a senior autonomous orchestration controller.
-        You must optimize workflow execution while ensuring safety, correctness, and auditability.
+        You must optimize agentflow execution while ensuring safety, correctness, and auditability.
       instruction: |-
         You may:
         - redirect flow
@@ -175,7 +186,7 @@ orchestration:
 
         You MUST NOT:
         - execute tools directly
-        - modify system outside workflow
+        - modify system outside agentflow
         - generate unstructured output
 
         Output STRICT JSON:
@@ -255,6 +266,53 @@ orchestration:
       soul: |-
         You are an architecture reviewer.
 
+    - name: requirement-analyst
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are a senior business analyst who extracts structured requirements from Confluence.
+      instruction: |-
+        Parse input content and extract:
+        1. Feature user stories with acceptance criteria
+        2. API specifications (endpoints, schemas)
+        3. Business rules and edge cases
+        Output STRICT JSON:
+        {
+          "requirements": [
+            {"id": "REQ-1", "type": "user_story|api_spec|business_rule",
+             "description": "...", "acceptance_criteria": [...], "priority": "high|medium|low"}
+          ]
+        }
+
+    - name: test-planner
+      model: bailian-codeplan/qwen3.6-plus
+      soul: |-
+        You are a senior QA architect who designs comprehensive test plans.
+      instruction: |-
+        Generate a detailed test planning document per project type:
+        - Spring Boot: JUnit 5 + Cucumber
+        - Flask: pytest + pytest-bdd
+        - React: Jest + @cucumber/cucumber
+        Include test scenarios, step definitions outline, mock requirements.
+        Output STRICT JSON:
+        {
+          "plan": {
+            "project_type": {"scenarios": [...], "mocks": [...], "test_data": [...]}
+          }
+        }
+
+    - name: test-generator
+      model: bailian-codeplan/qwen3.5-coder
+      soul: |-
+        You are a test automation engineer expert in Cucumber BDD.
+      instruction: |-
+        Generate complete Cucumber integration test code for the given project type.
+        Include .feature files with Gherkin scenarios and step definitions.
+        Follow best practices: setup/teardown, mocks, test data factories.
+        Output STRICT JSON:
+        {
+          "files": [{"path": "...", "content": "...", "type": "feature|step_def|config"}]
+        }
+
     - name: git-agent
       model: bailian-codeplan/qwen3.5-coder
       soul: |-
@@ -265,6 +323,7 @@ orchestration:
       enabled: true
       refresh: 1m
       paths:
+        - sample-autotest-generation.yaml
         - sample-security-autonomy-fixer.yaml
     standard:
       enabled: false  # DB-backed agentflows (UI drag-and-drop)
