@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/util"
 )
@@ -144,7 +145,7 @@ func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 func TestE2E_BasicAgentFlow(t *testing.T) {
 	store := newMockStore()
 	logger := util.NewLogger("JSON", "DEBUG")
-	agents := []*model.AgentDef{
+	agents := []*config.AgentDef{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 		{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Fixer."},
 		{Name: "security-reviewer", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Reviewer."},
@@ -199,7 +200,7 @@ func TestE2E_SupervisorAllowedActions(t *testing.T) {
 	store := newMockStore()
 	logger := util.NewLogger("JSON", "DEBUG")
 	llm := &mockLLMClient{}
-	agents := []*model.AgentDef{
+	agents := []*config.AgentDef{
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Supervisor."},
 	}
 	exec := NewExecutor(store, nil, agents, llm, logger)
@@ -241,7 +242,7 @@ func TestE2E_MapNodeExecution(t *testing.T) {
 	store := newMockStore()
 	logger := util.NewLogger("JSON", "DEBUG")
 	llm := &mockLLMClient{}
-	agents := []*model.AgentDef{
+	agents := []*config.AgentDef{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
 	exec := NewExecutor(store, nil, agents, llm, logger)
@@ -278,7 +279,7 @@ func TestE2E_NodeRetry(t *testing.T) {
 	store := newMockStore()
 	logger := util.NewLogger("JSON", "DEBUG")
 	failingLLM := &failingLLMClient{failCount: 1}
-	agents := []*model.AgentDef{
+	agents := []*config.AgentDef{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
 	exec := NewExecutor(store, nil, agents, failingLLM, logger)

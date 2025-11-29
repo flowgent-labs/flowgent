@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/config"
 )
 
 type entry struct {
@@ -23,7 +23,7 @@ type MemoryCache struct {
 }
 
 // NewMemoryCache creates an in-memory cache from MemoryCacheConfig.
-func NewMemoryCache(cfg *model.MemoryCacheConfig) *MemoryCache {
+func NewMemoryCache(cfg *config.MemoryCacheConfig) *MemoryCache {
 	initCap := cfg.InitialCapacity
 	if initCap <= 0 {
 		initCap = 32

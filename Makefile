@@ -5,18 +5,12 @@ build: build-server build-mcp
 
 # Build main server
 build-server:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent-server \
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent \
 		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		./src/cmd/server
 
-# Build A2A agent server
-build-agent:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent-agent \
-		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./src/cmd/agent
-
 # Build all MCP servers
-build-mcp: build-mcp-github build-mcp-test build-mcp-sonarqube build-mcp-sonatypeiq
+build-mcp: build-mcp-github build-mcp-test build-mcp-sonarqube build-mcp-sonatypeiq build-mcp-nexus3
 
 build-mcp-github:
 	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-github ./src/cmd/mcp-server-github
@@ -29,6 +23,9 @@ build-mcp-sonarqube:
 
 build-mcp-sonatypeiq:
 	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonatypeiq ./src/cmd/mcp-server-sonatypeiq
+
+build-mcp-nexus3:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-nexus3 ./src/cmd/mcp-server-nexus3
 
 # Clean
 clean:

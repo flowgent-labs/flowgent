@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/config"
 	"golang.org/x/time/rate"
 )
 
@@ -28,11 +28,11 @@ type providerClient struct {
 	proxy      *url.URL
 	httpClient *http.Client
 	limiter    *rate.Limiter
-	models     map[string]*model.ModelDef
+	models     map[string]*config.ModelDef
 }
 
 // New creates an LLM adapter from config.
-func New(cfg *model.LLMConfig) *Adapter {
+func New(cfg *config.LLMConfig) *Adapter {
 	a := &Adapter{
 		clients: make(map[string]*providerClient),
 		timeout: 120 * time.Second,
@@ -65,7 +65,7 @@ func New(cfg *model.LLMConfig) *Adapter {
 		}
 		limiter := rate.NewLimiter(rate.Limit(float64(rpm)/60.0), rpm)
 
-		modelMap := make(map[string]*model.ModelDef)
+		modelMap := make(map[string]*config.ModelDef)
 		for i := range p.Models {
 			m := &p.Models[i]
 			modelMap[m.Name] = m

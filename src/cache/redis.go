@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +24,7 @@ type RedisCache struct {
 //   - Single node             → standalone client
 //   - Multiple nodes          → cluster client (auto-discover topology)
 //   - Node URL contains "sentinel://" → failover client
-func NewRedisCache(cfg *model.RedisCacheConfig) (*RedisCache, error) {
+func NewRedisCache(cfg *config.RedisCacheConfig) (*RedisCache, error) {
 	addrs, username, password := parseRedisAddrs(cfg)
 	if len(addrs) == 0 {
 		addrs = []string{"127.0.0.1:6379"}
@@ -90,7 +90,7 @@ func NewRedisCache(cfg *model.RedisCacheConfig) (*RedisCache, error) {
 	}, nil
 }
 
-func parseRedisAddrs(cfg *model.RedisCacheConfig) ([]string, string, string) {
+func parseRedisAddrs(cfg *config.RedisCacheConfig) ([]string, string, string) {
 	var addrs []string
 	for _, n := range cfg.Nodes {
 		n = strings.TrimPrefix(n, "redis://")

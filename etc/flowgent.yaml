@@ -9,6 +9,11 @@ server:
   read-timeout: 30s
   write-timeout: 60s
 
+a2a:
+  enabled: true
+  host: 0.0.0.0
+  port: 9992
+
 mgmt:
   enabled: true
   host: 0.0.0.0
@@ -34,12 +39,13 @@ auth:
   jwt-private-key: "<YOUR_PRIVATE_KEY>"
   jwt-public-key: "<YOUR_PUBLIC_KEY>"
   anonymous-paths:
-        - sample-autotest-generation.yaml
     - "/public/**"
     - "/static/**"
     - "/_/healthz"
     - "/_/healthz/**"
     - "/swagger-ui/**"
+    - "/.well-known/**"
+    - "/a2a/**"
   oidc:
     enabled: false
     client-id: "<YOUR_OIDC_CLIENT_ID>"
@@ -170,6 +176,14 @@ orchestration:
         CONFLUENCE_BASE_URL: "https://your-domain.atlassian.net/wiki"
         CONFLUENCE_API_TOKEN: "<YOUR_ATLASSIAN_API_TOKEN>"
         CONFLUENCE_USER_EMAIL: "<YOUR_EMAIL>"
+
+    - name: test
+      enabled: true
+      type: local
+      command: ["sh", "-c", "/bin/test-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        TEST_WORKSPACE: "/workspace"
 
   agents:
     - name: supervisor

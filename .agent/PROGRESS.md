@@ -1,7 +1,26 @@
 # Flowgent Layer 1 Engine — Implementation Progress
 
 **Date:** 2026-05-08
-**Status:** Core engine complete, 17 audit gaps fixed, 9/9 tests passing, build clean.
+**Status:** Core engine complete, cmd structure cleaned up, 9/9 tests passing, build clean.
+
+## Latest Changes (2026-05-08)
+
+### CMD Structure Cleanup
+- **Merged `cmd/agent` into `cmd/server`** — A2A endpoints (agent card, task creation, status query) now live on the main server, eliminating ~60% code duplication. The `cmd/agent/` directory has been removed.
+- **Added `cmd/mcp-server-nexus3/`** — New MCP stdio server for Sonatype Nexus Repository 3 with tools: `get_foss_solution`, `search_components`, `get_component_details`. Completes the MCP tool chain for the security-autonomy-fixer agentflow (github, sonarqube, sonatype-iq, sonatype-nexus3).
+- **Updated `Makefile`** — Removed `build-agent` target, added `build-mcp-nexus3` target.
+- **Fixed `etc/flowgent.yaml`** — Corrected `anonymous-paths` indentation, added A2A paths (`/.well-known/**`, `/a2a/**`) to anonymous list, added `test` MCP server config entry.
+
+### Current CMD Layout (6 binaries)
+```
+cmd/
+├── server/                  # Main server (API + A2A + cron + webhook + OTEL)
+├── mcp-server-github/       # GitHub MCP (commit/branch/PR operations)
+├── mcp-server-sonarqube/    # SonarQube MCP (SAST/DAST scanning)
+├── mcp-server-sonatypeiq/   # Sonatype IQ MCP (FOSS dependency scanning)
+├── mcp-server-nexus3/       # Sonatype Nexus3 MCP (artifact compliance)
+└── mcp-server-test/         # Test MCP (Maven/Cucumber integration tests)
+```
 
 ## Implemented Packages
 

@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/config"
 )
 
 func TestMemoryCache_SetGet(t *testing.T) {
-	c := NewMemoryCache(&model.MemoryCacheConfig{
+	c := NewMemoryCache(&config.MemoryCacheConfig{
 		InitialCapacity: 10, MaxCapacity: 100, TTL: 60, EvictionPolicy: "LRU",
 	})
 	defer c.Close()
@@ -23,7 +23,7 @@ func TestMemoryCache_SetGet(t *testing.T) {
 }
 
 func TestMemoryCache_Exists(t *testing.T) {
-	c := NewMemoryCache(&model.MemoryCacheConfig{InitialCapacity: 10})
+	c := NewMemoryCache(&config.MemoryCacheConfig{InitialCapacity: 10})
 	defer c.Close()
 	ctx := context.Background()
 
@@ -39,7 +39,7 @@ func TestMemoryCache_Exists(t *testing.T) {
 }
 
 func TestMemoryCache_Delete(t *testing.T) {
-	c := NewMemoryCache(&model.MemoryCacheConfig{InitialCapacity: 10})
+	c := NewMemoryCache(&config.MemoryCacheConfig{InitialCapacity: 10})
 	defer c.Close()
 	ctx := context.Background()
 	c.Set(ctx, "k", []byte("v"), time.Minute)
@@ -51,7 +51,7 @@ func TestMemoryCache_Delete(t *testing.T) {
 }
 
 func TestMemoryCache_Clear(t *testing.T) {
-	c := NewMemoryCache(&model.MemoryCacheConfig{InitialCapacity: 10})
+	c := NewMemoryCache(&config.MemoryCacheConfig{InitialCapacity: 10})
 	defer c.Close()
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
@@ -67,7 +67,7 @@ func TestMemoryCache_Clear(t *testing.T) {
 }
 
 func TestMemoryCache_TTL(t *testing.T) {
-	c := NewMemoryCache(&model.MemoryCacheConfig{InitialCapacity: 10})
+	c := NewMemoryCache(&config.MemoryCacheConfig{InitialCapacity: 10})
 	defer c.Close()
 	ctx := context.Background()
 	c.Set(ctx, "k", []byte("v"), 1*time.Millisecond)

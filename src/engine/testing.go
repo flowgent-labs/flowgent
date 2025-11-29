@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/util"
 )
@@ -104,7 +105,7 @@ var _ Store = (*MockStore)(nil)
 // ─── VisibleForTesting — helpers ─────────────────────
 
 // NewTestExecutor creates an Executor with a test logger.
-func NewTestExecutor(store Store, mcp map[string]MCPClient, agents []*model.AgentDef, llm LLMClient) *Executor {
+func NewTestExecutor(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) *Executor {
 	return NewExecutor(store, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
 }
 

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/util"
 	"go.opentelemetry.io/otel"
@@ -19,7 +20,7 @@ import (
 type Executor struct {
 	store         Store
 	mcpClients    map[string]MCPClient
-	agents        map[string]*model.AgentDef
+	agents        map[string]*config.AgentDef
 	llmClient     LLMClient
 	logger        *util.Logger
 	mu            sync.Mutex
@@ -54,8 +55,8 @@ type LLMClient interface {
 	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64) (string, error)
 }
 
-func NewExecutor(store Store, mcp map[string]MCPClient, agents []*model.AgentDef, llm LLMClient, logger *util.Logger) *Executor {
-	agentMap := make(map[string]*model.AgentDef)
+func NewExecutor(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient, logger *util.Logger) *Executor {
+	agentMap := make(map[string]*config.AgentDef)
 	for _, a := range agents {
 		agentMap[a.Name] = a
 	}
