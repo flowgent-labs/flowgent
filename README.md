@@ -1,351 +1,193 @@
-# Security Auto-Fix Bot
+# Flowgent
 
-> **100% Golang** | **MCP Tools** | **GitHub EE / GitLab Agnostic** | **Test Framework Agnostic**
+> **A general-purpose AI agents orchestration engine that sits at the sweet spot between fully autonomous agents (like Claude Code) and traditional deterministic workflows — giving you the dynamic intelligence of LLMs with the predictability, traceability, and reliability of DAG execution.**
 
-通用的安全扫描自动修复机器人，通过 MCP Tools 集成不同扫描引擎、Git 平台和测试框架。
+Flowgent is the **Layer 1** infrastructure for building enterprise agentic applications. It lets you compose LLM-powered agents and deterministic nodes into a single DAG, executed by a topological scheduler with full state-machine persistence. Every decision is auditable; every run is resumable.
 
 ---
 
-## 快速开始
+## Highlights
 
-### 1. 构建
+| Feature | Why It Matters |
+|---------|----------------|
+| **Dynamic + Deterministic** | `agent` and `supervisor` nodes provide LLM intelligence; `tool`, `map`, `condition`, `tribunal`, `human`, `noop` nodes guarantee deterministic execution. You decide where intelligence lives. |
+| **DAG Topological Scheduler** | Predictable execution order with concurrent fan-out (`map` nodes) — process 100+ repos in parallel with bounded goroutine pools |
+| **Controlled Autonomy** | Supervisor is constrained to exactly 5 actions (`continue` / `redirect` / `retry` / `inject` / `abort`) with configurable quotas — LLM-powered but never unbounded |
+| **A2A Protocol Server** | External AI systems can dynamically call Flowgent via Google A2A protocol on a dedicated port — discover agentflows, trigger runs, and query results programmatically |
+| **State-Machine Persistence** | Every run and task is durable; pause at any `human` approval gate, resume via API, replay idempotently |
+| **Dual-Mode Deployment** | **All-in-One:** SQLite + memory queue (single binary, zero dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes |
+| **OTEL Tracing Per Node** | Every node span records input, output, and internal state — debug any execution path in Jaeger |
+| **9 Node Types** | `agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop` — compose any orchestration topology |
+| **Cron + Webhook Triggers** | Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow |
+| **Multi-Provider LLM** | OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking |
+| **MCP Ecosystem** | 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber) |
+| **OAS 3.1 + Swagger** | Full REST API spec and Swagger UI out of the box |
+
+---
+
+## Quick Install
+
+### Prerequisites
+
+- **Go 1.25+**
+- (Optional) PostgreSQL 15+ for distributed mode
+- (Optional) EMQX 5.x for MQTT distributed queue
+
+### Build
 
 ```bash
-# 构建 Bot 和 MCP Servers
+git clone git@github.com:flowgent-labs/flowgent.git && cd flowgent
 make build
-
-# 运行测试
-make test
 ```
 
-### 2. 配置 MCP Servers
+Produces one main binary + 5 MCP servers under `bin/`:
 
-在 `~/.config/mcp.json` 配置 MCP 服务器:
-
-```json
-{
-  "mcpServers": {
-    "scanner": {
-      "command": "scanner-mcp",
-      "config": "/etc/security-bot/scanner.yaml"
-    },
-    "parser": {
-      "command": "parser-mcp",
-      "config": "/etc/security-bot/parser.yaml"
-    },
-    "fixer": {
-      "command": "fixer-mcp",
-      "config": "/etc/security-bot/fixer.yaml"
-    },
-    "git": {
-      "command": "github-mcp-server",
-      "env": {
-        "GITHUB_TOKEN": "${GITHUB_TOKEN}",
-        "GITHUB_BASE_URL": "https://github.example.com"
-      }
-    },
-    "test": {
-      "command": "test-mcp-server",
-      "env": {
-        "TEST_WORKSPACE": "/workspace"
-      }
-    }
-  }
-}
+```
+bin/
+├── flowgent
+├── mcp-server-github
+├── mcp-server-sonarqube
+├── mcp-server-sonatypeiq
+├── mcp-server-nexus3
+└── mcp-server-test
 ```
 
-### 3. 设置环境变量
+### Run
 
 ```bash
-# GCP Secret Manager (推荐)
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+# All-in-one mode (SQLite — zero external dependencies)
+./bin/flowgent daemon start
 
-# GitHub Token
-export GITHUB_TOKEN="..."
-export GITHUB_BASE_URL="https://github.example.com"
+# With custom config + debug logging
+export FLOWGENT_CONFIG_FILE=/etc/flowgent/production.yaml
+./bin/flowgent -v daemon start
 ```
 
-### 4. 运行
+REST API on `:9999` · A2A on `:9992` · pprof on `:9991`
+
+### Verify
 
 ```bash
-# 指定配置运行
-./bin/security-bot --config /etc/security-bot/config.yaml
+curl http://localhost:9999/_/healthz                    # {"status":"ok"}
+curl http://localhost:9999/_/openapi.yaml               # OpenAPI 3.1 spec
+curl http://localhost:9992/.well-known/agent.json       # A2A agent card
+```
+
+### Interactive Console
+
+```bash
+./bin/flowgent console
+
+flowgent> list agentflows
+flowgent> list runs
+flowgent> show run <id>
+flowgent> tasks <run-id>
+flowgent> exit
 ```
 
 ---
 
-## 架构
+## Developer Quickstart
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                   Security Auto-Fix Bot                          │
-│                        (Go Binary)                               │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         │  所有操作通过 MCP Tools
-         │
-         ├──────────────────────────────────────────────────────┐
-         │                                                      │
-         ▼                                                      ▼
-┌─────────────────────────┐                       ┌─────────────────────────┐
-│   Built-in Tools        │                       │   MCP Tools Server      │
-│   (Go 内置实现)          │                       │   (可插拔 Provider)      │
-│                         │                       │                         │
-│ - deploy_verifier       │                       │ [scanner]               │
-│   (K8s/GKE 标准化)       │                       │ - scan/get_jobs_by_commit│
-│                         │                       │ - report/download       │
-│                         │                       │                         │
-│                         │                       │ [parser]                │
-│                         │                       │ - parse/sast_to_html    │
-│                         │                       │ - parse/dast_to_html    │
-│                         │                       │ - ...                   │
-│                         │                       │                         │
-│                         │                       │ [fixer]                 │
-│                         │                       │ - fix/get_foss_solution │
-│                         │                       │ - fix/search_web        │
-│                         │                       │                         │
-│                         │                       │ [git]                   │
-│                         │                       │ - git/get_latest_commit │
-│                         │                       │ - git/create_branch     │
-│                         │                       │ - git/commit_and_push   │
-│                         │                       │ - git/create_pull_request│
-│                         │                       │ - git/merge_pull_request│
-│                         │                       │                         │
-│                         │                       │ [test] ← 新增           │
-│                         │                       │ - test/run_integration  │
-│                         │                       │ - test/get_report       │
-│                         │                       │                         │
-│                         │                       │ Provider 可切换：        │
-│                         │                       │ - github/gitlab         │
-│                         │                       │ - maven/gradle/npm/pytest│
-└─────────────────────────┘                       └─────────────────────────┘
+```bash
+make build        # Compile all binaries
+make test         # Run all tests
+make fmt          # Format source
 ```
 
-### 完整 Tools 清单
+### Run Individual Components
 
-| 类别 | MCP Tool | 职责 | 实现 |
-|------|----------|------|------|
-| **扫描发现** | `scan/get_jobs_by_commit` | 根据 commit 获取扫描作业列表 | MCP |
-| **扫描发现** | `scan/get_status` | 获取扫描作业状态 | MCP |
-| **报告下载** | `report/download` | 下载报告/PDF 到本地 | MCP |
-| **报告解析** | `parse/sast_to_html` | SAST 报告转 HTML 并提取漏洞 | MCP |
-| **报告解析** | `parse/dast_to_html` | DAST 报告转 HTML 并提取漏洞 | MCP |
-| **报告解析** | `parse/cont_to_html` | 容器扫描报告转 HTML | MCP |
-| **报告解析** | `parse/sonar_to_html` | SonarQube 报告转 HTML | MCP |
-| **报告解析** | `parse/foss_to_html` | FOSS 报告转 HTML | MCP |
-| **修复方案** | `fix/get_foss_solution` | 获取 FOSS 漏洞修复方案 | MCP |
-| **修复方案** | `fix/search_web` | 搜索漏洞修复方案 | MCP |
-| **Git 操作** | `git/get_latest_commit` | 获取分支最新 commit | MCP |
-| **Git 操作** | `git/create_branch` | 创建新分支 | MCP |
-| **Git 操作** | `git/commit_and_push` | 提交代码并推送 | MCP |
-| **Git 操作** | `git/create_pull_request` | 创建 PR | MCP |
-| **Git 操作** | `git/merge_pull_request` | 合并 PR | MCP |
-| **测试执行** | `test/run_integration` | 运行集成测试 | MCP |
-| **测试执行** | `test/get_report` | 获取测试报告详情 | MCP |
-| **部署验证** | `deploy/wait_and_verify` | 等待部署并验证 | 内置 |
+```bash
+# Main server
+go build -o bin/flowgent ./src/cmd/server && ./bin/flowgent daemon start
 
----
+# A specific MCP server
+go build -o bin/mcp-server-github ./src/cmd/mcp-server-github
+GITHUB_TOKEN=xxx ./bin/mcp-server-github
+```
 
-## 完整工作流程
+### Add a Node Type
+
+1. Add constant in `src/model/node.go`
+2. Register in `src/engine/executor.go` → `executeNode` switch
+3. LLM node → provide `soul` + `instruction` in YAML; deterministic → pure Go
+
+### Add an MCP Tool
+
+1. Create `src/cmd/mcp-server-<name>/main.go` (stdio MCP pattern)
+2. Register in `etc/flowgent.yaml` → `orchestration.mcps`
+3. Reference via `type: tool` + `tool: <name>` in any L2 agentflow
+
+### Config Resolution
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. 扫描发现                                                      │
-│    git/get_latest_commit → scan/get_jobs_by_commit               │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. 报告获取                                                      │
-│    report/download (for each failed job)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. 漏洞解析                                                      │
-│    parse/{type}_to_html → []Vulnerability                       │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. 修复方案生成                                                  │
-│    FOSS: fix/get_foss_solution                                  │
-│    Code: fix/search_web                                         │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 5. 代码修复                                                      │
-│    git/create_branch → git/commit_and_push                      │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 6. 创建 PR                                                       │
-│    git/create_pull_request                                      │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 7. 验证阶段                                                      │
-│    等待 CI 部署 → deploy/wait_and_verify (内置)                  │
-│    运行测试 → test/run_integration (MCP)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-                    ┌─────────────────────────┐
-                    │ git/merge_pull_request  │
-                    └─────────────────────────┘
+-c/--config flag  >  $FLOWGENT_CONFIG_FILE  >  etc/flowgent.yaml
 ```
 
 ---
 
-## MCP Servers
+## Architecture
 
-### 当前实现
+```
+Trigger Layer (schedule / webhook)
+        ↓
+Supervisor (Control Plane — LLM, constrained)
+        ↓
+DAG Executor (topological scheduler + dataflow)
+        ↓
+Nodes (agent / tool / map / agentflow / condition / tribunal / human / supervisor / noop)
+```
 
-| Server | 描述 | 状态 |
-|--------|------|------|
-| `github-mcp-server` | GitHub EE Provider | ✅ 已实现 |
-| `test-mcp-server` | 测试执行 (Maven/Cucumber) | ✅ 已实现 |
-| `scanner-mcp` | 扫描系统集成 (示例) | 📝 模板 |
-| `parser-mcp` | 报告解析器 (示例) | 📝 模板 |
-| `fixer-mcp` | 修复方案集成 (示例) | 📝 模板 |
-
-### 未来扩展
-
-| Server | 描述 |
-|--------|------|
-| `gitlab-mcp-server` | GitLab Provider |
-| `bitbucket-mcp-server` | Bitbucket Provider |
-| `gradle-test-mcp` | Gradle 测试执行 |
-| `npm-test-mcp` | npm test 执行 |
-| `pytest-mcp` | pytest 测试执行 |
-| `sonarqube-mcp-server` | SonarQube 集成 |
-| `fortify-mcp-server` | Fortify SAST 集成 |
-| `zap-mcp-server` | OWASP ZAP 集成 |
+| Plane | Nodes | Behaviour |
+|-------|-------|-----------|
+| **Data Plane** | tool, map, agentflow, condition, tribunal, human, noop | Deterministic |
+| **Control Plane** | agent, supervisor | LLM-powered, constrained |
 
 ---
 
-## 配置说明
+## Enterprise Agentflows (L2 Examples)
 
-### MCP 配置
+### Security Autonomy Fixer — 11-phase closed-loop remediation
 
-```yaml
-mcp:
-  # Git 操作服务器 (当前：GitHub EE, 未来可切换到 GitLab)
-  git_server: git
-  
-  # 测试执行服务器 (当前：Maven/Cucumber, 未来可切换到 Gradle/npm/pytest)
-  test_server: test
-  
-  # 扫描集成服务器
-  scanner_server: scanner
-  
-  # 报告解析服务器
-  parser_server: parser
-  
-  # 修复方案服务器
-  fixer_server: fixer
+```
+4 parallel scans → LLM triage → nested map fan-out fix → 3-agent review →
+majority tribunal → supervisor safety gate → human approval (24h timeout) →
+commit & PR → multi-channel notify
 ```
 
-### 切换 Git Provider
+→ `etc/sample-security-autonomy-fixer.yaml`
 
-只需修改配置即可切换 Git 平台：
+### AutoTest Generation — Confluence-to-Cucumber pipeline
 
-```yaml
-# GitHub EE
-mcp:
-  git_server: git  # 对应 github-mcp-server
-
-# 未来切换到 GitLab
-mcp:
-  git_server: gitlab  # 对应 gitlab-mcp-server
+```
+Confluence fetch → requirement extraction → test planning per project type →
+Cucumber .feature + step definitions (Spring Boot / Flask / React) →
+review → tribunal → commit & PR → notify
 ```
 
-### 切换测试框架
-
-只需修改配置即可切换测试框架：
-
-```yaml
-# Maven/Cucumber (Java)
-mcp:
-  test_server: test  # 对应 test-mcp-server (Maven)
-
-# 未来切换到 Gradle
-mcp:
-  test_server: gradle-test  # 对应 gradle-test-mcp
-
-# 未来切换到 npm (Node.js)
-mcp:
-  test_server: npm-test  # 对应 npm-test-mcp
-
-# 未来切换到 pytest (Python)
-mcp:
-  test_server: pytest  # 对应 pytest-mcp
-```
+→ `etc/sample-autotest-generation.yaml`
 
 ---
 
-## 目录结构
+## Deployment Modes
 
-```
-security-bot/
-├── cmd/
-│   ├── security-bot/           # Bot 主程序
-│   │   └── main.go
-│   ├── mcp-server-github/      # GitHub MCP Server
-│   │   └── main.go
-│   └── mcp-server-test/        # Test MCP Server
-│       └── main.go
-├── internal/
-│   ├── bot/
-│   │   └── bot.go              # Bot 协调器 (全 MCP 调用)
-│   ├── config/
-│   │   └── config.go           # 配置加载
-│   └── tools/
-│       ├── scan_client.go      # 扫描 MCP 客户端
-│       ├── git_client.go       # Git MCP 客户端
-│       ├── test_client.go      # 测试 MCP 客户端 (新增)
-│       └── gke.go              # 部署验证 (内置)
-├── configs/
-│   └── config.yaml.example     # 配置示例
-├── go.mod
-├── Makefile
-└── README.md
-```
+| Mode | Storage | Queue | Target |
+|------|---------|-------|--------|
+| **All-in-One** | SQLite | Memory | Local dev, single node |
+| **Distributed** | PostgreSQL | MQTT (EMQX) | Kubernetes cluster |
 
 ---
 
-## 设计决策
+## API
 
-### 为什么测试执行也设计为 MCP？
-
-| 考虑 | 内置实现 | MCP 实现 |
-|------|----------|----------|
-| 多测试框架支持 | ❌ 需修改代码 | ✅ 配置切换 |
-| 公司差异 | ❌ 硬编码特定框架 | ✅ Provider 适配 |
-| 未来扩展 | ❌ 修改 Bot 核心 | ✅ 新增 Provider |
-| 当前复杂度 | ✅ 低 | 中 |
-
-**决策**: 选择 MCP 实现，因为不同公司集成测试框架差异大 (Maven/Gradle/npm/pytest)。
-
-### 什么保留为内置？
-
-- **deploy_verifier**: K8s/GKE 部署验证是标准化的，各公司差异小
-
----
-
-## Testing & Optional Services
-
-为了验证 CyberBot 的端到端 (E2E) 漏洞修复能力，你可能需要部署本地的 SAST 和 FOSS 扫描环境。
-我们提供了详细的系统设计文档以及部署指南：
-
-- **核心架构文档**: [docs/01-core-engine-design.md](docs/01-core-engine-design.md)
-- **应用层与扫描部署**: [docs/02-application-scanners.md](docs/02-application-scanners.md)
+| Interface | Port | Spec |
+|-----------|------|------|
+| REST API | `:9999` | OAS 3.1 (`/_/openapi.yaml`) + Swagger UI |
+| A2A Protocol | `:9992` | Google Agent-to-Agent (`/.well-known/agent.json`) |
+| Management | `:9991` | pprof (`/debug/pprof/`) |
 
 ---
 
 ## License
 
-Internal Use Only
+See [LICENSE](LICENSE).
