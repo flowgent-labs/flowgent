@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/payments"
 )
 
 // ─── Top-level config ────────────────────────────────────────
@@ -24,6 +27,7 @@ type ServiceConfig struct {
 	Storage       StorageConfig       `json:"storage" yaml:"storage"`
 	LLM           LLMConfig           `json:"llm" yaml:"llm"`
 	Orchestration OrchestrationConfig `json:"orchestration" yaml:"orchestration"`
+	Payments      *payments.PaymentsConfig `json:"payments" yaml:"payments"`
 }
 
 // ─── Server ──────────────────────────────────────────────────
@@ -290,14 +294,28 @@ func (c *AppConfig) GetModel(provider string) string {
 
 // ─── Config file I/O ─────────────────────────────────────────
 
-// Load reads the main service config YAML file.
+// Load reads the main service config YAML file with env var overrides via viper.
+// Environment variables prefixed with FLOWGENT_ take precedence over YAML values.
+// Naming: FLOWGENT_SERVER_PORT overrides server.port, etc.
 func Load(path string) (*ServiceConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
+	v := viper.New()
+
+	// Config file
+	v.SetConfigFile(path)
+	v.SetConfigType("yaml")
+
+	// Environment variable overrides — FLOWGENT_SERVER_PORT → server.port
+	v.SetEnvPrefix("FLOWGENT")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Read YAML config file
+	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+
 	var cfg ServiceConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	return &cfg, nil

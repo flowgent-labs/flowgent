@@ -35,9 +35,6 @@ type Store interface {
 	UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
 	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
 
-	// Idempotency
-	CheckIdempotency(ctx context.Context, key string) (bool, error)
-	AcquireIdempotency(ctx context.Context, key, taskRunID, execID string) error
 
 	// Supervisor log
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error

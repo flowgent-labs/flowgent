@@ -154,24 +154,6 @@ func TestSQLiteStore_HumanApproval(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_Idempotency(t *testing.T) {
-	s := NewSQLiteStore(t.TempDir())
-	s.Init(context.Background())
-	defer s.Close()
-	ctx := context.Background()
-
-	exists, _ := s.CheckIdempotency(ctx, "key-1")
-	if exists {
-		t.Fatal("should not exist yet")
-	}
-
-	s.AcquireIdempotency(ctx, "key-1", "tr-1", "exec-1")
-	exists, _ = s.CheckIdempotency(ctx, "key-1")
-	if !exists {
-		t.Fatal("should exist after acquire")
-	}
-}
-
 func TestSQLiteStore_AgentFlowDefinitions(t *testing.T) {
 	s := NewSQLiteStore(t.TempDir())
 	s.Init(context.Background())

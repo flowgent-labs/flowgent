@@ -15,13 +15,21 @@ import (
 
 func handleConsole(cfgPath string, verbose bool) {
 	if verbose {
-		log.Printf("Config file: %s", cfgPath)
-		log.Printf("Verbose logging enabled")
+		log.Printf("Config path: %s", cfgPath)
+		if v := os.Getenv("FLOWGENT_CONFIG_FILE"); v != "" {
+			log.Printf("Config env:  FLOWGENT_CONFIG_FILE=%s", v)
+		} else {
+			log.Printf("Config env:  FLOWGENT_CONFIG_FILE (not set, using default)")
+		}
 	}
 
 	serviceCfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	if verbose {
+		logConfig(serviceCfg)
 	}
 
 	storeImpl := initStore(serviceCfg)

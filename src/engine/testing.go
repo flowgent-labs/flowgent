@@ -84,8 +84,6 @@ func (s *MockStore) UpdateHumanApproval(ctx context.Context, a *model.HumanAppro
 func (s *MockStore) LogSupervisorDecision(ctx context.Context, arID, trID string, input, decision map[string]any) error {
 	return nil
 }
-func (s *MockStore) CheckIdempotency(ctx context.Context, key string) (bool, error)  { return false, nil }
-func (s *MockStore) AcquireIdempotency(ctx context.Context, key, trID, execID string) error { return nil }
 func (s *MockStore) GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error) {
 	s.Mu.Lock(); defer s.Mu.Unlock(); return s.Tasks[execID], nil
 }

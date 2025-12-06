@@ -152,13 +152,13 @@ func TestSQLiteMemStore_Knowledge(t *testing.T) {
 }
 
 func TestHelpers(t *testing.T) {
-	m := NewMemory("agent-1").Type(model.MemoryEpisodic).Content("hello").Build()
+	m := &model.Memory{AgentID: "agent-1", Type: model.MemoryEpisodic, Content: "hello"}
 	if m.AgentID != "agent-1" || m.Type != model.MemoryEpisodic {
-		t.Error("builder failed")
+		t.Error("memory init failed")
 	}
 
-	k := NewKnowledgeEntry("cat", "title", "body").Tags([]string{"t1"}).Build()
+	k := &model.KnowledgeEntry{Category: "cat", Title: "title", Content: "body", Tags: []string{"t1"}}
 	if k.Category != "cat" || len(k.Tags) != 1 {
-		t.Error("kb builder failed")
+		t.Error("kb init failed")
 	}
 }

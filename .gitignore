@@ -8,6 +8,8 @@
 *.so
 *.dylib
 bin/
+/flowgent-*
+server
 
 # Test binary, built with `go test -c`
 *.test
@@ -27,6 +29,9 @@ go.work.sum
 
 # env file
 .env
+
+# Data file
+.flowgent
 
 # Editor/IDE
 .idea/

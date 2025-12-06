@@ -42,8 +42,6 @@ type Store interface {
 	GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error)
 	UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error
-	CheckIdempotency(ctx context.Context, key string) (bool, error)
-	AcquireIdempotency(ctx context.Context, key, taskRunID, execID string) error
 	GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error)
 }
 

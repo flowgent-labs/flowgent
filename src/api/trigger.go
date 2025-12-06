@@ -125,3 +125,25 @@ func normalizeWebhookPayload(provider string, payload map[string]any) map[string
 	}
 	return n
 }
+
+// MatchWebhookTrigger returns agentflow IDs whose webhook triggers match the given
+// provider and event type. This is a standalone helper useful for testing.
+func MatchWebhookTrigger(flows []model.AgentFlowSpec, provider, eventType string) []string {
+	var matched []string
+	for _, wf := range flows {
+		for _, t := range wf.Triggers {
+			if t.Type != "webhook" {
+				continue
+			}
+			if t.Provider != "" && t.Provider != provider {
+				continue
+			}
+			if len(t.Events) > 0 && !containsEvent(t.Events, eventType) {
+				continue
+			}
+			matched = append(matched, wf.ID)
+			break
+		}
+	}
+	return matched
+}

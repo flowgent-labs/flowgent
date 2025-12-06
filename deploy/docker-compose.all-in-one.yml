@@ -1,0 +1,101 @@
+version: '3.8'
+# Flowgent All-in-One deployment with optional economic layer services.
+# Includes: flowgent (daemon), postgres (optional), emqx (optional),
+#           flowgent-wallet, coinbase/facilitator
+services:
+  # ─── Flowgent Daemon (all-in-one: REST + A2A) ──────────────
+  flowgent:
+    build: ..
+    container_name: flowgent
+    restart: unless-stopped
+    ports:
+      - "9999:9999"
+      - "9991:9991"
+    networks:
+      - flowgent-net
+    environment:
+      FLOWGENT_CONFIG_FILE: /etc/flowgent/flowgent.yaml
+      FLOWGENT_MASTER_KEY: "${FLOWGENT_MASTER_KEY:-change-me-in-production}"
+    volumes:
+      - ../etc:/etc/flowgent:ro
+      - flowgent_data:/var/lib/flowgent
+    depends_on:
+      - facilitator
+
+  # ─── Flowgent Wallet Daemon ──────────────────────────────────
+  flowgent-wallet:
+    build:
+      context: ..
+      dockerfile: Dockerfile.wallet
+    container_name: flowgent-wallet
+    restart: unless-stopped
+    ports:
+      - "9901:9901"
+    networks:
+      - flowgent-net
+    environment:
+      FLOWGENT_MASTER_KEY: "${FLOWGENT_MASTER_KEY:-change-me-in-production}"
+    volumes:
+      - wallet_data:/var/lib/flowgent/wallet
+
+  # ─── Coinbase x402 Facilitator ──────────────────────────────
+  facilitator:
+    image: coinbase/x402-facilitator:latest
+    container_name: x402-facilitator
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    networks:
+      - flowgent-net
+    environment:
+      FACILITATOR_PORT: "8085"
+      FACILITATOR_CHAIN: base
+      FACILITATOR_SETTLEMENT: x402
+
+  # ─── PostgreSQL (optional, for distributed mode) ────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: flowgent-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    networks:
+      - flowgent-net
+    environment:
+      POSTGRES_DB: flowgent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${PG_PASSWORD:-changeit}"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    profiles:
+      - distributed
+
+  # ─── EMQX MQTT Broker (optional, for distributed mode) ──────
+  emqx:
+    image: emqx/emqx:5.5.0
+    container_name: flowgent-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "8083:8083"
+      - "8084:8084"
+      - "8883:8883"
+      - "18083:18083"
+    networks:
+      - flowgent-net
+    environment:
+      EMQX_NODE__NAME: emqx@node.emqx.io
+      EMQX_NODE__COOKIE: "${EMQX_COOKIE:-flowgent-cluster}"
+    volumes:
+      - emqx_data:/opt/emqx/data
+    profiles:
+      - distributed
+
+networks:
+  flowgent-net:
+    driver: bridge
+volumes:
+  flowgent_data:
+  wallet_data:
+  pg_data:
+  emqx_data:

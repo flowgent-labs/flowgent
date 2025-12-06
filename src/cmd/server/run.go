@@ -66,7 +66,7 @@ func handleDaemon(cfgPath, pidFile string, verbose bool, args []string) {
 		}
 		defer os.Remove(pidFile)
 		log.Printf("Flowgent daemon starting (pid=%d, pidfile=%s)", os.Getpid(), pidFile)
-		startServer(cfgPath, verbose)
+		startServer(cfgPath, verbose, "all")
 
 	case "stop":
 		data, err := os.ReadFile(pidFile)
@@ -105,7 +105,7 @@ func handleDaemon(cfgPath, pidFile string, verbose bool, args []string) {
 		}
 		defer os.Remove(pidFile)
 		log.Printf("Flowgent daemon restarting (pid=%d)", os.Getpid())
-		startServer(cfgPath, verbose)
+		startServer(cfgPath, verbose, "all")
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown daemon action: %s\n\n%s", action, daemonUsage)
@@ -114,11 +114,15 @@ func handleDaemon(cfgPath, pidFile string, verbose bool, args []string) {
 }
 
 // startServer initialises all subsystems and starts the REST and A2A HTTP servers.
-func startServer(cfgPath string, verbose bool) {
+func startServer(cfgPath string, verbose bool, mode string) {
 	if verbose {
 		log.Printf("Flowgent v%s (commit: %s, built: %s)", Version, GitCommit, BuildTime)
-		log.Printf("Config file: %s", cfgPath)
-		log.Printf("Verbose logging enabled")
+		log.Printf("Config path: %s", cfgPath)
+		if v := os.Getenv("FLOWGENT_CONFIG_FILE"); v != "" {
+			log.Printf("Config env:  FLOWGENT_CONFIG_FILE=%s", v)
+		} else {
+			log.Printf("Config env:  FLOWGENT_CONFIG_FILE (not set, using default)")
+		}
 	} else {
 		log.Printf("Flowgent v%s (commit: %s, built: %s)", Version, GitCommit, BuildTime)
 	}
@@ -126,6 +130,10 @@ func startServer(cfgPath string, verbose bool) {
 	serviceCfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	if verbose {
+		logConfig(serviceCfg)
 	}
 
 	logger := util.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
@@ -298,24 +306,27 @@ func startServer(cfgPath string, verbose bool) {
 		writeTO = 60 * time.Second
 	}
 
-	restAddr := fmt.Sprintf("%s:%d", serviceCfg.Server.Host, serviceCfg.Server.Port)
-	restSrv := &http.Server{
-		Addr:           restAddr,
-		Handler:        restHandler,
-		ReadTimeout:    readTO,
-		WriteTimeout:   writeTO,
-		MaxHeaderBytes: serviceCfg.Server.MaxBodyBytes,
-	}
-	go func() {
-		slog.Info("REST API server", "addr", restAddr)
-		if err := restSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("REST server: %v", err)
+	var restSrv *http.Server
+	if mode == "all" || mode == "api" {
+		restAddr := fmt.Sprintf("%s:%d", serviceCfg.Server.Host, serviceCfg.Server.Port)
+		restSrv = &http.Server{
+			Addr:           restAddr,
+			Handler:        restHandler,
+			ReadTimeout:    readTO,
+			WriteTimeout:   writeTO,
+			MaxHeaderBytes: serviceCfg.Server.MaxBodyBytes,
 		}
-	}()
+		go func() {
+			slog.Info("REST API server", "addr", restAddr)
+			if err := restSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("REST server: %v", err)
+			}
+		}()
+	}
 
 	// ── A2A API Server (separate port) ─────────────────
 	var a2aSrv *http.Server
-	if serviceCfg.A2A.Enabled {
+	if serviceCfg.A2A.Enabled && (mode == "all" || mode == "a2a") {
 		a2aMux := http.NewServeMux()
 		a2aMux.HandleFunc("GET /.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -412,7 +423,9 @@ func startServer(cfgPath string, verbose bool) {
 	slog.Info("shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTO)
 	defer cancel()
-	restSrv.Shutdown(ctx)
+	if restSrv != nil {
+		restSrv.Shutdown(ctx)
+	}
 	if a2aSrv != nil {
 		a2aSrv.Shutdown(ctx)
 	}
@@ -451,6 +464,72 @@ func initStore(cfg *config.ServiceConfig) store.Store {
 		s = sqliteStore
 	}
 	return s
+}
+
+// startAPIServer initialises subsystems and starts only the REST API server.
+func startAPIServer(cfgPath string, verbose bool) {
+	startServer(cfgPath, verbose, "api")
+}
+
+// startA2AServer initialises subsystems and starts only the A2A protocol server.
+func startA2AServer(cfgPath string, verbose bool) {
+	startServer(cfgPath, verbose, "a2a")
+}
+
+// logConfig prints key configuration details (masks sensitive fields).
+func logConfig(cfg *config.ServiceConfig) {
+	// Storage
+	switch cfg.Storage.Type {
+	case "POSTGRE":
+		pg := cfg.Storage.Postgres
+		log.Printf("Storage:    PostgreSQL host=%s port=%d db=%s schema=%s user=%s pool_min=%d pool_max=%d ssl=%v",
+			pg.Host, pg.Port, pg.Database, pg.Schema, pg.Username, pg.MinConnections, pg.MaxConnections, pg.UseSSL)
+	default:
+		sq := cfg.Storage.SQLite
+		dir := sq.Dir
+		if dir == "" {
+			dir = "~/.flowgent/sqlite"
+		}
+		log.Printf("Storage:    SQLite dir=%s", dir)
+	}
+
+	// Cache
+	log.Printf("Cache:      provider=%s", cfg.Cache.Provider)
+
+	// Server bindings
+	log.Printf("REST API:   %s:%d (context=%s)", cfg.Server.Host, cfg.Server.Port, cfg.Server.ContextPath)
+	if cfg.A2A.Enabled {
+		log.Printf("A2A API:    %s:%d", cfg.A2A.Host, cfg.A2A.Port)
+	} else {
+		log.Printf("A2A API:    disabled")
+	}
+	if cfg.Mgmt.Enabled {
+		log.Printf("Management: %s:%d (pprof=%v, otel=%v)", cfg.Mgmt.Host, cfg.Mgmt.Port, cfg.Mgmt.PProf.Enabled, cfg.Mgmt.OTEL.Enabled)
+	}
+
+	// Orchestration
+	log.Printf("Engine:     max_concurrent=%d timeout=%s max_retries=%d",
+		cfg.Orchestration.MaxConcurrentFlows, cfg.Orchestration.FlowExecutionTimeout, cfg.Orchestration.MaxNodeRetries)
+
+	// LLM providers
+	for name, p := range cfg.LLM.Providers {
+		models := make([]string, len(p.Models))
+		for i, m := range p.Models {
+			models[i] = m.Name
+		}
+		proxy := p.Proxy
+		if proxy == "" {
+			proxy = "(direct)"
+		}
+		log.Printf("LLM:        provider=%s endpoint=%s proxy=%s models=%v", name, p.Endpoint, proxy, models)
+	}
+
+	// MCP tools
+	for _, mcp := range cfg.Orchestration.MCPs {
+		if mcp.Enabled {
+			log.Printf("MCP:        name=%s type=%s command=%v", mcp.Name, mcp.Type, mcp.Command)
+		}
+	}
 }
 
 // ── Supporting types & functions ──────────────────────────────

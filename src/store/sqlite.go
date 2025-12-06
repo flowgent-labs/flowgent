@@ -40,10 +40,10 @@ func (s *SQLiteStore) Init(ctx context.Context) error {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s.db = db
-
-	if _, err := db.ExecContext(ctx, sqliteSchema); err != nil {
-		return fmt.Errorf("apply sqlite schema: %w", err)
+	if err := RunMigrations(db, "sqlite"); err != nil {
+		return fmt.Errorf("sqlite migrations: %w", err)
 	}
+
 	return nil
 }
 
@@ -59,7 +59,6 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) SaveAgentFlowDefinition(ctx context.Context, def *model.AgentFlowVersion) error {
 	definitionJSON, err := json.Marshal(def.Definition)
 	if err != nil {
-		return err
 	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO agentflow_definitions (agentflow_id, version, definition, checksum, created_by, comment)
@@ -291,18 +290,6 @@ func (s *SQLiteStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApp
 	return approvals, nil
 }
 
-// --- Idempotency ---
-
-func (s *SQLiteStore) CheckIdempotency(ctx context.Context, key string) (bool, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM idempotency_keys WHERE key=?1`, key).Scan(&count)
-	return count > 0, err
-}
-
-func (s *SQLiteStore) AcquireIdempotency(ctx context.Context, key, taskRunID, execID string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO idempotency_keys (key,task_run_id,exec_id) VALUES (?1,?2,?3)`, key, taskRunID, execID)
-	return err
-}
 
 // --- Supervisor log ---
 
@@ -432,80 +419,3 @@ func scanHumanApprovalRow(r rowsScanner) (*model.HumanApproval, error) {
 	return scanHumanApproval(r)
 }
 
-const sqliteSchema = `
-CREATE TABLE IF NOT EXISTS agentflow_definitions (
-    id TEXT PRIMARY KEY,
-    agentflow_id TEXT NOT NULL UNIQUE,
-    version INTEGER NOT NULL DEFAULT 1,
-    definition TEXT NOT NULL,
-    checksum TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_by TEXT,
-    comment TEXT
-);
-
-CREATE TABLE IF NOT EXISTS agentflow_runs (
-    id TEXT PRIMARY KEY,
-    agentflow_id TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    vars TEXT,
-    output TEXT,
-    error TEXT,
-    trigger_type TEXT,
-    trigger_source TEXT,
-    trigger_payload TEXT,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    started_at DATETIME,
-    finished_at DATETIME
-);
-
-CREATE TABLE IF NOT EXISTS task_runs (
-    id TEXT PRIMARY KEY,
-    agentflow_run_id TEXT NOT NULL REFERENCES agentflow_runs(id),
-    node_id TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    input TEXT,
-    output TEXT,
-    error TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
-    max_retries INTEGER NOT NULL DEFAULT 0,
-    exec_id TEXT NOT NULL,
-    parent_task_run_id TEXT REFERENCES task_runs(id),
-    sequence INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    started_at DATETIME,
-    finished_at DATETIME
-);
-
-CREATE TABLE IF NOT EXISTS human_approvals (
-    task_run_id TEXT NOT NULL UNIQUE REFERENCES task_runs(id),
-    token TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL DEFAULT 'PENDING',
-    approved BOOLEAN,
-    comment TEXT,
-    timeout_seconds INTEGER NOT NULL DEFAULT 86400,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at DATETIME,
-    resolved_at DATETIME
-);
-
-CREATE TABLE IF NOT EXISTS supervisor_log (
-    id TEXT PRIMARY KEY,
-    agentflow_run_id TEXT NOT NULL REFERENCES agentflow_runs(id),
-    task_run_id TEXT REFERENCES task_runs(id),
-    input_snapshot TEXT NOT NULL,
-    decision TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS idempotency_keys (
-    key TEXT PRIMARY KEY,
-    task_run_id TEXT NOT NULL REFERENCES task_runs(id),
-    exec_id TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-`

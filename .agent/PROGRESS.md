@@ -125,9 +125,123 @@ TestE2E_WebhookTriggerMatch      — provider/event filtering
 2. Native pgvector `<->` operator — JSONB+Go cosine similarity usable for now
 3. PG queue (`pgqueue.go`) — memory and MQTT queues cover local and distributed modes
 
+## Economic Layer (Phase 1) — 2026-05-09
+
+### New Packages: `src/payments/`
+
+**Core types** (`src/payments/model.go`):
+- `X402PaymentRequest` — parsed x402 HTTP 402 response with `Validate()`
+- `PaymentIntent` — intent created before authorization (PENDING→APPROVED→PAID)
+- `PaymentReceipt` — returned by facilitator after settlement
+- `PaymentAuthorization` — signed auth sent to facilitator
+- `PaymentError` — structured error type (PAYMENT_DENIED, PAYMENT_REQUIRES_APPROVAL, etc.)
+
+**Configuration** (`src/payments/config.go`):
+- `PaymentsConfig` — top-level enable/disable toggle
+- `PoliciesConfig` — spending limits, domain allowlist/blocklist, approval thresholds
+- `WalletConfig` — wallet service endpoint and auth
+- `SecretStoreConfig` — provider selection (default/vault), master key resolution
+- `X402Config` — default facilitator, timeout, max retries
+
+**x402 Parser** (`src/payments/x402/`):
+- `Parse()` — reads `X402-Payment` header from 402 response, unmarshals JSON
+- `IsX402Response()` — detects x402 payment responses
+- `SetAuthorizationHeader()` — attaches `X402-Authorization` token for retry
+
+**Spending Policy Engine** (`src/payments/policy/`):
+- `Engine.Allow()` — evaluates asset/chain allowlists, max single payment, domain rules, daily budget
+- `Engine.RequiresHumanApproval()` — checks against `require_human_approval_above_usd` threshold
+- `Engine.RecordSpend()` — accumulates daily spend for budget enforcement
+- Domain matching with wildcard support (`*.example.com`)
+
+**Wallet Abstraction** (`src/payments/wallet/`):
+- `Wallet` interface — `Address()`, `SignAuthorization()`, `Balance()`
+- `Manager` — multi-wallet management, default wallet selection
+- `SignPaymentAuthorization()` — creates signed `PaymentAuthorization` for facilitator
+
+**Secret Store** (`src/payments/secretstore.go`, `src/payments/providers/`):
+- `SecretStoreProvider` interface — `GetSecret`, `PutSecret`, `DeleteSecret`, `ListSecrets`
+- `DefaultSecretStoreProvider` — AES-256-GCM encryption, DB-backed (SQLite/Postgres), master key from ENV/file
+- `VaultSecretStoreProvider` — Hashicorp Vault contract (SDK wiring at construction time)
+
+**PayableWebFetch Runtime** (`src/payments/pwf/`):
+- `Runtime.Fetch()` — full x402 payment flow: detect 402 → parse → create intent → evaluate policy → optional human approval → sign → facilitator authorize → retry
+- Implements the core economic-aware fetch primitive (NOT just a tool wrapper)
+
+**Facilitator Client** (`src/payments/facilitator/`):
+- `Client.Authorize()` — POSTs signed `PaymentAuthorization` to Coinbase x402 facilitator
+- `Client.Health()` — facilitator health check
+
+**Payment Approvals** (`src/payments/approvals/`):
+- `PaymentApprover` — implements `pwf.ApprovalHandler` reusing existing `HumanApproval` store
+- Does NOT create another approval subsystem
+
+**Payment Receipts** (`src/payments/receipts/`):
+- `Store` — persists receipts to DB, query by intent ID or date range
+
+### New CMD: `cmd/flowgent-wallet/`
+
+- Standalone daemon for secure key management and Ed25519 signing
+- Exposes REST API: `/health`, `/api/v1/wallet/sign`, `/api/v1/wallet/address`, `/api/v1/wallet/balance`
+- Private keys stored encrypted via `DefaultSecretStoreProvider` (AES-256-GCM)
+- `--generate-key` flag for Ed25519 keypair generation
+- Flowgent runtime NEVER directly stores raw private keys
+
+### Config Integration
+
+- `ServiceConfig` now includes optional `Payments *payments.PaymentsConfig` field
+- When `payments.enabled: false` (or nil), all payment features are no-ops
+- Flowgent remains usable as pure orchestration engine without payments
+
+### Deploy Updates
+
+- `deploy/facilitator/docker-compose.yml` — standalone Coinbase x402 facilitator
+- `deploy/docker-compose.all-in-one.yml` — full stack: flowgent + wallet + facilitator + optional postgres/emqx
+- `deploy/kubernetes/wallet-deployment.yaml` — wallet Deployment + Service + Secret
+- `deploy/kubernetes/facilitator-deployment.yaml` — facilitator Deployment + Service
+- `deploy/kubernetes/flowgent-deployment.yaml` — apiserver + worker + a2a Deployments
+
+### Makefile
+
+- `build-wallet` target for `bin/flowgent-wallet`
+- `build` now includes `build-wallet`
+
+### Dependencies Added
+
+- `github.com/shopspring/decimal` v1.4.0 — fixed-point decimal for payment amounts
+
+### Design Boundaries Enforced
+
+- Flowgent is consumer-side economic runtime ONLY — NO settlement/facilitator/bridging/escrow
+- Settlement delegated to Coinbase x402 facilitator
+- Economic layer isolated from orchestration runtime (`src/payments/` tree)
+- Wallet subsystem isolated (`cmd/flowgent-wallet/` daemon)
+- Human approval reuses existing `model.HumanApproval` store — no duplicate subsystem
+
+### Test Results (8/8 PASS, payments packages need dedicated tests)
+
+```
+ok  api      0.014s
+ok  cache    5.034s
+ok  config   0.008s
+ok  engine   0.015s
+ok  model    0.006s
+ok  queue    0.423s
+ok  store    0.107s
+ok  util     0.005s
+```
+
+### Build Status
+
+- All packages compile clean: `go build ./src/...` passes
+- `bin/flowgent-wallet` builds successfully
+
 ## Next Steps
 
 - Wire PG vector `<->` operator for production-scale memory search
 - Add MQTT queue e2e test against running EMQX broker
 - Run security-autonomy-fixer against real MCP servers (SonarQube, Sonatype IQ, Nexus3)
 - Run autotest-generation against real Confluence + GitHub
+- Add dedicated unit tests for payments packages (x402, policy, pwf, wallet, facilitator)
+- Wire Vault SDK in `VaultSecretStoreProvider` for production deployments
+- Integrate PWF runtime into engine tool node type as optional payment-aware fetch

@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  facilitator:
+    image: coinbase/x402-facilitator:latest
+    container_name: x402-facilitator
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    networks:
+      - facilitator-net
+    environment:
+      FACILITATOR_PORT: "8085"
+      FACILITATOR_CHAIN: base
+      FACILITATOR_SETTLEMENT: x402
+    volumes:
+      - facilitator_data:/data
+networks:
+  facilitator-net:
+    driver: bridge
+volumes:
+  facilitator_data:
+    name: x402_facilitator_data

@@ -18,7 +18,9 @@ Usage:
   flowgent [options] <command> [args]
 
 Commands:
-  daemon     Start, stop, or restart the Flowgent server
+  daemon     Start, stop, or restart all services (REST + A2A)
+  apiserver  Start the REST API server only (management UI backend)
+  a2a        Start the A2A protocol server only
   console    Interactive management console for querying store data
 
 Options:
@@ -118,9 +120,20 @@ parseCmd:
 
 	cmdArgs := remaining[1:]
 
+	// Also scan cmdArgs for -v/--verbose (supports flags after subcommand)
+	for _, a := range cmdArgs {
+		if a == "-v" || a == "--verbose" {
+			verbose = true
+		}
+	}
+
 	switch cmd {
 	case "daemon":
 		handleDaemon(cfgPath, pidFile, verbose, cmdArgs)
+	case "apiserver":
+		startAPIServer(cfgPath, verbose)
+	case "a2a":
+		startA2AServer(cfgPath, verbose)
 	case "console":
 		handleConsole(cfgPath, verbose)
 	default:

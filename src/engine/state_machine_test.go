@@ -8,7 +8,7 @@ import (
 )
 
 func TestStateMachine_ValidTransition(t *testing.T) {
-	store := newMockStore()
+	store := NewMockStore()
 	sm := NewStateMachine(store)
 
 	run := &model.AgentFlowRun{ID: "r1", Status: model.RunPending}
@@ -25,7 +25,7 @@ func TestStateMachine_ValidTransition(t *testing.T) {
 }
 
 func TestStateMachine_InvalidTransition(t *testing.T) {
-	store := newMockStore()
+	store := NewMockStore()
 	sm := NewStateMachine(store)
 
 	run := &model.AgentFlowRun{ID: "r2", Status: model.RunCompleted}
@@ -41,7 +41,7 @@ func TestStateMachine_InvalidTransition(t *testing.T) {
 }
 
 func TestStateMachine_PausedResume(t *testing.T) {
-	store := newMockStore()
+	store := NewMockStore()
 	sm := NewStateMachine(store)
 
 	run := &model.AgentFlowRun{ID: "r4", Status: model.RunRunning}

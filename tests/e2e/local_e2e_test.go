@@ -11,6 +11,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/queue"
 )
 
@@ -53,7 +54,7 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 		"github": mcp, "sonarqube": mcp, "sonatype-iq": mcp, "sonatype-nexus3": mcp,
 	}
 
-	agents := []*model.AgentDef{
+	agents := []*config.AgentDef{
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Supervisor.", Instruction: "Output action/target/reason JSON."},
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "DevSecOps expert.", Instruction: "Parse scan results."},
 		{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Secure coding expert.", Instruction: "Generate secure patches."},

@@ -79,9 +79,9 @@ cache:
     read-from-replica: true
 
 storage:
-  type: "POSTGRE" # SQLITE|POSTGRE
+  type: "SQLITE" # SQLITE|POSTGRE
   sqlite:
-    dir: "~/.flowgent/sqlite"
+    dir: ".flowgent/sqlite"
   postgres:
     host: "127.0.0.1"
     port: 5432

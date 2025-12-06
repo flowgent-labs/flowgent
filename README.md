@@ -1,8 +1,8 @@
 # Flowgent
 
-> **A general-purpose AI agents orchestration engine that sits at the sweet spot between fully autonomous agents (like Claude Code) and traditional deterministic workflows — giving you the dynamic intelligence of LLMs with the predictability, traceability, and reliability of DAG execution.**
+> **Build deterministic workflows powered by autonomous AI agents.**
 
-Flowgent is the **Layer 1** infrastructure for building enterprise agentic applications. It lets you compose LLM-powered agents and deterministic nodes into a single DAG, executed by a topological scheduler with full state-machine persistence. Every decision is auditable; every run is resumable.
+Flowgent is an AI-native Universality orchestration engine that combines the adaptive intelligence of LLM agents with the predictability, traceability, and reliability of deterministic DAG execution.
 
 ---
 

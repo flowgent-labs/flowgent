@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	_ "embed"
 	"fmt"
 	"time"
 
@@ -14,8 +13,6 @@ import (
 	"github.com/flowgent-labs/flowgent/src/model"
 )
 
-//go:embed schema.sql
-var schemaSQL string
 
 type PostgresStore struct {
 	dsn            string
@@ -70,8 +67,8 @@ func (s *PostgresStore) Init(ctx context.Context) error {
 		return fmt.Errorf("ping postgres: %w", err)
 	}
 
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
+	if err := RunMigrations(db, "postgres"); err != nil {
+		return fmt.Errorf("postgres migrations: %w", err)
 	}
 	return nil
 }
@@ -88,7 +85,6 @@ func (s *PostgresStore) Close() error {
 func (s *PostgresStore) SaveAgentFlowDefinition(ctx context.Context, def *model.AgentFlowVersion) error {
 	definitionJSON, err := json.Marshal(def.Definition)
 	if err != nil {
-		return err
 	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO agentflow_definitions (agentflow_id, version, definition, checksum, created_by, comment)
@@ -322,20 +318,6 @@ func (s *PostgresStore) GetPendingApprovals(ctx context.Context) ([]model.HumanA
 	return approvals, rows.Err()
 }
 
-// --- Idempotency ---
-
-func (s *PostgresStore) CheckIdempotency(ctx context.Context, key string) (bool, error) {
-	var exists bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM idempotency_keys WHERE key = $1)`, key).Scan(&exists)
-	return exists, err
-}
-
-func (s *PostgresStore) AcquireIdempotency(ctx context.Context, key, taskRunID, execID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO idempotency_keys (key, task_run_id, exec_id) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`,
-		key, taskRunID, execID)
-	return err
-}
 
 // --- Supervisor log ---
 
