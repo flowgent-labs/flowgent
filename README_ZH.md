@@ -1,9 +1,8 @@
 # Flowgent
 
+构建由自主化 AI Agents 驱动的确定性工作流
 
-> **构建由自主化 AI Agents 驱动的确定性工作流。**
-
-Flowgent 是一款通用原生 AI 编排引擎，它将 LLM 代理的自适应智能与确定性 DAG 执行的可预测性、可追溯性和可靠性相结合。
+> Flowgent 是一款通用原生 AI 编排引擎，它将 LLM 代理的自适应智能与确定性 DAG 执行的可预测性、可追溯性和可靠性相结合
 
 ---
 
@@ -11,18 +10,18 @@ Flowgent 是一款通用原生 AI 编排引擎，它将 LLM 代理的自适应�
 
 | 特性 | 为什么重要 |
 |---------|----------------|
-| **动态 + 确定性兼顾** | `agent` 和 `supervisor` 节点提供 LLM 智能；`tool`、`map`、`condition`、`tribunal`、`human`、`noop` 节点保证确定性执行。智能放哪里，由你决定 |
-| **DAG 拓扑调度器** | 可预测的执行顺序 + 并发扇出（`map` 节点）——有界 goroutine pool 并行处理 100+ 仓库 |
-| **受控自主性** | Supervisor 被严格限制为 5 种操作（`continue` / `redirect` / `retry` / `inject` / `abort`），可配置配额上限——LLM 驱动但绝不失控 |
-| **A2A 协议服务** | 外部 AI 系统可通过 Google A2A 协议在独立端口上**动态调用 Flowgent**——发现 agentflow、触发运行并以编程方式查询结果 |
-| **状态机持久化** | 每次运行和任务均可持久化；可在任意 `human` 审批节点暂停，通过 API 恢复，幂等重放 |
-| **双模式部署** | **一体化：** SQLite + 内存队列（单二进制、零依赖）。**分布式：** PostgreSQL + MQTT（EMQX）+ Kubernetes |
-| **OTEL 逐节点追踪** | 每个节点 Span 记录输入、输出和内部状态——在 Jaeger 中可调试任意执行路径 |
-| **9 种节点类型** | `agent`、`tool`、`map`、`agentflow`、`condition`、`tribunal`、`human`、`supervisor`、`noop`——组合出任意的编排拓扑 |
-| **Cron + Webhook 触发器** | 每个 agentflow 支持定时调度和事件驱动（GitHub/GitLab webhook）|
-| **多提供商 LLM** | OpenAI 兼容适配器，支持按提供商限流、SOCKS/HTTP 代理、modalities、extended thinking |
-| **MCP 生态** | 5 个 stdio MCP 服务：GitHub、SonarQube、Sonatype IQ、Nexus3、Test（Maven/Cucumber）|
-| **OAS 3.1 + Swagger** | 开箱即用的完整 REST API 文档 + Swagger UI |
+| 动态 + 确定性兼顾 | `agent` 和 `supervisor` 节点提供 LLM 智能；`tool`、`map`、`condition`、`tribunal`、`human`、`noop` 节点保证确定性执行。智能放哪里，由你决定 |
+| DAG 拓扑调度器 | 可预测的执行顺序 + 并发扇出（`map` 节点）——有界 goroutine pool 并行处理 100+ 仓库 |
+| 受控自主性 | Supervisor 被严格限制为 5 种操作（`continue` / `redirect` / `retry` / `inject` / `abort`），可配置配额上限——LLM 驱动但绝不失控 |
+| A2A 协议服务 | 外部 AI 系统可通过 Google A2A 协议在独立端口上**动态调用 Flowgent**——发现 agentflow、触发运行并以编程方式查询结果 |
+| 状态机持久化 | 每次运行和任务均可持久化；可在任意 `human` 审批节点暂停，通过 API 恢复，幂等重放 |
+| 双模式部署 | 一体化 SQLite + 内存队列（单二进制、零依赖）。**分布式：** PostgreSQL + MQTT（EMQX）+ Kubernetes |
+| OTEL 逐节点追踪 | 每个节点 Span 记录输入、输出和内部状态——在 Jaeger 中可调试任意执行路径 |
+| 9 种节点类型 | `agent`、`tool`、`map`、`agentflow`、`condition`、`tribunal`、`human`、`supervisor`、`noop`——组合出任意的编排拓扑 |
+| Cron + Webhook 触发器 | 每个 agentflow 支持定时调度和事件驱动（GitHub/GitLab webhook）|
+| 多提供商 LLM | OpenAI 兼容适配器，支持按提供商限流、SOCKS/HTTP 代理、modalities、extended thinking |
+| MCP 生态 | 5 个 stdio MCP 服务：GitHub、SonarQube、Sonatype IQ、Nexus3、Test（Maven/Cucumber）|
+| OAS 3.1 + Swagger | 开箱即用的完整 REST API 文档 + Swagger UI |
 
 ---
 

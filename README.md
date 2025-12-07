@@ -1,8 +1,8 @@
 # Flowgent
 
-> **Build deterministic workflows powered by autonomous AI agents.**
+Build deterministic workflows powered by autonomous AI agents.
 
-Flowgent is an AI-native Universality orchestration engine that combines the adaptive intelligence of LLM agents with the predictability, traceability, and reliability of deterministic DAG execution.
+> Flowgent is an AI-native Universality orchestration engine that combines the adaptive intelligence of LLM agents with the predictability, traceability, and reliability of deterministic DAG execution.
 
 ---
 
@@ -10,18 +10,18 @@ Flowgent is an AI-native Universality orchestration engine that combines the ada
 
 | Feature | Why It Matters |
 |---------|----------------|
-| **Dynamic + Deterministic** | `agent` and `supervisor` nodes provide LLM intelligence; `tool`, `map`, `condition`, `tribunal`, `human`, `noop` nodes guarantee deterministic execution. You decide where intelligence lives. |
-| **DAG Topological Scheduler** | Predictable execution order with concurrent fan-out (`map` nodes) — process 100+ repos in parallel with bounded goroutine pools |
-| **Controlled Autonomy** | Supervisor is constrained to exactly 5 actions (`continue` / `redirect` / `retry` / `inject` / `abort`) with configurable quotas — LLM-powered but never unbounded |
-| **A2A Protocol Server** | External AI systems can dynamically call Flowgent via Google A2A protocol on a dedicated port — discover agentflows, trigger runs, and query results programmatically |
-| **State-Machine Persistence** | Every run and task is durable; pause at any `human` approval gate, resume via API, replay idempotently |
-| **Dual-Mode Deployment** | **All-in-One:** SQLite + memory queue (single binary, zero dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes |
-| **OTEL Tracing Per Node** | Every node span records input, output, and internal state — debug any execution path in Jaeger |
-| **9 Node Types** | `agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop` — compose any orchestration topology |
-| **Cron + Webhook Triggers** | Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow |
-| **Multi-Provider LLM** | OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking |
-| **MCP Ecosystem** | 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber) |
-| **OAS 3.1 + Swagger** | Full REST API spec and Swagger UI out of the box |
+| Dynamic + Deterministic | `agent` and `supervisor` nodes provide LLM intelligence; `tool`, `map`, `condition`, `tribunal`, `human`, `noop` nodes guarantee deterministic execution. You decide where intelligence lives. |
+| DAG Topological Scheduler | Predictable execution order with concurrent fan-out (`map` nodes) — process 100+ repos in parallel with bounded goroutine pools |
+| Controlled Autonomy | Supervisor is constrained to exactly 5 actions (`continue` / `redirect` / `retry` / `inject` / `abort`) with configurable quotas — LLM-powered but never unbounded |
+| A2A Protocol Server | External AI systems can dynamically call Flowgent via Google A2A protocol on a dedicated port — discover agentflows, trigger runs, and query results programmatically |
+| State-Machine Persistence | Every run and task is durable; pause at any `human` approval gate, resume via API, replay idempotently |
+| Dual-Mode Deployment | **All-in-One:** SQLite + memory queue (single binary, zero dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes |
+| OTEL Tracing Per Node | Every node span records input, output, and internal state — debug any execution path in Jaeger |
+| 9 Node Types | `agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop` — compose any orchestration topology |
+| Cron + Webhook Triggers | Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow |
+| Multi-Provider LLM | OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking |
+| MCP Ecosystem | 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber) |
+| OAS 3.1 + Swagger | Full REST API spec and Swagger UI out of the box |
 
 ---
 
