@@ -1,19 +1,13 @@
-.PHONY: build build-server build-wallet build-mcp clean test fmt
+.PHONY: build build-server build-mcp clean test fmt
 
 # Build all
-build: build-server build-wallet build-mcp
+build: build-server build-mcp
 
-# Build main server
+# Build main unified binary (daemon, apiserver, a2a, wallet, console)
 build-server:
 	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent \
 		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./src/cmd/server
-
-# Build wallet daemon
-build-wallet:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent-wallet \
-		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./src/cmd/flowgent-wallet
+		./src/cmd/core
 
 # Build all MCP servers
 build-mcp: build-mcp-github build-mcp-test build-mcp-sonarqube build-mcp-sonatypeiq build-mcp-nexus3

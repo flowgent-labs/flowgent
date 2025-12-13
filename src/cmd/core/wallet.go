@@ -1,6 +1,3 @@
-// flowgent-wallet is a standalone daemon for secure key management and payment signing.
-// It exposes a local API that the Flowgent runtime calls to sign payment authorizations.
-// The wallet daemon is the ONLY process that has access to raw private keys.
 package main
 
 import (
@@ -11,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,79 +23,33 @@ import (
 	"github.com/flowgent-labs/flowgent/src/payments/providers"
 )
 
-const usage = `Flowgent Wallet — Secure Key Management Daemon
-
-Usage:
-  flowgent-wallet [options]
-
-Options:
-  --listen ADDR         Listen address (default: "127.0.0.1:9901")
-  --db PATH            SQLite database path (default: "~/.flowgent/wallet.db")
-  --master-key KEY     Master encryption key
-  --master-key-file F  Path to master key file
-  --generate-key       Generate a new wallet keypair and exit
-`
-
-func main() {
-	listen := "127.0.0.1:9901"
-	dbPath := os.ExpandEnv("$HOME/.flowgent/wallet.db")
-	masterKey := ""
-	masterKeyFile := ""
-	generateKey := false
-
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--listen":
-			i++
-			if i < len(args) {
-				listen = args[i]
-			}
-		case "--db":
-			i++
-			if i < len(args) {
-				dbPath = args[i]
-			}
-		case "--master-key":
-			i++
-			if i < len(args) {
-				masterKey = args[i]
-			}
-		case "--master-key-file":
-			i++
-			if i < len(args) {
-				masterKeyFile = args[i]
-			}
-		case "--generate-key":
-			generateKey = true
-		case "-h", "--help":
-			fmt.Print(usage)
-			os.Exit(0)
-		}
-	}
-
+// runWallet starts the wallet key-management daemon.
+// Flags (walletListen, walletDB, masterKey, masterKeyFile, generateKey) are sourced from cobra globals.
+func runWallet() error {
 	if generateKey {
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "key generation failed: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("key generation failed: %w", err)
 		}
 		fmt.Printf("Public key:  %s\n", hex.EncodeToString(pub))
 		fmt.Printf("Private key: %s\n", hex.EncodeToString(priv))
-		os.Exit(0)
+		return nil
+	}
+
+	dbPath := walletDB
+	if dbPath == "" {
+		dbPath = os.ExpandEnv("$HOME/.flowgent/wallet.db")
 	}
 
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
 
 	secretStore, err := providers.NewDefaultSecretStoreProvider(db, masterKey, masterKeyFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create secret store: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("create secret store: %w", err)
 	}
 
 	srv := &walletServer{
@@ -111,7 +63,7 @@ func main() {
 	mux.HandleFunc("/api/v1/wallet/balance", srv.handleBalance)
 
 	httpServer := &http.Server{
-		Addr:    listen,
+		Addr:    walletListen,
 		Handler: mux,
 	}
 
@@ -119,18 +71,17 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		fmt.Printf("Flowgent Wallet daemon listening on %s\n", listen)
+		log.Printf("Flowgent Wallet daemon listening on %s", walletListen)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-			os.Exit(1)
+			log.Fatalf("Wallet server: %v", err)
 		}
 	}()
 
 	<-sigCh
-	fmt.Println("\nShutting down...")
+	log.Println("Wallet daemon shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	httpServer.Shutdown(ctx)
+	return httpServer.Shutdown(ctx)
 }
 
 type walletServer struct {
@@ -156,7 +107,6 @@ func (s *walletServer) handleSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve the private key from the secret store
 	keyBytes, err := s.secretStore.GetSecret(r.Context(), "wallet:"+req.Wallet)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get key: " + err.Error()})
@@ -194,8 +144,6 @@ func (s *walletServer) handleAddress(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *walletServer) handleBalance(w http.ResponseWriter, r *http.Request) {
-	// Balance is checked via the facilitator or chain RPC.
-	// This endpoint returns a stub for the interface contract.
 	writeJSON(w, http.StatusOK, map[string]string{
 		"balance": decimal.Zero.String(),
 	})

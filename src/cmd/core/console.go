@@ -13,7 +13,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/store"
 )
 
-func handleConsole(cfgPath string, verbose bool) {
+func startConsole() {
 	if verbose {
 		log.Printf("Config path: %s", cfgPath)
 		if v := os.Getenv("FLOWGENT_CONFIG_FILE"); v != "" {
@@ -64,7 +64,15 @@ func handleConsole(cfgPath string, verbose bool) {
 			return
 
 		case "help":
-			fmt.Print(consoleUsage)
+			fmt.Print(`Interactive commands:
+  list agentflows          List all agentflow definitions
+  list runs [agentflow-id] List recent runs (optionally filtered)
+  show run <id>            Show details of a specific run
+  tasks <run-id>           List task runs for an agentflow run
+  show task <id>           Show details of a specific task
+  help                     Show this help
+  exit, quit               Exit the console
+`)
 
 		case "list":
 			if len(args) == 0 {

@@ -6,22 +6,33 @@ Build deterministic workflows powered by autonomous AI agents.
 
 ---
 
-## Highlights
+## Features
 
-| Feature | Why It Matters |
-|---------|----------------|
-| Dynamic + Deterministic | `agent` and `supervisor` nodes provide LLM intelligence; `tool`, `map`, `condition`, `tribunal`, `human`, `noop` nodes guarantee deterministic execution. You decide where intelligence lives. |
-| DAG Topological Scheduler | Predictable execution order with concurrent fan-out (`map` nodes) — process 100+ repos in parallel with bounded goroutine pools |
-| Controlled Autonomy | Supervisor is constrained to exactly 5 actions (`continue` / `redirect` / `retry` / `inject` / `abort`) with configurable quotas — LLM-powered but never unbounded |
-| A2A Protocol Server | External AI systems can dynamically call Flowgent via Google A2A protocol on a dedicated port — discover agentflows, trigger runs, and query results programmatically |
-| State-Machine Persistence | Every run and task is durable; pause at any `human` approval gate, resume via API, replay idempotently |
-| Dual-Mode Deployment | **All-in-One:** SQLite + memory queue (single binary, zero dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes |
-| OTEL Tracing Per Node | Every node span records input, output, and internal state — debug any execution path in Jaeger |
-| 9 Node Types | `agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop` — compose any orchestration topology |
-| Cron + Webhook Triggers | Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow |
-| Multi-Provider LLM | OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking |
-| MCP Ecosystem | 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber) |
-| OAS 3.1 + Swagger | Full REST API spec and Swagger UI out of the box |
+**DAG Topological Scheduler** — Predictable execution order with concurrent fan-out via `map` nodes. Process 100+ repos in parallel with bounded goroutine pools.
+
+**9 Node Types** — `agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop`. Compose any orchestration topology.
+
+**Deterministic + Intelligent** — `agent` and `supervisor` nodes provide LLM intelligence. All other nodes guarantee deterministic execution. You decide where intelligence lives.
+
+**Controlled Autonomy** — Supervisor constrained to 5 actions (`continue`, `redirect`, `retry`, `inject`, `abort`) with configurable quotas. LLM-powered but never unbounded.
+
+**State-Machine Persistence** — Every run and task is durable. Pause at any `human` approval gate, resume via API, replay idempotently.
+
+**A2A Protocol Server** — External AI systems dynamically call Flowgent via Google A2A protocol. Discover agentflows, trigger runs, query results programmatically.
+
+**Optional Economic Layer** — x402 payment protocol client-side support with spending policies, wallet abstraction, and human approval governance. Coinbase facilitator integration.
+
+**Dual-Mode Deployment** — **All-in-One:** SQLite + memory queue (single binary, no dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes.
+
+**OTEL Tracing Per Node** — Every node span records input, output, and internal state. Debug any execution path in Jaeger.
+
+**Cron + Webhook Triggers** — Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow.
+
+**Multi-Provider LLM** — OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking.
+
+**MCP Ecosystem** — 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber).
+
+**OAS 3.1 + Swagger** — Full REST API spec and Swagger UI out of the box.
 
 ---
 
@@ -40,7 +51,7 @@ git clone git@github.com:flowgent-labs/flowgent.git && cd flowgent
 make build
 ```
 
-Produces one main binary + 5 MCP servers under `bin/`:
+Produces one unified binary + 5 MCP servers under `bin/`:
 
 ```
 bin/
@@ -58,12 +69,17 @@ bin/
 # All-in-one mode (SQLite — zero external dependencies)
 ./bin/flowgent daemon start
 
+# Start individual components
+./bin/flowgent apiserver     # REST API only
+./bin/flowgent a2a           # A2A protocol only
+./bin/flowgent wallet        # Wallet key-management daemon
+./bin/flowgent console       # Interactive management console
+
 # With custom config + debug logging
-export FLOWGENT_CONFIG_FILE=/etc/flowgent/production.yaml
-./bin/flowgent -v daemon start
+./bin/flowgent -v --config /etc/flowgent/production.yaml daemon start
 ```
 
-REST API on `:9999` · A2A on `:9992` · pprof on `:9991`
+REST API on `:9999` · A2A on `:9992` · Wallet on `:9901` · pprof on `:9991`
 
 ### Verify
 
@@ -71,6 +87,7 @@ REST API on `:9999` · A2A on `:9992` · pprof on `:9991`
 curl http://localhost:9999/_/healthz                    # {"status":"ok"}
 curl http://localhost:9999/_/openapi.yaml               # OpenAPI 3.1 spec
 curl http://localhost:9992/.well-known/agent.json       # A2A agent card
+curl http://localhost:9901/health                       # Wallet health
 ```
 
 ### Interactive Console
@@ -83,6 +100,14 @@ flowgent> list runs
 flowgent> show run <id>
 flowgent> tasks <run-id>
 flowgent> exit
+```
+
+### CLI Help
+
+```bash
+./bin/flowgent --help              # Top-level commands
+./bin/flowgent daemon --help       # Daemon subcommands (start/stop/restart)
+./bin/flowgent wallet --help       # Wallet options (--listen, --master-key, --generate-key)
 ```
 
 ---
@@ -99,7 +124,11 @@ make fmt          # Format source
 
 ```bash
 # Main server
-go build -o bin/flowgent ./src/cmd/server && ./bin/flowgent daemon start
+go build -o bin/flowgent ./src/cmd/core && ./bin/flowgent daemon start
+
+# Specific components
+./bin/flowgent apiserver
+./bin/flowgent wallet
 
 # A specific MCP server
 go build -o bin/mcp-server-github ./src/cmd/mcp-server-github

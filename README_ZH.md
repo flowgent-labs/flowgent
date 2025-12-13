@@ -6,22 +6,33 @@
 
 ---
 
-## 核心亮点
+## 特性
 
-| 特性 | 为什么重要 |
-|---------|----------------|
-| 动态 + 确定性兼顾 | `agent` 和 `supervisor` 节点提供 LLM 智能；`tool`、`map`、`condition`、`tribunal`、`human`、`noop` 节点保证确定性执行。智能放哪里，由你决定 |
-| DAG 拓扑调度器 | 可预测的执行顺序 + 并发扇出（`map` 节点）——有界 goroutine pool 并行处理 100+ 仓库 |
-| 受控自主性 | Supervisor 被严格限制为 5 种操作（`continue` / `redirect` / `retry` / `inject` / `abort`），可配置配额上限——LLM 驱动但绝不失控 |
-| A2A 协议服务 | 外部 AI 系统可通过 Google A2A 协议在独立端口上**动态调用 Flowgent**——发现 agentflow、触发运行并以编程方式查询结果 |
-| 状态机持久化 | 每次运行和任务均可持久化；可在任意 `human` 审批节点暂停，通过 API 恢复，幂等重放 |
-| 双模式部署 | 一体化 SQLite + 内存队列（单二进制、零依赖）。**分布式：** PostgreSQL + MQTT（EMQX）+ Kubernetes |
-| OTEL 逐节点追踪 | 每个节点 Span 记录输入、输出和内部状态——在 Jaeger 中可调试任意执行路径 |
-| 9 种节点类型 | `agent`、`tool`、`map`、`agentflow`、`condition`、`tribunal`、`human`、`supervisor`、`noop`——组合出任意的编排拓扑 |
-| Cron + Webhook 触发器 | 每个 agentflow 支持定时调度和事件驱动（GitHub/GitLab webhook）|
-| 多提供商 LLM | OpenAI 兼容适配器，支持按提供商限流、SOCKS/HTTP 代理、modalities、extended thinking |
-| MCP 生态 | 5 个 stdio MCP 服务：GitHub、SonarQube、Sonatype IQ、Nexus3、Test（Maven/Cucumber）|
-| OAS 3.1 + Swagger | 开箱即用的完整 REST API 文档 + Swagger UI |
+**DAG 拓扑调度器** — 可预测的执行顺序 + 并发扇出（`map` 节点）。有界 goroutine pool 并行处理 100+ 仓库。
+
+**9 种节点类型** — `agent`、`tool`、`map`、`agentflow`、`condition`、`tribunal`、`human`、`supervisor`、`noop`。组合出任意的编排拓扑。
+
+**确定性 + 智能兼顾** — `agent` 和 `supervisor` 节点提供 LLM 智能。其余节点保证确定性执行。智能放哪里，由你决定。
+
+**受控自主性** — Supervisor 被严格限制为 5 种操作（`continue`、`redirect`、`retry`、`inject`、`abort`），可配置配额上限。LLM 驱动但绝不失控。
+
+**状态机持久化** — 每次运行和任务均可持久化。可在任意 `human` 审批节点暂停，通过 API 恢复，幂等重放。
+
+**A2A 协议服务** — 外部 AI 系统可通过 Google A2A 协议动态调用 Flowgent。发现 agentflow、触发运行、查询结果。
+
+**可选经济层** — x402 支付协议客户端支持，包含消费策略、钱包抽象、人工审批治理。Coinbase facilitator 集成。
+
+**双模式部署** — **一体化：** SQLite + 内存队列（单二进制、零依赖）。**分布式：** PostgreSQL + MQTT（EMQX）+ Kubernetes。
+
+**OTEL 逐节点追踪** — 每个节点 Span 记录输入、输出和内部状态。在 Jaeger 中调试任意执行路径。
+
+**Cron + Webhook 触发器** — 每个 agentflow 支持定时调度和事件驱动（GitHub/GitLab webhook）。
+
+**多提供商 LLM** — OpenAI 兼容适配器，支持按提供商限流、SOCKS/HTTP 代理、modalities、extended thinking。
+
+**MCP 生态** — 5 个 stdio MCP 服务：GitHub、SonarQube、Sonatype IQ、Nexus3、Test（Maven/Cucumber）。
+
+**OAS 3.1 + Swagger** — 开箱即用的完整 REST API 文档 + Swagger UI。
 
 ---
 
@@ -40,7 +51,7 @@ git clone git@github.com:flowgent-labs/flowgent.git && cd flowgent
 make build
 ```
 
-生成 1 个主二进制 + 5 个 MCP 服务，位于 `bin/`：
+生成 1 个统一二进制 + 5 个 MCP 服务，位于 `bin/`：
 
 ```
 bin/
@@ -58,12 +69,17 @@ bin/
 # 一体化模式（SQLite——零外部依赖）
 ./bin/flowgent daemon start
 
+# 单独启动组件
+./bin/flowgent apiserver     # 仅 REST API
+./bin/flowgent a2a           # 仅 A2A 协议
+./bin/flowgent wallet        # 钱包密钥管理守护进程
+./bin/flowgent console       # 交互式管理控制台
+
 # 自定义配置 + 调试日志
-export FLOWGENT_CONFIG_FILE=/etc/flowgent/production.yaml
-./bin/flowgent -v daemon start
+./bin/flowgent -v --config /etc/flowgent/production.yaml daemon start
 ```
 
-REST API `:9999` · A2A `:9992` · pprof `:9991`
+REST API `:9999` · A2A `:9992` · Wallet `:9901` · pprof `:9991`
 
 ### 验证
 
@@ -71,6 +87,7 @@ REST API `:9999` · A2A `:9992` · pprof `:9991`
 curl http://localhost:9999/_/healthz                    # {"status":"ok"}
 curl http://localhost:9999/_/openapi.yaml               # OpenAPI 3.1 规范
 curl http://localhost:9992/.well-known/agent.json       # A2A agent card
+curl http://localhost:9901/health                       # Wallet 健康检查
 ```
 
 ### 交互式控制台
@@ -83,6 +100,14 @@ flowgent> list runs
 flowgent> show run <id>
 flowgent> tasks <run-id>
 flowgent> exit
+```
+
+### CLI 帮助
+
+```bash
+./bin/flowgent --help              # 顶级命令列表
+./bin/flowgent daemon --help       # daemon 子命令（start/stop/restart）
+./bin/flowgent wallet --help       # wallet 选项（--listen, --master-key, --generate-key）
 ```
 
 ---
@@ -99,7 +124,11 @@ make fmt          # 格式化源码
 
 ```bash
 # 主服务
-go build -o bin/flowgent ./src/cmd/server && ./bin/flowgent daemon start
+go build -o bin/flowgent ./src/cmd/core && ./bin/flowgent daemon start
+
+# 特定组件
+./bin/flowgent apiserver
+./bin/flowgent wallet
 
 # 特定 MCP 服务
 go build -o bin/mcp-server-github ./src/cmd/mcp-server-github

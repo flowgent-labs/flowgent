@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,72 +27,42 @@ import (
 	"github.com/flowgent-labs/flowgent/src/util"
 )
 
-func handleDaemon(cfgPath, pidFile string, verbose bool, args []string) {
-	// Parse sub-action
-	action := ""
-	pidOverride := ""
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "start", "stop", "restart":
-			action = args[i]
-		case "-c", "--config":
-			i++
-			if i < len(args) {
-				cfgPath = args[i]
-			}
-		case "--pid-file":
-			i++
-			if i < len(args) {
-				pidOverride = args[i]
-			}
-		case "-h", "--help":
-			fmt.Print(daemonUsage)
-			return
-		}
-	}
-	if pidOverride != "" {
-		pidFile = pidOverride
-	}
-
-	_ = cfgPath // used by start/restart
-
+// runDaemon handles daemon start/stop/restart actions.
+// Flags (cfgPath, pidFile, verbose) are sourced from cobra globals.
+func runDaemon(action string) error {
 	switch action {
-	case "":
-		fmt.Print(daemonUsage)
-		return
 	case "start":
-		// Write PID file
 		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			log.Fatalf("Failed to write PID file %s: %v", pidFile, err)
+			return fmt.Errorf("write PID file %s: %w", pidFile, err)
 		}
 		defer os.Remove(pidFile)
 		log.Printf("Flowgent daemon starting (pid=%d, pidfile=%s)", os.Getpid(), pidFile)
 		startServer(cfgPath, verbose, "all")
+		return nil
 
 	case "stop":
 		data, err := os.ReadFile(pidFile)
 		if err != nil {
-			log.Fatalf("Failed to read PID file %s: %v (is the daemon running?)", pidFile, err)
+			return fmt.Errorf("read PID file %s: %w (is the daemon running?)", pidFile, err)
 		}
-		pid, err := strconv.Atoi(string(data))
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 		if err != nil {
-			log.Fatalf("Invalid PID file: %v", err)
+			return fmt.Errorf("invalid PID file: %w", err)
 		}
 		proc, err := os.FindProcess(pid)
 		if err != nil {
-			log.Fatalf("Process %d not found: %v", pid, err)
+			return fmt.Errorf("process %d not found: %w", pid, err)
 		}
 		if err := proc.Signal(syscall.SIGTERM); err != nil {
-			log.Fatalf("Failed to send SIGTERM to %d: %v", pid, err)
+			return fmt.Errorf("send SIGTERM to %d: %w", pid, err)
 		}
 		fmt.Printf("Sent SIGTERM to process %d\n", pid)
 		os.Remove(pidFile)
+		return nil
 
 	case "restart":
-		// Stop if running
 		if data, err := os.ReadFile(pidFile); err == nil {
-			pid, err := strconv.Atoi(string(data))
-			if err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
 				if proc, err := os.FindProcess(pid); err == nil {
 					proc.Signal(syscall.SIGTERM)
 					time.Sleep(500 * time.Millisecond)
@@ -99,17 +70,16 @@ func handleDaemon(cfgPath, pidFile string, verbose bool, args []string) {
 			}
 			os.Remove(pidFile)
 		}
-		// Start
 		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			log.Fatalf("Failed to write PID file %s: %v", pidFile, err)
+			return fmt.Errorf("write PID file %s: %w", pidFile, err)
 		}
 		defer os.Remove(pidFile)
 		log.Printf("Flowgent daemon restarting (pid=%d)", os.Getpid())
 		startServer(cfgPath, verbose, "all")
+		return nil
 
 	default:
-		fmt.Fprintf(os.Stderr, "unknown daemon action: %s\n\n%s", action, daemonUsage)
-		os.Exit(1)
+		return fmt.Errorf("unknown daemon action: %s", action)
 	}
 }
 
@@ -466,14 +436,16 @@ func initStore(cfg *config.ServiceConfig) store.Store {
 	return s
 }
 
-// startAPIServer initialises subsystems and starts only the REST API server.
-func startAPIServer(cfgPath string, verbose bool) {
+// runAPIServer starts only the REST API server.
+func runAPIServer() error {
 	startServer(cfgPath, verbose, "api")
+	return nil
 }
 
-// startA2AServer initialises subsystems and starts only the A2A protocol server.
-func startA2AServer(cfgPath string, verbose bool) {
+// runA2AServer starts only the A2A protocol server.
+func runA2AServer() error {
 	startServer(cfgPath, verbose, "a2a")
+	return nil
 }
 
 // logConfig prints key configuration details (masks sensitive fields).
