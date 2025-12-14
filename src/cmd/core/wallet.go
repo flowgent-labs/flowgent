@@ -23,18 +23,39 @@ import (
 	"github.com/flowgent-labs/flowgent/src/payments/providers"
 )
 
-// runWallet starts the wallet key-management daemon.
-// Flags (walletListen, walletDB, masterKey, masterKeyFile, generateKey) are sourced from cobra globals.
-func runWallet() error {
-	if generateKey {
-		pub, priv, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return fmt.Errorf("key generation failed: %w", err)
-		}
-		fmt.Printf("Public key:  %s\n", hex.EncodeToString(pub))
-		fmt.Printf("Private key: %s\n", hex.EncodeToString(priv))
-		return nil
+// runWallet handles wallet start/stop/restart.
+func runWallet(action, pidFile string) error {
+	switch action {
+	case "start":
+		return startWallet(pidFile)
+	case "stop":
+		return stopByPID(pidFile)
+	case "restart":
+		_ = stopByPID(pidFile)
+		time.Sleep(500 * time.Millisecond)
+		return startWallet(pidFile)
+	default:
+		return fmt.Errorf("unknown wallet action: %s", action)
 	}
+}
+
+// runWalletGenKey generates a new Ed25519 wallet keypair.
+func runWalletGenKey() error {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("key generation failed: %w", err)
+	}
+	fmt.Printf("Public key:  %s\n", hex.EncodeToString(pub))
+	fmt.Printf("Private key: %s\n", hex.EncodeToString(priv))
+	return nil
+}
+
+// startWallet starts the wallet key-management daemon.
+func startWallet(pidFile string) error {
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+		return fmt.Errorf("write PID file %s: %w", pidFile, err)
+	}
+	defer os.Remove(pidFile)
 
 	dbPath := walletDB
 	if dbPath == "" {

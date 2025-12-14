@@ -1,7 +1,7 @@
 // Flowgent — Autonomous Agentflow Orchestration Engine
 //
 // Unified CLI entry point with GNU-style multi-level argument parsing via cobra.
-// Subcommands: daemon (start/stop/restart), apiserver, a2a, wallet, console.
+// Every daemon-like subcommand supports start/stop/restart.
 package main
 
 import (
@@ -23,7 +23,6 @@ var (
 var (
 	cfgPath string
 	verbose bool
-	pidFile string
 )
 
 func init() {
@@ -48,27 +47,32 @@ var rootCmd = &cobra.Command{
 	Long: `Flowgent is an AI-native orchestration runtime that combines LLM agent
 intelligence with deterministic DAG execution for predictable, reliable,
 and auditable autonomous workflows.`,
-	Version:      fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildTime),
+	Version:       fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildTime),
 	SilenceErrors: true,
 	SilenceUsage:  true,
 }
+
+// ─── Shared PID file flags (per service) ──────────────────────
+
+var (
+	pidDaemon    string
+	pidAPIServer string
+	pidA2A       string
+	pidWallet    string
+)
 
 // ─── daemon ───────────────────────────────────────────────────
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Start, stop, or restart all components",
-	Long: `Manage the Flowgent daemon process (REST API + A2A + cron + worker).
-
-The daemon writes a PID file on start and removes it on stop. Signals
-(SIGINT/SIGTERM) trigger graceful shutdown with configurable timeout.`,
+	Short: "Start, stop, or restart all components (REST + A2A + cron + worker)",
 }
 
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Flowgent daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDaemon("start")
+		return runDaemon("start", pidDaemon)
 	},
 }
 
@@ -76,7 +80,7 @@ var daemonStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop a running Flowgent daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDaemon("stop")
+		return runDaemon("stop", pidDaemon)
 	},
 }
 
@@ -84,7 +88,7 @@ var daemonRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Stop then start the Flowgent daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDaemon("restart")
+		return runDaemon("restart", pidDaemon)
 	},
 }
 
@@ -92,10 +96,31 @@ var daemonRestartCmd = &cobra.Command{
 
 var apiserverCmd = &cobra.Command{
 	Use:   "apiserver",
-	Short: "Start the REST API server only",
-	Long:  "Start only the REST API server on the configured port (management UI backend).",
+	Short: "Manage the REST API server",
+	Long:  "Start, stop, or restart the REST API server independently (management UI backend).",
+}
+
+var apiserverStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the REST API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAPIServer()
+		return runAPIServer("start", pidAPIServer)
+	},
+}
+
+var apiserverStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a running REST API server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAPIServer("stop", pidAPIServer)
+	},
+}
+
+var apiserverRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Stop then start the REST API server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAPIServer("restart", pidAPIServer)
 	},
 }
 
@@ -103,35 +128,80 @@ var apiserverCmd = &cobra.Command{
 
 var a2aCmd = &cobra.Command{
 	Use:   "a2a",
-	Short: "Start the A2A protocol server only",
-	Long: `Start only the Google Agent-to-Agent (A2A) protocol server.
+	Short: "Manage the A2A protocol server",
+}
 
-External AI systems can discover agentflows via /.well-known/agent.json
-and trigger runs programmatically.`,
+var a2aStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the A2A protocol server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runA2AServer()
+		return runA2AServer("start", pidA2A)
+	},
+}
+
+var a2aStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a running A2A server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runA2AServer("stop", pidA2A)
+	},
+}
+
+var a2aRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Stop then start the A2A server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runA2AServer("restart", pidA2A)
 	},
 }
 
 // ─── wallet ───────────────────────────────────────────────────
 
 var (
-	walletListen string
-	walletDB     string
-	masterKey    string
-	masterKeyFile string
-	generateKey  bool
+	walletListen    string
+	walletDB        string
+	masterKey       string
+	masterKeyFile   string
 )
 
 var walletCmd = &cobra.Command{
 	Use:   "wallet",
-	Short: "Start the wallet key-management daemon",
-	Long: `Standalone daemon for secure key management and payment signing.
+	Short: "Manage the wallet key-management daemon",
+	Long: `Secure key management and payment signing daemon.
 
 The wallet daemon is the ONLY process with access to raw private keys.
 Keys are encrypted at rest with AES-256-GCM.`,
+}
+
+var walletStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet()
+		return runWallet("start", pidWallet)
+	},
+}
+
+var walletStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a running wallet daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runWallet("stop", pidWallet)
+	},
+}
+
+var walletRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Stop then start the wallet daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runWallet("restart", pidWallet)
+	},
+}
+
+var walletGenKeyCmd = &cobra.Command{
+	Use:   "generate-key",
+	Short: "Generate a new Ed25519 wallet keypair",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runWalletGenKey()
 	},
 }
 
@@ -169,31 +239,49 @@ var versionCmd = &cobra.Command{
 // ─── main ─────────────────────────────────────────────────────
 
 func main() {
+	// daemon
 	rootCmd.AddCommand(daemonCmd)
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonRestartCmd)
+	daemonCmd.PersistentFlags().StringVar(&pidDaemon, "pid-file", "/tmp/flowgent.pid", "PID file path")
+
+	// apiserver
 	rootCmd.AddCommand(apiserverCmd)
+	apiserverCmd.AddCommand(apiserverStartCmd)
+	apiserverCmd.AddCommand(apiserverStopCmd)
+	apiserverCmd.AddCommand(apiserverRestartCmd)
+	apiserverCmd.PersistentFlags().StringVar(&pidAPIServer, "pid-file", "/tmp/flowgent-apiserver.pid", "PID file path")
+
+	// a2a
 	rootCmd.AddCommand(a2aCmd)
+	a2aCmd.AddCommand(a2aStartCmd)
+	a2aCmd.AddCommand(a2aStopCmd)
+	a2aCmd.AddCommand(a2aRestartCmd)
+	a2aCmd.PersistentFlags().StringVar(&pidA2A, "pid-file", "/tmp/flowgent-a2a.pid", "PID file path")
+
+	// wallet
 	rootCmd.AddCommand(walletCmd)
+	walletCmd.AddCommand(walletStartCmd)
+	walletCmd.AddCommand(walletStopCmd)
+	walletCmd.AddCommand(walletRestartCmd)
+	walletCmd.AddCommand(walletGenKeyCmd)
+	walletCmd.PersistentFlags().StringVar(&pidWallet, "pid-file", "/tmp/flowgent-wallet.pid", "PID file path")
+	walletStartCmd.Flags().StringVar(&walletListen, "listen", "127.0.0.1:9901", "Listen address")
+	walletStartCmd.Flags().StringVar(&walletDB, "db", "", "SQLite database path (default: $HOME/.flowgent/wallet.db)")
+	walletStartCmd.Flags().StringVar(&masterKey, "master-key", "", "Master encryption key")
+	walletStartCmd.Flags().StringVar(&masterKeyFile, "master-key-file", "", "Path to master key file")
+
+	// console
 	rootCmd.AddCommand(consoleCmd)
+
+	// version
 	rootCmd.AddCommand(versionCmd)
-
-	// daemon flags
-	daemonCmd.PersistentFlags().StringVar(&pidFile, "pid-file", "/tmp/flowgent.pid", "PID file path")
-
-	// wallet flags
-	walletCmd.Flags().StringVar(&walletListen, "listen", "127.0.0.1:9901", "Listen address")
-	walletCmd.Flags().StringVar(&walletDB, "db", "", "SQLite database path (default: $HOME/.flowgent/wallet.db)")
-	walletCmd.Flags().StringVar(&masterKey, "master-key", "", "Master encryption key")
-	walletCmd.Flags().StringVar(&masterKeyFile, "master-key-file", "", "Path to master key file")
-	walletCmd.Flags().BoolVar(&generateKey, "generate-key", false, "Generate a new wallet keypair and exit")
 
 	cobra.EnableCommandSorting = false
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		// Show help for the failing command on usage errors
 		if strings.Contains(err.Error(), "unknown command") ||
 			strings.Contains(err.Error(), "required flag") ||
 			strings.Contains(err.Error(), "unknown flag") {
