@@ -40,14 +40,28 @@ func runWallet(action, pidFile string) error {
 }
 
 // runWalletGenKey generates a new Ed25519 wallet keypair.
-func runWalletGenKey() error {
+// Format: "text" (human-readable) or "json" (machine-parseable).
+func runWalletGenKey(format string) error {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return fmt.Errorf("key generation failed: %w", err)
 	}
-	fmt.Printf("Public key:  %s\n", hex.EncodeToString(pub))
-	fmt.Printf("Private key: %s\n", hex.EncodeToString(priv))
-	return nil
+	pubHex := hex.EncodeToString(pub)
+	privHex := hex.EncodeToString(priv)
+
+	switch format {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]string{
+			"public_key":  pubHex,
+			"private_key": privHex,
+		})
+	default:
+		fmt.Printf("Public key:  %s\n", pubHex)
+		fmt.Printf("Private key: %s\n", privHex)
+		return nil
+	}
 }
 
 // startWallet starts the wallet key-management daemon.
