@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -57,6 +58,12 @@ func runWalletGenKey(format string) error {
 			"public_key":  pubHex,
 			"private_key": privHex,
 		})
+	case "base64":
+		pubB64 := base64.StdEncoding.EncodeToString(pub)
+		privB64 := base64.StdEncoding.EncodeToString(priv)
+		fmt.Printf("Public key:  %s\n", pubB64)
+		fmt.Printf("Private key: %s\n", privB64)
+		return nil
 	default:
 		fmt.Printf("Public key:  %s\n", pubHex)
 		fmt.Printf("Private key: %s\n", privHex)
