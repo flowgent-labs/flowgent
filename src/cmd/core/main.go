@@ -163,6 +163,7 @@ var (
 	masterKey       string
 	masterKeyFile   string
 	keyFormat       string
+	keyEncoding     string
 )
 
 var walletCmd = &cobra.Command{
@@ -203,15 +204,19 @@ var walletGenKeyCmd = &cobra.Command{
 	Short: "Generate a new Ed25519 wallet keypair",
 	Long: `Generate a new Ed25519 keypair for wallet signing.
 
-Output formats:
-  text    Human-readable hex (default)
-  json    Machine-parseable, suitable for install scripts
-  base64  Base64-encoded raw bytes`,
+--format controls output structure:
+  text   Human-readable labels (default)
+  json   Machine-parseable key-value pairs
+
+--encoding controls key representation:
+  hex    Hexadecimal (default)
+  base64 Base64-encoded raw bytes`,
 	Example: `  flowgent wallet generate-key
   flowgent wallet generate-key --format json
-  flowgent wallet generate-key --format base64`,
+  flowgent wallet generate-key --encoding base64
+  flowgent wallet generate-key --format json --encoding base64`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWalletGenKey(keyFormat)
+		return runWalletGenKey(keyFormat, keyEncoding)
 	},
 }
 
@@ -281,7 +286,8 @@ func main() {
 	walletStartCmd.Flags().StringVar(&walletDB, "db", "", "SQLite database path (default: $HOME/.flowgent/wallet.db)")
 	walletStartCmd.Flags().StringVar(&masterKey, "master-key", "", "Master encryption key")
 	walletStartCmd.Flags().StringVar(&masterKeyFile, "master-key-file", "", "Path to master key file")
-	walletGenKeyCmd.Flags().StringVar(&keyFormat, "format", "text", "Output format: text|json|base64")
+	walletGenKeyCmd.Flags().StringVar(&keyFormat, "format", "text", "Output structure: text|json")
+	walletGenKeyCmd.Flags().StringVar(&keyEncoding, "encoding", "hex", "Key encoding: hex|base64")
 
 	// console
 	rootCmd.AddCommand(consoleCmd)

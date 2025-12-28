@@ -40,34 +40,39 @@ func runWallet(action, pidFile string) error {
 	}
 }
 
-// runWalletGenKey generates a new Ed25519 wallet keypair.
-// Format: "text" (human-readable) or "json" (machine-parseable).
-func runWalletGenKey(format string) error {
+// runWalletGenKey generates a new Ed25519 keypair.
+// format: "text" (human-readable) or "json" (machine-parseable).
+// encoding: "hex" (default) or "base64".
+func runWalletGenKey(format, encoding string) error {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return fmt.Errorf("key generation failed: %w", err)
 	}
-	pubHex := hex.EncodeToString(pub)
-	privHex := hex.EncodeToString(priv)
+
+	pubStr := encodeKey(pub, encoding)
+	privStr := encodeKey(priv, encoding)
 
 	switch format {
 	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(map[string]string{
-			"public_key":  pubHex,
-			"private_key": privHex,
+			"public_key":  pubStr,
+			"private_key": privStr,
 		})
-	case "base64":
-		pubB64 := base64.StdEncoding.EncodeToString(pub)
-		privB64 := base64.StdEncoding.EncodeToString(priv)
-		fmt.Printf("Public key:  %s\n", pubB64)
-		fmt.Printf("Private key: %s\n", privB64)
-		return nil
 	default:
-		fmt.Printf("Public key:  %s\n", pubHex)
-		fmt.Printf("Private key: %s\n", privHex)
+		fmt.Printf("Public key:  %s\n", pubStr)
+		fmt.Printf("Private key: %s\n", privStr)
 		return nil
+	}
+}
+
+func encodeKey(key []byte, enc string) string {
+	switch enc {
+	case "base64":
+		return base64.StdEncoding.EncodeToString(key)
+	default:
+		return hex.EncodeToString(key)
 	}
 }
 
