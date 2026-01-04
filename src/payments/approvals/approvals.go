@@ -15,23 +15,15 @@ import (
 	"github.com/flowgent-labs/flowgent/src/payments"
 )
 
-// Store is the persistence interface required for payment approvals.
-// It reuses the existing human approval store from the engine.
-type Store interface {
-	CreateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
-	GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error)
-	UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
-}
-
 // PaymentApprover implements pwf.ApprovalHandler using Flowgent's existing
-// human node runtime. It does NOT create another approval subsystem.
+// human approval infrastructure (model.HumanApprovalStore). No second approval subsystem.
 type PaymentApprover struct {
-	store   Store
+	store   model.HumanApprovalStore
 	timeout time.Duration
 }
 
 // New creates a payment approver that reuses the existing human approval store.
-func New(store Store, timeout time.Duration) *PaymentApprover {
+func New(store model.HumanApprovalStore, timeout time.Duration) *PaymentApprover {
 	if timeout <= 0 {
 		timeout = 24 * time.Hour
 	}

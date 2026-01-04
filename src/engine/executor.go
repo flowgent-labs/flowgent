@@ -29,6 +29,7 @@ type Executor struct {
 
 // Store is the interface for the persistence layer used by the engine.
 type Store interface {
+	model.HumanApprovalStore
 	CreateTaskRun(ctx context.Context, task *model.TaskRun) error
 	UpdateTaskRun(ctx context.Context, task *model.TaskRun) error
 	GetTaskRun(ctx context.Context, id string) (*model.TaskRun, error)
@@ -38,9 +39,6 @@ type Store interface {
 	ListAgentFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error)
 	ListActiveRuns(ctx context.Context) ([]model.AgentFlowRun, error)
 	GetTaskRunsByAgentFlowRun(ctx context.Context, agentFlowRunID string) ([]model.TaskRun, error)
-	CreateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
-	GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error)
-	UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error
 	GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error)
 }

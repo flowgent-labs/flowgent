@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type RunStatus string
 
@@ -61,6 +64,15 @@ type TaskRun struct {
 	UpdatedAt       time.Time      `json:"updated_at" yaml:"updated_at"`
 	StartedAt       *time.Time     `json:"started_at" yaml:"started_at"`
 	FinishedAt      *time.Time     `json:"finished_at" yaml:"finished_at"`
+}
+
+// HumanApprovalStore is the minimal interface for human approval persistence.
+// Both the engine and the payments module consume this interface,
+// ensuring a single approval subsystem.
+type HumanApprovalStore interface {
+	CreateHumanApproval(ctx context.Context, approval *HumanApproval) error
+	GetHumanApproval(ctx context.Context, token string) (*HumanApproval, error)
+	UpdateHumanApproval(ctx context.Context, approval *HumanApproval) error
 }
 
 type HumanApproval struct {

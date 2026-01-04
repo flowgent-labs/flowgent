@@ -4,18 +4,18 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/flowgent-labs/flowgent/src/store"
+	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/util"
 )
 
 // HumanHandler manages human approval endpoints.
 type HumanHandler struct {
-	store  store.Store
+	store  model.HumanApprovalStore
 	logger *util.Logger
 }
 
 // NewHumanHandler creates a human approval HTTP handler.
-func NewHumanHandler(s store.Store, logger *util.Logger) *HumanHandler {
+func NewHumanHandler(s model.HumanApprovalStore, logger *util.Logger) *HumanHandler {
 	return &HumanHandler{store: s, logger: logger}
 }
 
