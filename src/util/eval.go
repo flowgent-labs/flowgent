@@ -54,7 +54,7 @@ func EvalCondition(expr string, scope map[string]map[string]any) bool {
 
 	// Handle ${node.field == value} comparison
 	if strings.HasPrefix(expr, "${") && strings.HasSuffix(expr, "}") && strings.Contains(expr, " ") {
-		inner := expr[2 : len(expr)-1] // e.g. "vote.decision == true"
+		inner := expr[2 : len(expr)-1] // e.g. "tribunal.decision == true"
 		// Split on comparison operator
 		var path, op, rhs string
 		if idx := strings.Index(inner, " == "); idx > 0 {
