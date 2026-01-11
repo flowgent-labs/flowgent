@@ -30,14 +30,20 @@ func (w *e2eWallet) SignAuthorization(ctx context.Context, data []byte) ([]byte,
 func (w *e2eWallet) Balance(ctx context.Context) (decimal.Decimal, error)                     { return decimal.NewFromInt(10000), nil }
 
 func TestE2E_FullPaymentFlow(t *testing.T) {
-	// 1. Set up a mock facilitator that returns a valid receipt
+	// 1. Set up a mock facilitator that handles POST /settle
 	facilitatorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receipt := payments.PaymentReceipt{
-			ID: "rec-e2e-1", IntentID: "int-e2e-1", TxHash: "0xe2etx",
-			Asset: "USDC", Authorization: "fac-tok-xyz",
-			Chain: "base", Facilitator: "test", PaidAt: time.Now(),
+		if r.URL.Path == "/settle" {
+			json.NewEncoder(w).Encode(facilitator.SettleResponse{
+				TxHash: "0xe2etx", Status: "confirmed",
+			})
+			return
 		}
-		json.NewEncoder(w).Encode(receipt)
+		// /health
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer facilitatorSrv.Close()
 
@@ -116,8 +122,9 @@ func TestE2E_PolicyDeniesBlockedDomain(t *testing.T) {
 	defer targetSrv.Close()
 
 	wm := wallet.NewManager("0x", map[string]wallet.Wallet{"0x": &e2eWallet{}})
+	// Block by wildcard pattern — the test server domain contains "127.0.0.1"
 	eng := policy.NewEngine(&payments.PoliciesConfig{
-		BlockedDomains: []string{targetSrv.Listener.Addr().String()}, // block the domain
+		BlockedDomains: []string{"127.0.0.1"}, // block localhost
 		AllowedAssets:  []string{"USDC"},
 	}, nil)
 	fc := facilitator.New("http://localhost:8085", 5*time.Second)
@@ -171,16 +178,19 @@ func TestE2E_ApprovalRequiredAboveThreshold(t *testing.T) {
 // ─── E2E: x402 Parsing ↔ Facilitator Round-Trip ──────────────
 
 func TestE2E_X402ParseAndFacilitatorRoundTrip(t *testing.T) {
-	// Create facilitator
+	// Create facilitator mock that handles POST /settle (real x402 protocol)
 	facilitatorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var auth payments.PaymentAuthorization
-		json.NewDecoder(r.Body).Decode(&auth)
-		receipt := payments.PaymentReceipt{
-			ID: "rec-rt-1", IntentID: auth.IntentID,
-			Asset: "USDC", Authorization: "rt-token",
-			Chain: "base", Facilitator: "test", PaidAt: time.Now(),
+		if r.URL.Path != "/settle" {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-		json.NewEncoder(w).Encode(receipt)
+		var settleReq facilitator.SettleRequest
+		json.NewDecoder(r.Body).Decode(&settleReq)
+		// Return a SettleResponse (real facilitator format)
+		json.NewEncoder(w).Encode(facilitator.SettleResponse{
+			TxHash: "0x-roundtrip-tx",
+			Status: "confirmed",
+		})
 	}))
 	defer facilitatorSrv.Close()
 
@@ -194,7 +204,7 @@ func TestE2E_X402ParseAndFacilitatorRoundTrip(t *testing.T) {
 		t.Fatalf("SignPaymentAuthorization: %v", err)
 	}
 
-	// Send to facilitator
+	// Send to facilitator (calls POST /settle internally)
 	fc := facilitator.New(facilitatorSrv.URL, 5*time.Second)
 	receipt, err := fc.Authorize(context.Background(), auth)
 	if err != nil {
@@ -203,7 +213,11 @@ func TestE2E_X402ParseAndFacilitatorRoundTrip(t *testing.T) {
 	if receipt.IntentID != "int-rt" {
 		t.Errorf("expected intent int-rt, got %s", receipt.IntentID)
 	}
-	if receipt.Authorization != "rt-token" {
-		t.Errorf("expected token rt-token, got %s", receipt.Authorization)
+	if receipt.TxHash != "0x-roundtrip-tx" {
+		t.Errorf("expected tx 0x-roundtrip-tx, got %s", receipt.TxHash)
 	}
+	if receipt.Authorization == "" {
+		t.Error("authorization should not be empty")
+	}
+	t.Logf("Round-trip: intent=%s tx=%s auth=%s", receipt.IntentID, receipt.TxHash, receipt.Authorization)
 }

@@ -1,0 +1,15 @@
+# x402 Facilitator — Local Development Config
+host = "0.0.0.0"
+port = 8080
+log_level = "debug"
+
+[signers]
+evm = ["0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"]
+solana = ""
+
+[chains."eip155:84532"]
+rpc = [{ http = "https://sepolia.base.org" }]
+
+[[schemes]]
+id = "eip155-exact"
+chains = "eip155:*"

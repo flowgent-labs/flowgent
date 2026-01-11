@@ -1,22 +1,30 @@
 version: '3.8'
+# x402 Facilitator — Local Development
+#
+# Image sources (in priority order):
+#   1. ghcr.io/qntx/facilitator:latest (official)
+#   2. registry.cn-shenzhen.aliyuncs.com/wl4g/x402-facilitator:latest (Aliyun mirror)
+#
+# Usage:
+#   docker compose -f docker-compose.yml up -d
+#   docker compose -f docker-compose.yml logs -f
 services:
   facilitator:
-    image: coinbase/x402-facilitator:latest
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/x402-facilitator:latest
     container_name: x402-facilitator
     restart: unless-stopped
     ports:
-      - "8085:8085"
+      - "8085:8080"
     networks:
       - facilitator-net
-    environment:
-      FACILITATOR_PORT: "8085"
-      FACILITATOR_CHAIN: base
-      FACILITATOR_SETTLEMENT: x402
     volumes:
-      - facilitator_data:/data
+      - ./config.toml:/app/config.toml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 networks:
   facilitator-net:
     driver: bridge
-volumes:
-  facilitator_data:
-    name: x402_facilitator_data
