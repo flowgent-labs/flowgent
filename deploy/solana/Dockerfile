@@ -5,12 +5,12 @@
 #     https://github.com/anza-xyz/agave/releases/download/v3.1.14/solana-release-x86_64-unknown-linux-gnu.tar.bz2
 #
 # Build:
-#   docker build -t solana-test-validator:latest .
-#   docker tag solana-test-validator:latest registry.cn-shenzhen.aliyuncs.com/wl4g/solana-test-validator:latest
-#   docker push registry.cn-shenzhen.aliyuncs.com/wl4g/solana-test-validator:latest
+#   docker build -t anza_solana:3.1.14 .
+#   docker tag anza_solana:3.1.14 registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
+#   docker push registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
 #
 # Run:
-#   docker run -p 8899:8899 solana-test-validator:latest
+#   docker run -p 8899:8899 anza_solana:3.1.14
 
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.93-slim
 

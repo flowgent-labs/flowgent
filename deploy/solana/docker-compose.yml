@@ -1,8 +1,8 @@
 version: '3.8'
 # Solana Test Validator — Local Development
 #
-# Image: registry.cn-shenzhen.aliyuncs.com/wl4g/solana-test-validator:latest
-#   (Built from anza-xyz/agave release binaries)
+# Image: registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
+#   (Built from anza-xyz/agave v3.1.14 release binaries)
 #
 # Usage:
 #   docker compose -f docker-compose.yml up -d
@@ -10,7 +10,7 @@ version: '3.8'
 #   curl http://localhost:8899 -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
 services:
   solana:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/solana-test-validator:latest
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
     container_name: solana-test-validator
     restart: unless-stopped
     ports:

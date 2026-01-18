@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: facilitator
-          image: coinbase/x402-facilitator:latest
+          image: registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
           ports:
             - containerPort: 8085
               name: api

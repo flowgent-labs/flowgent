@@ -40,7 +40,7 @@ services:
 
   # ─── Coinbase x402 Facilitator ──────────────────────────────
   facilitator:
-    image: coinbase/x402-facilitator:latest
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
     container_name: x402-facilitator
     restart: unless-stopped
     ports:

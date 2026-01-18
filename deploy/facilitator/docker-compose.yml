@@ -2,15 +2,15 @@ version: '3.8'
 # x402 Facilitator — Local Development
 #
 # Image sources (in priority order):
-#   1. ghcr.io/qntx/facilitator:latest (official)
-#   2. registry.cn-shenzhen.aliyuncs.com/wl4g/x402-facilitator:latest (Aliyun mirror)
+#   1. ghcr.io/qntx/facilitator:latest (official, r402 v0.13.0)
+#   2. registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0 (Aliyun mirror)
 #
 # Usage:
 #   docker compose -f docker-compose.yml up -d
 #   docker compose -f docker-compose.yml logs -f
 services:
   facilitator:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/x402-facilitator:latest
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
     container_name: x402-facilitator
     restart: unless-stopped
     ports:

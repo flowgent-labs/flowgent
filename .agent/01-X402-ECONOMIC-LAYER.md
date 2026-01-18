@@ -259,7 +259,7 @@ kubectl apply -f deploy/kubernetes/wallet-deployment.yaml
 kubectl apply -f deploy/kubernetes/facilitator-deployment.yaml
 kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml
 # Creates: flowgent-apiserver (2), flowgent-worker (3), flowgent-a2a (1),
-#          flowgent-wallet (1), x402-facilitator (1)
+#          flowgent-wallet (1), facilitator (1)
 # Secret: flowgent-master-key
 ```
 
