@@ -1,0 +1,41 @@
+version: '3.8'
+# Anvil (Foundry) — Local EVM Development Node
+#
+# Image: registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1
+#   (Built from foundry-rs/foundry v1.7.1 release binaries)
+#
+# Anvil provides:
+#   - Full Ethereum JSON-RPC API (eth_*, net_*, web3_*)
+#   - 10 pre-funded test accounts (10000 ETH each)
+#   - Instant block mining
+#   - No consensus layer needed
+#
+# Usage:
+#   docker compose -f docker-compose.yml up -d
+#   curl -X POST -H 'Content-Type: application/json' \
+#     -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}' \
+#     http://localhost:8545
+services:
+  anvil:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1
+    container_name: anvil-dev
+    restart: unless-stopped
+    ports:
+      - "8545:8545"
+    networks:
+      - anvil-net
+    command:
+      - --host=0.0.0.0
+      - --port=8545
+      - --accounts=10
+      - --balance=10000
+      - --chain-id=31337
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}', "http://localhost:8545"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+networks:
+  anvil-net:
+    driver: bridge
