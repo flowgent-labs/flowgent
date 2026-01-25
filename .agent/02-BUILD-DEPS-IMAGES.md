@@ -257,5 +257,12 @@ Login first: `docker login registry.cn-shenzhen.aliyuncs.com`. Credentials are p
 - **Avalanche L1**: Full Avalanche node, heavier, more ops overhead
 - **Anvil**: Single binary, instant start, zero chain data, full EVM API — purpose-built for local dev
 
+### Facilitator "no handler registered" with custom chain
+The facilitator's scheme registry may reject custom chain IDs (e.g. anvil's `eip155:31337`).
+The chain provider is correctly connected, but scheme dispatch requires the chain to be
+registered in the `r402::scheme::SchemeRegistry`. For a working fallback, use Base Sepolia
+testnet (`eip155:84532`) which is pre-tested with the facilitator. See the commented
+chain in `deploy/facilitator/config.toml`.
+
 ### Solana image size
 The `rust:1.93-slim` base is ~800MB. Acceptable for dev; for production, use multi-stage build with a minimal runtime.

@@ -1,14 +1,33 @@
 # x402 Facilitator — Local Development Config
+# Chains: anvil (local EVM) + Solana devnet
+#
+# Anvil account #0 is pre-funded with 10000 ETH, so the facilitator
+# can sign, broadcast, and settle real on-chain transactions instantly.
 host = "0.0.0.0"
 port = 8080
 log_level = "debug"
 
 [signers]
+# anvil account #0 private key (0xf39F...6b92266)
+# DO NOT use in production — this is the public Foundry dev key
 evm = ["0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"]
 solana = ""
 
-[chains."eip155:84532"]
-rpc = [{ http = "https://sepolia.base.org" }]
+# ─── Local EVM (anvil) ─────────────────────────────────
+# Chain ID 31337, instant block mining, 10000 ETH pre-funded
+# Start: docker compose -f deploy/anvil/docker-compose.yml up -d
+[chains."eip155:31337"]
+rpc = [{ http = "http://anvil-dev:8545" }]
+
+# ─── Alternative: Base Sepolia Testnet ─────────────────
+# Uncomment to use public testnet instead of local anvil
+# [chains."eip155:84532"]
+# rpc = [{ http = "https://sepolia.base.org" }]
+
+# ─── Solana (requires funded signer key) ────────────────
+# Uncomment when Solana chain is needed
+# [chains."solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"]
+# rpc = "https://api.devnet.solana.com"
 
 [[schemes]]
 id = "eip155-exact"
