@@ -8,34 +8,30 @@ required for local x402 payment development and testing.
 
 ---
 
-## 1. x402 Facilitator
+## 1. x402 Facilitator (Official)
 
-**Source:** <https://github.com/qntx/facilitator>
-**Image:** `registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0`
+**Source:** <https://github.com/x402-rs/x402-rs> (v1.4.9)
+**Image:** `registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9`
 
-Handles x402 payment verification and onchain settlement. Supports EVM and Solana chains.
+Official x402 protocol facilitator. Handles payment verification and onchain settlement
+with multi-chain support (EVM, Solana, Aptos).
 
 ### Build
 
 ```bash
-# Option A — Pull from GHCR (recommended)
-docker pull ghcr.io/qntx/facilitator:latest
-docker tag ghcr.io/qntx/facilitator:latest registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
-docker push registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
-
-# Option B — Build from source (requires Rust, ~10 min)
-git clone https://github.com/qntx/facilitator.git && cd facilitator
-docker build -t qntx_facilitator:0.13.0 .
-docker tag qntx_facilitator:0.13.0 registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
-docker push registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
+# Clone official repo and build via Dockerfile
+git clone https://github.com/x402-rs/x402-rs.git deploy/facilitator/x402-rs
+docker build -t x402_facilitator:1.4.9 deploy/facilitator/
+docker tag x402_facilitator:1.4.9 registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
+docker push registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 ```
 
 ### Verify
 
 ```bash
 docker run -d --name facilitator-dev -p 8085:8080 \
-    -v $(pwd)/deploy/facilitator/config.toml:/app/config.toml:ro \
-    registry.cn-shenzhen.aliyuncs.com/wl4g/qntx_facilitator:0.13.0
+    -v $(pwd)/deploy/facilitator/config.json:/app/config.json:ro \
+    registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 
 curl --noproxy '*' http://localhost:8085/health          # {"status":"ok"}
 curl --noproxy '*' http://localhost:8085/supported       # lists chains + signers
@@ -46,31 +42,37 @@ curl --noproxy '*' http://localhost:8085/supported       # lists chains + signer
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Liveness check |
-| `/supported` | GET | List payment networks and signers |
-| `/verify` | POST | Verify payment (`{scheme, network, recipient, amount, asset}`) |
-| `/settle` | POST | Settle verified payment on-chain (`{network, signature}`) |
+| `/supported` | GET | List supported schemes + networks |
+| `/verify` | POST | Verify x402 payment request |
+| `/settle` | POST | Settle verified payment on-chain |
 
 ### Configuration
 
-`deploy/facilitator/config.toml` — chains and signers. Key sections:
+`deploy/facilitator/config.json` — JSON format with chains and schemes:
 
-```toml
-[signers]
-evm = ["0xPRIVATE_KEY"]          # hex, 0x-prefixed
-solana = "$SOLANA_SIGNER_KEY"     # base58
-
-# EVM testnet
-[chains."eip155:84532"]
-rpc = [{ http = "https://sepolia.base.org" }]
-
-# EVM local (anvil)
-[chains."eip155:31337"]
-rpc = [{ http = "http://anvil-dev:8545" }]
-
-# Solana devnet
-[chains."solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"]
-rpc = "https://api.devnet.solana.com"
+```json
+{
+  "port": 8080,
+  "host": "0.0.0.0",
+  "chains": {
+    "eip155:31337": {
+      "eip1559": false,
+      "signers": ["0xPRIVATE_KEY"],
+      "rpc": [{ "http": "http://anvil-dev:8545" }]
+    }
+  },
+  "schemes": [
+    { "id": "v1-eip155-exact", "chains": "eip155:31337" },
+    { "id": "v2-eip155-exact", "chains": "eip155:31337" }
+  ]
+}
 ```
+
+Key differences from the previous community fork (`qntx/facilitator`):
+- Config is **JSON** (not TOML)
+- Scheme IDs: `v1-eip155-exact`, `v2-eip155-exact` (versioned)
+- Signers per-chain (not global)
+- Binary: `x402-facilitator`
 
 ---
 
@@ -200,25 +202,24 @@ curl --noproxy '*' http://localhost:8085/health
 
 ### Facilitator Config for Local Dev
 
-Create `deploy/facilitator/config.toml` pointing to local nodes:
+Create `deploy/facilitator/config.json` pointing to local nodes:
 
-```toml
-host = "0.0.0.0"
-port = 8080
-log_level = "debug"
-
-[signers]
-# Use anvil's first test account private key
-evm = ["0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"]
-solana = ""
-
-# Local anvil (chain-id 31337)
-[chains."eip155:31337"]
-rpc = [{ http = "http://anvil-dev:8545" }]
-
-# Local solana
-# [chains."solana:<local_genesis>"]
-# rpc = "http://solana-dev:8899"
+```json
+{
+  "port": 8080,
+  "host": "0.0.0.0",
+  "chains": {
+    "eip155:31337": {
+      "eip1559": false,
+      "signers": ["0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"],
+      "rpc": [{ "http": "http://anvil-dev:8545" }]
+    }
+  },
+  "schemes": [
+    { "id": "v1-eip155-exact", "chains": "eip155:31337" },
+    { "id": "v2-eip155-exact", "chains": "eip155:31337" }
+  ]
+}
 ```
 
 ---
@@ -229,7 +230,7 @@ All images follow: `registry.cn-shenzhen.aliyuncs.com/<namespace>/<underscore_na
 
 | Service | Image | Ports |
 |---|---|---|
-| Facilitator | `wl4g/qntx_facilitator:0.13.0` | 8085→8080 |
+| Facilitator (official) | `wl4g/x402_facilitator:1.4.9` | 8085→8080 |
 | Anvil (EVM) | `wl4g/foundry_anvil:1.7.1` | 8545 |
 | Solana | `wl4g/anza_solana:3.1.14` | 8899, 8900 |
 | EMQX MQTT | `wl4g/emqx_emqx:5.5.0-elixir-amd64` | 1883, 18083 |
@@ -257,12 +258,10 @@ Login first: `docker login registry.cn-shenzhen.aliyuncs.com`. Credentials are p
 - **Avalanche L1**: Full Avalanche node, heavier, more ops overhead
 - **Anvil**: Single binary, instant start, zero chain data, full EVM API — purpose-built for local dev
 
-### Facilitator "no handler registered" with custom chain
-The facilitator's scheme registry may reject custom chain IDs (e.g. anvil's `eip155:31337`).
-The chain provider is correctly connected, but scheme dispatch requires the chain to be
-registered in the `r402::scheme::SchemeRegistry`. For a working fallback, use Base Sepolia
-testnet (`eip155:84532`) which is pre-tested with the facilitator. See the commented
-chain in `deploy/facilitator/config.toml`.
+### Facilitator "no handler registered"
+Ensure the scheme IDs in verify requests match the configured schemes:
+`v1-eip155-exact` or `v2-eip155-exact` for EVM chains.
+The `/supported` endpoint lists all registered schemes and networks.
 
 ### Solana image size
 The `rust:1.93-slim` base is ~800MB. Acceptable for dev; for production, use multi-stage build with a minimal runtime.
