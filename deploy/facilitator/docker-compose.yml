@@ -1,9 +1,10 @@
 version: '3.8'
 # x402 Facilitator — Local Development
+# Fork: https://github.com/wl4g-blockchain/x402-rs (mirror of x402-rs/x402-rs)
 #
 # Image sources (in priority order):
-#   1. ghcr.io/qntx/facilitator:latest (community fork)
-#   2. registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9 (Aliyun mirror — official x402-rs/x402-rs v1.4.9)
+#   1. registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9 (Aliyun mirror — official x402-rs/x402-rs v1.4.9)
+#   2. ghcr.io/qntx/facilitator:latest (community fork, legacy)
 #
 # Usage:
 #   docker compose -f docker-compose.yml up -d

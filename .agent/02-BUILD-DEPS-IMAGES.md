@@ -10,8 +10,10 @@ required for local x402 payment development and testing.
 
 ## 1. x402 Facilitator (Official)
 
-**Source:** <https://github.com/x402-rs/x402-rs> (v1.4.9)
+**Fork:** <https://github.com/wl4g-blockchain/x402-rs>
+**Upstream:** <https://github.com/x402-rs/x402-rs> (v1.4.9)
 **Image:** `registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9`
+**Go SDK (reference):** <https://github.com/wl4g-blockchain/coinbase-x402-sdk> → `src/payments/x402sdk/`
 
 Official x402 protocol facilitator. Handles payment verification and onchain settlement
 with multi-chain support (EVM, Solana, Aptos).
@@ -130,7 +132,8 @@ Anvil creates 10 accounts with 10000 ETH each. Private keys are deterministic
 
 ## 3. Solana Test Validator
 
-**Source:** <https://github.com/anza-xyz/agave> (release binaries)
+**Fork:** <https://github.com/wl4g-blockchain/solana>
+**Upstream:** <https://github.com/anza-xyz/agave> (release binaries)
 **Image:** `registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14`
 
 Local single-node Solana cluster for testing.

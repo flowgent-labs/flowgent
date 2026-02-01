@@ -1,5 +1,6 @@
 version: '3.8'
 # Solana Test Validator — Local Development
+# Fork: https://github.com/wl4g-blockchain/solana (mirror of anza-xyz/agave)
 #
 # Image: registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
 #   (Built from anza-xyz/agave v3.1.14 release binaries)

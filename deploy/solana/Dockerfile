@@ -1,5 +1,6 @@
 # Solana Test Validator — Local Development Image
-# Builds from official agave release binaries (anza-xyz/agave).
+# Fork: https://github.com/wl4g-blockchain/solana (mirror of anza-xyz/agave)
+# Builds from official agave release binaries.
 # Download the release tarball to the build context before building:
 #   curl -sSLo solana-release.tar.bz2 \
 #     https://github.com/anza-xyz/agave/releases/download/v3.1.14/solana-release-x86_64-unknown-linux-gnu.tar.bz2

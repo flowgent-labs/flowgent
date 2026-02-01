@@ -1,5 +1,6 @@
 # x402 Facilitator — from official x402-rs/x402-rs v1.4.9
-# https://github.com/x402-rs/x402-rs
+# Fork: https://github.com/wl4g-blockchain/x402-rs (mirror of x402-rs/x402-rs)
+# Source: https://github.com/x402-rs/x402-rs
 #
 # Pre-built binary copied from host build:
 #   cd deploy/facilitator/x402-rs

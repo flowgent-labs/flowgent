@@ -47,6 +47,8 @@ require (
 
 replace google.golang.org/adk => github.com/google/adk-go v1.2.0
 
+replace github.com/x402-foundation/x402/go => ./src/payments/x402sdk
+
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.18.2 // indirect
