@@ -13,12 +13,14 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	x402sdk "github.com/x402-foundation/x402/go"
+
 	"github.com/flowgent-labs/flowgent/src/payments"
 	"github.com/flowgent-labs/flowgent/src/payments/facilitator"
 	"github.com/flowgent-labs/flowgent/src/payments/policy"
 	"github.com/flowgent-labs/flowgent/src/payments/pwf"
 	"github.com/flowgent-labs/flowgent/src/payments/wallet"
-	"github.com/flowgent-labs/flowgent/src/payments/x402"
+	px402 "github.com/flowgent-labs/flowgent/src/payments/x402"
 )
 
 // ─── E2E: Full x402 Payment Flow ──────────────────────────────
@@ -33,8 +35,8 @@ func TestE2E_FullPaymentFlow(t *testing.T) {
 	// 1. Set up a mock facilitator that handles POST /settle
 	facilitatorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/settle" {
-			json.NewEncoder(w).Encode(facilitator.SettleResponse{
-				TxHash: "0xe2etx", Status: "confirmed",
+			json.NewEncoder(w).Encode(x402sdk.SettleResponse{
+				Transaction: "0xe2etx", Success: true,
 			})
 			return
 		}
@@ -51,7 +53,7 @@ func TestE2E_FullPaymentFlow(t *testing.T) {
 	callCount := 0
 	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		if r.Header.Get(x402.HeaderX402Auth) != "" {
+		if r.Header.Get(px402.HeaderX402Auth) != "" {
 			// Retry with auth token → succeed
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]string{"status": "paid", "data": "success"})
@@ -64,7 +66,7 @@ func TestE2E_FullPaymentFlow(t *testing.T) {
 			Settlement: "x402", Facilitator: facilitatorSrv.URL,
 		}
 		headerVal, _ := json.Marshal(pr)
-		w.Header().Set(x402.HeaderX402Payment, string(headerVal))
+		w.Header().Set(px402.HeaderX402Payment, string(headerVal))
 		w.WriteHeader(http.StatusPaymentRequired)
 	}))
 	defer targetSrv.Close()
@@ -116,7 +118,7 @@ func TestE2E_PolicyDeniesBlockedDomain(t *testing.T) {
 	})
 
 	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(x402.HeaderX402Payment, string(paymentHeader))
+		w.Header().Set(px402.HeaderX402Payment, string(paymentHeader))
 		w.WriteHeader(http.StatusPaymentRequired)
 	}))
 	defer targetSrv.Close()
@@ -148,7 +150,7 @@ func TestE2E_ApprovalRequiredAboveThreshold(t *testing.T) {
 	})
 
 	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(x402.HeaderX402Payment, string(paymentHeader))
+		w.Header().Set(px402.HeaderX402Payment, string(paymentHeader))
 		w.WriteHeader(http.StatusPaymentRequired)
 	}))
 	defer targetSrv.Close()
@@ -187,9 +189,9 @@ func TestE2E_X402ParseAndFacilitatorRoundTrip(t *testing.T) {
 		var settleReq facilitator.SettleRequest
 		json.NewDecoder(r.Body).Decode(&settleReq)
 		// Return a SettleResponse (real facilitator format)
-		json.NewEncoder(w).Encode(facilitator.SettleResponse{
-			TxHash: "0x-roundtrip-tx",
-			Status: "confirmed",
+		json.NewEncoder(w).Encode(x402sdk.SettleResponse{
+			Transaction: "0x-roundtrip-tx",
+			Success: true,
 		})
 	}))
 	defer facilitatorSrv.Close()

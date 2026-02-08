@@ -16,6 +16,7 @@ require (
 	github.com/shopspring/decimal v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	github.com/x402-foundation/x402/go v0.0.0-20260510121626-cd87caaed3ef
 	go.opentelemetry.io/otel/sdk v1.40.0
 	go.opentelemetry.io/otel/sdk/metric v1.40.0
 	golang.org/x/oauth2 v0.36.0
@@ -46,8 +47,6 @@ require (
 )
 
 replace google.golang.org/adk => github.com/google/adk-go v1.2.0
-
-replace github.com/x402-foundation/x402/go => ./src/payments/x402sdk
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

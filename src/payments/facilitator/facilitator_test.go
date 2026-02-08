@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	x402 "github.com/x402-foundation/x402/go"
+
 	"github.com/flowgent-labs/flowgent/src/payments"
 )
 
@@ -46,20 +48,20 @@ func TestClient_Health_Unhealthy(t *testing.T) {
 	}
 }
 
-func TestClient_SupportedNetworks(t *testing.T) {
+func TestClient_Supported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
-			"kinds": []map[string]any{{"network": "eip155:84532", "scheme": "exact"}},
+		json.NewEncoder(w).Encode(x402.SupportedResponse{
+			Kinds: []x402.SupportedKind{{X402Version: 2, Scheme: "exact", Network: "eip155:84532"}},
 		})
 	}))
 	defer server.Close()
 
 	client := New(server.URL, 5*time.Second)
-	result, err := client.SupportedNetworks(context.Background())
+	result, err := client.Supported(context.Background())
 	if err != nil {
-		t.Fatalf("SupportedNetworks: %v", err)
+		t.Fatalf("Supported: %v", err)
 	}
-	if kinds, ok := result["kinds"]; !ok || kinds == nil {
+	if len(result.Kinds) == 0 {
 		t.Error("expected kinds in supported response")
 	}
 }
@@ -70,7 +72,7 @@ func TestClient_Verify(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		json.NewEncoder(w).Encode(VerifyResponse{IsValid: true})
+		json.NewEncoder(w).Encode(x402.VerifyResponse{IsValid: true})
 	}))
 	defer server.Close()
 
@@ -89,8 +91,8 @@ func TestClient_Verify(t *testing.T) {
 
 func TestClient_Verify_Invalid(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(VerifyResponse{
-			IsValid: false, Reason: "insufficient_funds", Message: "not enough balance",
+		json.NewEncoder(w).Encode(x402.VerifyResponse{
+			IsValid: false, InvalidReason: "insufficient_funds", InvalidMessage: "not enough balance",
 		})
 	}))
 	defer server.Close()
@@ -114,7 +116,9 @@ func TestClient_Authorize(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		json.NewEncoder(w).Encode(SettleResponse{TxHash: "0xtx123", Status: "confirmed"})
+		json.NewEncoder(w).Encode(x402.SettleResponse{
+			Success: true, Transaction: "0xtx123", Network: "eip155:84532",
+		})
 	}))
 	defer server.Close()
 
@@ -157,5 +161,4 @@ func TestClient_Authorize_FacilitatorError(t *testing.T) {
 	}
 }
 
-// Ensure httptest is used
 var _ = httptest.NewServer

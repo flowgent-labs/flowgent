@@ -32,29 +32,22 @@ func TestE2E_FacilitatorHealth(t *testing.T) {
 	t.Log("Facilitator health: OK")
 }
 
-func TestE2E_FacilitatorSupportedNetworks(t *testing.T) {
+func TestE2E_FacilitatorSupported(t *testing.T) {
 	skipIfNoFacilitator(t)
 
 	client := facilitator.New(facilitatorURL, 5*time.Second)
-	result, err := client.SupportedNetworks(context.Background())
+	result, err := client.Supported(context.Background())
 	if err != nil {
-		t.Fatalf("SupportedNetworks: %v", err)
+		t.Fatalf("Supported: %v", err)
 	}
 
-	kinds, ok := result["kinds"]
-	if !ok {
-		t.Fatal("expected 'kinds' in supported response")
-	}
-	kindsList, ok := kinds.([]interface{})
-	if !ok || len(kindsList) == 0 {
+	if len(result.Kinds) == 0 {
 		t.Fatal("expected non-empty kinds list")
 	}
+	t.Logf("Supported networks: %+v", result.Kinds)
 
-	t.Logf("Supported networks: %+v", kindsList)
-
-	// Verify it has signers
-	if signers, ok := result["signers"]; ok {
-		t.Logf("Signers: %+v", signers)
+	if len(result.Signers) > 0 {
+		t.Logf("Signers: %+v", result.Signers)
 	}
 }
 
@@ -74,7 +67,7 @@ func TestE2E_FacilitatorVerify_RejectsInvalidPayment(t *testing.T) {
 	}
 
 	// Expect verification to be invalid — dev signer has no real funds on Base Sepolia
-	t.Logf("Verify response: isValid=%v, reason=%s, message=%s", vr.IsValid, vr.Reason, vr.Message)
+	t.Logf("Verify response: isValid=%v, reason=%s, message=%s", vr.IsValid, vr.InvalidReason, vr.InvalidMessage)
 
 	// The verify endpoint succeeded (HTTP 200), even if payment is invalid
 	// This is correct x402 behavior — verification failures are returned as valid HTTP responses
@@ -96,7 +89,7 @@ func TestE2E_FacilitatorVerify_InvalidRequest(t *testing.T) {
 	if vr.IsValid {
 		t.Error("expected invalid for nonexistent scheme")
 	}
-	t.Logf("Invalid scheme response: isValid=%v, reason=%s", vr.IsValid, vr.Reason)
+	t.Logf("Invalid scheme response: isValid=%v, reason=%s", vr.IsValid, vr.InvalidReason)
 }
 
 func TestE2E_FacilitatorConnection(t *testing.T) {
@@ -110,7 +103,7 @@ func TestE2E_FacilitatorConnection(t *testing.T) {
 	}
 
 	// Supported
-	supported, err := client.SupportedNetworks(context.Background())
+	supported, err := client.Supported(context.Background())
 	if err != nil {
 		t.Fatalf("Supported: %v", err)
 	}
@@ -127,7 +120,7 @@ func TestE2E_FacilitatorConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	t.Logf("Verify: isValid=%v reason=%s message=%s", vr.IsValid, vr.Reason, vr.Message)
+	t.Logf("Verify: isValid=%v reason=%s message=%s", vr.IsValid, vr.InvalidReason, vr.InvalidMessage)
 
 	t.Log("All facilitator connectivity checks passed")
 }

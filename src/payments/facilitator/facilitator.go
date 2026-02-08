@@ -1,12 +1,13 @@
 // Package facilitator implements the x402 facilitator HTTP client.
-// Flowgent sends verify and settle requests to the facilitator,
-// which handles onchain settlement.
+// Uses the official x402 SDK (github.com/x402-foundation/x402/go) for
+// protocol types. Request types are transport-layer only (SDK handles
+// protocol logic via raw bytes; we construct HTTP requests directly).
 //
 // Protocol endpoints:
 //   - GET  /health     — health check
-//   - GET  /supported  — list supported payment schemes
-//   - POST /verify     — verify a proposed x402 payment
-//   - POST /settle     — settle a verified payment on-chain
+//   - GET  /supported  — list supported payment schemes (→ x402.SupportedResponse)
+//   - POST /verify     — verify a proposed x402 payment (→ x402.VerifyResponse)
+//   - POST /settle     — settle a verified payment on-chain (→ x402.SettleResponse)
 package facilitator
 
 import (
@@ -16,6 +17,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	x402 "github.com/x402-foundation/x402/go"
 
 	"github.com/flowgent-labs/flowgent/src/payments"
 )
@@ -38,7 +41,6 @@ func New(endpoint string, timeout time.Duration) *Client {
 
 // ─── Health ──────────────────────────────────────────────────
 
-// Health checks if the facilitator is reachable.
 func (c *Client) Health(ctx context.Context) error {
 	if c.endpoint == "" {
 		return &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
@@ -62,8 +64,9 @@ func (c *Client) Health(ctx context.Context) error {
 
 // ─── Supported ───────────────────────────────────────────────
 
-// SupportedNetworks returns the list of supported payment networks from the facilitator.
-func (c *Client) SupportedNetworks(ctx context.Context) (map[string]any, error) {
+// Supported returns the facilitator's supported schemes and networks.
+// Response type is from the official x402 SDK.
+func (c *Client) Supported(ctx context.Context) (*x402.SupportedResponse, error) {
 	if c.endpoint == "" {
 		return nil, &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
 	}
@@ -77,23 +80,16 @@ func (c *Client) SupportedNetworks(ctx context.Context) (map[string]any, error) 
 	}
 	defer resp.Body.Close()
 
-	var result map[string]any
+	var result x402.SupportedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode supported response: %w", err)
 	}
-	return result, nil
+	return &result, nil
 }
 
 // ─── Verify ────────────────────────────────────────────────
 
-// VerifyResponse is the response from POST /verify.
-type VerifyResponse struct {
-	IsValid   bool   `json:"isValid"`
-	Reason    string `json:"invalidReason,omitempty"`
-	Message   string `json:"invalidMessage,omitempty"`
-}
-
-// VerifyRequest is the body sent to POST /verify.
+// VerifyRequest is the HTTP body sent to POST /verify.
 type VerifyRequest struct {
 	Scheme    string `json:"scheme"`
 	Network   string `json:"network"`
@@ -103,7 +99,8 @@ type VerifyRequest struct {
 }
 
 // Verify sends a payment verification request to the facilitator.
-func (c *Client) Verify(ctx context.Context, req *VerifyRequest) (*VerifyResponse, error) {
+// Returns the SDK's VerifyResponse type.
+func (c *Client) Verify(ctx context.Context, req *VerifyRequest) (*x402.VerifyResponse, error) {
 	if c.endpoint == "" {
 		return nil, &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
 	}
@@ -125,16 +122,16 @@ func (c *Client) Verify(ctx context.Context, req *VerifyRequest) (*VerifyRespons
 	}
 	defer resp.Body.Close()
 
-	var vr VerifyResponse
+	var vr x402.VerifyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&vr); err != nil {
 		return nil, fmt.Errorf("decode verify response: %w", err)
 	}
 	return &vr, nil
 }
 
-// ─── Settle (Authorize) ─────────────────────────────────────
+// ─── Settle ────────────────────────────────────────────────
 
-// SettleRequest is the body sent to POST /settle.
+// SettleRequest is the HTTP body sent to POST /settle.
 type SettleRequest struct {
 	Network   string `json:"network"`
 	Recipient string `json:"recipient"`
@@ -142,15 +139,8 @@ type SettleRequest struct {
 	Signature string `json:"signature"`
 }
 
-// SettleResponse is the response from POST /settle.
-type SettleResponse struct {
-	TxHash string `json:"txHash,omitempty"`
-	Status string `json:"status,omitempty"`
-	Error  string `json:"error,omitempty"`
-}
-
-// Authorize is the legacy API — it POSTs signed PaymentAuthorization to the facilitator.
-// For real facilitators, it sends a SettleRequest to POST /settle.
+// Authorize sends a signed PaymentAuthorization to the facilitator's
+// POST /settle endpoint and returns a PaymentReceipt.
 func (c *Client) Authorize(ctx context.Context, auth *payments.PaymentAuthorization) (*payments.PaymentReceipt, error) {
 	if c.endpoint == "" {
 		return nil, &payments.PaymentError{
@@ -159,9 +149,6 @@ func (c *Client) Authorize(ctx context.Context, auth *payments.PaymentAuthorizat
 	}
 
 	settleReq := &SettleRequest{
-		Network:   "",  // derived from payment request
-		Recipient: "",  // derived from payment request
-		Amount:    "",  // derived from payment request
 		Signature: auth.Signature,
 	}
 
@@ -188,7 +175,7 @@ func (c *Client) Authorize(ctx context.Context, auth *payments.PaymentAuthorizat
 		}
 	}
 
-	var sr SettleResponse
+	var sr x402.SettleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
 		return nil, fmt.Errorf("decode settle response: %w", err)
 	}
@@ -196,7 +183,7 @@ func (c *Client) Authorize(ctx context.Context, auth *payments.PaymentAuthorizat
 	return &payments.PaymentReceipt{
 		ID:            auth.IntentID,
 		IntentID:      auth.IntentID,
-		TxHash:        sr.TxHash,
+		TxHash:        sr.Transaction,
 		Authorization: auth.Signature,
 		PaidAt:        time.Now(),
 	}, nil
