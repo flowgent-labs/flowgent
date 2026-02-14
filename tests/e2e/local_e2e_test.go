@@ -9,10 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
-	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/queue"
+	"github.com/flowgent-labs/flowgent/src/util"
 )
 
 // ─── Mock LLM ────────────────────────────────────────
@@ -47,7 +48,6 @@ func (m *secFixMCP) CallTool(ctx context.Context, toolName string, args map[stri
 // ─── E2E: Full Security Fix Pipeline (Local Mode) ─────
 
 func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
-	store, rt := engine.NewTestRuntime()
 	llm := &secFixLLM{}
 	mcp := &secFixMCP{}
 	mcpMap := map[string]engine.MCPClient{
@@ -64,9 +64,12 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 		{Name: "git-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Git operations.", Instruction: "Handle git."},
 	}
 
-	exec := engine.NewTestExecutor(store, mcpMap, agents, llm)
-	rt.SetExecutor(exec)
-	rt.SetTimeout(60 * time.Second)
+	store := engine.NewMockStore()
+	tm := engine.NewTestTaskManager(store, mcpMap, agents, llm)
+	scheduler := engine.NewStandaloneScheduler(tm, 10)
+	jm := engine.NewJobManager(store, scheduler, util.NewLogger("JSON", "DEBUG"))
+	jm.SetTaskManager(tm)
+	jm.SetTimeout(60 * time.Second)
 
 	spec := &model.AgentFlowSpec{
 		ID:          "security-autonomy-fixer",
@@ -116,7 +119,7 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if err := rt.Execute(ctx, run, spec); err != nil {
+	if err := jm.StartJob(ctx, run, spec); err != nil {
 		t.Fatalf("pipeline failed: %v", err)
 	}
 

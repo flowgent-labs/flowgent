@@ -20,7 +20,6 @@ type MockStore struct {
 	Humans map[string]*model.HumanApproval
 }
 
-// NewMockStore creates an in-memory mock store.
 func NewMockStore() *MockStore {
 	return &MockStore{
 		Runs:   make(map[string]*model.AgentFlowRun),
@@ -100,18 +99,23 @@ func (s *MockStore) DB() interface{ Close() error } { return nil }
 
 var _ Store = (*MockStore)(nil)
 
-// ─── VisibleForTesting — helpers ─────────────────────
+// ─── Test helpers ──────────────────────────────────────
 
-// NewTestExecutor creates an Executor with a test logger.
-func NewTestExecutor(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) *Executor {
-	return NewExecutor(store, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
+// NewTestTaskManager creates a TaskManager with a test logger.
+func NewTestTaskManager(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) *TaskManager {
+	return NewTaskManager(store, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
 }
 
-// NewTestRuntime creates a fresh runtime with an in-memory MockStore.
-func NewTestRuntime() (*MockStore, *AgentFlowRuntime) {
+// NewTestJobManager creates a JobManager backed by an in-memory MockStore
+// and a StandaloneScheduler with pool size 10. Returns the shared store
+// and the JobManager — both reference the same in-memory store.
+func NewTestJobManager(mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) (*MockStore, *JobManager) {
 	s := NewMockStore()
-	r := NewAgentFlowRuntime(s, util.NewLogger("JSON", "DEBUG"))
-	return s, r
+	tm := NewTaskManager(s, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
+	scheduler := NewStandaloneScheduler(tm, 10)
+	jm := NewJobManager(s, scheduler, util.NewLogger("JSON", "DEBUG"))
+	jm.SetTaskManager(tm)
+	return s, jm
 }
 
 // BoolPtr returns a pointer to a bool.

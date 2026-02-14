@@ -23,7 +23,6 @@ import (
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
 	"github.com/flowgent-labs/flowgent/src/store"
-	"github.com/flowgent-labs/flowgent/src/worker"
 	"github.com/flowgent-labs/flowgent/src/util"
 )
 
@@ -218,7 +217,7 @@ func startServer(mode string) {
 	for i := range serviceCfg.Orchestration.Agents {
 		agents[i] = &serviceCfg.Orchestration.Agents[i]
 	}
-	exec := engine.NewExecutor(storeImpl, mcpMap, agents, llmClient, logger)
+	tm := engine.NewTaskManager(storeImpl, mcpMap, agents, llmClient, logger)
 
 	// ── API Handlers ───────────────────────────────────
 	healthHandler := &api.HealthHandler{}
@@ -251,17 +250,9 @@ func startServer(mode string) {
 	}
 	maxRetries := serviceCfg.Orchestration.MaxNodeRetries
 	q := queue.NewMemoryQueue(1000)
-	go startRunPoller(context.Background(), storeImpl, exec, agentFlowHandler.AgentFlows(), q, logger,
+	go startRunPoller(context.Background(), storeImpl, tm, agentFlowHandler.AgentFlows(), q, logger,
 		flowTimeout, maxRetries, serviceCfg.Orchestration.MaxConcurrentFlows)
 
-	// ── Workers (distributed mode) ─────────────────────
-	_ = worker.NewPool(serviceCfg.Orchestration.MaxConcurrentFlows, &worker.Config{
-		Store:    storeImpl,
-		Executor: exec,
-		Queue:    q,
-		Logger:   logger,
-		Flows:    agentFlowHandler.AgentFlows(),
-	})
 
 	// ── Hot reload ─────────────────────────────────────
 	if refreshStr := serviceCfg.Orchestration.AgentFlows.Static.Refresh; refreshStr != "" {
@@ -540,7 +531,7 @@ func (a *mcpAdapter) CallTool(ctx context.Context, toolName string, args map[str
 	return a.factory.CallTool(ctx, a.name, toolName, args)
 }
 
-func startRunPoller(ctx context.Context, s engine.Store, exec *engine.Executor,
+func startRunPoller(ctx context.Context, s engine.Store, tm *engine.TaskManager,
 	flows map[string]*model.AgentFlowSpec, q queue.Queue, logger *util.Logger,
 	flowTimeout time.Duration, maxRetries int, maxConcurrent int) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -564,15 +555,16 @@ func startRunPoller(ctx context.Context, s engine.Store, exec *engine.Executor,
 					continue
 				}
 				sem <- struct{}{}
-				rt := engine.NewAgentFlowRuntime(s, logger)
-				rt.SetExecutor(exec)
-				rt.SetTimeout(flowTimeout)
+				scheduler := engine.NewStandaloneScheduler(tm, maxConcurrent)
+				jm := engine.NewJobManager(s, scheduler, logger)
+				jm.SetTaskManager(tm)
+				jm.SetTimeout(flowTimeout)
 				if maxRetries > 0 {
-					rt.SetMaxRetries(maxRetries)
+					jm.SetNodeLimit(maxRetries)
 				}
 				go func(r model.AgentFlowRun, sp *model.AgentFlowSpec) {
 					defer func() { <-sem }()
-					rt.Execute(ctx, &r, sp)
+					jm.StartJob(ctx, &r, sp)
 				}(run, spec)
 			}
 		}

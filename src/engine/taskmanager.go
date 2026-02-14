@@ -16,8 +16,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Executor handles execution of individual nodes.
-type Executor struct {
+// TaskManager executes individual nodes. It corresponds to a Flink TaskManager:
+// stateless, receives a node + input, executes blindly, returns result.
+// The JobManager handles all DAG/scheduling logic.
+type TaskManager struct {
 	store         Store
 	mcpClients    map[string]MCPClient
 	agents        map[string]*config.AgentDef
@@ -51,12 +53,12 @@ type LLMClient interface {
 	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64) (string, error)
 }
 
-func NewExecutor(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient, logger *util.Logger) *Executor {
+func NewTaskManager(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient, logger *util.Logger) *TaskManager {
 	agentMap := make(map[string]*config.AgentDef)
 	for _, a := range agents {
 		agentMap[a.Name] = a
 	}
-	return &Executor{
+	return &TaskManager{
 		store:      store,
 		mcpClients: mcp,
 		agents:     agentMap,
@@ -65,12 +67,15 @@ func NewExecutor(store Store, mcp map[string]MCPClient, agents []*config.AgentDe
 	}
 }
 
-func (e *Executor) SetAgentFlowContext(desc string) {
-	e.agentFlowDesc = desc
+func (tm *TaskManager) SetAgentFlowContext(desc string) {
+	tm.agentFlowDesc = desc
 }
 
-func (e *Executor) executeNode(ctx context.Context, task *model.TaskRun, node *model.Node, scope map[string]map[string]any) error {
-	ctx, span := otel.Tracer("flowgent/executor").Start(ctx, "executor.node",
+// ExecuteNode executes a single node and persists the result via the store.
+// This is the sole public entry point, callable from both local execution
+// (StandaloneScheduler) and distributed execution (K8sScheduler / remote pod).
+func (tm *TaskManager) ExecuteNode(ctx context.Context, task *model.TaskRun, node *model.Node, scope map[string]map[string]any) error {
+	ctx, span := otel.Tracer("flowgent/taskmanager").Start(ctx, "taskmanager.node",
 		trace.WithAttributes(
 			attribute.String("node.id", node.ID),
 			attribute.String("node.type", string(node.Type)),
@@ -91,7 +96,7 @@ func (e *Executor) executeNode(ctx context.Context, task *model.TaskRun, node *m
 	now := time.Now()
 	task.StartedAt = &now
 	task.Status = model.Running
-	if err := e.store.UpdateTaskRun(ctx, task); err != nil {
+	if err := tm.store.UpdateTaskRun(ctx, task); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
@@ -101,23 +106,21 @@ func (e *Executor) executeNode(ctx context.Context, task *model.TaskRun, node *m
 
 	switch node.Type {
 	case model.AgentNode:
-		out, err = e.executeAgent(ctx, node, resolvedInput, scope)
+		out, err = tm.executeAgent(ctx, node, resolvedInput, scope)
 	case model.ToolNode:
-		out, err = e.executeTool(ctx, node, resolvedInput)
+		out, err = tm.executeTool(ctx, node, resolvedInput)
 	case model.MapNode:
-		// Map nodes are handled by the runtime at a higher level
 		out = resolvedInput
 	case model.AgentFlowNode:
-		// Sub-agentflow nodes are dispatched by the runtime via spec lookup
 		out = resolvedInput
 	case model.ConditionNode:
-		out, err = e.executeCondition(node, resolvedInput, scope)
+		out, err = tm.executeCondition(node, resolvedInput, scope)
 	case model.TribunalNode:
-		out, err = e.executeTribunal(node, resolvedInput)
+		out, err = tm.executeTribunal(node, resolvedInput)
 	case model.HumanNode:
-		return e.executeHuman(ctx, task, node)
+		return tm.executeHuman(ctx, task, node)
 	case model.SupervisorNode:
-		return e.executeSupervisor(ctx, task, node, resolvedInput, scope)
+		return tm.executeSupervisor(ctx, task, node, resolvedInput, scope)
 	case model.NoopNode:
 		out = nil
 	default:
@@ -126,7 +129,7 @@ func (e *Executor) executeNode(ctx context.Context, task *model.TaskRun, node *m
 
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return e.finishTask(ctx, task, nil, err)
+		return tm.finishTask(ctx, task, nil, err)
 	}
 
 	if out != nil {
@@ -134,17 +137,16 @@ func (e *Executor) executeNode(ctx context.Context, task *model.TaskRun, node *m
 			attribute.String("output.json", util.TruncateJSON(out, 4000)),
 		))
 	}
-	return e.finishTask(ctx, task, out, nil)
+	return tm.finishTask(ctx, task, out, nil)
 }
 
-func (e *Executor) executeAgent(ctx context.Context, node *model.Node, input map[string]any, scope map[string]map[string]any) (map[string]any, error) {
-	agent := e.agents[node.Agent]
+func (tm *TaskManager) executeAgent(ctx context.Context, node *model.Node, input map[string]any, scope map[string]map[string]any) (map[string]any, error) {
+	agent := tm.agents[node.Agent]
 	if agent == nil {
 		return nil, fmt.Errorf("agent not found: %s", node.Agent)
 	}
 
 	userPrompt := formatInput(input)
-	// Node-level instruction overrides agent-level instruction
 	instruction := node.Instruction
 	if instruction == "" {
 		instruction = agent.Instruction
@@ -153,7 +155,7 @@ func (e *Executor) executeAgent(ctx context.Context, node *model.Node, input map
 		userPrompt = instruction + "\n\n" + userPrompt
 	}
 
-	resp, err := e.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, 0.3)
+	resp, err := tm.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, 0.3)
 	if err != nil {
 		return nil, fmt.Errorf("LLM call failed: %w", err)
 	}
@@ -165,8 +167,8 @@ func (e *Executor) executeAgent(ctx context.Context, node *model.Node, input map
 	return out, nil
 }
 
-func (e *Executor) executeTool(ctx context.Context, node *model.Node, input map[string]any) (map[string]any, error) {
-	client, ok := e.mcpClients[node.Tool]
+func (tm *TaskManager) executeTool(ctx context.Context, node *model.Node, input map[string]any) (map[string]any, error) {
+	client, ok := tm.mcpClients[node.Tool]
 	if !ok {
 		return nil, fmt.Errorf("MCP client not found: %s", node.Tool)
 	}
@@ -180,7 +182,7 @@ func (e *Executor) executeTool(ctx context.Context, node *model.Node, input map[
 	return client.CallTool(ctx, toolName, input)
 }
 
-func (e *Executor) executeCondition(node *model.Node, input map[string]any, scope map[string]map[string]any) (map[string]any, error) {
+func (tm *TaskManager) executeCondition(node *model.Node, input map[string]any, scope map[string]map[string]any) (map[string]any, error) {
 	expr := node.Expression
 	if expr == "" {
 		expr = "${input.result == true}"
@@ -189,7 +191,7 @@ func (e *Executor) executeCondition(node *model.Node, input map[string]any, scop
 	return map[string]any{"result": result}, nil
 }
 
-func (e *Executor) executeTribunal(node *model.Node, input map[string]any) (map[string]any, error) {
+func (tm *TaskManager) executeTribunal(node *model.Node, input map[string]any) (map[string]any, error) {
 	strategy := node.Strategy
 	decisionType := "majority"
 	if strategy != nil {
@@ -247,7 +249,7 @@ func (e *Executor) executeTribunal(node *model.Node, input map[string]any) (map[
 	}, nil
 }
 
-func (e *Executor) executeHuman(ctx context.Context, task *model.TaskRun, node *model.Node) error {
+func (tm *TaskManager) executeHuman(ctx context.Context, task *model.TaskRun, node *model.Node) error {
 	timeout := 24 * time.Hour
 	if node.Approval != nil && node.Approval.Timeout > 0 {
 		timeout = node.Approval.Timeout
@@ -261,7 +263,7 @@ func (e *Executor) executeHuman(ctx context.Context, task *model.TaskRun, node *
 		Status:    "PENDING",
 	}
 
-	if err := e.store.CreateHumanApproval(ctx, approval); err != nil {
+	if err := tm.store.CreateHumanApproval(ctx, approval); err != nil {
 		return fmt.Errorf("create human approval: %w", err)
 	}
 
@@ -273,7 +275,7 @@ func (e *Executor) executeHuman(ctx context.Context, task *model.TaskRun, node *
 		"on_reject":      resolveApprovalAction(node.Approval.OnReject),
 	}
 
-	return e.store.UpdateTaskRun(ctx, task)
+	return tm.store.UpdateTaskRun(ctx, task)
 }
 
 func resolveApprovalAction(action string) string {
@@ -285,33 +287,27 @@ func resolveApprovalAction(action string) string {
 	}
 }
 
-func (e *Executor) executeSupervisor(ctx context.Context, task *model.TaskRun, node *model.Node, input map[string]any, scope map[string]map[string]any) error {
-	ctx, span := otel.Tracer("flowgent/executor").Start(ctx, "executor.supervisor",
+func (tm *TaskManager) executeSupervisor(ctx context.Context, task *model.TaskRun, node *model.Node, input map[string]any, scope map[string]map[string]any) error {
+	ctx, span := otel.Tracer("flowgent/taskmanager").Start(ctx, "taskmanager.supervisor",
 		trace.WithAttributes(
 			attribute.String("supervisor.agent", node.Agent),
-			attribute.String("agentflow.description", e.agentFlowDesc),
-			attribute.String("supervisor.allowed_actions", fmt.Sprintf("%v", func() []string {
-				if node.SupervisorConfig != nil {
-					return node.SupervisorConfig.AllowedActions
-				}
-				return nil
-			}())),
+			attribute.String("agentflow.description", tm.agentFlowDesc),
 		),
 	)
 	defer span.End()
 
-	agent := e.agents[node.Agent]
+	agent := tm.agents[node.Agent]
 	if agent == nil {
 		return fmt.Errorf("supervisor agent not found: %s", node.Agent)
 	}
 
 	systemPrompt := agent.Soul
-	if e.agentFlowDesc != "" {
-		systemPrompt = fmt.Sprintf("%s\n\n## AgentFlow Context\n%s", agent.Soul, e.agentFlowDesc)
+	if tm.agentFlowDesc != "" {
+		systemPrompt = fmt.Sprintf("%s\n\n## AgentFlow Context\n%s", agent.Soul, tm.agentFlowDesc)
 	}
 
 	userPrompt := formatInput(input)
-	resp, err := e.llmClient.Generate(ctx, systemPrompt, userPrompt, agent.Model, 0.2)
+	resp, err := tm.llmClient.Generate(ctx, systemPrompt, userPrompt, agent.Model, 0.2)
 	if err != nil {
 		return fmt.Errorf("supervisor LLM call failed: %w", err)
 	}
@@ -321,7 +317,7 @@ func (e *Executor) executeSupervisor(ctx context.Context, task *model.TaskRun, n
 		return fmt.Errorf("supervisor output invalid JSON: %w", err)
 	}
 
-	_ = e.store.LogSupervisorDecision(ctx, task.AgentFlowRunID, task.ID, input, decision)
+	_ = tm.store.LogSupervisorDecision(ctx, task.AgentFlowRunID, task.ID, input, decision)
 
 	span.AddEvent("supervisor.decision", trace.WithAttributes(
 		attribute.String("decision.action", fmt.Sprintf("%v", decision["action"])),
@@ -342,31 +338,31 @@ func (e *Executor) executeSupervisor(ctx context.Context, task *model.TaskRun, n
 
 	switch action {
 	case "continue":
-		return e.finishTask(ctx, task, decision, nil)
+		return tm.finishTask(ctx, task, decision, nil)
 	case "retry":
-		return e.retryFromSupervisor(ctx, task, target, decision)
+		return tm.retryFromSupervisor(ctx, task, target, decision)
 	case "redirect":
 		task.Output = decision
-		if err := e.finishTask(ctx, task, decision, nil); err != nil {
+		if err := tm.finishTask(ctx, task, decision, nil); err != nil {
 			return err
 		}
 		return nil
 	case "inject":
-		return e.injectFromSupervisor(ctx, task, target, decision)
+		return tm.injectFromSupervisor(ctx, task, target, decision)
 	case "abort":
 		task.Output = decision
-		if err := e.finishTask(ctx, task, decision, nil); err != nil {
+		if err := tm.finishTask(ctx, task, decision, nil); err != nil {
 			return err
 		}
 		return ErrSupervisorAbort
 	default:
-		return e.finishTask(ctx, task, decision, nil)
+		return tm.finishTask(ctx, task, decision, nil)
 	}
 }
 
-func (e *Executor) retryFromSupervisor(ctx context.Context, task *model.TaskRun, target string, decision map[string]any) error {
+func (tm *TaskManager) retryFromSupervisor(ctx context.Context, task *model.TaskRun, target string, decision map[string]any) error {
 	task.Output = decision
-	if err := e.finishTask(ctx, task, decision, nil); err != nil {
+	if err := tm.finishTask(ctx, task, decision, nil); err != nil {
 		return err
 	}
 	return &SupervisorActionError{
@@ -376,9 +372,9 @@ func (e *Executor) retryFromSupervisor(ctx context.Context, task *model.TaskRun,
 	}
 }
 
-func (e *Executor) injectFromSupervisor(ctx context.Context, task *model.TaskRun, target string, decision map[string]any) error {
+func (tm *TaskManager) injectFromSupervisor(ctx context.Context, task *model.TaskRun, target string, decision map[string]any) error {
 	task.Output = decision
-	if err := e.finishTask(ctx, task, decision, nil); err != nil {
+	if err := tm.finishTask(ctx, task, decision, nil); err != nil {
 		return err
 	}
 
@@ -407,7 +403,7 @@ func (e *Executor) injectFromSupervisor(ctx context.Context, task *model.TaskRun
 	}
 }
 
-func (e *Executor) finishTask(ctx context.Context, task *model.TaskRun, out map[string]any, err error) error {
+func (tm *TaskManager) finishTask(ctx context.Context, task *model.TaskRun, out map[string]any, err error) error {
 	now := time.Now()
 	task.FinishedAt = &now
 	if err != nil {
@@ -418,7 +414,7 @@ func (e *Executor) finishTask(ctx context.Context, task *model.TaskRun, out map[
 		task.Output = out
 	}
 	task.UpdatedAt = now
-	return e.store.UpdateTaskRun(ctx, task)
+	return tm.store.UpdateTaskRun(ctx, task)
 }
 
 func resolveInput(input map[string]any, scope map[string]map[string]any) map[string]any {

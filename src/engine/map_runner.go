@@ -14,17 +14,17 @@ import (
 )
 
 // MapRunner handles concurrent fan-out execution of map nodes.
+// Each child item is dispatched directly to the TaskManager.
 type MapRunner struct {
-	executor *Executor
-	store    Store
-	logger   *util.Logger
+	store  Store
+	logger *util.Logger
 }
 
-func newMapRunner(exec *Executor, store Store, logger *util.Logger) *MapRunner {
-	return &MapRunner{executor: exec, store: store, logger: logger}
+func newMapRunner(store Store, logger *util.Logger) *MapRunner {
+	return &MapRunner{store: store, logger: logger}
 }
 
-func (m *MapRunner) runMap(ctx context.Context, task *model.TaskRun, node *model.Node, scope map[string]map[string]any) error {
+func (m *MapRunner) runMap(ctx context.Context, task *model.TaskRun, node *model.Node, scope map[string]map[string]any, tm *TaskManager) error {
 	ctx, span := otel.Tracer("flowgent/engine").Start(ctx, "map.run",
 		trace.WithAttributes(
 			attribute.String("node.id", node.ID),
@@ -69,10 +69,10 @@ func (m *MapRunner) runMap(ctx context.Context, task *model.TaskRun, node *model
 				Status:         model.TaskPending,
 				ExecID:         fmt.Sprintf("%s-%d", task.ExecID, idx),
 			}
-			m.store.CreateTaskRun(ctx, innerTask)
+			_ = m.store.CreateTaskRun(ctx, innerTask)
 
-			if node.Node != nil {
-				m.executor.executeNode(ctx, innerTask, node.Node, innerScope)
+			if node.Node != nil && tm != nil {
+				_ = tm.ExecuteNode(ctx, innerTask, node.Node, innerScope)
 			}
 
 			mu.Lock()

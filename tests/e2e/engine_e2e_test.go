@@ -54,17 +54,13 @@ func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 // ─── E2E Tests ────────────────────────────────────────────
 
 func TestE2E_BasicAgentFlow(t *testing.T) {
-	store := engine.NewMockStore()
-	
 	agents := []*config.AgentDef{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 		{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Fixer."},
 		{Name: "security-reviewer", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Reviewer."},
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Supervisor."},
 	}
-	exec := engine.NewTestExecutor(store, nil, agents, &e2eLLM{})
-	_, rt := engine.NewTestRuntime()
-	rt.SetExecutor(exec)
+	store, jm := engine.NewTestJobManager(nil, agents, &e2eLLM{})
 
 	run := &model.AgentFlowRun{
 		ID: "test-run-001", AgentFlowID: "test-flow", Version: 1,
@@ -95,7 +91,7 @@ func TestE2E_BasicAgentFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := rt.Execute(ctx, run, spec); err != nil {
+	if err := jm.StartJob(ctx, run, spec); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -107,14 +103,10 @@ func TestE2E_BasicAgentFlow(t *testing.T) {
 }
 
 func TestE2E_SupervisorAllowedActions(t *testing.T) {
-	store := engine.NewMockStore()
-	
 	agents := []*config.AgentDef{
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Supervisor."},
 	}
-	exec := engine.NewTestExecutor(store, nil, agents, &e2eLLM{})
-	_, rt := engine.NewTestRuntime()
-	rt.SetExecutor(exec)
+	store, jm := engine.NewTestJobManager(nil, agents, &e2eLLM{})
 
 	run := &model.AgentFlowRun{
 		ID: "test-run-aa", AgentFlowID: "test-aa", Version: 1,
@@ -136,7 +128,7 @@ func TestE2E_SupervisorAllowedActions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err := rt.Execute(ctx, run, spec)
+	err := jm.StartJob(ctx, run, spec)
 	if err != nil {
 		t.Logf("supervisor validation: error returned: %v", err)
 	} else {
@@ -148,14 +140,10 @@ func TestE2E_SupervisorAllowedActions(t *testing.T) {
 }
 
 func TestE2E_MapNodeExecution(t *testing.T) {
-	store := engine.NewMockStore()
-	
 	agents := []*config.AgentDef{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
-	exec := engine.NewTestExecutor(store, nil, agents, &e2eLLM{})
-	_, rt := engine.NewTestRuntime()
-	rt.SetExecutor(exec)
+	store, jm := engine.NewTestJobManager(nil, agents, &e2eLLM{})
 
 	run := &model.AgentFlowRun{
 		ID: "test-run-map", AgentFlowID: "test-map", Version: 1,
@@ -176,22 +164,17 @@ func TestE2E_MapNodeExecution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := rt.Execute(ctx, run, spec); err != nil {
+	if err := jm.StartJob(ctx, run, spec); err != nil {
 		t.Fatalf("map workflow: %v", err)
 	}
-
 	t.Logf("Map node: %d tasks", len(store.Tasks))
 }
 
 func TestE2E_NodeRetry(t *testing.T) {
-	store := engine.NewMockStore()
-	
 	agents := []*config.AgentDef{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
-	exec := engine.NewTestExecutor(store, nil, agents, &e2eFailingLLM{failCount: 1})
-	_, rt := engine.NewTestRuntime()
-	rt.SetExecutor(exec)
+	store, jm := engine.NewTestJobManager(nil, agents, &e2eFailingLLM{failCount: 1})
 
 	run := &model.AgentFlowRun{
 		ID: "test-run-retry", AgentFlowID: "test-retry", Version: 1, Status: model.RunPending,
@@ -211,92 +194,95 @@ func TestE2E_NodeRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := rt.Execute(ctx, run, spec); err != nil {
+	if err := jm.StartJob(ctx, run, spec); err != nil {
 		t.Fatalf("retry workflow: %v", err)
 	}
 	t.Logf("Node retry: %d tasks", len(store.Tasks))
 }
 
-func TestE2E_DAGScheduler(t *testing.T) {
-	s := engine.NewDAGScheduler([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
+func TestE2E_DAGExecutor(t *testing.T) {
+	jm := &engine.JobManager{}
+	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
 
-	ready := s.Ready()
+	ready := jm.Ready()
 	if len(ready) != 1 || ready[0] != "A" {
 		t.Fatalf("expected A ready, got %v", ready)
 	}
 
-	s.Done("A")
-	ready = s.Ready()
+	jm.Done("A")
+	ready = jm.Ready()
 	if len(ready) != 1 || ready[0] != "B" {
 		t.Fatalf("expected B ready, got %v", ready)
 	}
 
-	s.Done("B")
-	ready = s.Ready()
+	jm.Done("B")
+	ready = jm.Ready()
 	if len(ready) != 1 || ready[0] != "C" {
 		t.Fatalf("expected C ready, got %v", ready)
 	}
 
-	s.Done("C")
-	if !s.IsComplete() {
+	jm.Done("C")
+	if !jm.IsComplete() {
 		t.Fatal("expected complete")
 	}
 }
 
 func TestE2E_DAGInject(t *testing.T) {
-	s := engine.NewDAGScheduler([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
-	s.Done("A")
+	jm := &engine.JobManager{}
+	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
+	jm.Done("A")
 
-	ready := s.Ready()
+	ready := jm.Ready()
 	if len(ready) != 1 || ready[0] != "B" {
 		t.Fatalf("expected B ready, got %v", ready)
 	}
 
-	s.Inject("D", []string{"A"})
-	ready = s.Ready()
+	jm.Inject("D", []string{"A"})
+	ready = jm.Ready()
 	if len(ready) != 2 {
 		t.Fatalf("expected B and D ready, got %v", ready)
 	}
 
-	s.Done("B")
-	s.Done("D")
-	ready = s.Ready()
+	jm.Done("B")
+	jm.Done("D")
+	ready = jm.Ready()
 	if len(ready) != 1 || ready[0] != "C" {
 		t.Fatalf("expected C ready, got %v", ready)
 	}
-	s.Done("C")
-	if !s.IsComplete() {
+	jm.Done("C")
+	if !jm.IsComplete() {
 		t.Fatal("expected complete")
 	}
 }
 
 func TestE2E_ConditionSkip(t *testing.T) {
-	s := engine.NewDAGScheduler([]string{"A", "cond", "B_true", "B_false", "end"},
+	jm := &engine.JobManager{}
+	jm.BuildGraphNodes([]string{"A", "cond", "B_true", "B_false", "end"},
 		[][2]string{{"A", "cond"}, {"cond", "B_true"}, {"cond", "B_false"}, {"B_true", "end"}, {"B_false", "end"}})
-	s.Done("A")
+	jm.Done("A")
 
-	ready := s.Ready()
+	ready := jm.Ready()
 	if len(ready) != 1 || ready[0] != "cond" {
 		t.Fatalf("expected cond ready, got %v", ready)
 	}
 
-	s.SetConditionResult("cond", true)
-	s.Done("cond")
-	s.Skip("B_false")
+	jm.SetConditionResult("cond", true)
+	jm.Done("cond")
+	jm.Skip("B_false")
 
-	ready = s.Ready()
+	ready = jm.Ready()
 	if len(ready) != 1 || ready[0] != "B_true" {
 		t.Fatalf("expected B_true ready, got %v", ready)
 	}
 
-	s.Done("B_true")
-	ready = s.Ready()
+	jm.Done("B_true")
+	ready = jm.Ready()
 	if len(ready) != 1 || ready[0] != "end" {
 		t.Fatalf("expected end ready, got %v", ready)
 	}
 
-	s.Done("end")
-	if !s.IsComplete() {
+	jm.Done("end")
+	if !jm.IsComplete() {
 		t.Fatal("expected complete")
 	}
 }
