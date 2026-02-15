@@ -8,31 +8,41 @@ Build deterministic workflows powered by autonomous AI agents.
 
 ## Features
 
-**DAG Topological Scheduler** — Predictable execution order with concurrent fan-out via `map` nodes. Process 100+ repos in parallel with bounded goroutine pools.
+- **DAG Topological Scheduler**
+Predictable execution order with concurrent fan-out via `map` nodes. Process 100+ repos in parallel with bounded goroutine pools.
 
-**9 Node Types** — `agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop`. Compose any orchestration topology.
+- **9 Node Types**
+`agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop`. Compose any orchestration topology.
 
-**Deterministic + Intelligent** — `agent` and `supervisor` nodes provide LLM intelligence. All other nodes guarantee deterministic execution. You decide where intelligence lives.
+- **Deterministic + Intelligent**
+`agent` and `supervisor` nodes provide LLM intelligence. All other nodes guarantee deterministic execution. You decide where intelligence lives.
 
-**Controlled Autonomy** — Supervisor constrained to 5 actions (`continue`, `redirect`, `retry`, `inject`, `abort`) with configurable quotas. LLM-powered but never unbounded.
+- **Controlled Autonomy**
+Supervisor constrained to 5 actions (`continue`, `redirect`, `retry`, `inject`, `abort`) with configurable quotas. LLM-powered but never unbounded.
 
-**State-Machine Persistence** — Every run and task is durable. Pause at any `human` approval gate, resume via API, replay idempotently.
+- **State-Machine Persistence**
+Every run and task is durable. Pause at any `human` approval gate, resume via API, replay idempotently.
 
-**A2A Protocol Server** — External AI systems dynamically call Flowgent via Google A2A protocol. Discover agentflows, trigger runs, query results programmatically.
+- **A2A Protocol Server**
+External AI systems dynamically call Flowgent via Google A2A protocol. Discover agentflows, trigger runs, query results programmatically.
 
-**Optional Economic Layer** — x402 payment protocol client-side support with spending policies, wallet abstraction, and human approval governance. Coinbase facilitator integration.
+- **Optional Economic Layer**
+x402 payment protocol client-side support with spending policies, wallet abstraction, and human approval governance. Coinbase facilitator integration.
 
-**Dual-Mode Deployment** — **All-in-One:** SQLite + memory queue (single binary, no dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes.
+- **Dual-Mode Deployment**
+**All-in-One:** SQLite + memory queue (single binary, no dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes.
 
-**OTEL Tracing Per Node** — Every node span records input, output, and internal state. Debug any execution path in Jaeger.
+- **OTEL Tracing Per Node**
+Every node span records input, output, and internal state. Debug any execution path in Jaeger.
 
-**Cron + Webhook Triggers** — Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow.
+- **Cron + Webhook Triggers**
+Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow.
 
-**Multi-Provider LLM** — OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking.
+- **Multi-Provider LLM**
+OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking.
 
-**MCP Ecosystem** — 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber).
-
-**OAS 3.1 + Swagger** — Full REST API spec and Swagger UI out of the box.
+- **MCP Ecosystem**
+Default built-in 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber).
 
 ---
 
