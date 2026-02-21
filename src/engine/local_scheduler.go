@@ -5,33 +5,33 @@ import (
 	"log/slog"
 )
 
-// StandaloneScheduler runs tasks in a local goroutine pool.
-// Designed for dev/test and all-in-one deployment mode.
-// In Flink terms this is a Standalone cluster with a fixed TaskManager pool.
-type StandaloneScheduler struct {
+// LocalScheduler runs tasks in the same process using a goroutine pool.
+// It is the default scheduler for dev/test and all-in-one deployments.
+// Resource management is handled by a semaphore that limits concurrency.
+type LocalScheduler struct {
 	taskManager *TaskManager
 	sem         chan struct{}
 }
 
-func NewStandaloneScheduler(tm *TaskManager, poolSize int) *StandaloneScheduler {
+func NewLocalScheduler(tm *TaskManager, poolSize int) *LocalScheduler {
 	if poolSize <= 0 {
 		poolSize = 10
 	}
-	return &StandaloneScheduler{
+	return &LocalScheduler{
 		taskManager: tm,
 		sem:         make(chan struct{}, poolSize),
 	}
 }
 
-func (s *StandaloneScheduler) Type() SchedulerType { return SchedulerTypeStandalone }
+func (s *LocalScheduler) Type() SchedulerType { return SchedulerTypeLocal }
 
 // SubmitTask acquires a slot from the goroutine pool and runs the task
 // via TaskManager.ExecuteNode. Blocks until execution completes.
-func (s *StandaloneScheduler) SubmitTask(ctx context.Context, submit *TaskSubmit) (*TaskResult, error) {
+func (s *LocalScheduler) SubmitTask(ctx context.Context, submit *TaskSubmit) (*TaskResult, error) {
 	s.sem <- struct{}{}
 	defer func() { <-s.sem }()
 
-	slog.Debug("standalone scheduler executing task",
+	slog.Debug("local scheduler executing task",
 		"cluster_id", submit.ClusterID,
 		"run_id", submit.RunID,
 		"node_id", submit.NodeID,
@@ -51,4 +51,4 @@ func (s *StandaloneScheduler) SubmitTask(ctx context.Context, submit *TaskSubmit
 	return &TaskResult{Output: task.Output}, nil
 }
 
-func (s *StandaloneScheduler) Close() error { return nil }
+func (s *LocalScheduler) Close() error { return nil }

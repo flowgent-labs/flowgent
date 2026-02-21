@@ -50,8 +50,8 @@ type EdgeCondition struct {
 type SchedulerType string
 
 const (
-	SchedulerTypeStandalone SchedulerType = "standalone"
-	SchedulerTypeK8s        SchedulerType = "k8s"
+	SchedulerTypeLocal       SchedulerType = "local"
+	SchedulerTypeKubernetes  SchedulerType = "kubernetes"
 )
 
 // TaskSubmit carries the parameters needed for a single node execution.
@@ -77,8 +77,8 @@ type TaskResult struct {
 // Inspired by Flink's pluggable scheduler (Standalone, Kubernetes, YARN).
 //
 // Implementations:
-//   - StandaloneScheduler — goroutine pool, for dev/test/all-in-one mode
-//   - K8sScheduler       — Kubernetes pod per task, for production distributed mode
+//   - LocalScheduler — goroutine pool, for dev/test/all-in-one mode
+//   - KubernetesScheduler       — Kubernetes pod per task, for production distributed mode
 type Scheduler interface {
 	Type() SchedulerType
 	SubmitTask(ctx context.Context, submit *TaskSubmit) (*TaskResult, error)
@@ -86,12 +86,12 @@ type Scheduler interface {
 }
 
 // NewScheduler creates a Scheduler by type.
-func NewScheduler(schedType SchedulerType, tm *TaskManager, poolSize int) (Scheduler, error) {
+func NewScheduler(schedType SchedulerType, tm *TaskManager, poolSize int, k8sCfg *KubernetesSchedulerConfig) (Scheduler, error) {
 	switch schedType {
-	case SchedulerTypeStandalone:
-		return NewStandaloneScheduler(tm, poolSize), nil
-	case SchedulerTypeK8s:
-		return NewK8sScheduler(), nil
+	case SchedulerTypeLocal:
+		return NewLocalScheduler(tm, poolSize), nil
+	case SchedulerTypeKubernetes:
+		return NewKubernetesScheduler(k8sCfg)
 	default:
 		return nil, fmt.Errorf("unknown scheduler type: %s", schedType)
 	}

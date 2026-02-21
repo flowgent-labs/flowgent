@@ -1,44 +1,77 @@
 # Flowgent Layer 1 Engine — Implementation Progress
 
 **Date:** 2026-05-11
-**Status:** Engine refactored to Flink-aligned architecture, 7/7 unit tests passing, build clean.
+**Status:** Engine refactored, KubernetesScheduler implemented, 14/14 tests passing, build clean.
 
 ## Latest Changes (2026-05-11)
 
-### Engine Architecture Refactoring (Flink-Aligned)
+### Round 2: Scheduler Rename, Kubernetes Implementation, Doc Cleanup
 
-**Problem:** `DAGScheduler` was a passive state container (just maps + locks), `runtime.go` was too fat (did DAG loop + scope + supervisor handling), and `worker.go` wrapped a full runtime to execute a single node (code smell).
+**Scheduler renames:**
+- `StandaloneScheduler` → `LocalScheduler` (goroutine pool is in-process, not a Flink-style standalone cluster)
+- `K8sScheduler` → `KubernetesScheduler` (full name, no abbreviations)
+- Scheduler type constants: `"standalone"` → `"local"`, `"k8s"` → `"kubernetes"`
 
-**Solution:** Replaced the three-way split with a clean JobManager / Scheduler / TaskManager hierarchy inspired by Apache Flink.
+**KubernetesScheduler** — fully implemented with `k8s.io/client-go`:
+- Connects via in-cluster config, explicit kubeconfig, or `~/.kube/config`
+- Creates a `batch/v1 Job` per task with configurable container image, resource requests/limits
+- `TaskSubmit` serialized into `FLOWGENT_TASK_SUBMIT` env var for the pod
+- Watches Job completion/failure via K8s API watch
+- Automatic cleanup via `TTLSecondsAfterFinished`
+- Configurable via `KubernetesSchedulerConfig` struct
+
+**New `cmd/tasklet/`** — K8s Job pod entry point:
+- Minimal binary that reads `FLOWGENT_TASK_SUBMIT` + `FLOWGENT_DATABASE_URL` from env
+- Connects to shared Postgres store, loads TaskRun + scope
+- Calls `TaskManager.ExecuteNode()`, result persisted to store
+- Exits cleanly on completion → K8s Job controller detects finish
+
+**Documentation:**
+- `01-ENGINE-IMPL-DESIGN.md` — cleaned up: removed explicit Flink comparison table,
+  updated scheduler names, added ResourceManager section, added tasklet docs
+- `PROGRESS.md` — updated with latest changes
 
 **New file structure:**
 
 ```
 src/engine/
-├── jobmanager.go          — JobManager (DAG orchestrator, replaces DAGScheduler + runtime)
-├── taskmanager.go         — TaskManager (node executor, renamed from Executor)
-├── scheduler.go           — Scheduler interface + TaskSubmit/TaskResult types
-├── standalone_scheduler.go — Goroutine-pool scheduler (dev/test/all-in-one)
-├── k8s_scheduler.go       — Kubernetes scheduler stub (production distributed)
-├── map_runner.go          — MapRunner (updated refs)
-├── testing.go             — Test helpers (updated refs)
-├── state_machine.go       — (unchanged)
-└── retry.go               — (unchanged)
+├── jobmanager.go              — JobManager (DAG orchestrator)
+├── taskmanager.go             — TaskManager (node executor)
+├── scheduler.go               — Scheduler interface + types
+├── local_scheduler.go         — Goroutine-pool (dev/test/all-in-one)
+├── kubernetes_scheduler.go    — K8s Job per task (production distributed)
+├── map_runner.go              — MapRunner
+├── testing.go                 — Test helpers
+├── state_machine.go           — (unchanged)
+└── retry.go                   — (unchanged)
+src/cmd/tasklet/main.go        — K8s pod entry point
 ```
 
+**Dependencies added:** `k8s.io/client-go v0.36.0`, `k8s.io/api v0.36.0`, `k8s.io/apimachinery v0.36.0`
+
+### ResourceManager Design Decision
+No separate ResourceManager abstraction. Resource management is embedded in each scheduler:
+- **LocalScheduler**: goroutine pool semaphore
+- **KubernetesScheduler**: K8s ResourceQuota + per-container resource requests/limits
+
+### Previous Round: Engine Architecture Refactoring
+
+**Problem:** `DAGScheduler` was a passive state container, `runtime.go` was too fat, and `worker.go` wrapped a full runtime to execute a single node.
+
+**Solution:** Replaced the three-way split with JobManager / Scheduler / TaskManager hierarchy.
+
 **Deleted files:**
-- `src/engine/dag_scheduler.go` + `dag_scheduler_test.go` — merged into jobmanager.go
-- `src/engine/runtime.go` — merged into jobmanager.go
-- `src/engine/executor.go` — renamed to taskmanager.go
-- `src/worker/` — whole package deleted (absorbed by StandaloneScheduler)
+- `src/engine/dag_scheduler.go` + `dag_scheduler_test.go`
+- `src/engine/runtime.go`
+- `src/engine/executor.go` → renamed to taskmanager.go
+- `src/worker/` — whole package deleted
 
 **Updated files:**
 - `src/engine/map_runner.go` — references TaskManager instead of Executor
 - `src/engine/testing.go` — NewTestJobManager replaces NewTestRuntime
-- `src/cmd/core/run.go` — uses JobManager + StandaloneScheduler, removed worker.Pool
+- `src/cmd/core/run.go` — uses JobManager + LocalScheduler, removed worker.Pool
 - `tests/e2e/engine_e2e_test.go` — uses NewTestJobManager
 - `tests/e2e/local_e2e_test.go` — uses JobManager directly
-- `.agent/` — 01-ENGINE-IMPL-DESIGN.md added, existing files renumbered
 
 ### JobManager Responsibilities
 - Build DAG execution graph from AgentFlowSpec
@@ -48,8 +81,8 @@ src/engine/
 - Generate ClusterID per job for resource tracking
 
 ### Scheduler Implementations
-- **StandaloneScheduler**: goroutine pool with semaphore, calls TaskManager.ExecuteNode
-- **K8sScheduler**: stub for production distributed mode (launches K8s pod per task)
+- **LocalScheduler**: goroutine pool with semaphore, calls TaskManager.ExecuteNode
+- **KubernetesScheduler**: batch/v1 Job per task, full K8s API integration
 
 ### TaskManager Responsibilities
 - Stateless node executor, no DAG awareness

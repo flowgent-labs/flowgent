@@ -5,7 +5,7 @@
 
 ---
 
-## 1. Architecture Overview (Flink-Aligned)
+## 1. Architecture Overview
 
 ```
 AgentFlowSpec (YAML / DB)
@@ -13,18 +13,19 @@ AgentFlowSpec (YAML / DB)
    JobManager          ← master orchestrator, drives DAG
         ↓
    Scheduler           ← pluggable dispatch layer
-    ├── Standalone     ← goroutine pool (dev/test/all-in-one)
-    └── K8s            ← Kubernetes pod per task (stub)
+    ├── Local          ← goroutine pool (dev/test/all-in-one)
+    └── Kubernetes     ← Kubernetes Job per task (production distributed)
         ↓
    TaskManager         ← stateless node executor (agent/tool/vote/etc.)
 ```
 
-| Flowgent | Flink Analogy | Responsibility |
-|----------|---------------|----------------|
-| `JobManager` | JobManager | Build DAG graph, topological loop, dispatch tasks |
-| `Scheduler` | Scheduler (Standalone/K8s) | Dispatch abstraction, resource management |
-| `TaskManager` | TaskManager | Execute individual nodes, no DAG knowledge |
-| `ClusterID` | Cluster ID | Resource pool identifier per job |
+The engine is structured as three loosely coupled layers:
+
+| Component | Responsibility |
+|-----------|----------------|
+| `JobManager` | Build DAG execution graph, topological loop, dispatch tasks |
+| `Scheduler` | Dispatch abstraction, resource management |
+| `TaskManager` | Execute individual nodes, no DAG knowledge |
 
 ---
 
@@ -53,13 +54,11 @@ type JobManager struct {
     conditions     map[string]bool
     edgeConditions map[string]*bool  // "from->to" → condition
 
-    // Dependencies
     store       Store
     scheduler   Scheduler
     taskManager *TaskManager   // for inline map node execution
     logger      *util.Logger
 
-    // Limits
     timeout        time.Duration
     injectionLimit int
     nodeLimit      int
@@ -82,19 +81,19 @@ type JobManager struct {
   6. Handle supervisor actions (retry/redirect/inject/abort)
   7. Complete or fail the run
 
-### DAG State Methods (previously on DAGScheduler)
+### DAG State Methods
 
 `Ready()`, `Done()`, `Skip()`, `Fail()`, `IsComplete()`, `HasFailed()`, `Inject()`, `Children()`, `Deps()`, `SetConditionResult()`, `ConditionResult()`, `SetEdgeConditions()`, `GetChildCondition()`
 
 ---
 
-## 3. Scheduler Interface (`scheduler.go` + implementations)
+## 3. Scheduler
 
-### Interface
+### Interface (`scheduler.go`)
 
 ```go
 type Scheduler interface {
-    Type() SchedulerType              // "standalone" | "k8s"
+    Type() SchedulerType              // "local" | "kubernetes"
     SubmitTask(ctx, *TaskSubmit) (*TaskResult, error)
     Close() error
 }
@@ -115,19 +114,23 @@ type TaskResult struct {
 }
 ```
 
-### StandaloneScheduler (`standalone_scheduler.go`)
+### LocalScheduler (`local_scheduler.go`)
 
 - Goroutine pool with configurable concurrency (default 10)
 - `SubmitTask` acquires a semaphore slot, calls `TaskManager.ExecuteNode` directly
 - Designed for dev/test and all-in-one deployment
-- Zero serialization overhead — same process, same memory
+- Resource management is the semaphore — no external dependencies
 
-### K8sScheduler (`k8s_scheduler.go`)
+### KubernetesScheduler (`kubernetes_scheduler.go`)
 
-- Stub implementation for production distributed mode
-- `SubmitTask` would launch a Kubernetes Job (pod) per node execution
-- Pod contains a TaskManager that receives the serialized `TaskSubmit`
-- Not yet implemented — returns descriptive error
+- Creates a Kubernetes `batch/v1 Job` per task execution
+- Requires `k8s.io/client-go` for API access
+- Config resolution: explicit kubeconfig path → in-cluster config → `~/.kube/config`
+- Each Job runs a `tasklet` container image with the `TaskSubmit` serialized into `FLOWGENT_TASK_SUBMIT` env
+- Resource requests/limits configurable via `KubernetesSchedulerConfig`
+- Automatic Job cleanup via `TTLSecondsAfterFinished`
+- Blocks until Job completes or fails (watches via K8s API)
+- Resource management delegated to Kubernetes (ResourceQuota, LimitRange)
 
 ---
 
@@ -145,7 +148,7 @@ type TaskManager struct {
 }
 ```
 
-### Public Method
+### Public Entry Point
 
 - **`ExecuteNode(ctx, task, node, scope) error`** — executes a single node:
   1. Resolve input via JSONPath (`${node.field}`)
@@ -160,6 +163,15 @@ type TaskManager struct {
      - **`map`** — dispatched by JobManager, not TaskManager
      - **`agentflow`** — dispatched by JobManager via spec lookup
   3. Persist task result via store
+
+### Tasklet (`cmd/tasklet/main.go`)
+
+Kubernetes Job entry point for distributed node execution:
+1. Read `TaskSubmit` from `FLOWGENT_TASK_SUBMIT` env var
+2. Connect to shared Postgres store + LLM + MCP clients
+3. Load `TaskRun` + build scope
+4. Call `TaskManager.ExecuteNode()`
+5. Result persisted to store → Job exits → controller detects completion
 
 ---
 
@@ -184,11 +196,11 @@ JobManager.StartJob(ctx, run, spec)
         │   │    │                                        │
         │   │    └── Other? → Scheduler.SubmitTask()      │
         │   │                    │                        │
-        │   │                    ├── Standalone: goroutine │
+        │   │                    ├── Local: goroutine pool│
         │   │                    │   → TaskManager        │
         │   │                    │                        │
-        │   │                    ├── K8s (stub): pod      │
-        │   │                    │   → TaskManager        │
+        │   │                    ├── Kubernetes: Job pod  │
+        │   │                    │   → tasklet → TM       │
         │   │                    │                        │
         │   │                    └── Collect TaskResult   │
         │   │                                             │
@@ -211,9 +223,9 @@ JobManager.StartJob(ctx, run, spec)
 | `runtime.go` | — | Merged into `jobmanager.go` |
 | `executor.go` | `taskmanager.go` | Renamed type `Executor` → `TaskManager` |
 | — | `scheduler.go` | New: interface + types |
-| — | `standalone_scheduler.go` | New: goroutine pool |
-| — | `k8s_scheduler.go` | New: K8s stub |
-| `worker/worker.go` | — | Deleted (absorbed by StandaloneScheduler) |
+| — | `local_scheduler.go` | New: goroutine pool |
+| — | `kubernetes_scheduler.go` | New: K8s Job per task + tasklet binary |
+| `worker/worker.go` | — | Deleted (absorbed by LocalScheduler) |
 
 ---
 
@@ -231,7 +243,7 @@ Engine unit tests: 7/7 PASS
 | `TestJobManager_EdgeCondition` | Edge-level condition storage/lookup |
 | `TestJobManager_ConditionResult` | Condition result set/get |
 
-E2E tests (9 total, 6 DAG-related + 3 pipeline):
+E2E tests (9+2):
 
 | Test | What it covers |
 |------|---------------|
@@ -239,15 +251,40 @@ E2E tests (9 total, 6 DAG-related + 3 pipeline):
 | `TestE2E_SupervisorAllowedActions` | Supervisor action validation |
 | `TestE2E_MapNodeExecution` | Map fan-out with concurrency |
 | `TestE2E_NodeRetry` | Retry after transient failure |
-| `TestE2E_DAGExecutor` | Topological ordering (e2e) |
-| `TestE2E_DAGInject` | Dynamic injection (e2e) |
+| `TestE2E_DAGExecutor` | Topological ordering |
+| `TestE2E_DAGInject` | Dynamic injection |
 | `TestE2E_ConditionSkip` | Condition-based path skipping |
+| `TestE2E_SecurityFixPipeline_Local` | 13-node full pipeline e2e |
+| `TestE2E_MQTTQueue_Local` | MQTT broker integration |
 
 ---
 
-## 8. ClusterID and Resource Management
+## 8. ResourceManager
 
-Each `StartJob` call generates a `ClusterID` (format: `cluster-{agentflow_id}-{run_id}`) that identifies the resource pool for all tasks in this job execution. The `TaskSubmit` carries the `ClusterID` to the `TaskManager` for:
+A separate `ResourceManager` abstraction is **not** implemented. Resource
+management is embedded in each scheduler implementation:
 
-- **Standalone mode**: ClusterID maps to the goroutine pool semaphore
-- **K8s mode** (future): ClusterID maps to a Kubernetes namespace/label selector for pod grouping and resource quotas
+- **LocalScheduler**: goroutine pool semaphore controls concurrency
+- **KubernetesScheduler**: Kubernetes ResourceQuota, LimitRange, and
+  per-container resource requests/limits handle resource allocation
+
+This keeps the architecture minimal while allowing each scheduler to use
+the resource model most natural to its environment. A cross-scheduler
+ResourceManager interface can be extracted later if scheduling backends
+need unified resource accounting (e.g., hybrid deployments).
+
+---
+
+## 9. ClusterID
+
+Each `StartJob` call generates a `ClusterID` (`cluster-{agentflow_id}-{run_id}`)
+that identifies the resource pool for all tasks in this job execution. The
+`TaskSubmit` carries the `ClusterID` to the scheduler for resource tracking.
+
+---
+
+> **Note on design inspiration:** The JobManager/Scheduler/TaskManager
+> separation is inspired by distributed computing frameworks that separate
+> job orchestration from task execution. The goal is to make Flowgent
+> the "AI Agent world's" equivalent of those systems — an open,
+> flexible, and predictable orchestration engine for autonomous agents.

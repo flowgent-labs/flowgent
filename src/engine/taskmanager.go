@@ -16,9 +16,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TaskManager executes individual nodes. It corresponds to a Flink TaskManager:
-// stateless, receives a node + input, executes blindly, returns result.
-// The JobManager handles all DAG/scheduling logic.
+// TaskManager executes individual nodes. It is stateless — receives a node +
+// input, executes blindly, returns result. The JobManager handles all DAG
+// orchestration and scheduling.
 type TaskManager struct {
 	store         Store
 	mcpClients    map[string]MCPClient
@@ -73,7 +73,7 @@ func (tm *TaskManager) SetAgentFlowContext(desc string) {
 
 // ExecuteNode executes a single node and persists the result via the store.
 // This is the sole public entry point, callable from both local execution
-// (StandaloneScheduler) and distributed execution (K8sScheduler / remote pod).
+// (LocalScheduler) and distributed execution (KubernetesScheduler / remote pod).
 func (tm *TaskManager) ExecuteNode(ctx context.Context, task *model.TaskRun, node *model.Node, scope map[string]map[string]any) error {
 	ctx, span := otel.Tracer("flowgent/taskmanager").Start(ctx, "taskmanager.node",
 		trace.WithAttributes(

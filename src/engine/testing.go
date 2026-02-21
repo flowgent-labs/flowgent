@@ -107,12 +107,12 @@ func NewTestTaskManager(store Store, mcp map[string]MCPClient, agents []*config.
 }
 
 // NewTestJobManager creates a JobManager backed by an in-memory MockStore
-// and a StandaloneScheduler with pool size 10. Returns the shared store
+// and a LocalScheduler with pool size 10. Returns the shared store
 // and the JobManager — both reference the same in-memory store.
 func NewTestJobManager(mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) (*MockStore, *JobManager) {
 	s := NewMockStore()
 	tm := NewTaskManager(s, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
-	scheduler := NewStandaloneScheduler(tm, 10)
+	scheduler := NewLocalScheduler(tm, 10)
 	jm := NewJobManager(s, scheduler, util.NewLogger("JSON", "DEBUG"))
 	jm.SetTaskManager(tm)
 	return s, jm

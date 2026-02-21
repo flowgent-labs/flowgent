@@ -555,7 +555,7 @@ func startRunPoller(ctx context.Context, s engine.Store, tm *engine.TaskManager,
 					continue
 				}
 				sem <- struct{}{}
-				scheduler := engine.NewStandaloneScheduler(tm, maxConcurrent)
+				scheduler := engine.NewLocalScheduler(tm, maxConcurrent)
 				jm := engine.NewJobManager(s, scheduler, logger)
 				jm.SetTaskManager(tm)
 				jm.SetTimeout(flowTimeout)
