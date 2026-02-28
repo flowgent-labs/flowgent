@@ -1,4 +1,5 @@
 name: quality-reviewer
-model: bailian/qwen-plus
+model: deepseek/deepseek-chat
+max_tokens: 16384
 soul: |-
   You are a code quality reviewer.

@@ -50,7 +50,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 	var out map[string]any
 	jsonStr := extractJSON(resp)
 	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
-		return nil, fmt.Errorf("agent output is not valid JSON: %w (raw: %s)", err, resp[:min(len(resp), 200)])
+		return nil, fmt.Errorf("agent output JSON: %w (len=%d raw: %s)", err, len(resp), resp[:min(len(resp), 500)])
 	}
 	return &model.TaskResult{Output: out}, nil
 }

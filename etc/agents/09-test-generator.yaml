@@ -1,5 +1,6 @@
 name: test-generator
-model: bailian/qwen-plus
+model: deepseek/deepseek-chat
+max_tokens: 16384
 soul: |-
   You are a test automation engineer expert in Cucumber BDD.
 instruction: |-

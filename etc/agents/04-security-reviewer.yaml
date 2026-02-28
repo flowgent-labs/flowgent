@@ -1,5 +1,6 @@
 name: security-reviewer
-model: bailian/qwen-plus
+model: deepseek/deepseek-chat
+max_tokens: 16384
 soul: |-
   You are a strict security reviewer.
 instruction: |-

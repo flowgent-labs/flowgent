@@ -283,8 +283,8 @@ func fetchProjectAnalysis(projectKey string) ([]SonarQubeIssue, error) {
 func fetchSonarQubeIssues(projectKey, branch, commitSHA string) ([]SonarQubeIssue, error) {
 	params := map[string]string{
 		"componentKeys": projectKey,
-		"ps":            "1000",
-		"statuses":      "OPEN,CONFIRMED",
+		"ps":            "500",
+		"statuses":      "OPEN",
 		"additionalFields": "rules",
 	}
 	if branch != "" {
@@ -313,7 +313,7 @@ func fetchSonarQubeIssues(projectKey, branch, commitSHA string) ([]SonarQubeIssu
 	}
 
 	for len(resp.Issues) < resp.Total {
-		params["p"] = fmt.Sprintf("%d", len(resp.Issues)/100+2)
+		params["p"] = fmt.Sprintf("%d", len(resp.Issues)/500+2)
 		var nextResp struct {
 			Issues []SonarQubeIssue `json:"issues"`
 		}

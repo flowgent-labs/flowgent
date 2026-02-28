@@ -119,6 +119,7 @@ func (a *Adapter) Generate(ctx context.Context, systemPrompt, userPrompt, provid
 			{"role": "user", "content": userPrompt},
 		},
 		"temperature": float64(temperature),
+		"max_tokens":  8192,
 	}
 
 	if md, ok := pc.models[modelName]; ok {

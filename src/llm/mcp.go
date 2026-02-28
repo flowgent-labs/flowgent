@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -54,7 +55,25 @@ func (f *Factory) GetClient(ctx context.Context, name string) (*client.Client, e
 
 	env := os.Environ()
 	for k, v := range def.env {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
+		// Normalize key to uppercase (viper lowercases YAML keys)
+		key := strings.ToUpper(k)
+		prefix := key + "="
+		found := false
+		for i := 0; i < len(env); i++ {
+			if len(env[i]) >= len(prefix) && strings.EqualFold(env[i][:len(prefix)], prefix) {
+				if found {
+					// Remove duplicate (e.g. both all_proxy and ALL_PROXY exist)
+					env = append(env[:i], env[i+1:]...)
+					i--
+				} else {
+					env[i] = prefix + v
+					found = true
+				}
+			}
+		}
+		if !found {
+			env = append(env, prefix+v)
+		}
 	}
 
 		allArgs := make([]string, 0, len(def.command)-1+len(def.args))

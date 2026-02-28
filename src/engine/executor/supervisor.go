@@ -74,6 +74,10 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *model.ExecutionP
 
 // extractJSON finds the first balanced JSON object in text, handling LLM preamble.
 func extractJSON(s string) string {
+		s = strings.TrimPrefix(s, "```json")
+		s = strings.TrimPrefix(s, "```")
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
 	start := strings.IndexByte(s, '{')
 	end := strings.LastIndexByte(s, '}')
 	if start == -1 || end == -1 || end <= start {

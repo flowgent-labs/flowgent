@@ -186,7 +186,7 @@ type LLMConfig struct {
 }
 
 type OrchestrationConfig struct {
-	MCPs                 []MCPDef    `json:"mcps" yaml:"mcps"`
+	MCPs                 []MCPDef    `json:"mcps" yaml:"mcps" mapstructure:"mcps"`
 	Agents               ResourceCfg `json:"agents" yaml:"agents"`
 	Skills               ResourceCfg `json:"skills,omitempty" yaml:"skills,omitempty"`
 	AgentFlows           ResourceCfg `json:"agentflows" yaml:"agentflows"`

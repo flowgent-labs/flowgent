@@ -1,5 +1,6 @@
 name: supervisor
-model: bailian/qwen-plus
+model: deepseek/deepseek-chat
+max_tokens: 16384
 temperature: 0.2
 soul: |-
   You are a senior autonomous orchestration controller. Output ONLY a JSON object.

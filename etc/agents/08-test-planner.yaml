@@ -1,5 +1,6 @@
 name: test-planner
-model: bailian/qwen-plus
+model: deepseek/deepseek-chat
+max_tokens: 16384
 soul: |-
   You are a senior QA architect who designs comprehensive test plans.
 instruction: |-

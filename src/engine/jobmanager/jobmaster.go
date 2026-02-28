@@ -193,7 +193,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 		for _, nodeID := range ready {
 			plan, ok := jm.planMap[nodeID]
 			if !ok { continue }
-			plan.Input = jm.resolveInput(nodeID)
+			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
 			_ = jm.store.SaveExecutionPlan(ctx, plan)
 
 			result, err := jm.rm.Schedule(ctx, plan)
@@ -216,9 +216,18 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 	return nil
 }
 
-func (jm *JobMaster) resolveInput(nodeID string) map[string]any {
+func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[string]any {
 	in := make(map[string]any)
-	for _, dep := range jm.Deps(nodeID) { if o, ok := jm.nodeOutputs[dep]; ok { in[dep] = o } }
+	// Start with YAML-defined input (action, params, etc.)
+	for k, v := range yamlInput {
+		in[k] = v
+	}
+	// Merge upstream node outputs (overrides YAML if same key)
+	for _, dep := range jm.Deps(nodeID) {
+		if o, ok := jm.nodeOutputs[dep]; ok {
+			in[dep] = o
+		}
+	}
 	return in
 }
 

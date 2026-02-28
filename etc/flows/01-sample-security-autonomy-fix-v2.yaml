@@ -3,9 +3,8 @@ priority: high
 tenant_id: default
 namespace: flowgent-rengine
 description: |
-  Simplified security fixer: agent-only pipeline with .cyberbot metadata step.
-  For scenarios where SonarQube/Sonatype MCP tools are not available.
-  The SonarQube scan is triggered externally via sonar-scanner CLI (see docs).
+  Production security fixer with SonarQube MCP, .cyberbot stateful metadata.
+  PR strategy: new-pr branch per run. Rereads .cyberbot on restart.
 
 triggers:
   - type: webhook
@@ -17,18 +16,27 @@ vars:
   repo_path: "/home/agent/rengine"
 
 nodes:
+  - id: fetch-issues
+    type: tool
+    tool: sonarqube
+    input:
+      action: "scan/get_issues"
+      project_key: "rengine"
+      severities: "BLOCKER"
+
   - id: analyze-issues
     type: agent
     agent: issue-detector
     input:
       repo: "${vars.repo}"
-      repo_path: "${vars.repo_path}"
+      sonarqube_issues: "${fetch-issues}"
 
   - id: generate-fixes
     type: agent
     agent: fixer-agent
     input:
       issues: "${analyze-issues.issues}"
+      repo_path: "${vars.repo_path}"
 
   - id: review-security
     type: agent
@@ -58,7 +66,7 @@ nodes:
         - "${review-quality.decision}"
         - "${review-arch.decision}"
 
-  - id: supervisor-check
+  - id: supervisor
     type: supervisor
     agent: supervisor
     supervisor_config:
@@ -71,29 +79,37 @@ nodes:
     type: condition
     expression: "${vote.decision == true}"
 
-  - id: generate-cyberbot
+  - id: write-cyberbot
     type: agent
-    agent: issue-detector
+    agent: git-agent
     input:
       repo: "${vars.repo}"
+      repo_path: "${vars.repo_path}"
       vote_decision: "${vote.decision}"
       patches: "${generate-fixes.patches}"
+      reviewers:
+        - { name: "security", decision: "${review-security.decision}" }
+        - { name: "quality", decision: "${review-quality.decision}" }
+        - { name: "arch", decision: "${review-arch.decision}" }
     instruction: |
-      Generate .cyberbot metadata JSON for this automated fix run.
-      {"version":"1.0","project":"${vars.repo}","fixes":[...],"reviewers":[...],"vote_outcome":true|false,"status":"completed|needs_review|rejected"}
-      Output STRICT JSON.
+      Write/update ${vars.repo_path}/.cyberbot metadata JSON for this run.
+      Strategy: "new-pr" — creates fix_branch=security-bot/fix-{timestamp}.
+      If .cyberbot exists from a prior run, read it and UPDATE (append to runs[]).
+      Output STRICT JSON of the full .cyberbot content.
 
   - id: summary-report
     type: agent
     agent: issue-detector
     input:
-      cyberbot_metadata: "${generate-cyberbot}"
+      cyberbot_metadata: "${write-cyberbot}"
+      vote_outcome: "${vote.decision}"
       repo: "${vars.repo}"
 
   - id: end
     type: noop
 
 edges:
+  - { from: fetch-issues, to: analyze-issues }
   - { from: analyze-issues, to: generate-fixes }
   - { from: generate-fixes, to: review-security }
   - { from: generate-fixes, to: review-quality }
@@ -101,9 +117,9 @@ edges:
   - { from: review-security, to: vote }
   - { from: review-quality, to: vote }
   - { from: review-arch, to: vote }
-  - { from: vote, to: supervisor-check }
-  - { from: supervisor-check, to: is-approved }
-  - { from: is-approved, to: generate-cyberbot, condition: true }
+  - { from: vote, to: supervisor }
+  - { from: supervisor, to: is-approved }
+  - { from: is-approved, to: write-cyberbot, condition: true }
   - { from: is-approved, to: summary-report, condition: false }
-  - { from: generate-cyberbot, to: summary-report }
+  - { from: write-cyberbot, to: summary-report }
   - { from: summary-report, to: end }

@@ -68,6 +68,7 @@ type NodeSpec struct {
 	Approval         *HumanApprovalConfig `json:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig    `json:"supervisor_config,omitempty"`
 	ChildNode        *NodeSpec            `json:"child_node,omitempty"`
+	RawInput         map[string]any       `json:"raw_input,omitempty"` // YAML-defined input
 	// Sandbox fields
 	Runtime   string            `json:"runtime,omitempty"`
 	Script    string            `json:"script,omitempty"`
@@ -122,6 +123,7 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Script:           n.Script,
 		Timeout:          n.Timeout,
 		Resources:        n.Resources,
+		RawInput:         n.Input,
 	}
 	if n.Node != nil {
 		spec.ChildNode = NodeSpecFromNode(n.Node)
