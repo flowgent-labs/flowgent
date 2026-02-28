@@ -234,7 +234,25 @@ func startServer(mode string) {
 		if endpoint == "" {
 			endpoint = "localhost:4317"
 		}
-		oc, err := tracing.NewProvider(context.Background(), serviceCfg.ServiceName, Version, &serviceCfg.Mgmt.OTEL, &serviceCfg.Mgmt.Metrics)
+		otelCfg := &tracing.OTELConfig{
+				Enabled:    serviceCfg.Mgmt.OTEL.Enabled,
+				Endpoint:   serviceCfg.Mgmt.OTEL.Endpoint,
+				Protocol:   serviceCfg.Mgmt.OTEL.Protocol,
+				Timeout:    serviceCfg.Mgmt.OTEL.Timeout,
+				SampleRate: serviceCfg.Mgmt.OTEL.SampleRate,
+			}
+			metricsCfg := &tracing.MetricsConfig{
+				Enabled:             serviceCfg.Mgmt.Metrics.Enabled,
+				Prometheus:          serviceCfg.Mgmt.Metrics.Prometheus,
+				ExportInterval:      serviceCfg.Mgmt.Metrics.ExportInterval,
+				HistogramBoundaries: tracing.MetricsBoundaries{
+					Task:  serviceCfg.Mgmt.Metrics.HistogramBoundaries.Task,
+					LLM:   serviceCfg.Mgmt.Metrics.HistogramBoundaries.LLM,
+					Queue: serviceCfg.Mgmt.Metrics.HistogramBoundaries.Queue,
+				},
+				Labels: serviceCfg.Mgmt.Metrics.Labels,
+			}
+			oc, err := tracing.NewProvider(context.Background(), serviceCfg.ServiceName, Version, otelCfg, metricsCfg)
 		if err != nil {
 			slog.Warn("OTEL initialization failed", "error", err)
 		} else {
