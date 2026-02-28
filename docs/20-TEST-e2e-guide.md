@@ -42,7 +42,7 @@ cd /home/agent/flowgent
 
 # Create test config (auto-expands env vars)
 cat > etc/flowgent-e2e.yaml << 'YEOF'
-# ... (copy from etc/flowgent.yaml, set storage.type=SQLITE, cache.provider=Memory)
+# ... (copy from etc/flowgent.yaml.fully.sample, set storage.type=SQLITE, cache.provider=Memory)
 YEOF
 
 # Start daemon
