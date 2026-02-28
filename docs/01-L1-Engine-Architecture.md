@@ -183,6 +183,19 @@ flowgent.io/mode:   "session" | "application"
 
 ---
 
+## 1.4 Key Design Decisions (KDD)
+
+| Decision | Rationale |
+|----------|-----------|
+| **Controller uses PG shard-scan, not K8s CRD watch** | Flow catalog lives in PG (transactional, no CRD complexity); hash-mod sharding (Apache ShardingSphere pattern) scales horizontally without leader election |
+| **Session TM admin-managed, Application TM auto-scale** | Economic boundary: shared = fixed capacity (admin controls cost), dedicated = elastic (VIP isolation) |
+| **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
+| **UI → PG → Controller (three-phase async)** | Decouples authoring from execution; Controller is the only component that writes runs; JM is the only component that executes them |
+| **JM unification: same binary, same poller, same DAG for both modes** | `FLOWGENT_NAMESPACE` is the only variable; avoids code duplication, bugs fix uniformly |
+| **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
+
+---
+
 ## 2. API Server — Multi-Tenant Gateway
 
 A **separate, always-on component** distinct from JobManager. Rationale:
