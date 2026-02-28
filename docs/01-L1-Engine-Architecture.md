@@ -1,47 +1,126 @@
 # Flowgent Distributed Engine Architecture
 
 **Date:** 2026-05-22
-**Status:** Implemented — Helm chart, Controller≈FlinkOperator, multi-tenant naming, E2E verified on k3s
+**Status:** Implemented — three-phase architecture (Design→Schedule→Execute), E2E verified on k3s
 
 ---
 
 ## 1. Architecture Overview
 
-Flowgent is a distributed multi-tenant AI agent orchestration engine, modeled after
-Apache Flink's session/application separation. Five runtime components:
+Flowgent is a distributed multi-tenant AI agent orchestration engine. The data flow
+spans three phases: **Design/Trigger** (sync — users author flows via UI/API/A2A,
+persisted to PG), **Scheduling** (async — Controller polls definitions, generates
+runs, launches JM pods for Application mode), and **Execution** (async — JM parses
+the flow JSON into a DAG, creates one ExecutionPlan per node in PG, and dispatches
+to TM pods via the ResourceManager).
 
 ```
-  External: REST / A2A / Webhook / Cron
+═══════════════════════════════════════════════════════════════════════════
+PHASE 1 — Flow Design & Trigger (Sync)
+═══════════════════════════════════════════════════════════════════════════
+
+  AI App Developers                    External Systems
+  (Flowgent UI, design flows)          (REST API / A2A / Webhook)
+       │                                        │
+       └────────────────┬───────────────────────┘
+                        │ Flow/Agent CRUD + Trigger
+                        ▼
+               ┌──────────────────┐
+               │   API Server     │  Multi-Tenant Gateway
+               │  Auth · Rate     │  Trigger → INSERT PENDING run
+               │  Limit · Tenant  │
+               └────────┬─────────┘
+                        │ INSERT / UPDATE
+                        ▼
+               ┌──────────────────────────────────────────┐
+               │     Store (PostgreSQL / SQLite)      │
+               │                                      │
+               │  agentflow_definition (flow spec)    │
+               │    └── agentflow_run (1:N)           │
+               │          └── execution_plan (1:N)    │
+               │                one plan per DAG node │
+               └──────────┬───────────┬───────────────┘
+                          │           │
+═════════════════════════════         │
+PHASE 2 — Scheduling (Async)         │
+═════════════════════════════         │
+                          │           │
+      poll agentflow_definitions      │
+      (every 10s, hash-mod shard)     │
+                          │           │
+                          ▼           │
+               ┌──────────────────────────────┐
+               │  Controller (N sharded pods) │
+               │  hash(flow_id) % N → owner   │
+               │                              │
+               │  Session mode:               │
+               │    INSERT agentflow_runs     │
+               │    (PENDING, namespace="")   │
+               │                              │
+               │  Application mode:           │
+               │    Create K8s JM Deployment  │
+               │    + INSERT agentflow_runs   │
+               │    (PENDING, namespace={ns}) │
+               └──────────────┬───────────────┘
                               │
+                              │ INSERT agentflow_runs (PENDING)
+                              │
+══════════════════════════════╪══════════════════════════════════
+PHASE 3 — Execution (Async)   │
+══════════════════════════════╪══════════════════════════════════
+                              │
+                              │  poll agentflow_runs (every 2s)
+                              │  namespace-filtered
                               ▼
-  ┌───────────────────────────────────────────────────────────┐
-  │  Controller (≈ Flink Operator, sharded PG scan)          │  ← L2 app driver
-  │  polls agentflow_definitions, hash-mod shards across pods │
-  └──────────────────────────┬────────────────────────────────┘
-                             │ INSERT agentflow_runs / create K8s JM Deployments
-                             ▼
-                        API Server
-                   (multi-tenant gateway)
-                             │
-               ┌─────────────┴──────────────┐
-               ▼                            ▼
-         JobManager (session)         JobManager (application)
-         ─ Helm-deployed, shared       ─ Controller-created, per-tenant-flow
-               │                            │
-               ▼                            ▼
-          Scheduler                     Scheduler
-               │                            │
-               ▼                            ▼
-         TaskManager(s)               TaskManager(s)
-         ─ manual scale               ─ JM auto-scale
-               │                            │
-               ▼                            ▼
-          MQTT Event Bus              MQTT Event Bus
-               │                            │
-               ▼                            ▼
-     ┌──────────────────────────────────────────┐
-     │  TaskExecutors (agent / tool / vote / …) │
-     └──────────────────────────────────────────┘
+               ┌─────────────────────────────────────────────┐
+               │         JobManager Pod(s)                   │
+               │                                             │
+               │  1. Parse AgentFlowSpec JSON                │
+               │     → Build DAG from Nodes + Edges          │
+               │  2. Create one ExecutionPlan per node       │
+               │     → Save each ExecutionPlan to PG         │
+               │  3. For each ready node (topo order):       │
+               │     rm.Schedule(plan)                       │
+               └──────────────────┬──────────────────────────┘
+                                  │ Schedule(plan)
+                                  ▼
+               ┌─────────────────────────────────────────────┐
+               │          ResourceManager                    │
+               │                                             │
+               │  Evaluate pending plans vs free slots:      │
+               │                                             │
+               │  LocalRM (all-in-one):                      │
+               │    In-process goroutine pool                │
+               │    INSUFFICIENT_RESOURCES if all slots busy │
+               │                                             │
+               │  K8sRM (production):                        │
+               │    MQTT dispatch + manage TM Deployment     │
+               │    Auto-scale TM replicas by queue depth    │
+               │    (ensure enough pods for pending plans)   │
+               └──────────────────┬──────────────────────────┘
+                                  │ dispatch ExecutionPlan
+                                  ▼
+               ┌─────────────────────────────────────────────┐
+               │        TaskManager Pods (K8s Deployment)    │
+               │                                             │
+               │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+               │  │ TM Pod 1 │  │ TM Pod 2 │  │ TM Pod N │  │
+               │  │ Slot 1   │  │ Slot 1   │  │ Slot 1   │  │
+               │  │ Slot 2   │  │ Slot 2   │  │ Slot 2   │  │
+               │  │ Slot 3   │  │ Slot 3   │  │ Slot 3   │  │
+               │  │ Slot 4   │  │ Slot 4   │  │ Slot 4   │  │
+               │  └──────────┘  └──────────┘  └──────────┘  │
+               │                                             │
+               │  1 Slot = 1 ExecutionPlan = 1 DAG Node     │
+               │  1 ExecutionPlan ∈ 1 AgentFlowRun          │
+               │  1 AgentFlowRun ∈ 1 AgentFlowDefinition    │
+               │                                             │
+               │  ExecutorRouter:                            │
+               │  agent | tool | supervisor | human          │
+               │  tribunal | condition | map | sandbox | ... │
+               │                                             │
+               │  Result → MQTT/Channel → back to JM         │
+               └─────────────────────────────────────────────┘
 ```
 
 ### 1.1 Session vs Application — The Only Difference Is JM Lifecycle
@@ -151,25 +230,48 @@ JWT-based auth (ES256/RS256/EdDSA). Configurable anonymous paths:
 `/public/**`, `/static/**`, `/_/healthz/**`, `/a2a/**`. OIDC and GitHub OAuth
 supported for user-facing endpoints.
 
-### 2.4 Submit Path (API → JM)
+### 2.4 Submit Path (API → Store → JM)
+
+The API Server is purely a persistence layer — it never calls the JM directly.
+There are two ways runs enter the system:
+
+**Path A: API Trigger (sync write, async execution)**
 
 ```
 POST /api/v1/{tenant}/agentflows/trigger
   → agentFlowHandler.TriggerWithVars()
     → spec := flows[agentFlowID]
-    → run := { AgentFlowID, Vars, Status:PENDING, Tenant }
-    → store.CreateAgentFlowRun(run)
-    → JM's runPoller picks up pending run
+    → run := { AgentFlowID, Vars, Status:PENDING, Tenant, Namespace:"" }
+    → store.CreateAgentFlowRun(run)       // ← sync ends here
+    → returns run_id to caller
+  ... (later, asynchronously) ...
+  → JM's runPoller (2s tick) finds PENDING run
+  → jm.Submit(run, spec) → JobMaster.Execute()
+```
+
+**Path B: Controller Dispatch (fully async)**
+
+```
+Controller polls agentflow_definitions every 10s:
+  → Hash-mod shard: only processes owned flows
+  → Session mode: INSERT agentflow_runs (PENDING, namespace="")
+  → Application mode: create K8s JM Deployment
+                      + INSERT agentflow_runs (PENDING, namespace={ns})
+  ... (later, asynchronously) ...
+  → Shared JM picks up namespace="" runs
+  → Dedicated JM picks up its namespace runs
+  → jm.Submit(run, spec) → JobMaster.Execute()
 ```
 
 ---
 
 ## 3. JobManager — Control Plane
 
-The JM is the singleton control plane (per session or per application). Receives
-agentflow run submissions and spawns a **JobMaster** per run. Each JobMaster
-builds a DAG from `AgentFlowSpec.Nodes` + `Edges` and executes nodes in
-topological order.
+The JM is the singleton control plane (per session or per application). It polls
+`agentflow_runs` for PENDING entries (with namespace filtering), parses the
+`AgentFlowSpec` JSON, and spawns a **JobMaster** per run. Each JobMaster builds
+a DAG from `AgentFlowSpec.Nodes` + `Edges`, creates `ExecutionPlan` records in PG,
+and executes nodes in topological order via the ResourceManager.
 
 ### 3.1 JobMaster — Per-Run DAG Orchestrator
 
@@ -179,15 +281,24 @@ state between runs.
 
 ```
 Execute(run, spec):
+  // Step 1: Build DAG from AgentFlowSpec JSON
   buildExecutionGraph(spec, runID)
-  → for each node in topological order:
-      plan := buildPlan(node, inputs)
-      result := rm.Schedule(plan)       // dispatch to TM
-      nodeOutputs[nodeID] = result
-      Done(nodeID)
-      if condition → SetConditionResult
-      if supervisor → validate action
+    → For each node: create ExecutionPlan in memory (planMap)
+    → One ExecutionPlan per DAG node
+
+  // Step 2: Topological loop — process each ready node
+  for each ready node (all dependencies satisfied):
+    plan := resolveInputs(node, previousOutputs)
+    store.SaveExecutionPlan(ctx, plan)    // persist to PG BEFORE dispatch
+    result := rm.Schedule(ctx, plan)      // dispatch to TM (MQTT or local)
+    store.SaveTaskResult(ctx, result)     // persist result to PG
+    Done(nodeID)
+    if condition → SetConditionResult → Skip(false-branch)
+    if supervisor → validate action → Inject/Retry/Abort
+
+  // Step 3: Finalize
   → run.Status = COMPLETED | FAILED
+  → Persist final state to PG
 ```
 
 ### 3.2 DAG State Methods
@@ -215,8 +326,11 @@ only difference is `FLOWGENT_NAMESPACE`:
 
 ## 4. Controller — Distributed Flow Driver (≈ Flink Operator)
 
-Polls PG for agentflow definitions, shards across pods via hash-mod, dispatches
-session (INSERT run) or application (create K8s JM Deployment + INSERT run).
+Polls PG for `agentflow_definitions`, shards across pods via hash-mod. For each owned
+flow, it either inserts a PENDING run (session mode, picked up by the shared JM) or
+creates a dedicated K8s JM Deployment + inserts a PENDING run (application mode,
+picked up by the dedicated JM). The Controller never calls JM directly — communication
+is through the database.
 
 ### 4.1 Hash-Mod Sharding
 
@@ -241,10 +355,10 @@ Every 10s:
 
 ### 4.3 Dispatch Detail
 
-| Priority | Mode | Controller Action | TM |
-|----------|------|-------------------|-----|
-| low/medium/high | Session | `INSERT agentflow_runs` (namespace="") | Admin-managed pool |
-| grade | Application | `kubectl create deploy flowgent-jm-{tenant}-{flow}` + `INSERT` (namespace={tenant}) | JM auto-scales |
+| Priority | Mode | Controller Action | Who Executes |
+|----------|------|-------------------|--------------|
+| low/medium/high | Session | `INSERT agentflow_runs` (namespace="") → shared JM picks up | Admin-managed TM pool |
+| grade | Application | Create K8s JM Deployment + `INSERT agentflow_runs` (namespace={tenant}) → dedicated JM picks up | JM auto-scales TMs via K8sRM |
 
 ### 4.4 Dual Format: Static YAML vs DB JSON
 
@@ -255,8 +369,10 @@ loaded at startup + hot-reload. DB JSON saved by UI via API, polled by Controlle
 
 ## 5. ResourceManager / Scheduler — Pluggable Dispatch
 
-Single entry point: `Schedule(ctx, plan) → TaskResult`. JM calls Schedule() and RM
-internally handles capacity, TM selection, and deployment.
+JM calls `Schedule(ctx, plan)` once per ready node. The RM evaluates pending plans
+against free slots to decide where and how to execute. In production (K8s) mode, it
+also manages TM pod lifecycle — creating the TM Deployment if it doesn't exist and
+auto-scaling replicas to meet demand.
 
 ```go
 type ResourceManager interface {
@@ -267,24 +383,41 @@ type ResourceManager interface {
 }
 ```
 
-### 5.1 LocalResourceManager
+### 5.1 LocalResourceManager (all-in-one mode)
 
-In-process goroutine pool. Non-blocking slot acquisition — returns
-`INSUFFICIENT_RESOURCES` when full (session mode capacity limit).
+Bounded in-process goroutine pool using a channel semaphore (`make(chan struct{},
+poolSize)`). `Schedule()` acquires a slot via non-blocking select — if all slots are
+busy, returns `INSUFFICIENT_RESOURCES` immediately. When a slot is acquired, calls
+`tm.ExecutePlan()` synchronously in the same goroutine.
 
-### 5.2 KubernetesResourceManager
+### 5.2 KubernetesResourceManager (production mode)
 
-Dispatches plans via MQTT to TM pods. `AutoScale` flag controls scaling:
-- `false` (session): admin-managed TM replicas, scaling loop is no-op
-- `true` (application): JM auto-scales TM Deployment via K8s API
+Two responsibilities: **plan dispatch** and **TM pod management**.
+
+**Dispatch**: `Schedule()` serializes the ExecutionPlan to JSON and publishes it to
+an MQTT topic. TM pods subscribed to the topic dequeue and execute plans. Returns
+immediately after publish (fire-and-forget).
+
+**TM pod management**: Manages a K8s Deployment (`flowgent-taskmanager`). On init,
+`ensureDeployment()` checks if the Deployment exists and creates it if not. A
+background `scalingLoop` periodically evaluates `pendingPlans / slotsPerTM` against
+current replicas and scales the Deployment up or down via the K8s API.
+
+`AutoScale` flag:
+- `false` (session): admin-managed TM replicas (Helm `replicas`), scaling loop is no-op
+- `true` (application): JM auto-scales TM replicas based on queue depth
 
 ---
 
 ## 6. TaskManager — Persistent Worker
 
-Long-running K8s Deployment. Consumes `ExecutionPlan` messages from MQTT queue.
-Each TM has N `SlotWorker` goroutines (typically 4). Slots execute plans via
-`TaskExecutorRouter` and report results back to JM.
+Long-running K8s Deployment (or in-process in all-in-one mode). Each TM pod runs N
+`SlotWorker` goroutines (default 4). Each slot independently dequeues one
+`ExecutionPlan` from the MQTT queue (or channel), executes it via the
+`TaskExecutorRouter`, and reports the result back to JM via MQTT.
+
+The key relationship: **1 Slot = 1 ExecutionPlan = 1 DAG Node**. A TM pod with 4
+slots executes up to 4 DAG nodes concurrently.
 
 ### 6.1 TaskExecutorRouter — 10 Node Types
 
@@ -324,8 +457,24 @@ flowgent/notify/queue/{tenant}/{flow} — Notification queue
 
 ### 8.1 ExecutionPlan
 
-Serializable task description dispatched to TMs. Contains: PlanID, NodeID,
-AgentFlowRunID, TaskType, Input, RetryPolicy, and Agent/Tool references.
+The `ExecutionPlan` is the atomic unit of work dispatched to TM slots. The data
+hierarchy is:
+
+```
+agentflow_definition (flow spec, defines Nodes + Edges)
+  └── agentflow_run (one invocation of a flow, status: PENDING→RUNNING→COMPLETED/FAILED)
+        ├── execution_plan (plan-node-A, 1:1 with DAG node A)
+        ├── execution_plan (plan-node-B, 1:1 with DAG node B)
+        └── execution_plan (plan-node-C, 1:1 with DAG node C)
+```
+
+**Each DAG node produces exactly one ExecutionPlan, and every ExecutionPlan
+belongs to exactly one AgentFlowRun.** A flow with N nodes creates N plans per run.
+Each plan is serialized to JSON, persisted to PG, then dispatched to a TM slot for
+execution.
+
+Each ExecutionPlan contains: PlanID, NodeID, AgentFlowRunID, TaskType, Input,
+RetryPolicy, and Agent/Tool references.
 
 ### 8.2 TaskCheckpoint
 
@@ -368,34 +517,75 @@ Flow completes → Controller cleans up Deployment.
 
 ## 10. Execution Flow (End to End)
 
+There are two paths to trigger a run:
+
+### 10.1 Path A: API Trigger (Sync → Async)
+
 ```
-1. TRIGGER
-   → REST/A2A/Cron/Webhook → POST /api/v1/{tenant}/agentflows/trigger
+1. TRIGGER (sync)
+   → REST/A2A/Webhook → POST /api/v1/{tenant}/agentflows/trigger
    → agentFlowHandler validates spec exists
    → INSERT INTO agentflow_runs (status=PENDING)
+   → returns run_id to caller    ← sync ends here
 
-2. DISPATCH (JM runPoller)
-   → Polls agentflow_runs for PENDING (namespace-filtered)
+2. JM POLL (async)
+   → JM's runPoller (2s tick) finds PENDING run (namespace-filtered)
    → jm.Submit(run, spec) spawns JobMaster
-   → BuildGraphNodes from spec → DAG state initialized
+```
+
+### 10.2 Path B: Controller Dispatch (Fully Async)
+
+```
+1. CONTROLLER POLL
+   → Controller polls agentflow_definitions every 10s
+   → Hash-mod shard: only processes owned flows
+   → Detects flow trigger condition (cron / interval / on-new-definition)
+   → Session mode: INSERT agentflow_runs (PENDING, namespace="")
+   → Application mode: kubectl create deploy flowgent-jm-{tenant}-{flow}
+                       + INSERT agentflow_runs (PENDING, namespace={tenant})
+
+2. JM POLL
+   → Shared JM picks up namespace="" runs
+   → Dedicated JM picks up its own namespace runs
+   → jm.Submit(run, spec) spawns JobMaster
+```
+
+### 10.3 Common Execution Path (Both Paths)
+
+```
+3. DAG BUILD (JobMaster.Execute)
+   → Parses agentflow definition JSON (AgentFlowSpec.Nodes + Edges)
+   → BuildGraphNodes → initializes DAG state
+   → Creates ExecutionPlans in PG (one per node)
    → run.Status = RUNNING
 
-3. TOPOLOGICAL LOOP (JobMaster.Execute)
+4. TOPOLOGICAL LOOP
    ready := jm.Ready()
    for each ready node:
      plan := buildPlan(node, inputs, resolved vars)
-     result := rm.Schedule(plan)  → MQTT or local slot
+     result := rm.Schedule(plan)  → MQTT (K8s) or local slot (all-in-one)
      Done(node) / Fail(node)
      condition → SetConditionResult → Skip(false-branch)
      supervisor → validate action → Inject/Retry/Abort
 
-4. COMPLETION
+5. RM DISPATCH
+   → Evaluates pending plans vs free slots
+   → LocalRM: goroutine pool, returns INSUFFICIENT_RESOURCES if full
+   → K8sRM: publishes plan to MQTT topic, TM pods consume;
+     auto-scales TM replicas based on queue depth (application mode)
+
+6. TM EXECUTION
+   → SlotWorker dequeues ExecutionPlan from MQTT / channel
+   → ExecutorRouter dispatches to correct executor (agent/tool/supervisor/...)
+   → Result published back to JM via MQTT
+
+7. COMPLETION
    → IsComplete() → run.Status = COMPLETED
    → HasFailed()  → run.Status = FAILED
    → Persist final state to PG
 ```
 
-### 10.1 TM Failover
+### 10.4 TM Failover
 
 ```
 1. TM sends heartbeat every 5s
