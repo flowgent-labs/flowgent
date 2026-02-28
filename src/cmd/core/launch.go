@@ -643,10 +643,16 @@ func startTaskManager() error {
 	}
 	defer q.Close()
 
-	sqliteDir := "/tmp/flowgent/sqlite"
-	if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" { sqliteDir = svcCfg.Storage.SQLite.Dir }
-	dbStore := store.NewSQLiteStore(sqliteDir)
-	if err := dbStore.Init(context.Background()); err != nil { return fmt.Errorf("init store: %w", err) }
+	var dbStore engine.Store
+	if dbURL := envOr("FLOWGENT_DATABASE_URL", ""); dbURL != "" {
+		dbStore = store.NewPostgresStore(dbURL)
+	} else {
+		sqliteDir := "/tmp/flowgent/sqlite"
+		if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" { sqliteDir = svcCfg.Storage.SQLite.Dir }
+		s := store.NewSQLiteStore(sqliteDir)
+		if err := s.Init(context.Background()); err != nil { return fmt.Errorf("init store: %w", err) }
+		dbStore = s
+	}
 
 	var agentPtrs []*config.AgentDef
 	if svcCfg != nil {
