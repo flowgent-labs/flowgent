@@ -1,7 +1,7 @@
-# Flowgent Samples Catalog
+# Flowgent Use Cases
 
-Ready-to-use sample applications demonstrating Flowgent's orchestration capabilities.
-Each sample links to its corresponding AgentFlow and Agent definition YAML files under
+Real-world use cases demonstrating Flowgent's orchestration capabilities.
+Each use case links to its corresponding AgentFlow and Agent definition YAML files under
 `examples/`. Structure and naming follow the convention described in the
 [architecture doc](01-L1-Engine-Architecture.md#162-directory-layout).
 
@@ -117,13 +117,13 @@ Quick-start YAML configs for running Flowgent in different modes:
 
 ---
 
-## Adding New Samples
+## Adding New Use Cases
 
 1. Create AgentFlow YAML in `examples/flows/` with numbered prefix (`NN-name.yaml`)
 2. Create Agent YAMLs in `examples/agents/` if introducing new agent roles
-3. Add a section in this catalog describing the sample, its architecture, and the
+3. Add a section in this catalog describing the use case, its architecture, and the
    linked config files
 4. For new MCP integrations, add the MCP server source under `examples/mcp-*/`
 
-Keep sample configs self-contained — all agents and flows referenced by a sample
+Keep use case configs self-contained — all agents and flows referenced by a use case
 should exist under `examples/`.
