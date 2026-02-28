@@ -1,4 +1,4 @@
-{{- if eq .Values.mode "application" }}
+{{- if eq .Values.global.mode "application" }}
 {{- if .Values.controller.rbac.create }}
 apiVersion: v1
 kind: ServiceAccount

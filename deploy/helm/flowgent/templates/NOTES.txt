@@ -2,7 +2,7 @@
 
 Release: {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
-Mode: {{ .Values.mode }}
+Mode: {{ .Values.global.mode }}
 
 {{- if .Values.wallet.generatedMasterKey }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -31,7 +31,7 @@ Mode: {{ .Values.mode }}
 {{- end }}
 
 ━━━ Components ━━━
-{{- if eq .Values.mode "session" }}
+{{- if eq .Values.global.mode "session" }}
 ━━━ Session Mode — Shared Pool ━━━
   API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
   JobManager       — {{ .Values.jobmanager.replicas }} replicas{{ if .Values.jobmanager.ha.enabled }} (HA){{ end }}
@@ -71,7 +71,7 @@ Mode: {{ .Values.mode }}
     --from-literal=nodes='redis://host:6379' \
     --from-literal=password='your-password'
 {{- end }}
-{{- if eq .Values.mode "session" }}
+{{- if eq .Values.global.mode "session" }}
 ━━━ Scale ━━━
   helm upgrade {{ .Release.Name }} . --set taskmanager.replicas=8
 {{- end }}

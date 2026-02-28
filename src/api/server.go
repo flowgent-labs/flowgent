@@ -34,7 +34,7 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/{id}", agentFlows.GetDefinition)
 	mux.HandleFunc("PUT /api/v1/{tenant}/agentflows/{id}", agentFlows.UpdateDefinition)
 	mux.HandleFunc("DELETE /api/v1/{tenant}/agentflows/{id}", agentFlows.DeleteDefinition)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/trigger", agentFlows.Trigger)
+	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/~/trigger", agentFlows.Trigger)
 	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/{id}/trigger", agentFlows.TriggerByID)
 
 	// ── Runs (tenant-scoped) ───────────────────────────────

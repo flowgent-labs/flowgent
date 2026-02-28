@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/model"
@@ -156,6 +159,7 @@ func (h *AgentFlowHandler) TriggerWithVars(w http.ResponseWriter, r *http.Reques
 		Priority:    spec.Priority,
 		Namespace:   spec.Namespace,
 	}
+	slog.Info("TRIGGER_CREATE_RUN", "agentflow", agentFlowID, "store_type", fmt.Sprintf("%T", h.store))
 	if err := h.store.CreateAgentFlowRun(r.Context(), run); err != nil {
 		h.logger.Error("create agentflow run", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -184,6 +188,7 @@ func (h *AgentFlowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	if req.Trigger.Type == "" {
 		req.Trigger = model.TriggerInfo{Type: "api", Source: "rest"}
 	}
+	fmt.Fprintf(os.Stderr, "TRIGGER_CALLED agentflow=%s store=%T\n", req.AgentFlowID, h.store)
 	h.TriggerWithVars(w, r, req.AgentFlowID, req.Vars, req.Trigger)
 }
 

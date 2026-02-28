@@ -2,19 +2,19 @@
 # Flowgent Helm Chart — Default Values
 # ═══════════════════════════════════════════════════════════════
 
-# Deployment mode: session | application
-mode: session
-
-# Application-mode settings (used by Controller when creating dedicated JMs)
-application:
-  namespacePrefix: "flowgent"
-  autoCleanup: true
-  taskmanager:
-    slots: 4
-  sandbox:
-    slots: 4
-
 global:
+  # Deployment mode: session | application
+  mode: session
+
+  # Application-mode settings (used by Controller when creating dedicated JMs)
+  application:
+    namespacePrefix: "flowgent"
+    autoCleanup: true
+    taskmanager:
+      slots: 4
+    sandbox:
+      slots: 4
+
   image:
     repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent
     tag: latest

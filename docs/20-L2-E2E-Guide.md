@@ -21,7 +21,7 @@ sudo podman save localhost/flowgent:latest | sudo k3s ctr images import -
 
 # Deploy with A2A + sandbox (wallet disabled)
 helm upgrade --install flowgent deploy/helm/flowgent \
-  --set mode=session \
+  --set global.mode=session \
   --set global.image.repository=localhost/flowgent \
   --set global.image.tag=latest \
   --set a2a.enabled=true \

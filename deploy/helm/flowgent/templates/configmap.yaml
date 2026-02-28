@@ -8,7 +8,7 @@ data:
   flowgent.yaml: |
     service-name: {{ include "flowgent.name" . }}
     deployment:
-      mode: {{ .Values.mode | quote }}
+      mode: {{ .Values.global.mode | quote }}
     server:
       host: "0.0.0.0"
       port: {{ .Values.apiserver.service.restPort }}

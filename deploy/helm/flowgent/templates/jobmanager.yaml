@@ -1,4 +1,4 @@
-{{- if eq .Values.mode "session" }}
+{{- if eq .Values.global.mode "session" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

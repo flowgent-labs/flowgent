@@ -4,6 +4,10 @@ services:
     image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3-vmware-photon-5.0
     container_name: sonarqube-postgres
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: "2G" }
+        reservations: { cpus: "0.5", memory: "512M" }
     environment:
       - POSTGRESQL_MASTER_PORT_NUMBER=5432
       - POSTGRESQL_PORT_NUMBER=5432
@@ -33,6 +37,10 @@ services:
     image: registry.cn-shenzhen.aliyuncs.com/wl4g/sonarqube:26.4.0.121862-community-amd64 # 26.4.0.121862-community-amd64
     container_name: sonarqube
     restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: "4G" }
+        reservations: { cpus: "0.5", memory: "2G" }
     environment:
       SONAR_JDBC_URL: jdbc:postgresql://sonarqube-postgres:5432/sonarqube
       SONAR_JDBC_USERNAME: sonarqube
