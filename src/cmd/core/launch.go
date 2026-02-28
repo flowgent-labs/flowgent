@@ -279,21 +279,8 @@ func startServer(mode string) {
 	}
 
 	// ── REST API Server ────────────────────────────────
-	restMux := http.NewServeMux()
-	restMux.HandleFunc("GET /_/healthz", healthHandler.Healthz)
-	restMux.HandleFunc("GET /_/openapi.yaml", api.OpenAPIHandler)
-	restMux.HandleFunc("GET /_/swagger-ui", api.SwaggerUIHandler)
-	restMux.HandleFunc("GET /api/v1/agentflows", agentFlowHandler.ListDefinitions)
-	restMux.HandleFunc("POST /api/v1/agentflows/trigger", agentFlowHandler.Trigger)
-	restMux.HandleFunc("GET /api/v1/runs", agentFlowHandler.ListRuns)
-	restMux.HandleFunc("GET /api/v1/runs/{id}", agentFlowHandler.GetRun)
-	restMux.HandleFunc("GET /api/v1/runs/{run_id}/tasks", agentFlowHandler.GetTaskRuns)
-	restMux.HandleFunc("POST /api/v1/webhooks/{provider}", triggerDispatcher.Webhook)
-	restMux.HandleFunc("POST /api/v1/webhooks/github", triggerDispatcher.Webhook)
-	restMux.HandleFunc("POST /api/v1/human/{token}/approve", humanHandler.Approve)
-	restMux.HandleFunc("POST /api/v1/human/{token}/reject", humanHandler.Reject)
-
-	var restHandler http.Handler = restMux
+		restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, humanHandler, triggerDispatcher)
+		var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
 		restHandler = authMiddleware(serviceCfg.Auth, restMux)
 	}
@@ -558,7 +545,10 @@ func startRunPoller(ctx context.Context, s engine.Store, tm *engine.TaskManager,
 					continue
 				}
 				sem <- struct{}{}
-				jm := engine.NewJobManager(s, q, logger)
+				localSched, _ := engine.NewLocalScheduler(&engine.SchedulerConfig{
+					Type: engine.SchedulerTypeLocal, TaskManager: tm, PoolSize: maxConcurrent,
+				})
+				jm := engine.NewJobManager(s, q, localSched, logger)
 				jm.SetTimeout(flowTimeout)
 				if maxRetries > 0 {
 					jm.SetNodeLimit(maxRetries)

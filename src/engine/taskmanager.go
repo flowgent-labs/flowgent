@@ -146,3 +146,21 @@ func (tm *TaskManager) Stop() {
 		close(tm.stopCh)
 	}
 }
+
+// ExecutePlan executes a single ExecutionPlan via the router.
+// Used by LocalScheduler for in-process execution.
+func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *model.ExecutionPlan, task *model.TaskRun) (*model.TaskResult, error) {
+	task.Input = plan.Input
+	scope := map[string]map[string]any{"input": plan.Input}
+	result, err := tm.router.Execute(ctx, plan, scope)
+	if err != nil {
+		return nil, err
+	}
+	task.Output = result.Output
+	task.Status = model.Success
+	now := time.Now()
+	task.FinishedAt = &now
+	plan.FinishedAt = &now
+	_ = tm.store.UpdateTaskRun(ctx, task)
+	return result, nil
+}

@@ -167,9 +167,21 @@ func NewTestTaskManager(store Store, mcp map[string]MCPClient, agents []*config.
 func NewTestJobManager(mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) (*MockStore, *JobManager) {
 	s := NewMockStore()
 	q := NewTestQueue()
-	jm := NewJobManager(s, q, util.NewLogger("JSON", "DEBUG"))
+	sched := &TestScheduler{slots: 10}
+	jm := NewJobManager(s, q, sched, util.NewLogger("JSON", "DEBUG"))
 	return s, jm
 }
+
+// TestScheduler is a no-op scheduler for unit tests.
+type TestScheduler struct{ slots int }
+func (ts *TestScheduler) Type() SchedulerType { return SchedulerTypeLocal }
+func (ts *TestScheduler) EnsureCapacity(ctx context.Context, n int) (int, error) { return ts.slots, nil }
+func (ts *TestScheduler) SubmitTask(ctx context.Context, p *model.ExecutionPlan) (*model.TaskResult, error) {
+	return &model.TaskResult{Output: map[string]any{"status": "ok"}}, nil
+}
+func (ts *TestScheduler) AvailableSlots() int { return ts.slots }
+func (ts *TestScheduler) TotalSlots() int { return ts.slots }
+func (ts *TestScheduler) Shutdown(ctx context.Context) error { return nil }
 
 func BoolPtr(b bool) *bool { return &b }
 func MustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }

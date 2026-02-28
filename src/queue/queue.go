@@ -7,12 +7,14 @@ import (
 
 // Message represents a queue message for distributed execution.
 type Message struct {
-	ID        string `json:"id"`
-	TaskRunID string `json:"task_run_id"`
-	NodeID    string `json:"node_id"`
-	Payload   []byte `json:"payload,omitempty"`
-	Attempts  int    `json:"attempts"`
-	Status    string `json:"status"`
+	ID        string            `json:"id"`
+	Topic     string            `json:"topic"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	TaskRunID string            `json:"task_run_id"`
+	NodeID    string            `json:"node_id"`
+	Payload   []byte            `json:"payload,omitempty"`
+	Attempts  int               `json:"attempts"`
+	Status    string            `json:"status"`
 }
 
 // Heartbeat is a TM liveness signal published periodically.
