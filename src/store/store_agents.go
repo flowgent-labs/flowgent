@@ -82,11 +82,17 @@ func (s *PostgresStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.Age
 	if err != nil {
 		return fmt.Errorf("marshal agentflow spec: %w", err)
 	}
+	// Two-step: get next version first (avoids PG parameter ambiguity with $1 in subquery)
+	var nextVer int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version),0)+1 FROM agentflow_definitions WHERE agentflow_id=$1`, spec.ID).Scan(&nextVer); err != nil {
+		nextVer = 1
+	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment, priority, tenant_id, namespace, mode, labels)
-		 VALUES ($1, (SELECT COALESCE(MAX(version),0)+1 FROM agentflow_definitions WHERE agentflow_id=$1), $2, $3, $4, $5, $6, $7, $8, $9)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (agentflow_id, version) DO NOTHING`,
-		spec.ID, defJSON, createdBy, comment,
+		spec.ID, nextVer, defJSON, createdBy, comment,
 		spec.Priority, spec.TenantID, spec.Namespace, string(spec.EffectiveMode()), toJSON(spec.Labels))
 	return err
 }
@@ -210,10 +216,15 @@ func (s *SQLiteStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.Agent
 	if err != nil {
 		return fmt.Errorf("marshal agentflow spec: %w", err)
 	}
+	var nextVer int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version),0)+1 FROM agentflow_definitions WHERE agentflow_id=?1`, spec.ID).Scan(&nextVer); err != nil {
+		nextVer = 1
+	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment, priority, tenant_id, namespace, mode, labels)
-		 VALUES (?1, (SELECT COALESCE(MAX(version),0)+1 FROM agentflow_definitions WHERE agentflow_id=?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
-		spec.ID, defJSON, createdBy, comment,
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+		spec.ID, nextVer, defJSON, createdBy, comment,
 		spec.Priority, spec.TenantID, spec.Namespace, string(spec.EffectiveMode()), toJSON(spec.Labels))
 	return err
 }
