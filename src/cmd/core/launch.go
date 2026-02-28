@@ -131,52 +131,42 @@ func runA2AServer(action, pidFile string) error {
 	return serverProcess("a2a", action, pidFile, "a2a")
 }
 
-// runTaskManager starts a persistent TM worker for distributed mode.
 func runTaskManager(action, pidFile string) error {
 	switch action {
 	case "start":
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file: %w", err)
-		}
-		defer os.Remove(pidFile)
+		if pidFile != "" { writePID(pidFile) }
 		return startTaskManager()
 	case "stop":
 		return stopByPID(pidFile)
 	case "restart":
 		_ = stopByPID(pidFile)
 		time.Sleep(500 * time.Millisecond)
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file: %w", err)
-		}
-		defer os.Remove(pidFile)
+		if pidFile != "" { writePID(pidFile) }
 		return startTaskManager()
 	default:
 		return fmt.Errorf("unknown taskmanager action: %s", action)
 	}
 }
 
-// runJobManager starts a standalone JM for distributed control plane.
 func runJobManager(action, pidFile string) error {
 	switch action {
 	case "start":
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file: %w", err)
-		}
-		defer os.Remove(pidFile)
+		if pidFile != "" { writePID(pidFile) }
 		return startJobManager()
 	case "stop":
 		return stopByPID(pidFile)
 	case "restart":
 		_ = stopByPID(pidFile)
 		time.Sleep(500 * time.Millisecond)
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file: %w", err)
-		}
-		defer os.Remove(pidFile)
+		if pidFile != "" { writePID(pidFile) }
 		return startJobManager()
 	default:
 		return fmt.Errorf("unknown jobmanager action: %s", action)
 	}
+}
+
+func writePID(pidFile string) {
+	_ = os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644)
 }
 
 // startServer initialises all subsystems and starts the REST and A2A HTTP servers.
@@ -629,131 +619,142 @@ func matchGlob(pattern, path string) bool {
 
 // ─── TaskManager subcommand ─────────────────────────────
 
+
+// ─── TaskManager subcommand ─────────────────────────────
+
 func startTaskManager() error {
-	svcCfg, err := config.Load(cfgPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
+	svcCfg, _ := config.Load(cfgPath)
+	logMode, logLevel := "JSON", "DEBUG"
+	if svcCfg != nil { logMode, logLevel = svcCfg.Logging.Mode, svcCfg.Logging.Level }
+	logger := utils.NewLogger(logMode, logLevel)
 
-	tmID := os.Getenv("FLOWGENT_TM_ID")
-	if tmID == "" {
-		hostname, _ := os.Hostname()
-		tmID = fmt.Sprintf("tm-%s", hostname)
-	}
+	tmID := envOr("FLOWGENT_TM_ID", "tm-"+hostname())
+	slotCount := envIntOr("FLOWGENT_TM_SLOTS", 4)
 
-	q, err := queue.NewMQTTQueue(&queue.MQTTConfig{
-		Broker:   os.Getenv("FLOWGENT_MQTT_BROKER"),
-		ClientID: tmID,
-		Topic:    "flowgent/exec",
-	})
-	if err != nil {
-		return fmt.Errorf("connect MQTT: %w", err)
+	var q queue.Queue
+	if broker := envOr("FLOWGENT_MQTT_BROKER", "tcp://127.0.0.1:1883"); broker != "" {
+		mq, err := queue.NewMQTTQueue(&queue.MQTTConfig{Broker: broker, ClientID: tmID, Topic: "flowgent/exec"})
+		if err != nil {
+			log.Printf("WARNING: MQTT connect failed (%v), using memory queue for dev", err)
+			q = queue.NewMemoryQueue(1000)
+		} else { q = mq }
+	} else {
+		q = queue.NewMemoryQueue(1000)
 	}
 	defer q.Close()
 
-	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
-	storeImpl := store.NewSQLiteStore(svcCfg.Storage.SQLite.Dir)
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
+	sqliteDir := "/tmp/flowgent/sqlite"
+	if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" { sqliteDir = svcCfg.Storage.SQLite.Dir }
+	dbStore := store.NewSQLiteStore(sqliteDir)
+	if err := dbStore.Init(context.Background()); err != nil { return fmt.Errorf("init store: %w", err) }
 
-	loadedAgents, err := config.LoadAgents(svcCfg, cfgPath)
-	if err != nil { return fmt.Errorf("load agents: %w", err) }
-	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
-	for i := range loadedAgents { agentPtrs[i] = &loadedAgents[i] }
+	var agentPtrs []*config.AgentDef
+	if svcCfg != nil {
+		if agents, err := config.LoadAgents(svcCfg, cfgPath); err == nil {
+			agentPtrs = make([]*config.AgentDef, len(agents))
+			for i := range agents { agentPtrs[i] = &agents[i] }
+		}
+	}
 
 	tm, err := taskmanager.NewTaskManager(&engine.TaskManagerConfig{
-		ID:        tmID,
-		SlotCount: 4,
-		Queue:     q,
-		Store:     storeImpl,
-		Agents:    agentPtrs,
-		Logger:    logger,
+		ID: tmID, SlotCount: slotCount, Queue: q, Store: dbStore,
+		Agents: agentPtrs, Logger: logger,
 	})
-	if err != nil {
-		return fmt.Errorf("create taskmanager: %w", err)
-	}
+	if err != nil { return fmt.Errorf("create taskmanager: %w", err) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	if err := tm.Start(ctx); err != nil {
-		return fmt.Errorf("start taskmanager: %w", err)
-	}
-	log.Printf("TaskManager %s started (slots=%d)", tmID, 4)
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	<-sigCh
-	log.Printf("TaskManager %s shutting down", tmID)
-	cancel()
-	time.Sleep(2 * time.Second)
+	if err := tm.Start(ctx); err != nil { return fmt.Errorf("start: %w", err) }
+	log.Printf("TaskManager %s started (slots=%d)", tmID, slotCount)
+	waitSignal()
+	cancel(); time.Sleep(2 * time.Second)
 	return nil
 }
 
 // ─── JobManager subcommand ───────────────────────────────
 
 func startJobManager() error {
-	svcCfg, err := config.Load(cfgPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
+	svcCfg, _ := config.Load(cfgPath)
+	logMode, logLevel := "JSON", "DEBUG"
+	if svcCfg != nil { logMode, logLevel = svcCfg.Logging.Mode, svcCfg.Logging.Level }
+	logger := utils.NewLogger(logMode, logLevel)
+	jmID := "jm-" + hostname()
 
-	q, err := queue.NewMQTTQueue(&queue.MQTTConfig{
-		Broker:   os.Getenv("FLOWGENT_MQTT_BROKER"),
-		ClientID: "jm-" + svcCfg.ServiceName,
-		Topic:    "flowgent/exec",
-	})
-	if err != nil {
-		return fmt.Errorf("connect MQTT: %w", err)
-	}
+	var q queue.Queue
+	if broker := envOr("FLOWGENT_MQTT_BROKER", "tcp://127.0.0.1:1883"); broker != "" {
+		mq, err := queue.NewMQTTQueue(&queue.MQTTConfig{Broker: broker, ClientID: jmID, Topic: "flowgent/exec"})
+		if err != nil { q = queue.NewMemoryQueue(1000) } else { q = mq }
+	} else { q = queue.NewMemoryQueue(1000) }
 	defer q.Close()
 
-	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
-	storeImpl := store.NewPostgresStore(os.Getenv("FLOWGENT_DATABASE_URL"))
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
+	var storeImpl engine.Store
+	if dbURL := envOr("FLOWGENT_DATABASE_URL", ""); dbURL != "" {
+		storeImpl = store.NewPostgresStore(dbURL)
+	} else {
+		sqliteDir := "/tmp/flowgent/sqlite"
+		if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" { sqliteDir = svcCfg.Storage.SQLite.Dir }
+		dbStore := store.NewSQLiteStore(sqliteDir)
+		if err := dbStore.Init(context.Background()); err != nil { return fmt.Errorf("init store: %w", err) }
+		storeImpl = dbStore
 	}
 
-	rm, err := scheduler.NewResourceManager(&scheduler.ResourceManagerConfig{
-		Provider:              engine.ProviderKubernetes,
-		SlotsPerTM:        4,
-		MinTMs:            2,
-		MaxTMs:            10,
-		K8sNamespace:      os.Getenv("KUBERNETES_NAMESPACE"),
-		K8sDeploymentName: "flowgent-taskmanager",
-	})
-	if err != nil {
-		return fmt.Errorf("create resource manager: %w", err)
+	var rm scheduler.ResourceManager
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		rm, _ = scheduler.NewResourceManager(&scheduler.ResourceManagerConfig{
+			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
+			K8sNamespace: envOr("KUBERNETES_NAMESPACE", "default"),
+			K8sDeploymentName: envOr("FLOWGENT_TM_DEPLOY", "flowgent-taskmanager"),
+			Store: storeImpl, Logger: logger,
+		})
+	}
+	if rm == nil {
+		rm, _ = scheduler.NewResourceManager(&scheduler.ResourceManagerConfig{
+			Provider: engine.ProviderLocal, PoolSize: 10, Store: storeImpl, Logger: logger,
+		})
 	}
 
 	jm, err := jobmanager.NewJobManager(storeImpl, rm, logger, svcCfg)
-	if err != nil { return fmt.Errorf("create job manager: %w", err) }
+	if err != nil { return fmt.Errorf("create jobmanager: %w", err) }
+
+	flows := make(map[string]*model.AgentFlowSpec)
+	if svcCfg != nil {
+		if f, sf, err := config.LoadAgentFlows(svcCfg, cfgPath); err == nil {
+			for i := range f { flows[f[i].ID] = &f[i] }
+			for k, v := range sf { flows[k] = &v }
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	go startRunPoller(ctx, storeImpl, jm, mapFromStore(storeImpl))
-
-	log.Printf("JobManager started (rm=%s)", rm.Provider())
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	<-sigCh
-	log.Println("JobManager shutting down")
-	cancel()
-	time.Sleep(2 * time.Second)
+	go startRunPoller(ctx, storeImpl, jm, flows)
+	log.Printf("JobManager started (scheduler=%s)", rm.Provider())
+	waitSignal()
+	cancel(); time.Sleep(2 * time.Second)
 	return nil
 }
 
-func mapFromStore(s store.Store) map[string]*model.AgentFlowSpec {
-	defs, _ := s.ListAgentFlowDefinitions(context.Background())
-	out := make(map[string]*model.AgentFlowSpec)
-	for _, d := range defs {
-		spec := &model.AgentFlowSpec{}
-		if err := json.Unmarshal(d.Definition, spec); err == nil {
-			out[spec.ID] = spec
-		}
+// ─── Helpers ──────────────────────────────────────────────
+
+func waitSignal() {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	<-sigCh
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" { return v }
+	return def
+}
+
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil { return n }
 	}
-	return out
+	return def
+}
+
+func hostname() string {
+	h, _ := os.Hostname()
+	if h == "" { h = "unknown" }
+	return h
 }
