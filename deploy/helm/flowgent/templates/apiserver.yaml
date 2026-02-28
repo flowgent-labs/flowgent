@@ -43,7 +43,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /_/healthz
-              port: mgmt
+              port: rest
             initialDelaySeconds: 10
             periodSeconds: 30
       volumes:
