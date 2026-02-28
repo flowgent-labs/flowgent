@@ -105,31 +105,51 @@ flowgent.io/mode:   "session" | "application"
 
 ## 2. API Server — Multi-Tenant Gateway
 
-A **separate, always-on component** distinct from JobManager. Handles auth, rate
-limiting, webhook ingress BEFORE any agentflow execution. In application mode, acts
-as the operator that provisions dedicated JM clusters for VIP tenants.
+A **separate, always-on component** distinct from JobManager. Rationale:
+1. **Multi-tenancy**: Auth (JWT/OIDC/GitHub OAuth), rate limiting, tenant routing
+   BEFORE execution — JM is not burdened with auth concerns
+2. **Webhook ingress**: Single stable endpoint for GitHub/GitLab → validated, routed
+3. **A2A protocol**: External AI agents discover Flowgent via `/.well-known/agent.json`
+4. **Scale independence**: API Server scales independently (stateless, 2+ replicas);
+   JM is stateful (leader-elected)
 
 ### 2.1 REST API (Port 9999)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/{tenant}/agentflows` | List flows (static YAML + DB) |
-| POST | `/api/v1/{tenant}/agentflows` | Create flow definition → PG |
-| GET/PUT/DELETE | `/api/v1/{tenant}/agentflows/{id}` | CRUD operations |
-| POST | `/api/v1/{tenant}/agentflows/trigger` | Trigger execution |
-| GET | `/api/v1/{tenant}/runs/{id}` | Query run status |
-| GET/POST | `/api/v1/{tenant}/agents` | Agent CRUD |
-| GET | `/_/healthz` | Health check |
+All CRUD paths tenant-scoped via `{tenant}` in URL path. Webhook/human-approval
+paths are global (token-based).
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/_/healthz` | GET | Health check |
+| `/_/webhooks/{provider}` | POST | Webhook trigger (GitHub/GitLab) |
+| `/api/v1/{tenant}/agents` | GET/POST | List / Create agent definitions |
+| `/api/v1/{tenant}/agents/{name}` | GET/PUT/DELETE | Agent CRUD |
+| `/api/v1/{tenant}/agentflows` | GET/POST | List / Create flow definitions |
+| `/api/v1/{tenant}/agentflows/{id}` | GET/PUT/DELETE | Flow CRUD |
+| `/api/v1/{tenant}/agentflows/trigger` | POST | Trigger run by `agentflow_id` in body |
+| `/api/v1/{tenant}/runs` | GET | List runs (tenant-scoped) |
+| `/api/v1/{tenant}/runs/{id}` | GET/DELETE | Get / Delete run |
+| `/api/v1/{tenant}/runs/{id}/cancel` | POST | Cancel a running run |
+| `/api/v1/{tenant}/runs/{id}/tasks` | GET | List tasks for a run |
+| `/api/v1/{tenant}/notifications/channels` | GET/POST | Notification channel CRUD |
+| `/api/v1/human/{token}/approve` | POST | Human approval (global) |
+| `/api/v1/human/{token}/reject` | POST | Human rejection (global) |
 
 ### 2.2 A2A Protocol (Port 9992)
 
-Google Agent-to-Agent protocol endpoint. Supports `POST /a2a/tasks` (trigger) and
-`GET /a2a/tasks/{id}` (query). Agent card at `/.well-known/agent.json`.
+Google Agent-to-Agent protocol for inter-agent interoperability:
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/.well-known/agent.json` | GET | Agent card (skills, schemas, capabilities) |
+| `/a2a/tasks` | POST | Submit agentflow for execution |
+| `/a2a/tasks/{id}` | GET | Query task result |
 
 ### 2.3 Auth & Multi-Tenancy
 
-JWT-based auth with configurable algorithm (ES256/RS256/EdDSA). Anonymous paths
-for health checks and A2A. OIDC and GitHub OAuth supported for user-facing endpoints.
+JWT-based auth (ES256/RS256/EdDSA). Configurable anonymous paths:
+`/public/**`, `/static/**`, `/_/healthz/**`, `/a2a/**`. OIDC and GitHub OAuth
+supported for user-facing endpoints.
 
 ### 2.4 Submit Path (API → JM)
 
@@ -436,7 +456,24 @@ KubernetesHA), `StaticDiscoveryClient` (env-var based, for dev/CI).
 
 ---
 
-## 12. Key Design Constraints
+## 12. Metrics & Observability
+
+OpenTelemetry integration with configurable exporters:
+
+| Signal | Implementation | Config |
+|--------|---------------|--------|
+| Traces | W3C TraceContext propagation through MQTT | `mgmt.otel` |
+| Metrics | Prometheus exporter, custom histogram buckets per domain | `mgmt.metrics.prometheus` |
+| pprof | Debug endpoints at `:6669` | `mgmt.pprof` |
+
+Histogram boundaries (from sample config):
+- Task execution: `[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]s`
+- LLM calls: `[0.5, 1, 2, 5, 10, 30, 60, 120, 300]s`
+- Queue latency: `[0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30]s`
+
+---
+
+## 13. Key Design Constraints
 
 | Constraint | Rationale |
 |-----------|-----------|
@@ -449,7 +486,7 @@ KubernetesHA), `StaticDiscoveryClient` (env-var based, for dev/CI).
 
 ---
 
-## 13. File Map
+## 14. File Map
 
 | File | Role |
 |------|------|
