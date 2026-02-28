@@ -1,19 +1,20 @@
 # Flowgent E2E Test Guide — Full Distributed Mode on K3s
 
-**Date:** 2026-05-23
-**Status:** 7 microservices (apiserver, controller, jobmanager, taskmanager, sandbox, wallet, notifier) — Helm + K3s
+**Date:** 2026-05-24
+**Status:** 7 required + 2 optional (a2a, wallet) microservices — Helm + K3s
 
 ---
 
 ## 1. Architecture Summary
 
-Flowgent runs as 7 microservices on K3s. All are deployed via a single Helm chart.
+Flowgent runs as 7 required microservices on K3s, plus 2 optional services (a2a, wallet).
+All deployed via a single Helm chart. Optional components default to disabled.
 
 ```
 kubectl get pods -l 'app.kubernetes.io/name=flowgent'
 ```
 
-Expected (session mode, 2 replicas per service, 14 pods total):
+Expected (session mode, 2 replicas each, 7 required + optional extras):
 
 ```
 NAME                                                READY   STATUS    RESTARTS   AGE
@@ -27,23 +28,31 @@ flowgent-taskmanager-default-stu901                 1/1     Running   0         
 flowgent-taskmanager-default-vwx234                 1/1     Running   0          30s
 flowgent-sandbox-default-yza567                     1/1     Running   0          30s
 flowgent-sandbox-default-bcd890                     1/1     Running   0          30s
-flowgent-wallet-default-efg123                      1/1     Running   0          30s
-flowgent-wallet-default-hij456                      1/1     Running   0          30s
-flowgent-notifier-default-klm789                    1/1     Running   0          30s
-flowgent-notifier-default-nop012                    1/1     Running   0          30s
+flowgent-notifier-default-efg123                    1/1     Running   0          30s
+flowgent-notifier-default-hij456                    1/1     Running   0          30s
+```
+
+Optional components (enable via `--set a2a.enabled=true`, `--set wallet.enabled=true`):
+
+```
+flowgent-a2a-default-klm789                         1/1     Running   0          30s
+flowgent-a2a-default-nop012                         1/1     Running   0          30s
+flowgent-wallet-default-qrs345                      1/1     Running   0          30s
+flowgent-wallet-default-tuv678                      1/1     Running   0          30s
 ```
 
 ### 1.1 Component Responsibilities
 
 | # | Service | Port | Role |
 |---|---------|------|------|
-| 1 | **API Server** | 9999 (REST), 9992 (A2A), 9991 (mgmt) | Multi-tenant gateway: CRUD, auth, triggers, A2A agent card |
-| 2 | **Controller** | — | Polls PG `agentflow_definitions`, hash-mod sharding, inserts PENDING runs, creates K8s JM for application mode |
-| 3 | **JobManager** | — | Polls `agentflow_runs` (PENDING), parses flow JSON, builds DAG + ExecutionPlans, calls RM.Schedule() |
-| 4 | **TaskManager** | — | Consumes ExecutionPlans from MQTT, executes via router (12 node types) |
-| 5 | **Sandbox** | — | Consumes sandbox ExecutionPlans from queue, executes scripts in isolated env with network restrictions |
-| 6 | **Wallet** | 9901 | x402 Ed25519 key management, payment signing |
-| 7 | **Notifier** | 9993 (WS) | Multi-channel push (Telegram, Slack, DingTalk, Email, Webhook) + WS SSE |
+| 1 | **API Server** | 9999 (REST), 9991 (mgmt) | Multi-tenant gateway: CRUD, auth, triggers (required) |
+| 2 | **Controller** | — | Polls PG `agentflow_definitions`, hash-mod sharding, inserts PENDING runs, creates K8s JM for application mode (required) |
+| 3 | **JobManager** | — | Polls `agentflow_runs` (PENDING), parses flow JSON, builds DAG + ExecutionPlans, calls RM.Schedule() (required) |
+| 4 | **TaskManager** | — | Consumes ExecutionPlans from MQTT, executes via router (12 node types) (required) |
+| 5 | **Sandbox** | — | Consumes sandbox ExecutionPlans from queue, executes scripts in isolated env with network restrictions (required) |
+| 6 | **Notifier** | 9993 (WS) | Multi-channel push (Telegram, Slack, DingTalk, Email, Webhook) + WS SSE (required) |
+| 7 | **A2A** | 9992 | Google Agent-to-Agent protocol endpoint, agent card discovery (optional) |
+| 8 | **Wallet** | 9901 | x402 Ed25519 key management, payment signing (optional) |
 
 ---
 
@@ -114,12 +123,14 @@ helm install flowgent deploy/helm/flowgent \
 ### 3.4 Verify Deployment
 
 ```bash
-# All 7 components (14 pods with replicas=2)
+# All 7 required components (14 pods with replicas=2)
+# Add --set a2a.enabled=true --set wallet.enabled=true for optional services
 kubectl get pods -l 'app.kubernetes.io/name=flowgent'
 
 # Component-level verification:
 kubectl get deploy -l 'app.kubernetes.io/name=flowgent'
-# Expected: apiserver, controller, jobmanager, taskmanager, sandbox, notifier, wallet
+# Expected: apiserver, controller, jobmanager, taskmanager, sandbox, notifier
+# Optional: a2a, wallet (require --set <component>.enabled=true)
 ```
 
 ---
@@ -183,7 +194,7 @@ VALUES ('vip-security-fixer', 1,
 "
 
 # Controller detects grade priority → creates JM Deployment automatically
-kubectl get deploy -n flowgent-rengine flowgent-jm-rengine-vip-security-fixer-<run_id>
+kubectl get deploy -n flowgent-rengine flowgent-jobmanager-rengine-vip-security-fixer-<run_id>-<hash>
 # Expected: 1 JM pod running in the tenant namespace
 
 # JM picks up PENDING run → dispatches to TM → COMPLETED
@@ -245,13 +256,13 @@ psql -h 172.29.235.101 -U flowgent -d flowgent -c \
 | # | Service | Command | Expected |
 |---|---------|---------|----------|
 | 1 | API Server | `curl http://<svc>:9999/_/healthz` | `{"status":"ok"}` |
-| 2 | API Server (A2A) | `curl http://<svc>:9992/.well-known/agent.json` | Agent card JSON |
-| 3 | Controller | `kubectl logs -l app.kubernetes.io/component=controller` | `shard=X/N, dispatching flow` |
-| 4 | JobManager | `kubectl logs -l app.kubernetes.io/component=jobmanager` | `JobManager started` |
-| 5 | TaskManager | `kubectl logs -l app.kubernetes.io/component=taskmanager` | `task manager started, slots=N` |
-| 6 | Sandbox | `kubectl logs -l app.kubernetes.io/component=sandbox` | `Sandbox worker started` |
-| 7 | Wallet | `curl http://<svc>:9901/health` | `200` |
-| 8 | Notifier | `kubectl logs -l app.kubernetes.io/component=notification` | `Notifier service started` |
+| 2 | Controller | `kubectl logs -l app.kubernetes.io/component=controller` | `shard=X/N, dispatching flow` |
+| 3 | JobManager | `kubectl logs -l app.kubernetes.io/component=jobmanager` | `JobManager started` |
+| 4 | TaskManager | `kubectl logs -l app.kubernetes.io/component=taskmanager` | `task manager started, slots=N` |
+| 5 | Sandbox | `kubectl logs -l app.kubernetes.io/component=sandbox` | `Sandbox worker started` |
+| 6 | Notifier | `kubectl logs -l app.kubernetes.io/component=notifier` | `Notifier service started` |
+| 7 | A2A *(opt)* | `curl http://<svc>:9992/.well-known/agent.json` | Agent card JSON |
+| 8 | Wallet *(opt)* | `curl http://<svc>:9901/health` | `200` |
 
 ---
 
@@ -322,7 +333,7 @@ Both modes share `model.AgentFlowSpec` (dual-tagged `json:` + `yaml:`). At start
 | T4 | Sandbox Script Execution | Sandbox × 2 + TM | Queue dispatch, policy enforcement, result collection |
 | T5 | Notifier Load-Balancing | Notifier × 2 | MQTT shared subscription, dedup, channel delivery |
 | T6 | Application Mode | Controller + K8s | Auto-create JM Deployment on grade-priority flow, cleanup on completion |
-| T7 | Full E2E | All 7 services | Trigger → Controller → JM → RM → TM/Sandbox → Notifier |
+| T7 | Full E2E | All 7 required services | Trigger → API → Controller → JM → RM → TM/Sandbox → Notifier |
 
 ---
 

@@ -7,14 +7,16 @@ metadata:
 data:
   flowgent.yaml: |
     service-name: {{ include "flowgent.name" . }}
+    deployment:
+      mode: {{ .Values.mode | quote }}
     server:
       host: "0.0.0.0"
       port: {{ .Values.apiserver.service.restPort }}
       shutdown-timeout: "15s"
     a2a:
-      enabled: true
+      enabled: {{ .Values.a2a.enabled }}
       host: "0.0.0.0"
-      port: {{ .Values.apiserver.service.a2aPort }}
+      port: {{ .Values.a2a.service.port }}
     mgmt:
       enabled: true
       host: "0.0.0.0"
@@ -68,9 +70,16 @@ data:
       agentflows:
         static: { enabled: false }
         standard: { enabled: true }
+    queue:
+      type: {{ .Values.queue.type | quote }}
+      mqtt:
+        broker: {{ include "flowgent.mqttBroker" . | quote }}
+        topic_prefix: {{ .Values.queue.topicPrefix | quote }}
+    lock:
+      provider: postgres
     notification:
-      enabled: {{ .Values.notification.enabled }}
-      {{- if .Values.notification.channels }}
+      enabled: {{ .Values.notifier.enabled }}
+      {{- if .Values.notifier.channels }}
       channels:
-        {{- toYaml .Values.notification.channels | nindent 8 }}
+        {{- toYaml .Values.notifier.channels | nindent 8 }}
       {{- end }}

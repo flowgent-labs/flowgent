@@ -2,8 +2,9 @@
 
 Release: {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
+Mode: {{ .Values.mode }}
 
-{{- if .Values.wallet.autoGenerateKey }}
+{{- if .Values.wallet.generatedMasterKey }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔑 Wallet Root Private Key (auto-generated)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -15,28 +16,35 @@ Namespace: {{ .Release.Namespace }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {{- end }}
 
-Services (all default to 2 replicas for HA):
-
+{{- if eq .Values.mode "session" }}
+━━━ Session Mode — Pre-deployed Shared Pool ━━━
 {{- if .Values.apiserver.enabled }}
   ✅ API Server      — {{ .Values.apiserver.replicas }} replicas, port {{ .Values.apiserver.service.restPort }}
 {{- end }}
-{{- if .Values.controller.enabled }}
-  ✅ Controller       — {{ .Values.controller.replicas }} replicas (sharded by hash(flow_id) % N)
-{{- end }}
-{{- if .Values.jobmanager.enabled }}
-  ✅ JobManager       — {{ .Values.jobmanager.replicas }} replicas {{ if .Values.jobmanager.ha.enabled }}(HA: K8s label-selector leader election){{ end }}
-{{- end }}
-{{- if .Values.taskmanager.enabled }}
+  ✅ JobManager       — {{ .Values.jobmanager.replicas }} replicas {{ if .Values.jobmanager.ha.enabled }}(HA leader election){{ end }}
   ✅ TaskManager      — {{ .Values.taskmanager.replicas }} replicas, {{ .Values.taskmanager.slots }} slots each
-{{- end }}
-{{- if .Values.sandbox.enabled }}
   ✅ Sandbox          — {{ .Values.sandbox.replicas }} replicas, {{ .Values.sandbox.slots }} slots each
+{{- if .Values.notifier.enabled }}
+  ✅ Notifier         — {{ .Values.notifier.replicas }} replicas, port {{ .Values.notifier.service.port }}
+{{- end }}
+  ℹ️  API Server handles triggers directly → JM poller picks up PENDING runs.
+{{- else }}
+━━━ Application Mode — Controller-Managed ━━━
+{{- if .Values.apiserver.enabled }}
+  ✅ API Server      — {{ .Values.apiserver.replicas }} replicas, port {{ .Values.apiserver.service.restPort }}
+{{- end }}
+  ✅ Controller       — {{ .Values.controller.replicas }} replicas (creates dynamic JMs per grade-priority flow)
+{{- if .Values.notifier.enabled }}
+  ✅ Notifier         — {{ .Values.notifier.replicas }} replicas, port {{ .Values.notifier.service.port }}
+{{- end }}
+  ℹ️  Controller polls PG → creates dedicated JM/TM/Sandbox per flow at runtime.
+{{- end }}
+
+{{- if .Values.a2a.enabled }}
+  ✅ A2A             — {{ .Values.a2a.replicas }} replicas, port {{ .Values.a2a.service.port }} (optional)
 {{- end }}
 {{- if .Values.wallet.enabled }}
-  ✅ Wallet           — {{ .Values.wallet.replicas }} replicas, port {{ .Values.wallet.service.port }}
-{{- end }}
-{{- if .Values.notification.enabled }}
-  ✅ Notifier     — {{ .Values.notification.replicas }} replicas, port {{ .Values.notification.service.port }}
+  ✅ Wallet           — {{ .Values.wallet.replicas }} replicas, port {{ .Values.wallet.service.port }} (optional)
 {{- end }}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -44,6 +52,11 @@ Quick checks:
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   curl http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.restPort }}/_/healthz
 
-Scale:
+{{- if eq .Values.mode "session" }}
+Scale (session mode — admin-managed):
   helm upgrade {{ .Release.Name }} . --set taskmanager.replicas=8
-  helm upgrade {{ .Release.Name }} . --set controller.replicas=4
+  helm upgrade {{ .Release.Name }} . --set sandbox.replicas=4
+{{- else }}
+Application mode uses auto-scaling. Adjust limits:
+  helm upgrade {{ .Release.Name }} . --set application.taskmanager.slots=8
+{{- end }}

@@ -1,41 +1,38 @@
-{{- if .Values.notifier.enabled }}
+{{- if .Values.a2a.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "flowgent.fullname" . }}-notifier
+  name: {{ include "flowgent.fullname" . }}-a2a
   labels:
     {{- include "flowgent.labels" . | nindent 4 }}
-    app.kubernetes.io/component: notifier
+    app.kubernetes.io/component: a2a
 spec:
-  replicas: {{ .Values.notifier.replicas }}
+  replicas: {{ .Values.a2a.replicas }}
   selector:
     matchLabels:
       {{- include "flowgent.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: notifier
+      app.kubernetes.io/component: a2a
   template:
     metadata:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: notifier
+        app.kubernetes.io/component: a2a
     spec:
       containers:
-        - name: notifier
+        - name: a2a
           image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
-          args: ["notifier", "start"]
+          args: ["a2a", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.a2a.service.port }}
           env:
             - name: FLOWGENT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "flowgent.fullname" . }}-pg
                   key: url
-            - name: FLOWGENT_MQTT_BROKER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.fullname" . }}-mqtt
-                  key: broker
-                  optional: true
             - name: FLOWGENT_CONFIG_FILE
               value: /etc/flowgent/flowgent.yaml
             - name: POD_NAME
@@ -45,38 +42,31 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
-            {{- if eq .Values.mode "session" }}
-            - name: workspace
-              mountPath: /var/flowgent/workspace
-            {{- end }}
-          ports:
-            - name: ws
-              containerPort: {{ .Values.notifier.service.port }}
           resources:
-            {{- toYaml .Values.notifier.resources | nindent 12 }}
+            {{- toYaml .Values.a2a.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /_/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
       volumes:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
-        {{- if eq .Values.mode "session" }}
-        - name: workspace
-          hostPath:
-            path: {{ .Values.sandbox.workspace }}
-            type: DirectoryOrCreate
-        {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "flowgent.fullname" . }}-notifier
+  name: {{ include "flowgent.fullname" . }}-a2a
   labels:
     {{- include "flowgent.labels" . | nindent 4 }}
-    app.kubernetes.io/component: notifier
+    app.kubernetes.io/component: a2a
 spec:
   selector:
     {{- include "flowgent.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: notifier
+    app.kubernetes.io/component: a2a
   ports:
-    - name: ws
-      port: {{ .Values.notifier.service.port }}
+    - name: http
+      port: {{ .Values.a2a.service.port }}
 {{- end }}

@@ -19,6 +19,7 @@ import (
 // ServiceConfig is the top-level runtime configuration for the flowgent engine.
 type ServiceConfig struct {
 	ServiceName   string              `json:"service-name" yaml:"service-name"`
+	Deployment    DeploymentConfig    `json:"deployment" yaml:"deployment"`
 	Server        ServerConfig        `json:"server" yaml:"server"`
 	A2A           A2AConfig           `json:"a2a" yaml:"a2a"`
 	Mgmt          MgmtConfig          `json:"mgmt" yaml:"mgmt"`
@@ -34,6 +35,11 @@ type ServiceConfig struct {
 	Payments      *payments.PaymentsConfig `json:"payments" yaml:"payments"`
 	Notification  NotifierConfig       `json:"notification" yaml:"notification"`
 	Tenant        TenantConfig             `json:"tenant" yaml:"tenant"`
+}
+
+// DeploymentConfig sets the execution mode: session or application.
+type DeploymentConfig struct {
+	Mode string `json:"mode" yaml:"mode"` // "session" | "application"
 }
 
 // ─── Server ──────────────────────────────────────────────────

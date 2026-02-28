@@ -124,20 +124,80 @@ PHASE 3 — Execution (Async)   │
                └─────────────────────────────────────────────┘
 ```
 
-### 1.1 Session vs Application — The Only Difference Is JM Lifecycle
+### 1.1 Session vs Application — Helm Deployment Matrix
 
 Both modes use the **same binary, same poller, same DAG execution logic**.
-The sole architectural difference is **who starts the JM and when**:
+The difference is **which components Helm pre-deploys** vs. **which are created dynamically at runtime**.
+
+**Deployment mode** is configured via `deployment.mode` in `flowgent.yaml` (or Helm `mode` value),
+and can be overridden at runtime via `FLOWGENT_DEPLOYMENT_MODE` env var:
+
+```yaml
+# flowgent.yaml
+deployment:
+  mode: session       # "session" or "application"
+```
+
+```yaml
+# Helm values.yaml
+mode: session         # "session" or "application"
+```
+
+**Component deployment by mode:**
+
+| Component | Session | Application | Notes |
+|-----------|---------|-------------|-------|
+| apiserver | Helm | Helm | Always pre-deployed — REST API + triggers |
+| controller | — | **Helm** | Only in application mode — polls PG, creates dynamic JMs |
+| jobmanager | **Helm** | **Controller (dynamic)** | Session: shared pool. App: `buildJMDeployment()` per-flow |
+| taskmanager | **Helm** | **JM auto-scale** | Session: admin-managed replicas. App: JM's K8s RM scales |
+| sandbox | **Helm** | **JM auto-scale** | Session: shared hostPath workspace. App: per-flow PVC |
+| notifier | Helm | Helm | Both modes. Session: shared workspace vol. App: dedicated vol. |
+| a2a | optional | optional | `--set a2a.enabled=true` |
+| wallet | optional | optional | `--set wallet.enabled=true` |
+
+**Session mode — Helm pre-deploys 5 components:**
+```
+apiserver + jobmanager + taskmanager + sandbox + notifier
+```
+API Server handles triggers directly → creates PENDING runs → JM poller executes.
+
+**Application mode — Helm pre-deploys 3 components:**
+```
+apiserver + controller + notifier
+```
+Controller polls PG → creates dedicated jobmanager/taskmanager/sandbox per grade-priority flow.
 
 | | Session | Application |
 |---|---|---|
 | **JM started by** | Helm / Admin (platform init) | Controller (on flow discovery) |
-| **JM naming** | `flowgent-jobmanager-{tenantId}-{hash}` | `flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}` |
+| **JM naming** | `flowgent-jobmanager-{tenantId}-{hash}` | `flowgent-jobmanager-{tenantId}-{flowId}-{runId}-{hash}` |
 | **JM lifecycle** | Persistent, shared across tenants | Per-flow, destroyed on completion |
-| **TM scale** | **Manual** (admin-managed capacity) | **Auto** (JM's K8s RM scales TMs) |
+| **TM scale** | **Manual** (admin-managed replicas) | **Auto** (JM's K8s RM scales TMs) |
 | **Slot exhaustion** | Run stays PENDING, admin adds TMs | JM auto-scales TM replicas |
+| **Workspace** | Shared hostPath volume | Per-flow PVC (dynamic) |
 | **Resource isolation** | Logical (tenant_id + rate limit) | Physical (dedicated K8s namespace) |
 | **Flink analogy** | Session Cluster | Application Cluster |
+
+**How mode is resolved at runtime:**
+
+1. `config.Load()` reads `deployment.mode` from YAML (viper auto-binds `FLOWGENT_DEPLOYMENT_MODE` env var)
+2. Session JM (Helm-deployed): config file has `mode: session` → shared pool, `AutoScale=false`
+3. Application JM (Controller-created): Controller sets `FLOWGENT_DEPLOYMENT_MODE=application` on the pod, overriding the config file → `AutoScale=true`
+4. `FLOWGENT_NAMESPACE` is a namespace filter for the runPoller, NOT a mode flag
+
+**JM polling scope — tenant-wide scan vs zero-scan:**
+
+| | Session JM | Application JM |
+|---|---|---|
+| **Startup** | `jobmanager start` | `jobmanager start --flow-id <id>` |
+| **Flow spec** | Load ALL flows from config + DB | Load single flow from DB by ID |
+| **Run poller** | `ListAgentFlowRuns("", 50)` — full table scan | `ListAgentFlowRuns("<id>", 50)` — targeted index query |
+| **Polling needed** | Yes — must discover PENDING runs | Yes — but only for its one flow |
+
+**Key design**: Application JM receives the flow ID at startup (Controller passes
+`--flow-id` in `buildJMDeployment` args). It does NOT scan config files or load
+unrelated flows. Session JM alone performs tenant-wide discovery.
 
 **TM scaling design decision**: Session mode TMs are admin-managed (Helm `replicas`).
 If slots are exhausted, JM returns `INSUFFICIENT_RESOURCES` — the run stays PENDING
@@ -161,22 +221,49 @@ in a single transactional store (PG).
 ### 1.3 Multi-Tenant Pod Naming
 
 Tenant isolation uses **K8s namespaces**: each tenant gets its own namespace.
-Pod names carry `tenant_id` + `agentflow_id` + `agentflow_run_id` for observability:
+Pod names carry `tenant_id` + `flow_id` + `run_id` for observability:
+
+**Components** (distributed mode):
+
+| Component | Required | Role |
+|-----------|----------|------|
+| apiserver | yes | REST API gateway, auth, triggers |
+| controller | yes | Flow discovery, run dispatch, hash-mod sharding |
+| jobmanager | yes | DAG orchestration, ExecutionPlan scheduling |
+| taskmanager | yes | Plan execution via router (12 node types) |
+| sandbox | yes | Isolated script execution worker |
+| notifier | yes | Multi-channel push + WebSocket SSE |
+| a2a | **optional** | Google Agent-to-Agent protocol endpoint |
+| wallet | **optional** | x402 Ed25519 payment signing |
+
+> **Note**: `a2a` and `wallet` are optional in distributed mode and default to `enabled: false`
+> in the Helm chart. Use `--set a2a.enabled=true` or `--set wallet.enabled=true` to enable.
+> In all-in-one mode, all components run in a single process regardless.
 
 ```
-Session (shared pool, {hash}=K8s suffix):
-  flowgent-{component}-{tenantId}-{hash}
+Session (shared pool, default=tenantId, {hash}=K8s suffix):
+  flowgent-{component}-default-{hash}
 
 Application (dedicated per-run, {hash}=K8s suffix):
-  flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}
-  flowgent-tm-{tenantId}-{flowId}-{runId}-{hash}
-  flowgent-sandbox-{tenantId}-{flowId}-{runId}-{hash}
+  flowgent-{component}-{tenantId}-{flowId}-{runId}-{hash}
 ```
 
-**Why `agentflow_run_id` not `{hash}` for Application pods?** Each application-mode run
-spawns a dedicated JM+TM cluster. The run ID uniquely identifies the pod — no need
-for a random suffix. Session pods use a K8s `{hash}` because they are shared across
-many runs and scaled via Helm/Dynamic.
+**Examples — Session mode (required components):**
+```
+flowgent-apiserver-default-abc123
+flowgent-controller-default-ghi789
+flowgent-jobmanager-default-jkl012
+flowgent-taskmanager-default-mno345
+flowgent-sandbox-default-pqr678
+flowgent-notifier-default-stu901
+```
+
+**Examples — Application mode:**
+```
+flowgent-jobmanager-rengine-vip-security-fixer-run-abc123-xyz001
+flowgent-taskmanager-rengine-vip-security-fixer-run-abc123-xyz002
+flowgent-sandbox-rengine-vip-security-fixer-run-abc123-xyz003
+```
 
 Labels on all pods:
 ```yaml
@@ -196,7 +283,7 @@ flowgent.io/mode:         "session" | "application"
 | **Session TM admin-managed, Application TM auto-scale** | Economic boundary: shared = fixed capacity (admin controls cost), dedicated = elastic (VIP isolation) |
 | **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
 | **UI → PG → Controller (three-phase async)** | Decouples authoring from execution; Controller is the only component that writes runs; JM is the only component that executes them |
-| **JM unification: same binary, same poller, same DAG for both modes** | `FLOWGENT_NAMESPACE` is the only variable; avoids code duplication, bugs fix uniformly |
+| **JM unification: same binary, same poller, same DAG for both modes** | Session: `jobmanager start` loads all flows, scans all runs. Application: `jobmanager start --flow-id <id>` loads single flow, scans only that flow. `deployment.mode` controls AutoScale; `FLOWGENT_NAMESPACE` is a namespace filter safety net |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
 
 ---
@@ -467,10 +554,44 @@ and re-dispatches orphaned plans.
 JM ↔ TM communication via MQTT pub/sub. Topic structure:
 
 ```
-flowgent/exec/{runID}/{planID}      — Execution plan dispatch
-flowgent/notify/pod/{podID}/ws/+    — WebSocket routing
-flowgent/notify/queue/{tenant}/{flow} — Notifier queue
+flowgent/exec/{runID}/{planID}           — Execution plan dispatch
+flowgent/notify/pod/{podID}/ws/+         — WebSocket routing
+flowgent/notify/queue/{tenant}/{flow}    — Notifier queue
 ```
+
+### 7.1 Queue Configuration
+
+Configured in `flowgent.yaml` (Helm renders via `values.yaml`):
+
+```yaml
+# flowgent.yaml
+queue:
+  type: mqtt
+  mqtt:
+    broker: "tcp://<host>:1883"
+    topic_prefix: "flowgent/exec"
+```
+
+```yaml
+# Helm values.yaml
+queue:
+  type: mqtt
+  topicPrefix: "flowgent/exec"
+```
+
+### 7.2 Fail-Fast in Distributed Mode
+
+Components that depend on the queue (jobmanager, taskmanager, sandbox) call
+`newQueueFromConfig()` at startup. In distributed mode (`deployment.mode: session`
+or `application`), MQTT is mandatory:
+
+1. Config file `queue.mqtt.broker` → try MQTT → failure = fatal
+2. `FLOWGENT_MQTT_BROKER` env var → try MQTT → failure = fatal
+3. Neither configured → fatal: `"MQTT broker not configured"`
+
+In local dev / all-in-one mode, the queue silently falls back to in-memory
+(`MemoryQueue`, buffer=1000) with a warning log. This ensures Helm deployments
+never silently degrade to single-process mode.
 
 ---
 
@@ -531,7 +652,7 @@ election. TM capacity admin-managed via Helm.
 ### 9.3 Application Mode (VIP Dedicated Cluster)
 
 Controller detects `priority=grade` flow → creates dedicated K8s JM Deployment
-(`flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}`) in tenant namespace → JM auto-scales TMs.
+(`flowgent-jobmanager-{tenantId}-{flowId}-{runId}-{hash}`) in tenant namespace → JM auto-scales TMs.
 Flow completes → Controller cleans up Deployment.
 
 ---
@@ -562,7 +683,7 @@ There are two paths to trigger a run:
    → Hash-mod shard: only processes owned flows
    → Detects flow trigger condition (cron / interval / on-new-definition)
    → Session mode: INSERT agentflow_runs (PENDING, namespace="")
-   → Application mode: kubectl create deploy flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}
+   → Application mode: kubectl create deploy flowgent-jobmanager-{tenantId}-{flowId}-{runId}-{hash}
                        + INSERT agentflow_runs (PENDING, namespace={tenant})
 
 2. JM POLL
