@@ -4,135 +4,91 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/eclipse/paho.golang/autopaho"
-	"github.com/eclipse/paho.golang/paho"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-// MQTTQueue implements Queue using MQTT 5 (paho.golang) with native $share support.
 type MQTTQueue struct {
 	mu       sync.Mutex
-	cm       *autopaho.ConnectionManager
+	client   mqtt.Client
 	topic    string
 	ch       chan *Message
 	messages map[string]chan *Message
-	subs     map[string]struct{} // tracks active subscriptions
-	ctx      context.Context
-	cancel   context.CancelFunc
+	subs     map[string]struct{}
 }
 
-// MQTTConfig holds MQTT broker connection parameters.
 type MQTTConfig struct {
-	Broker   string `json:"broker" yaml:"broker"`
-	ClientID string `json:"client_id" yaml:"client_id"`
-	Username string `json:"username" yaml:"username"`
-	Password string `json:"password" yaml:"password"`
-	Topic    string `json:"topic" yaml:"topic"`
+	Broker   string
+	ClientID string
+	Username string
+	Password string
+	Topic    string
 }
 
-// NewMQTTQueue creates an MQTT 5-backed queue with auto-reconnection.
 func NewMQTTQueue(cfg *MQTTConfig) (*MQTTQueue, error) {
 	if cfg.Topic == "" {
 		cfg.Topic = "flowgent/tasks"
 	}
-
-	brokerURL, err := url.Parse(strings.Replace(cfg.Broker, "tcp://", "mqtt://", 1))
-	if err != nil {
-		return nil, fmt.Errorf("mqtt parse broker %q: %w", cfg.Broker, err)
+	opts := mqtt.NewClientOptions().
+		AddBroker(cfg.Broker).
+		SetClientID(cfg.ClientID).
+		SetCleanSession(true).
+		SetKeepAlive(30 * time.Second).
+		SetPingTimeout(10 * time.Second).
+		SetConnectTimeout(10 * time.Second).
+		SetAutoReconnect(true).
+		SetMaxReconnectInterval(30 * time.Second)
+	if cfg.Username != "" {
+		opts.SetUsername(cfg.Username)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
+	if cfg.Password != "" {
+		opts.SetPassword(cfg.Password)
+	}
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
+		return nil, fmt.Errorf("mqtt connect: %w", token.Error())
+	}
 	q := &MQTTQueue{
+		client:   client,
 		topic:    cfg.Topic,
 		ch:       make(chan *Message, 100),
 		messages: make(map[string]chan *Message),
 		subs:     make(map[string]struct{}),
-		ctx:      ctx,
-		cancel:   cancel,
 	}
-
-	cliCfg := autopaho.ClientConfig{
-		ServerUrls:                    []*url.URL{brokerURL},
-		KeepAlive:                     30,
-		CleanStartOnInitialConnection: true,
-		ConnectTimeout:                10 * time.Second,
-		OnConnectionUp: func(cm *autopaho.ConnectionManager, _ *paho.Connack) {
-			// Re-subscribe to all active topics on reconnect.
-			q.mu.Lock()
-			defer q.mu.Unlock()
-			for topic := range q.subs {
-				if _, err := cm.Subscribe(ctx, &paho.Subscribe{
-					Subscriptions: []paho.SubscribeOptions{{Topic: topic, QoS: 1}},
-				}); err != nil {
-					// Logged by autopaho
-				}
-			}
-		},
-		OnConnectError: func(err error) {},
+	// Subscribe to base topic for Pop()
+	if token := client.Subscribe(cfg.Topic, 1, q.onMessage); token.WaitTimeout(5*time.Second) && token.Error() != nil {
+		return nil, fmt.Errorf("mqtt subscribe: %w", token.Error())
 	}
-	if cfg.ClientID != "" {
-		cliCfg.ClientID = cfg.ClientID
-	}
-	if cfg.Username != "" {
-		cliCfg.ConnectUsername = cfg.Username
-	}
-	if cfg.Password != "" {
-		cliCfg.ConnectPassword = []byte(cfg.Password)
-	}
-
-	cm, err := autopaho.NewConnection(ctx, cliCfg)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("mqtt connect: %w", err)
-	}
-
-	if err := cm.AwaitConnection(ctx); err != nil {
-		cancel()
-		return nil, fmt.Errorf("mqtt await connection: %w", err)
-	}
-
-	q.cm = cm
-
-	// Base handler: routes messages to all dequeue/pop channels.
-	cm.AddOnPublishReceived(func(pr autopaho.PublishReceived) (bool, error) {
-		var m Message
-		if err := json.Unmarshal(pr.Packet.Payload, &m); err != nil {
-			return true, nil
-		}
-		q.mu.Lock()
-		for _, ch := range q.messages {
-			select {
-			case ch <- &m:
-			default:
-			}
-		}
-		q.mu.Unlock()
-		select {
-		case q.ch <- &m:
-		default:
-		}
-		return true, nil
-	})
-
 	return q, nil
 }
 
+func (q *MQTTQueue) onMessage(_ mqtt.Client, msg mqtt.Message) {
+	var m Message
+	if err := json.Unmarshal(msg.Payload(), &m); err != nil {
+		return
+	}
+	q.mu.Lock()
+	for _, ch := range q.messages {
+		select { case ch <- &m: default: }
+	}
+	q.mu.Unlock()
+	select { case q.ch <- &m: default: }
+}
+
+// Push publishes to msg.Topic if set, otherwise base topic.
 func (q *MQTTQueue) Push(ctx context.Context, msg *Message) error {
+	data, _ := json.Marshal(msg)
 	topic := msg.Topic
 	if topic == "" {
 		topic = q.topic
 	}
-	_, err := q.cm.Publish(ctx, &paho.Publish{
-		Topic:   topic,
-		QoS:     1,
-		Payload: mustMarshal(msg),
-	})
-	return err
+	token := q.client.Publish(topic, 1, false, data)
+	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
+		return token.Error()
+	}
+	return nil
 }
 
 func (q *MQTTQueue) Pop(ctx context.Context, timeout time.Duration) (*Message, error) {
@@ -149,42 +105,39 @@ func (q *MQTTQueue) Pop(ctx context.Context, timeout time.Duration) (*Message, e
 	}
 }
 
-// Dequeue subscribes to the plan execution topic via MQTT 5 $share for
-// load-balanced consumption across TM slot workers.
-// Topic: $share/{consumerGroup}/{q.topic}/tasks/plans
+// Dequeue subscribes to {topic}/tasks/plans — same topic K8sRM publishes to.
 func (q *MQTTQueue) Dequeue(ctx context.Context, consumerGroup string) (*Message, error) {
-	topic := q.topic
-	if consumerGroup != "" {
-		topic = fmt.Sprintf("$share/%s/%s/tasks/plans", consumerGroup, q.topic)
-	}
-
-	// Subscribe once per unique topic.
+	topic := q.topic + "/tasks/plans"
 	q.mu.Lock()
 	if _, ok := q.subs[topic]; !ok {
 		q.subs[topic] = struct{}{}
 		q.mu.Unlock()
-		if _, err := q.cm.Subscribe(ctx, &paho.Subscribe{
-			Subscriptions: []paho.SubscribeOptions{{Topic: topic, QoS: 1}},
-		}); err != nil {
-			return nil, fmt.Errorf("mqtt subscribe %s: %w", topic, err)
+		if token := q.client.Subscribe(topic, 1, func(c mqtt.Client, m mqtt.Message) {
+			var msg Message
+			if json.Unmarshal(m.Payload(), &msg) == nil {
+				q.mu.Lock()
+				for _, ch := range q.messages {
+					select { case ch <- &msg: default: }
+				}
+				q.mu.Unlock()
+				select { case q.ch <- &msg: default: }
+			}
+		}); token.WaitTimeout(5*time.Second) && token.Error() != nil {
+			return nil, fmt.Errorf("mqtt subscribe %s: %w", topic, token.Error())
 		}
 	} else {
 		q.mu.Unlock()
 	}
-
 	ch := make(chan *Message, 10)
-	consumerID := fmt.Sprintf("%s-%d", consumerGroup, time.Now().UnixNano())
-
+	cid := fmt.Sprintf("%s-%d", consumerGroup, time.Now().UnixNano())
 	q.mu.Lock()
-	q.messages[consumerID] = ch
+	q.messages[cid] = ch
 	q.mu.Unlock()
-
 	defer func() {
 		q.mu.Lock()
-		delete(q.messages, consumerID)
+		delete(q.messages, cid)
 		q.mu.Unlock()
 	}()
-
 	select {
 	case msg := <-ch:
 		return msg, nil
@@ -194,29 +147,23 @@ func (q *MQTTQueue) Dequeue(ctx context.Context, consumerGroup string) (*Message
 }
 
 func (q *MQTTQueue) PublishHeartbeat(ctx context.Context, hb *Heartbeat) error {
-	_, err := q.cm.Publish(ctx, &paho.Publish{
-		Topic:   "flowgent/heartbeat/" + hb.TMID,
-		QoS:     0,
-		Payload: mustMarshal(hb),
-	})
-	return err
+	data, _ := json.Marshal(hb)
+	token := q.client.Publish("/flowgent/v1/heartbeat/"+hb.TMID, 0, false, data)
+	if token.WaitTimeout(3*time.Second) && token.Error() != nil {
+		return token.Error()
+	}
+	return nil
 }
 
 func (q *MQTTQueue) ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*Heartbeat, error) {
-	return nil, nil // heartbeat monitoring via separate subscription
+	return nil, nil
 }
 
 func (q *MQTTQueue) Ack(ctx context.Context, msgID string) error   { return nil }
 func (q *MQTTQueue) Nack(ctx context.Context, msgID string) error { return nil }
-
 func (q *MQTTQueue) Topic() string { return q.topic }
 
 func (q *MQTTQueue) Close() error {
-	q.cancel()
-	return q.cm.Disconnect(context.Background())
-}
-
-func mustMarshal(v any) []byte {
-	data, _ := json.Marshal(v)
-	return data
+	q.client.Disconnect(250)
+	return nil
 }

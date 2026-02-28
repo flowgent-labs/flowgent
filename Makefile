@@ -1,36 +1,27 @@
-.PHONY: build build-flowgent examples example-mcps clean test fmt
+.PHONY: build build-all docker-build docker-all-in-one clean test fmt
 
+BIN_DIR ?= bin
 GO ?= go
 
-# ── Default ────────────────────────────────────────────────
-build: build-flowgent
+# ── Build (Docker — no host Go required) ──────────────────────
+build:
+	@mkdir -p $(BIN_DIR)
+	DOCKER_BUILDKIT=1 sudo docker build -f deploy/docker/Dockerfile --target export --output type=local,dest=$(BIN_DIR) .
 
-# ── Binaries ───────────────────────────────────────────────
-build-flowgent:
-	CGO_ENABLED=0 $(GO) build -C src/cmd -o ../../bin/flowgent \
-		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./src/flowgent
+build-all:
+	@mkdir -p $(BIN_DIR)
+	DOCKER_BUILDKIT=1 sudo docker build -f deploy/docker/Dockerfile.all-in-one --target export --output type=local,dest=$(BIN_DIR) .
 
-# ── Example MCPs ───────────────────────────────────────────
-example-mcps: example-mcp-github example-mcp-sonarqube example-mcp-sonatypeiq example-mcp-nexus3
+# ── Docker ─────────────────────────────────────────────────────
+docker-build:
+	DOCKER_BUILDKIT=1 sudo docker build -t flowgent:latest -f deploy/docker/Dockerfile .
 
-example-mcp-github:
-	cd examples/mcp-github && CGO_ENABLED=0 $(GO) build -o ../../bin/github-mcp .
+docker-all-in-one:
+	DOCKER_BUILDKIT=1 sudo docker build -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
 
-example-mcp-sonarqube:
-	cd examples/mcp-sonarqube && CGO_ENABLED=0 $(GO) build -o ../../bin/sonarqube-mcp .
-
-example-mcp-sonatypeiq:
-	cd examples/mcp-sonatypeiq && CGO_ENABLED=0 $(GO) build -o ../../bin/sonatype-iq-mcp .
-
-example-mcp-nexus3:
-	cd examples/mcp-nexus3 && CGO_ENABLED=0 $(GO) build -o ../../bin/sonatype-nexus3-mcp .
-
-examples: example-mcps
-
-# ── Utilities ──────────────────────────────────────────────
+# ── Utilities ──────────────────────────────────────────────────
 clean:
-	rm -rf bin/
+	rm -rf $(BIN_DIR)/
 
 test:
 	cd src/common && CGO_ENABLED=0 $(GO) test -count=1 -timeout 120s ./...
@@ -46,7 +37,6 @@ test:
 	cd src/core && CGO_ENABLED=0 $(GO) test -count=1 -timeout 120s ./...
 	cd src/cmd && CGO_ENABLED=0 $(GO) test -count=1 -timeout 120s ./...
 
-GO ?= go
 fmt:
 	cd src/common && $(GO) fmt ./...
 	cd src/model && $(GO) fmt ./...
@@ -60,7 +50,3 @@ fmt:
 	cd src/sandbox && $(GO) fmt ./...
 	cd src/core && $(GO) fmt ./...
 	cd src/cmd && $(GO) fmt ./...
-
-# ── Docker ─────────────────────────────────────────────────
-docker-build:
-	docker build -t flowgent/flowgent:latest .

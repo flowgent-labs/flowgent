@@ -910,18 +910,34 @@ func startJobManager() error {
 	}
 	appMode := mode == "application"
 
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+	// Application mode only: K8sRM for elastic TM scaling via MQTT.
+	// Session mode: LocalRM for in-process execution.
+	if appMode && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
 			K8sNamespace:      envOr("KUBERNETES_NAMESPACE", "default"),
 			K8sDeploymentName: envOr("FLOWGENT_TM_DEPLOY", "flowgent-taskmanager"),
 			Store:             storeImpl, Logger: logger, Queue: q,
-			AutoScale: appMode,
+			AutoScale: true,
 		})
 	}
 	if rm == nil {
+		var agentPtrs []*config.AgentDef
+		if agents, err := config.LoadAgents(svcCfg, cfgPath); err == nil {
+			for i := range agents { agentPtrs = append(agentPtrs, &agents[i]) }
+		}
+		mcpFactory := llm.NewFactory()
+		for _, mcpDef := range svcCfg.Orchestration.MCPs {
+			if mcpDef.Enabled { mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env) }
+		}
+		mcpMap := make(map[string]engine.MCPClient)
+		for _, mcpDef := range svcCfg.Orchestration.MCPs {
+			if mcpDef.Enabled { mcpMap[mcpDef.Name] = &mcpAdapter{factory: mcpFactory, name: mcpDef.Name} }
+		}
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-			Provider: engine.ProviderLocal, PoolSize: 10, Store: storeImpl, Logger: logger,
+			Provider: engine.ProviderLocal, PoolSize: 10, Store: storeImpl,
+			Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llm.New(&svcCfg.LLM),
+			Logger: logger, Queue: q,
 		})
 	}
 

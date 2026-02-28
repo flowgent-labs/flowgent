@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -37,6 +39,8 @@ func main() {
 	sonarqubeCli = resty.New()
 	sonarqubeCli.SetBaseURL(sonarqubeURL)
 	sonarqubeCli.SetBasicAuth(sonarqubeUser, sonarqubePass)
+	sonarqubeCli.SetTimeout(30 * time.Second)
+	sonarqubeCli.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
 
 	mcpServer := server.NewMCPServer("sonarqube-mcp-server", "1.0.0")
 

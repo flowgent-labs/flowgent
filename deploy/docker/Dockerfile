@@ -1,8 +1,24 @@
+# syntax=docker/dockerfile:1
+# ─── Stage 1: Build ──────────────────────────────────────────
+FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder
+
+ENV GOPROXY=https://goproxy.cn,direct
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=bind,source=.,target=/build \
+    cd /build/src/cmd && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowgent ./src/flowgent/
+
+# ─── Stage 2: Export (used by `make build`) ─────────────────
+FROM scratch AS export
+COPY --from=builder /out/ /
+
+# ─── Stage 3: Runtime ────────────────────────────────────────
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
-COPY flowgent /app/flowgent
-COPY github-mcp /bin/github-mcp
-COPY sonarqube-mcp /bin/sonarqube-mcp
-COPY mcp-server-sonatypeiq /bin/sonatype-iq-mcp
-COPY mcp-server-nexus3 /bin/nexus3-mcp
-COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+RUN apk add --no-cache ca-certificates tzdata
+ENV TZ=Asia/Shanghai
+
+COPY --from=builder /out/flowgent /app/flowgent
+
+ENTRYPOINT ["/app/flowgent"]
+CMD ["--help"]
