@@ -27,7 +27,7 @@ spec:
       serviceAccountName: flowgent-controller
       containers:
         - name: controller
-          image: flowgent:latest
+          image: localhost/flowgent:latest
           imagePullPolicy: IfNotPresent
           command: ["/bin/flowgent"]
           args:
