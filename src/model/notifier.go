@@ -1,27 +1,27 @@
 // Package model defines the shared domain types for the Flowgent engine.
 //
 // File: notification.go — Notification channel definitions consumed by Notification service.
-//   NotificationChannel, NotificationEvent, NotificationMessage, SubscriptionRoute.
+//   NotifierChannel, NotifierEvent, NotifierMessage, SubscriptionRoute.
 package model
 
 import "time"
 
-// NotificationChannelType enumerates supported notification providers.
-type NotificationChannelType string
+// NotifierChannelType enumerates supported notification providers.
+type NotifierChannelType string
 
 const (
-	NotifTelegram NotificationChannelType = "telegram"
-	NotifDingTalk NotificationChannelType = "dingtalk"
-	NotifSlack    NotificationChannelType = "slack"
-	NotifEmail    NotificationChannelType = "email"
-	NotifWebhook  NotificationChannelType = "webhook"
+	NotifTelegram NotifierChannelType = "telegram"
+	NotifDingTalk NotifierChannelType = "dingtalk"
+	NotifSlack    NotifierChannelType = "slack"
+	NotifEmail    NotifierChannelType = "email"
+	NotifWebhook  NotifierChannelType = "webhook"
 )
 
-// NotificationChannel is a persisted notification provider configuration.
-type NotificationChannel struct {
+// NotifierChannel is a persisted notification provider configuration.
+type NotifierChannel struct {
 	ID        string                  `json:"id"`
 	Name      string                  `json:"name"`
-	Type      NotificationChannelType `json:"type"`
+	Type      NotifierChannelType `json:"type"`
 	Config    map[string]any          `json:"config"`
 	Enabled   bool                    `json:"enabled"`
 	TenantID  string                  `json:"tenant_id"`
@@ -29,18 +29,18 @@ type NotificationChannel struct {
 	UpdatedAt time.Time               `json:"updated_at"`
 }
 
-// NotificationEvent is a transient message sent through a channel.
-type NotificationEvent struct {
+// NotifierEvent is a transient message sent through a channel.
+type NotifierEvent struct {
 	ChannelID string `json:"channel_id"`
 	Recipient string `json:"recipient"`
 	Title     string `json:"title"`
 	Body      string `json:"body"`
 }
 
-// NotificationMessage is a queued notification to be consumed and dispatched.
+// NotifierMessage is a queued notification to be consumed and dispatched.
 // Published to MQTT topic /flowgent/notify/queue/{tenantID}/{agentflowID}
 // where notification pods consume via shared subscription and post to channels.
-type NotificationMessage struct {
+type NotifierMessage struct {
 	Title       string    `json:"title"`
 	Body        string    `json:"body"`
 	TenantID    string    `json:"tenant_id"`

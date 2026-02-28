@@ -1,4 +1,4 @@
-package notification
+package notifier
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 // Store is the subset of store.Store needed by the notification service.
 type Store interface {
 	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
-	ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error)
+	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
 	SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error
 	GetSubscriptionRoutesByAgentFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error)
 	DeleteSubscriptionRoute(ctx context.Context, id string) error
@@ -146,7 +146,7 @@ func (s *Service) onQueueMessage(topic string, payload []byte) {
 		return
 	}
 
-	var msg model.NotificationMessage
+	var msg model.NotifierMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		s.logger.Warn("queue message unmarshal", "error", err)
 		return
@@ -168,7 +168,7 @@ func (s *Service) PublishNotification(ctx context.Context, tenantID, agentflowID
 		return fmt.Errorf("notification: mqtt not configured")
 	}
 
-	msg := model.NotificationMessage{
+	msg := model.NotifierMessage{
 		Title:        title,
 		Body:         body,
 		TenantID:     tenantID,
@@ -318,7 +318,7 @@ func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg
 
 // notifyChannels sends a notification through all configured notification channels.
 func (s *Service) notifyChannels(ctx context.Context, recipient, title, body string) {
-	channels, err := s.store.ListNotificationChannels(ctx, "")
+	channels, err := s.store.ListNotifierChannels(ctx, "")
 	if err != nil {
 		s.logger.Error("list notification channels", "error", err)
 		return
@@ -340,7 +340,7 @@ func (s *Service) notifyChannels(ctx context.Context, recipient, title, body str
 			continue
 		}
 
-		go func(ch model.NotificationChannel, sender Sender) {
+		go func(ch model.NotifierChannel, sender Sender) {
 			if err := sender.Send(ctx, recipient, title, body); err != nil {
 				s.logger.Error("send notification", "channel", ch.Name, "error", err)
 			}

@@ -12,7 +12,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/engine/jobmanager"
-	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
+	"github.com/flowgent-labs/flowgent/src/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
@@ -68,7 +68,7 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 	}
 
 	store := testutil.NewMockStore()
-	rm, err := scheduler.NewLocalResourceManager(&scheduler.ResourceManagerConfig{
+	rm, err := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 10,
 		Store: store, Agents: agents, MCPClients: mcpMap, LLMClient: llm,
 		Logger: utils.NewLogger("JSON", "DEBUG"),

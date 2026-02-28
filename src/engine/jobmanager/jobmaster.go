@@ -1,7 +1,7 @@
 package jobmanager
 
 import (
-	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
+	"github.com/flowgent-labs/flowgent/src/engine/resourcemanager"
 	"context"
 	"fmt"
 	"sync"
@@ -23,11 +23,11 @@ type EdgeCondition struct {
 }
 
 // JobMaster is the per-run DAG orchestrator. It builds the execution graph
-// from an AgentFlowSpec and dispatches plans via scheduler.ResourceManager.Schedule().
+// from an AgentFlowSpec and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
 	store     store.Store
-	rm        scheduler.ResourceManager
+	rm        resourcemanager.ResourceManager
 	logger    *utils.Logger
 	tracer    trace.Tracer
 	timeout   time.Duration
@@ -52,7 +52,7 @@ type JobMaster struct {
 }
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
-func NewJobMaster(store store.Store, rm scheduler.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
+func NewJobMaster(store store.Store, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
 	timeout := cfg.FlowExecutionTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute

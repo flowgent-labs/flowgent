@@ -53,10 +53,10 @@ type Store interface {
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error
 
 	// Notification channels
-	SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error
-	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
-	ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error)
-	DeleteNotificationChannel(ctx context.Context, id string) error
+	SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error
+	GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error)
+	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
+	DeleteNotifierChannel(ctx context.Context, id string) error
 
 	// Subscription routes (clustered WebSocket delivery)
 	SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error

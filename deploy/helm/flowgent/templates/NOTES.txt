@@ -36,7 +36,7 @@ Services (all default to 2 replicas for HA):
   ✅ Wallet           — {{ .Values.wallet.replicas }} replicas, port {{ .Values.wallet.service.port }}
 {{- end }}
 {{- if .Values.notification.enabled }}
-  ✅ Notification     — {{ .Values.notification.replicas }} replicas, port {{ .Values.notification.service.port }}
+  ✅ Notifier     — {{ .Values.notification.replicas }} replicas, port {{ .Values.notification.service.port }}
 {{- end }}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -164,7 +164,7 @@ wallet:
 # ═══════════════════════════════════════════════════════════════
 # Notification — WS Push + Multi-Channel Notifier
 # ═══════════════════════════════════════════════════════════════
-notification:
+notifier:
   enabled: true
   replicas: 2
   image: ""

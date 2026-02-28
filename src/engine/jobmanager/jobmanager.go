@@ -3,7 +3,7 @@ package jobmanager
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
+	"github.com/flowgent-labs/flowgent/src/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/store"
@@ -22,20 +22,20 @@ type JobManagerConfig struct {
 // It receives agentflow run submissions and spawns a JobMaster per run.
 type JobManager struct {
 	store  store.Store
-	rm     scheduler.ResourceManager
+	rm     resourcemanager.ResourceManager
 	logger *utils.Logger
 	cfg    *JobManagerConfig
 }
 
 // NewJobManager creates the shared JobManager singleton.
-func NewJobManager(store store.Store, rm scheduler.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
-	if errs := scheduler.ValidateComponents(rm, store); len(errs) > 0 {
+func NewJobManager(store store.Store, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
+	if errs := resourcemanager.ValidateComponents(rm, store); len(errs) > 0 {
 		for _, e := range errs {
 			logger.Error("component validation failed", "error", e.Error())
 		}
 		return nil, errs[0]
 	}
-	scheduler.WarnCompatibility(rm, store)
+	resourcemanager.WarnCompatibility(rm, store)
 	return &JobManager{store: store, rm: rm, logger: logger, cfg: cfg}, nil
 }
 

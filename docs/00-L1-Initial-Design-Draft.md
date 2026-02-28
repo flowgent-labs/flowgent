@@ -764,7 +764,7 @@ vars:
   repos:
     - "org/repo1"
     - "org/repo2"
-  # Notification targets
+  # Notifier targets
   notify_email_to: "security-team@company.com"
   notify_webhook_url: "https://outlook.office.com/webhook/xxxxx"
 	

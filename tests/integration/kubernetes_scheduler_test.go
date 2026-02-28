@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
+	"github.com/flowgent-labs/flowgent/src/engine/resourcemanager"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -35,7 +35,7 @@ func TestKubernetesScheduler_RealCluster_CreateAndScale(t *testing.T) {
 
 	_ = client.AppsV1().Deployments(ns).Delete(ctx, testDeployName, metav1.DeleteOptions{})
 
-	rm := &scheduler.KubernetesResourceManager{}
+	rm := &resourcemanager.KubernetesResourceManager{}
 	rm.InitForTest(client, ns, testDeployName)
 	rctx, cancel := context.WithCancel(ctx)
 	rm.SetCtx(rctx, cancel)

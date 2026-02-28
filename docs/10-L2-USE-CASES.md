@@ -48,12 +48,12 @@ Supervisor (per-repo)
   │     ├── FOSS Alpha (dependency vulns via IQ)
   │     └── Code Quality Alpha (SonarQube issues)
   ├── Review Board (3-round voting: security + quality + architecture)
-  └── CI Verification Loop → Notification
+  └── CI Verification Loop → Notifier
 ```
 
 **Key features**: 11 DAG node types, parallel map fan-out, deterministic majority vote,
 supervisor-controlled autonomy (redirect/retry/inject/abort with quotas),
-human-in-the-loop approval gate, multi-channel notification.
+human-in-the-loop approval gate, multi-channel notifier.
 
 ### MCP Tools Used
 

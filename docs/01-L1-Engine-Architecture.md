@@ -211,7 +211,7 @@ paths are global (token-based).
 | `/api/v1/{tenant}/runs/{id}` | GET/DELETE | Get / Delete run |
 | `/api/v1/{tenant}/runs/{id}/cancel` | POST | Cancel a running run |
 | `/api/v1/{tenant}/runs/{id}/tasks` | GET | List tasks for a run |
-| `/api/v1/{tenant}/notifications/channels` | GET/POST | Notification channel CRUD |
+| `/api/v1/{tenant}/notifications/channels` | GET/POST | Notifier channel CRUD |
 | `/api/v1/human/{token}/approve` | POST | Human approval (global) |
 | `/api/v1/human/{token}/reject` | POST | Human rejection (global) |
 
@@ -451,7 +451,7 @@ JM ↔ TM communication via MQTT pub/sub. Topic structure:
 ```
 flowgent/exec/{runID}/{planID}      — Execution plan dispatch
 flowgent/notify/pod/{podID}/ws/+    — WebSocket routing
-flowgent/notify/queue/{tenant}/{flow} — Notification queue
+flowgent/notify/queue/{tenant}/{flow} — Notifier queue
 ```
 
 ---
@@ -600,7 +600,7 @@ There are two paths to trigger a run:
 
 ---
 
-## 11. Notification Service — Queue Consumer + Multi-Channel Push
+## 11. Notifier Service — Queue Consumer + Multi-Channel Push
 
 Bridges internal agentflow events to external communication channels.
 
@@ -608,7 +608,7 @@ Bridges internal agentflow events to external communication channels.
 
 ```
   ┌────────────────────────────────────────────┐
-  │       Notification Service (2+ pods)        │
+  │       Notifier Service (2+ pods)        │
   │  ┌──────────────────┐  ┌────────────────┐  │
   │  │ MQTT Queue       │  │ Human Approval │  │
   │  │ Consumer         │  │ Scanner (5s)   │  │
@@ -763,17 +763,18 @@ Histogram boundaries (from sample config):
 | File | Role |
 |------|------|
 | `src/cmd/flowgent/main.go` | CLI entry (cobra): all-in-one, apiserver, wallet, controller, etc. |
-| `src/cmd/flowgent/launch.go` | Subsystem init + JM/TM/Controller/Notification startup |
+| `src/cmd/flowgent/launch.go` | Subsystem init + JM/TM/Controller/Notifier startup |
 | `src/cmd/flowgent/wallet.go` | Wallet daemon (separate for security isolation) |
 | `src/engine/discovery/` | IDiscoveryClient interface + K8s/static implementations |
 | `src/engine/jobmanager/` | JobManager + per-run JobMaster DAG orchestrator |
-| `src/engine/scheduler/` | LocalResourceManager + KubernetesResourceManager |
+| `src/engine/resourcemanager/` | ResourceManager interface + Local + Kubernetes implementations |
+| `src/engine/trigger/` | ScheduleTrigger — cron-based flow triggering |
 | `src/engine/taskmanager/` | SlotWorker pool + heartbeat |
 | `src/engine/executor/` | 10 TaskExecutor implementations |
 | `src/api/server.go` | REST route registration |
 | `src/api/agentflow.go` | AgentFlow CRUD + trigger handlers |
 | `src/store/` | PostgreSQL + SQLite store implementations |
-| `src/notification/` | Notification service + channel senders |
+| `src/notification/` | Notifier service + channel senders |
 | `src/model/` | Shared types: AgentFlowSpec, Node, Edge, Run, etc. |
 | `deploy/helm/flowgent/` | Helm chart (6 microservices × 2 replicas) |
 

@@ -12,7 +12,7 @@ import (
 
 // ─── Notification Channels ──────────────────────────────────
 
-func (s *PostgresStore) SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error {
+func (s *PostgresStore) SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error {
 	if ch.ID == "" {
 		ch.ID = uuid.New().String()
 	}
@@ -31,14 +31,14 @@ func (s *PostgresStore) SaveNotificationChannel(ctx context.Context, ch *model.N
 	return err
 }
 
-func (s *PostgresStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error) {
+func (s *PostgresStore) GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, name, channel_type, config, enabled, tenant_id, created_at, updated_at
 		 FROM notification_channels WHERE id=$1`, id)
-	return scanNotificationChannel(row)
+	return scanNotifierChannel(row)
 }
 
-func (s *PostgresStore) ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error) {
+func (s *PostgresStore) ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
 	var rows *sql.Rows
 	var err error
 	if tenantID == "" {
@@ -54,9 +54,9 @@ func (s *PostgresStore) ListNotificationChannels(ctx context.Context, tenantID s
 		return nil, err
 	}
 	defer rows.Close()
-	var channels []model.NotificationChannel
+	var channels []model.NotifierChannel
 	for rows.Next() {
-		ch, err := scanNotificationChannelRow(rows)
+		ch, err := scanNotifierChannelRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -65,7 +65,7 @@ func (s *PostgresStore) ListNotificationChannels(ctx context.Context, tenantID s
 	return channels, rows.Err()
 }
 
-func (s *PostgresStore) DeleteNotificationChannel(ctx context.Context, id string) error {
+func (s *PostgresStore) DeleteNotifierChannel(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM notification_channels WHERE id=$1`, id)
 	return err
 }
@@ -129,22 +129,22 @@ func (s *PostgresStore) CleanupOrphanedRoutes(ctx context.Context, podID string,
 
 // ─── Scanner helpers ────────────────────────────────────────
 
-func scanNotificationChannel(s scanner) (*model.NotificationChannel, error) {
-	var ch model.NotificationChannel
+func scanNotifierChannel(s scanner) (*model.NotifierChannel, error) {
+	var ch model.NotifierChannel
 	var cfgB []byte
 	var chType string
 	if err := s.Scan(&ch.ID, &ch.Name, &chType, &cfgB, &ch.Enabled, &ch.TenantID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 		return nil, err
 	}
-	ch.Type = model.NotificationChannelType(chType)
+	ch.Type = model.NotifierChannelType(chType)
 	if cfgB != nil {
 		json.Unmarshal(cfgB, &ch.Config)
 	}
 	return &ch, nil
 }
 
-func scanNotificationChannelRow(r rowsScanner) (*model.NotificationChannel, error) {
-	return scanNotificationChannel(r)
+func scanNotifierChannelRow(r rowsScanner) (*model.NotifierChannel, error) {
+	return scanNotifierChannel(r)
 }
 
 func scanSubscriptionRoute(s scanner) (*model.SubscriptionRoute, error) {
@@ -161,7 +161,7 @@ func scanSubscriptionRouteRow(r rowsScanner) (*model.SubscriptionRoute, error) {
 
 // ─── SQLite implementations ─────────────────────────────────
 
-func (s *SQLiteStore) SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error {
+func (s *SQLiteStore) SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error {
 	if ch.ID == "" {
 		ch.ID = uuid.New().String()
 	}
@@ -180,14 +180,14 @@ func (s *SQLiteStore) SaveNotificationChannel(ctx context.Context, ch *model.Not
 	return err
 }
 
-func (s *SQLiteStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error) {
+func (s *SQLiteStore) GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, name, channel_type, config, enabled, tenant_id, created_at, updated_at
 		 FROM notification_channels WHERE id=?1`, id)
-	return scanNotificationChannel(row)
+	return scanNotifierChannel(row)
 }
 
-func (s *SQLiteStore) ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error) {
+func (s *SQLiteStore) ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
 	var rows *sql.Rows
 	var err error
 	if tenantID == "" {
@@ -203,9 +203,9 @@ func (s *SQLiteStore) ListNotificationChannels(ctx context.Context, tenantID str
 		return nil, err
 	}
 	defer rows.Close()
-	var channels []model.NotificationChannel
+	var channels []model.NotifierChannel
 	for rows.Next() {
-		ch, err := scanNotificationChannelRow(rows)
+		ch, err := scanNotifierChannelRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +214,7 @@ func (s *SQLiteStore) ListNotificationChannels(ctx context.Context, tenantID str
 	return channels, rows.Err()
 }
 
-func (s *SQLiteStore) DeleteNotificationChannel(ctx context.Context, id string) error {
+func (s *SQLiteStore) DeleteNotifierChannel(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM notification_channels WHERE id=?1`, id)
 	return err
 }

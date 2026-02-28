@@ -10,7 +10,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/engine/jobmanager"
-	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
+	"github.com/flowgent-labs/flowgent/src/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
@@ -63,7 +63,7 @@ func TestE2E_BasicAgentFlow(t *testing.T) {
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Supervisor."},
 	}
 	store := testutil.NewMockStore()
-	rm, err := scheduler.NewLocalResourceManager(&scheduler.ResourceManagerConfig{
+	rm, err := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 10,
 		Store: store, Agents: agents, MCPClients: map[string]engine.MCPClient{}, LLMClient: &e2eLLM{},
 		Logger: utils.NewLogger("JSON", "DEBUG"),
@@ -115,7 +115,7 @@ func TestE2E_MapNodeExecution(t *testing.T) {
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
 	store := testutil.NewMockStore()
-	rm, err := scheduler.NewLocalResourceManager(&scheduler.ResourceManagerConfig{
+	rm, err := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 5,
 		Store: store, Agents: agents, MCPClients: map[string]engine.MCPClient{}, LLMClient: &e2eLLM{},
 		Logger: utils.NewLogger("JSON", "DEBUG"),
@@ -157,7 +157,7 @@ func TestE2E_NodeRetry(t *testing.T) {
 	}
 	store := testutil.NewMockStore()
 	failingLLM := &e2eFailingLLM{failCount: 1}
-	rm, err := scheduler.NewLocalResourceManager(&scheduler.ResourceManagerConfig{
+	rm, err := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 5,
 		Store: store, Agents: agents, MCPClients: map[string]engine.MCPClient{}, LLMClient: failingLLM,
 		Logger: utils.NewLogger("JSON", "DEBUG"),

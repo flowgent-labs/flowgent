@@ -19,10 +19,10 @@ type NotificationHandler struct {
 
 // NotifStore is the subset of store.Store needed by NotificationHandler.
 type NotifStore interface {
-	SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error
-	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
-	ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error)
-	DeleteNotificationChannel(ctx context.Context, id string) error
+	SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error
+	GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error)
+	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
+	DeleteNotifierChannel(ctx context.Context, id string) error
 }
 
 // NewNotificationHandler creates a notification channel handler.
@@ -33,7 +33,7 @@ func NewNotificationHandler(s NotifStore, logger *utils.Logger) *NotificationHan
 // ListChannels returns all notification channels for the given tenant.
 func (h *NotificationHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	channels, err := h.store.ListNotificationChannels(r.Context(), tenant)
+	channels, err := h.store.ListNotifierChannels(r.Context(), tenant)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -45,7 +45,7 @@ func (h *NotificationHandler) ListChannels(w http.ResponseWriter, r *http.Reques
 // CreateChannel persists a new notification channel.
 func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	var ch model.NotificationChannel
+	var ch model.NotifierChannel
 	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -58,7 +58,7 @@ func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Reque
 	ch.TenantID = tenant
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = ch.CreatedAt
-	if err := h.store.SaveNotificationChannel(r.Context(), &ch); err != nil {
+	if err := h.store.SaveNotifierChannel(r.Context(), &ch); err != nil {
 		h.logger.Error("save notification channel", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -71,7 +71,7 @@ func (h *NotificationHandler) CreateChannel(w http.ResponseWriter, r *http.Reque
 // GetChannel returns a single notification channel by ID.
 func (h *NotificationHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	ch, err := h.store.GetNotificationChannel(r.Context(), id)
+	ch, err := h.store.GetNotifierChannel(r.Context(), id)
 	if err != nil || ch == nil {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
@@ -84,7 +84,7 @@ func (h *NotificationHandler) GetChannel(w http.ResponseWriter, r *http.Request)
 func (h *NotificationHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
 	id := r.PathValue("id")
-	var ch model.NotificationChannel
+	var ch model.NotifierChannel
 	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -92,7 +92,7 @@ func (h *NotificationHandler) UpdateChannel(w http.ResponseWriter, r *http.Reque
 	ch.ID = id
 	ch.TenantID = tenant
 	ch.UpdatedAt = time.Now()
-	if err := h.store.SaveNotificationChannel(r.Context(), &ch); err != nil {
+	if err := h.store.SaveNotifierChannel(r.Context(), &ch); err != nil {
 		h.logger.Error("update notification channel", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -104,7 +104,7 @@ func (h *NotificationHandler) UpdateChannel(w http.ResponseWriter, r *http.Reque
 // DeleteChannel removes a notification channel.
 func (h *NotificationHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := h.store.DeleteNotificationChannel(r.Context(), id); err != nil {
+	if err := h.store.DeleteNotifierChannel(r.Context(), id); err != nil {
 		h.logger.Error("delete notification channel", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

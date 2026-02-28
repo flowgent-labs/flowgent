@@ -32,7 +32,7 @@ type ServiceConfig struct {
 	Lock          LockConfig               `json:"lock" yaml:"lock"`
 	Sandbox       SandboxConfig            `json:"sandbox" yaml:"sandbox"`
 	Payments      *payments.PaymentsConfig `json:"payments" yaml:"payments"`
-	Notification  NotificationConfig       `json:"notification" yaml:"notification"`
+	Notification  NotifierConfig       `json:"notification" yaml:"notification"`
 	Tenant        TenantConfig             `json:"tenant" yaml:"tenant"`
 }
 
@@ -278,14 +278,14 @@ type AgentDef = model.AgentDef
 
 // ─── Notification ─────────────────────────────────────────────
 
-// NotificationConfig configures the notification service and its channels.
-type NotificationConfig struct {
+// NotifierConfig configures the notification service and its channels.
+type NotifierConfig struct {
 	Enabled  bool                        `json:"enabled" yaml:"enabled"`
-	Channels []NotificationChannelConfig `json:"channels" yaml:"channels"`
+	Channels []NotifierChannelConfig `json:"channels" yaml:"channels"`
 }
 
-// NotificationChannelConfig defines a single notification channel.
-type NotificationChannelConfig struct {
+// NotifierChannelConfig defines a single notification channel.
+type NotifierChannelConfig struct {
 	Name    string         `json:"name" yaml:"name"`
 	Type    string         `json:"type" yaml:"type"` // telegram, dingtalk, slack, email, webhook
 	Enabled bool           `json:"enabled" yaml:"enabled"`

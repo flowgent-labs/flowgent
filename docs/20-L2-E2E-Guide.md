@@ -43,7 +43,7 @@ flowgent-notification-yyy               1/1     Running   0          30s
 | 4 | **TaskManager** | — | Consumes ExecutionPlans from MQTT, executes via router (12 node types) |
 | 5 | **Sandbox** | — | Consumes sandbox ExecutionPlans from queue, executes scripts in isolated env with network restrictions |
 | 6 | **Wallet** | 9901 | x402 Ed25519 key management, payment signing |
-| 7 | **Notification** | 9993 (WS) | Multi-channel push (Telegram, Slack, DingTalk, Email, Webhook) + WS SSE |
+| 7 | **Notifier** | 9993 (WS) | Multi-channel push (Telegram, Slack, DingTalk, Email, Webhook) + WS SSE |
 
 ---
 
@@ -251,7 +251,7 @@ psql -h 172.29.235.101 -U flowgent -d flowgent -c \
 | 5 | TaskManager | `kubectl logs -l app.kubernetes.io/component=taskmanager` | `task manager started, slots=N` |
 | 6 | Sandbox | `kubectl logs -l app.kubernetes.io/component=sandbox` | `Sandbox worker started` |
 | 7 | Wallet | `curl http://<svc>:9901/health` | `200` |
-| 8 | Notification | `kubectl logs -l app.kubernetes.io/component=notification` | `Notification service started` |
+| 8 | Notifier | `kubectl logs -l app.kubernetes.io/component=notification` | `Notifier service started` |
 
 ---
 
@@ -320,9 +320,9 @@ Both modes share `model.AgentFlowSpec` (dual-tagged `json:` + `yaml:`). At start
 | T2 | Controller Hash-Mod Sharding | Controller × 3 | hash(flow_id) % N partition, no overlap, no gaps |
 | T3 | TM Distributed Plan Execution | TM × 4 | MQTT dispatch, slot allocation, lease claiming, orphan re-claim |
 | T4 | Sandbox Script Execution | Sandbox × 2 + TM | Queue dispatch, policy enforcement, result collection |
-| T5 | Notification Load-Balancing | Notification × 2 | MQTT shared subscription, dedup, channel delivery |
+| T5 | Notifier Load-Balancing | Notifier × 2 | MQTT shared subscription, dedup, channel delivery |
 | T6 | Application Mode | Controller + K8s | Auto-create JM Deployment on grade-priority flow, cleanup on completion |
-| T7 | Full E2E | All 7 services | Trigger → Controller → JM → RM → TM/Sandbox → Notification |
+| T7 | Full E2E | All 7 services | Trigger → Controller → JM → RM → TM/Sandbox → Notifier |
 
 ---
 
