@@ -261,13 +261,17 @@ func startServer(mode string) {
 	// ── LLM Client ─────────────────────────────────────
 	llmClient := llm.New(&serviceCfg.LLM)
 
-	// ── Engine Executor ────────────────────────────────
+	// ── Scheduler (owns TaskManager internally) ─────────
 	agents := make([]*config.AgentDef, len(serviceCfg.Orchestration.Agents))
 	for i := range serviceCfg.Orchestration.Agents {
 		agents[i] = &serviceCfg.Orchestration.Agents[i]
 	}
 	q := queue.NewMemoryQueue(1000)
-	tm, _ := engine.NewTaskManager(&engine.TaskManagerConfig{ID: "tm-main", SlotCount: 10, Queue: q, Store: storeImpl, MCPClients: mcpMap, Agents: agents, LLMClient: llmClient, Logger: logger})
+	scheduler, err := engine.NewScheduler(&engine.SchedulerConfig{
+		Type: engine.SchedulerTypeLocal, PoolSize: serviceCfg.Orchestration.MaxConcurrentFlows,
+		Store: storeImpl, Agents: agents, MCPClients: mcpMap, LLMClient: llmClient, Logger: logger,
+	})
+	if err != nil { log.Fatalf("Failed to create scheduler: %v", err) }
 
 	// ── API Handlers ───────────────────────────────────
 	healthHandler := &api.HealthHandler{}
@@ -293,16 +297,17 @@ func startServer(mode string) {
 	cronSched.Start()
 	defer cronSched.Stop()
 
-	// ── Queue + Poller ─────────────────────────────────
+	// ── JobManager + Poller ────────────────────────────
 	flowTimeout, _ := time.ParseDuration(serviceCfg.Orchestration.FlowExecutionTimeout)
-	if flowTimeout == 0 {
-		flowTimeout = 30 * time.Minute
-	}
+	if flowTimeout == 0 { flowTimeout = 30 * time.Minute }
 	maxRetries := serviceCfg.Orchestration.MaxNodeRetries
-	// TaskManager.Start is called later with agents/LLM already configured
-	_ = tm.Start(context.Background())
-	go startRunPoller(context.Background(), storeImpl, tm, agentFlowHandler.AgentFlows(), q, logger,
-		flowTimeout, maxRetries, serviceCfg.Orchestration.MaxConcurrentFlows)
+
+	jm := engine.NewJobManager(storeImpl, q, scheduler, logger)
+	jm.SetTimeout(flowTimeout)
+	if maxRetries > 0 { jm.SetNodeLimit(maxRetries) }
+
+	go startRunPoller(context.Background(), storeImpl, jm,
+		agentFlowHandler.AgentFlows(), flowTimeout, maxRetries)
 
 
 	// ── Hot reload ─────────────────────────────────────
@@ -569,15 +574,13 @@ func (a *mcpAdapter) CallTool(ctx context.Context, toolName string, args map[str
 	return a.factory.CallTool(ctx, a.name, toolName, args)
 }
 
-func startRunPoller(ctx context.Context, s engine.Store, tm *engine.TaskManager,
-	flows map[string]*model.AgentFlowSpec, q queue.Queue, logger *util.Logger,
-	flowTimeout time.Duration, maxRetries int, maxConcurrent int) {
+// startRunPoller polls for pending AgentFlowRuns and dispatches them
+// via the shared JobManager. Each run is dispatched in a goroutine;
+// the JM's scheduler handles concurrency internally.
+func startRunPoller(ctx context.Context, s engine.Store, jm *engine.JobManager,
+	flows map[string]*model.AgentFlowSpec, flowTimeout time.Duration, maxRetries int) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	if maxConcurrent <= 0 {
-		maxConcurrent = 10
-	}
-	sem := make(chan struct{}, maxConcurrent)
 	for {
 		select {
 		case <-ctx.Done():
@@ -585,25 +588,11 @@ func startRunPoller(ctx context.Context, s engine.Store, tm *engine.TaskManager,
 		case <-ticker.C:
 			runs, _ := s.ListAgentFlowRuns(ctx, "", 10)
 			for _, run := range runs {
-				if run.Status != model.RunPending {
-					continue
-				}
+				if run.Status != model.RunPending { continue }
 				spec := flows[run.AgentFlowID]
-				if spec == nil {
-					continue
-				}
-				sem <- struct{}{}
-				localSched, _ := engine.NewLocalScheduler(&engine.SchedulerConfig{
-					Type: engine.SchedulerTypeLocal, TaskManager: tm, PoolSize: maxConcurrent,
-				})
-				jm := engine.NewJobManager(s, q, localSched, logger)
-				jm.SetTimeout(flowTimeout)
-				if maxRetries > 0 {
-					jm.SetNodeLimit(maxRetries)
-				}
+				if spec == nil { continue }
 				go func(r model.AgentFlowRun, sp *model.AgentFlowSpec) {
-					defer func() { <-sem }()
-					jm.StartJob(ctx, &r, sp)
+					_ = jm.StartJob(ctx, &r, sp)
 				}(run, spec)
 			}
 		}
@@ -739,9 +728,7 @@ func startJobManager() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start run poller (picks up pending runs and dispatches them)
-	go startRunPoller(ctx, storeImpl, nil, mapFromStore(storeImpl), q, logger,
-		30*time.Minute, 3, 10)
+	go startRunPoller(ctx, storeImpl, jm, mapFromStore(storeImpl), 30*time.Minute, 3)
 
 	log.Printf("JobManager started (scheduler=%s)", scheduler.Type())
 

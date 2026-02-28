@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/util"
 )
 
 // SchedulerType identifies the scheduling backend.
@@ -48,16 +50,20 @@ type SchedulerConfig struct {
 	MinTMs       int
 	MaxTMs       int
 	IdleTimeout  time.Duration
+	PoolSize     int
 
-	// For LocalScheduler
-	TaskManager *TaskManager
-	PoolSize    int
+	// TM dependencies (used by LocalScheduler to create TM internally)
+	Store      Store
+	Agents     []*config.AgentDef
+	MCPClients map[string]MCPClient
+	LLMClient  LLMClient
+	Logger     *util.Logger
 
-	// For KubernetesScheduler
-	K8sNamespace       string
-	K8sDeploymentName  string
-	K8sKubeConfigPath  string
-	TMImage            string
+	// KubernetesScheduler specific
+	K8sNamespace      string
+	K8sDeploymentName string
+	K8sKubeConfigPath string
+	TMImage           string
 }
 
 // NewScheduler creates the configured scheduler implementation.
