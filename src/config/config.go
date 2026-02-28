@@ -32,7 +32,7 @@ type ServiceConfig struct {
 	Lock          LockConfig               `json:"lock" yaml:"lock"`
 	Sandbox       SandboxConfig            `json:"sandbox" yaml:"sandbox"`
 	Payments      *payments.PaymentsConfig `json:"payments" yaml:"payments"`
-	Notification  NotifierConfig       `json:"notification" yaml:"notification"`
+	Notifier      NotifierConfig       `json:"notifier" yaml:"notifier"`
 	Tenant        TenantConfig             `json:"tenant" yaml:"tenant"`
 }
 
@@ -281,7 +281,7 @@ type MCPDef struct {
 // All agent-related code should use model.AgentDef directly.
 type AgentDef = model.AgentDef
 
-// ─── Notification ─────────────────────────────────────────────
+// ─── Notifier ─────────────────────────────────────────────────
 
 // NotifierConfig configures the notification service and its channels.
 type NotifierConfig struct {
@@ -464,6 +464,7 @@ func LoadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, 
 	// Also load skills if configured
 	if cfg.Orchestration.Skills.Static.Enabled {
 		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.Skills.Static.LoadDir)
+		// Load top-level skill YAML files
 		all, err := loadResourceDir[model.AgentFlowSpec](dir)
 		if err == nil {
 			for _, spec := range all {
@@ -474,6 +475,27 @@ func LoadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, 
 					flows = append(flows, spec)
 				}
 			}
+		}
+		// Also scan one level of subdirectories for skill.yaml files
+		// (standard skill directory layout: skill-name/{skill.yaml,scripts/,references/,SKILL.md})
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			skillFile := filepath.Join(dir, e.Name(), "skill.yaml")
+			data, err := os.ReadFile(skillFile)
+			if err != nil {
+				continue
+			}
+			var spec model.AgentFlowSpec
+			if err := yaml.Unmarshal(data, &spec); err != nil {
+				continue
+			}
+			if spec.ID == "" || spec.Kind != "skill" {
+				continue
+			}
+			flows = append(flows, spec)
 		}
 	}
 

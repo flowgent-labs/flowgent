@@ -94,7 +94,7 @@ Built-in examples are under `examples/` — agents, flows, MCP servers, and skil
 
 | Skill | Description | File |
 |-------|-------------|------|
-| dependency-firewall-check | Nexus3 dependency firewall check via copilot scripts (replaces sonatype-nexus3 MCP) | `examples/skills/dependency-firewall-check.yaml` |
+| nexus3-maven-versions-retrieve-with-iq-firewall | Nexus3 dependency firewall check via copilot scripts (replaces sonatype-nexus3 MCP) | `examples/skills/nexus3-maven-versions-retrieve-with-iq-firewall.yaml` |
 
 Full e2e guide → [docs/20-L2-E2E-Guide.md](docs/20-L2-E2E-Guide.md)
 

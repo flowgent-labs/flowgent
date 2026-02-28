@@ -1,35 +1,30 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Skill: dependency-firewall-check
+# Skill: nexus3-maven-versions-retrieve-with-iq-firewall
+#
+# Standard skill directory layout:
+#   skill.yaml     — AgentFlowSpec definition (this file)
+#   SKILL.md       — Human-readable skill documentation + agent instructions
+#   scripts/       — Executable scripts called by sandbox nodes
+#   references/    — API references, config templates
+#   workspace/     — Runtime scratch space (mounted in sandbox)
 #
 # Replaces the sonatype-nexus3 MCP tool for environments where Nexus3 OSS lacks
 # SonatypeIQ license integration (no firewall.status in UI or REST API).
 #
 # Design rationale (see docs/01-L1-Engine-Architecture.md §13.4):
-#   This skill wraps existing copilot scripts that use gh CLI + Nexus3 web API +
-#   gcloud CLI to fetch the latest top-N Maven dependency versions with
-#   SonatypeIQ firewall.status=allow (i.e., not quarantined).
+#   This skill wraps copilot scripts (gh + nexus3 web API + gcloud CLI) to fetch
+#   the latest top-N Maven dependency versions with firewall.status=allow.
 #
-#   In Flowgent, a "skill" IS a sub-AgentFlow (kind: skill). No new abstractions
-#   or executors. This skill is referenced from the security fixer V1/V2 flow as:
-#     type: skill
-#     skill: dependency-firewall-check
+#   In Flowgent, a "skill" IS a sub-AgentFlow (kind: skill). No new abstractions.
+#   Reference from a parent flow as:  type: skill, skill: <this-id>
 #
-#   When running in an environment WITH SonatypeIQ license, this entire skill can
-#   be replaced by a single MCP tool node (type: tool, tool: sonatype-nexus3).
-#
-# Inputs (passed from parent flow via plan.Input):
-#   - repo:              target repository name (e.g. "rengine")
-#   - maven_coordinates: Maven GAV coordinates from SonatypeIQ scan
-#   - top_n:             number of latest non-quarantined versions to return (default 3)
-#
-# Output: JSON array of top-N safe versions with metadata
 # ═══════════════════════════════════════════════════════════════════════════════
 
-id: dependency-firewall-check
+id: nexus3-maven-versions-retrieve-with-iq-firewall
 kind: skill
 summary: >-
-  Fetch top-N Maven dependency versions with SonatypeIQ firewall.status=allow
-  via copilot scripts (gh + nexus3 web API + gcloud)
+  Fetch top-N Maven dependency versions from Nexus3 with SonatypeIQ
+  firewall.status=allow, using copilot scripts instead of Nexus3 MCP
 
 vars:
   nexus3_url: "http://nexus3:8081"
@@ -37,42 +32,34 @@ vars:
   default_top_n: 3
 
 nodes:
-  # ── Step 1: Query Nexus3 for top-N non-quarantined dependency versions ──
   - id: query-nexus3
     type: sandbox
     runtime: bash
     timeout: 30s
     script: |
       #!/bin/bash
+      # Queries Nexus3 for component versions and checks firewall status.
+      # See scripts/query-nexus3.sh for development / local testing.
       set -euo pipefail
       N3URL="${NEXUS3_URL:-http://nexus3:8081}"
-      N3REPO="${NEXUS3_REPO:-maven-releases}"
-      COORDS="${INPUT_MAVEN_COORDINATES:-}"
-      TOPN="${INPUT_TOP_N:-3}"
       N3USER="${NEXUS3_USER:-admin}"
       N3PASS="${NEXUS3_PASSWORD:-admin}"
-      if [ -z "$COORDS" ]; then echo '{"error":"maven_coordinates is required"}'; exit 1; fi
+      COORDS="${INPUT_MAVEN_COORDINATES:-}"
+      TOPN="${INPUT_TOP_N:-3}"
+      if [ -z "$COORDS" ]; then echo '{"error":"maven_coordinates required"}'; exit 1; fi
       IFS=':' read -r GID AID CURVER <<< "$COORDS"
-      # Query Nexus3
       RESULTS=$(curl -s --noproxy '*' -u "${N3USER}:${N3PASS}" \
         "$N3URL/service/rest/v1/search?group=$GID&name=$AID&sort=version&direction=desc" \
         2>/dev/null || echo '{"items":[]}')
-      # Extract top-N versions (filter snapshots + current)
-      TOPN="$TOPN" CURVER="$CURVER" python3 -c "
-      import sys,os,json
-      d=json.load(sys.stdin)
-      vs=[i['version'] for i in d.get('items',[]) if 'SNAPSHOT' not in i.get('version','').upper() and i.get('version')!=os.environ.get('CURVER','')]
-      print(json.dumps(vs[:int(os.environ.get('TOPN','3'))]))
-      " <<< "$RESULTS" 2>/dev/null > /tmp/versions.json
+      TOPN="$TOPN" CURVER="$CURVER" python3 scripts/filter-versions.py <<< "$RESULTS" 2>/dev/null > /tmp/versions.json
       VERSIONS=$(cat /tmp/versions.json 2>/dev/null || echo '[]')
-      # Check firewall status for each version
       printf '["'
       FIRST=1
       for VER in $(echo "$VERSIONS" | python3 -c "import sys,json; [print(v) for v in json.load(sys.stdin)]" 2>/dev/null); do
         FW="unknown"
         command -v gcloud &>/dev/null && FW=$(gcloud artifacts packages list \
-          --repository="$N3REPO" --location=us-central1 --package="$AID" \
-          --format="value(firewallStatus)" 2>/dev/null || echo "unknown")
+          --repository="${NEXUS3_REPO:-maven-releases}" --location=us-central1 \
+          --package="$AID" --format="value(firewallStatus)" 2>/dev/null || echo "unknown")
         if [ "$FW" = "unknown" ]; then
           FW=$(curl -s --noproxy '*' -u "${N3USER}:${N3PASS}" \
             "$N3URL/service/rest/v1/firewall/component?group=$GID&name=$AID&version=$VER" \
@@ -81,14 +68,13 @@ nodes:
         [ "$FIRST" = 1 ] && FIRST=0 || printf '","'
         printf '{"version":"%s","firewall_status":"%s"}' "$VER" "$FW"
       done
-      printf '"]'
+      printf '"]\n'
     network_policy:
       mode: allowlist
       allowed:
         - "nexus3:8081"
         - "localhost:8081"
 
-  # ── Step 2: Filter and normalize results ──
   - id: filter-results
     type: agent
     agent: issue-detector

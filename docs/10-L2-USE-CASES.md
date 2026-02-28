@@ -47,7 +47,7 @@ Supervisor (per-repo)
   ├── Discovery Phase
   │     ├── SonarQube MCP (SAST — get_issues)
   │     ├── Sonatype IQ MCP (FOSS dependency vulns)
-  │     └── Skill: dependency-firewall-check (replaces Nexus3 MCP)
+  │     └── Skill: nexus3-maven-versions-retrieve-with-iq-firewall (replaces Nexus3 MCP)
   │           Uses copilot scripts (gh + nexus3 web API + gcloud)
   │           to fetch top-3 non-quarantined Maven dep versions.
   │           See §13.4 in architecture doc for design rationale.
@@ -77,7 +77,7 @@ multi-channel notifier.
 | GitHub | `get_latest_commit`, `create_branch`, `commit_and_push`, `create_pull_request` | `examples/mcp-github/` |
 | SonarQube | `scan/get_issues`, `scan/trigger_analysis`, `scan/get_status` | `examples/mcp-sonarqube/` |
 | Sonatype IQ | `get_jobs_by_commit`, `get_foss_solution` | `examples/mcp-sonatypeiq/` |
-| **Skill**: `dependency-firewall-check` | Nexus3 dependency firewall check via copilot scripts | Replaces `sonatype-nexus3` MCP (see §13.4) |
+| **Skill**: `nexus3-maven-versions-retrieve-with-iq-firewall` | Nexus3 dependency firewall check via copilot scripts | Replaces `sonatype-nexus3` MCP (see §13.4) |
 | Sonatype Nexus3 | `get_foss_solution` | `examples/mcp-nexus3/` |
 
 ---

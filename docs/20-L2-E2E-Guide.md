@@ -465,7 +465,7 @@ Three versions of the security fixer flow were consolidated into a clean V1/V2 p
 | V3 | **Merged → deleted** | Iterative SonarQube re-scan loop (max 3 iterations) incorporated into V1. File removed. |
 
 **Key improvements in merged V1/V2:**
-- **Nexus3 MCP → Skill**: `fetch-safe-deps` node uses `type: skill, skill: dependency-firewall-check` instead of `type: tool, tool: sonatype-nexus3`. Rationale: Nexus3 OSS lacks SonatypeIQ license → no firewall status in UI/API. Skill wraps existing copilot scripts (gh + nexus3 web API + gcloud). Documented in architecture doc §13.4.
+- **Nexus3 MCP → Skill**: `fetch-safe-deps` node uses `type: skill, skill: nexus3-maven-versions-retrieve-with-iq-firewall` instead of `type: tool, tool: sonatype-nexus3`. Rationale: Nexus3 OSS lacks SonatypeIQ license → no firewall status in UI/API. Skill wraps existing copilot scripts (gh + nexus3 web API + gcloud). Documented in architecture doc §13.4.
 - **Iterative re-scan loop** (from V3): After commit → trigger SonarQube re-analysis → poll for completion (sandbox, 120s timeout) → compare pre/post issue lists → loop back to Fix if unresolved (max 3 iterations).
 - **12 → 22 nodes** covering full enterprise pipeline with 12 phases.
 
@@ -495,7 +495,7 @@ Basic SonarQube MCP integration verified:
 
 1. Register SonarQube MCP in flowgent config (`mcp_servers` section)
 2. Register agent definitions (issue-detector, fixer-agent, reviewers, supervisor, git-agent)
-3. Register `dependency-firewall-check` skill definition
+3. Register `nexus3-maven-versions-retrieve-with-iq-firewall` skill definition
 4. Enable notification service (`notification.enabled: true`)
 5. Rebuild + redeploy flowgent with MCP/agent/skill registrations
 6. Trigger V2 flow → verify: SonarQube issues fetched → agent analyzes → fixes generated → review → vote → commit → re-scan → report

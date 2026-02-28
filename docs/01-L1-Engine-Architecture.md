@@ -999,7 +999,7 @@ environment (dev/staging/production) without rebuilding any binaries.
 # In the flow YAML — skill replaces MCP tool
 - id: fetch-safe-deps
   type: skill                                  # was: type: tool, tool: sonatype-nexus3
-  skill: dependency-firewall-check
+  skill: nexus3-maven-versions-retrieve-with-iq-firewall
   input:
     repo: "${vars.repo}"
     maven_coordinates: "${scan-sonatypeiq.maven_coords}"
