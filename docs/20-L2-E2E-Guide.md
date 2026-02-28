@@ -1,7 +1,7 @@
 # Flowgent E2E Test Guide — Full Distributed Mode on K3s
 
 **Date:** 2026-05-23
-**Status:** 7 microservices (apiserver, controller, jobmanager, taskmanager, sandbox, wallet, notification) — Helm + K3s
+**Status:** 7 microservices (apiserver, controller, jobmanager, taskmanager, sandbox, wallet, notifier) — Helm + K3s
 
 ---
 
@@ -16,21 +16,21 @@ kubectl get pods -l 'app.kubernetes.io/name=flowgent'
 Expected (session mode, 2 replicas per service, 14 pods total):
 
 ```
-NAME                                    READY   STATUS    RESTARTS   AGE
-flowgent-apiserver-xxx                  1/1     Running   0          30s
-flowgent-apiserver-yyy                  1/1     Running   0          30s
-flowgent-controller-xxx                 1/1     Running   0          30s
-flowgent-controller-yyy                 1/1     Running   0          30s
-flowgent-jobmanager-xxx                 1/1     Running   0          30s
-flowgent-jobmanager-yyy                 1/1     Running   0          30s
-flowgent-taskmanager-xxx                1/1     Running   0          30s
-flowgent-taskmanager-yyy                1/1     Running   0          30s
-flowgent-sandbox-xxx                    1/1     Running   0          30s
-flowgent-sandbox-yyy                    1/1     Running   0          30s
-flowgent-wallet-xxx                     1/1     Running   0          30s
-flowgent-wallet-yyy                     1/1     Running   0          30s
-flowgent-notification-xxx               1/1     Running   0          30s
-flowgent-notification-yyy               1/1     Running   0          30s
+NAME                                                READY   STATUS    RESTARTS   AGE
+flowgent-apiserver-default-abc123                   1/1     Running   0          30s
+flowgent-apiserver-default-def456                   1/1     Running   0          30s
+flowgent-controller-default-ghi789                  1/1     Running   0          30s
+flowgent-controller-default-jkl012                  1/1     Running   0          30s
+flowgent-jobmanager-default-mno345                  1/1     Running   0          30s
+flowgent-jobmanager-default-pqr678                  1/1     Running   0          30s
+flowgent-taskmanager-default-stu901                 1/1     Running   0          30s
+flowgent-taskmanager-default-vwx234                 1/1     Running   0          30s
+flowgent-sandbox-default-yza567                     1/1     Running   0          30s
+flowgent-sandbox-default-bcd890                     1/1     Running   0          30s
+flowgent-wallet-default-efg123                      1/1     Running   0          30s
+flowgent-wallet-default-hij456                      1/1     Running   0          30s
+flowgent-notifier-default-klm789                    1/1     Running   0          30s
+flowgent-notifier-default-nop012                    1/1     Running   0          30s
 ```
 
 ### 1.1 Component Responsibilities
@@ -119,7 +119,7 @@ kubectl get pods -l 'app.kubernetes.io/name=flowgent'
 
 # Component-level verification:
 kubectl get deploy -l 'app.kubernetes.io/name=flowgent'
-# Expected: apiserver, controller, jobmanager, taskmanager, sandbox, wallet, notification
+# Expected: apiserver, controller, jobmanager, taskmanager, sandbox, notifier, wallet
 ```
 
 ---
@@ -183,7 +183,7 @@ VALUES ('vip-security-fixer', 1,
 "
 
 # Controller detects grade priority → creates JM Deployment automatically
-kubectl get deploy -n flowgent-rengine flowgent-jm-vip-security-fixer
+kubectl get deploy -n flowgent-rengine flowgent-jm-rengine-vip-security-fixer-<run_id>
 # Expected: 1 JM pod running in the tenant namespace
 
 # JM picks up PENDING run → dispatches to TM → COMPLETED

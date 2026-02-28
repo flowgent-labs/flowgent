@@ -132,7 +132,7 @@ The sole architectural difference is **who starts the JM and when**:
 | | Session | Application |
 |---|---|---|
 | **JM started by** | Helm / Admin (platform init) | Controller (on flow discovery) |
-| **JM naming** | `flowgent-{release}-jobmanager` | `flowgent-jm-{tenant}-{flow}` |
+| **JM naming** | `flowgent-jobmanager-{tenantId}-{hash}` | `flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}` |
 | **JM lifecycle** | Persistent, shared across tenants | Per-flow, destroyed on completion |
 | **TM scale** | **Manual** (admin-managed capacity) | **Auto** (JM's K8s RM scales TMs) |
 | **Slot exhaustion** | Run stays PENDING, admin adds TMs | JM auto-scales TM replicas |
@@ -161,24 +161,29 @@ in a single transactional store (PG).
 ### 1.3 Multi-Tenant Pod Naming
 
 Tenant isolation uses **K8s namespaces**: each tenant gets its own namespace.
-Pod names carry `tenant_id` + `flow_id` for observability within 63-char limit:
+Pod names carry `tenant_id` + `agentflow_id` + `agentflow_run_id` for observability:
 
 ```
-Session pods (shared pool, platform namespace):
-  flowgent-{release}-apiserver-{hash}
-  flowgent-{release}-jobmanager-{hash}
-  flowgent-{release}-taskmanager-{hash}
+Session (shared pool, {hash}=K8s suffix):
+  flowgent-{component}-{tenantId}-{hash}
 
-Application pods (per-tenant namespace, dedicated):
-  flowgent-jm-{tenant}-{flow}-{hash}
-  flowgent-tm-{tenant}-{flow}-{hash}
+Application (dedicated per-run, {hash}=K8s suffix):
+  flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}
+  flowgent-tm-{tenantId}-{flowId}-{runId}-{hash}
+  flowgent-sandbox-{tenantId}-{flowId}-{runId}-{hash}
 ```
+
+**Why `agentflow_run_id` not `{hash}` for Application pods?** Each application-mode run
+spawns a dedicated JM+TM cluster. The run ID uniquely identifies the pod — no need
+for a random suffix. Session pods use a K8s `{hash}` because they are shared across
+many runs and scaled via Helm/Dynamic.
 
 Labels on all pods:
 ```yaml
-flowgent.io/tenant: "default"
-flowgent.io/flow:   "security-fixer"   # empty for session pods
-flowgent.io/mode:   "session" | "application"
+flowgent.io/tenant:       "default"
+flowgent.io/agentflow_id: "security-fixer"   # empty for session pods
+flowgent.io/run_id:       "run-abc123"       # empty for session pods
+flowgent.io/mode:         "session" | "application"
 ```
 
 ---
@@ -526,7 +531,7 @@ election. TM capacity admin-managed via Helm.
 ### 9.3 Application Mode (VIP Dedicated Cluster)
 
 Controller detects `priority=grade` flow → creates dedicated K8s JM Deployment
-(`flowgent-jm-{tenant}-{flow}`) in tenant namespace → JM auto-scales TMs.
+(`flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}`) in tenant namespace → JM auto-scales TMs.
 Flow completes → Controller cleans up Deployment.
 
 ---
@@ -557,7 +562,7 @@ There are two paths to trigger a run:
    → Hash-mod shard: only processes owned flows
    → Detects flow trigger condition (cron / interval / on-new-definition)
    → Session mode: INSERT agentflow_runs (PENDING, namespace="")
-   → Application mode: kubectl create deploy flowgent-jm-{tenant}-{flow}
+   → Application mode: kubectl create deploy flowgent-jm-{tenantId}-{flowId}-{runId}-{hash}
                        + INSERT agentflow_runs (PENDING, namespace={tenant})
 
 2. JM POLL
