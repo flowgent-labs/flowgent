@@ -3,6 +3,7 @@ module github.com/flowgent-labs/flowgent
 go 1.26.0
 
 require (
+	github.com/a2aproject/a2a-go v0.3.13
 	github.com/eclipse/paho.mqtt.golang v1.4.3
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -42,8 +43,6 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 )
-
-replace google.golang.org/adk => github.com/google/adk-go v1.2.0
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
