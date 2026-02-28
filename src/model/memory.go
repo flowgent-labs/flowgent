@@ -1,45 +1,21 @@
 // Package model defines the shared domain types for the Flowgent engine.
 //
-// File: memory.go — Agent memory and knowledge store types.
-//   Memory, KnowledgeEntry, MemoryType enum.
+// File: memory.go — Agent node memory, scoped by (flow_id, node_id).
+// Persists across runs: if a flow is interrupted and restarted, each node's
+// memory from previous executions is available for LLM context enrichment.
 package model
 
 import "time"
 
-type MemoryType string
-
-const (
-	MemoryEpisodic   MemoryType = "episodic"
-	MemoryProcedural MemoryType = "procedural"
-	MemorySemantic   MemoryType = "semantic"
-)
-
-// Memory represents an episodic/procedural/semantic memory entry tied to an agent execution.
-// Stored after each node execution and queried before LLM calls to enrich context.
-type Memory struct {
-	ID             string         `json:"id" yaml:"id"`
-	AgentID        string         `json:"agent_id" yaml:"agent_id"`
-	AgentFlowRunID string         `json:"agentflow_run_id" yaml:"agentflow_run_id"`
-	NodeID         string         `json:"node_id" yaml:"node_id"`           // which DAG node created this memory
-	Type           MemoryType     `json:"type" yaml:"type"`
-	Content        string         `json:"content" yaml:"content"`           // LLM prompt/response, tool output, etc.
-	Embedding      []float32      `json:"embedding" yaml:"embedding"`       // vector for similarity search
-	RetryCount     int            `json:"retry_count" yaml:"retry_count"`   // which retry attempt
-	Status         string         `json:"status" yaml:"status"`             // "success" | "failed" | "retrying"
-	Tags           []string       `json:"tags" yaml:"tags"`
-	Metadata       map[string]any `json:"metadata" yaml:"metadata"`         // extensible: token usage, model, latency, etc.
-	TTL            *time.Time     `json:"ttl,omitempty" yaml:"ttl,omitempty"` // auto-expiry (nil = never)
-	CreatedAt      time.Time      `json:"created_at" yaml:"created_at"`
-}
-
-type KnowledgeEntry struct {
-	ID        string         `json:"id" yaml:"id"`
-	Category  string         `json:"category" yaml:"category"`
-	Title     string         `json:"title" yaml:"title"`
-	Content   string         `json:"content" yaml:"content"`
-	Embedding []float32      `json:"embedding" yaml:"embedding"`
-	Tags      []string       `json:"tags" yaml:"tags"`
-	Source    string         `json:"source" yaml:"source"`
-	CreatedAt time.Time      `json:"created_at" yaml:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at" yaml:"updated_at"`
+// NodeMemory stores accumulated execution context for a (flow, node) pair.
+// Scoped by FlowID + NodeID; persists across ALL runs of the same flow definition.
+// When NodeID is empty, this is flow-level shared memory accessible to every node.
+type NodeMemory struct {
+	FlowID    string         `json:"flow_id"`    // agentflow definition ID
+	NodeID    string         `json:"node_id"`    // DAG node ID (empty = flow-level shared)
+	Content   string         `json:"content"`    // accumulated execution context
+	Embedding []float32      `json:"embedding"`  // vector for similarity search
+	Metadata  map[string]any `json:"metadata"`   // {retry_count, last_error, last_model, token_usage, ...}
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }

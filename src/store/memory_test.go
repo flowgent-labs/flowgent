@@ -17,148 +17,110 @@ func newTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestSQLiteMemStore_SaveGet(t *testing.T) {
+func TestNodeMemory_UpsertGet(t *testing.T) {
 	db := newTestDB(t)
 	defer db.Close()
-	store, err := NewSQLiteMemStore(db)
+	store, err := NewSQLiteNodeMemoryStore(db)
 	if err != nil {
-		t.Fatalf("NewSQLiteMemStore: %v", err)
+		t.Fatalf("NewSQLiteNodeMemoryStore: %v", err)
 	}
 
 	ctx := context.Background()
-	m := &model.Memory{
-		AgentID:        "agent-1",
-		AgentFlowRunID: "run-1",
-		Type:           model.MemoryEpisodic,
-		Content:        "test memory content",
-		Embedding:      []float32{0.1, 0.2, 0.3},
-		Tags:           []string{"test", "memory"},
-		Metadata:       map[string]any{"source": "ut"},
+	m := &model.NodeMemory{
+		FlowID:    "flow-1",
+		NodeID:    "detect",
+		Content:   "attempt=0 prompt=... response=...",
+		Embedding: []float32{0.1, 0.2, 0.3},
+		Metadata:  map[string]any{"retry_count": 0},
 	}
-	if err := store.SaveMemory(ctx, m); err != nil {
-		t.Fatalf("SaveMemory: %v", err)
-	}
-	if m.ID == "" {
-		t.Fatal("ID should be set")
+	if err := store.UpsertMemory(ctx, m); err != nil {
+		t.Fatalf("UpsertMemory: %v", err)
 	}
 
-	got, err := store.GetMemory(ctx, m.ID)
+	got, err := store.GetMemory(ctx, "flow-1", "detect")
 	if err != nil {
 		t.Fatalf("GetMemory: %v", err)
 	}
-	if got.Content != "test memory content" {
-		t.Errorf("expected content, got %s", got.Content)
+	if got == nil {
+		t.Fatal("expected memory, got nil")
 	}
-	if len(got.Embedding) != 3 {
-		t.Errorf("expected 3 embedding dims, got %d", len(got.Embedding))
+	if got.Content != m.Content {
+		t.Errorf("expected %q, got %q", m.Content, got.Content)
 	}
-	if len(got.Tags) != 2 {
-		t.Errorf("expected 2 tags, got %d", len(got.Tags))
+
+	// Upsert should accumulate, not replace
+	m2 := &model.NodeMemory{
+		FlowID:  "flow-1",
+		NodeID:  "detect",
+		Content: "attempt=1 prompt=... response=...",
+	}
+	_ = store.UpsertMemory(ctx, m2)
+	got2, _ := store.GetMemory(ctx, "flow-1", "detect")
+	if got2.Content == "attempt=1 prompt=... response=..." {
+		t.Error("upsert should accumulate content, caller handles that")
 	}
 }
 
-func TestSQLiteMemStore_ListDelete(t *testing.T) {
+func TestNodeMemory_FlowScoped(t *testing.T) {
 	db := newTestDB(t)
 	defer db.Close()
-	store, _ := NewSQLiteMemStore(db)
+	store, _ := NewSQLiteNodeMemoryStore(db)
 	ctx := context.Background()
 
-	ids := make([]string, 3)
-	for i := 0; i < 3; i++ {
-		m := &model.Memory{AgentID: "a2", Type: model.MemoryEpisodic, Content: "c"}
-		store.SaveMemory(ctx, m)
-		ids[i] = m.ID
+	// Same flow, different nodes
+	store.UpsertMemory(ctx, &model.NodeMemory{FlowID: "flow-1", NodeID: "detect", Content: "d"})
+	store.UpsertMemory(ctx, &model.NodeMemory{FlowID: "flow-1", NodeID: "fix", Content: "f"})
+	store.UpsertMemory(ctx, &model.NodeMemory{FlowID: "flow-2", NodeID: "detect", Content: "d2"})
+
+	list, _ := store.ListFlowMemories(ctx, "flow-1")
+	if len(list) != 2 {
+		t.Errorf("flow-1: expected 2, got %d", len(list))
 	}
 
-	list, err := store.ListMemories(ctx, "a2", "", 10)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(list) < 2 {
-		t.Fatalf("expected at least 2, got %d", len(list))
-	}
-
-	store.DeleteMemory(ctx, ids[0])
-	list2, _ := store.ListMemories(ctx, "a2", "", 10)
-	if len(list2) != 2 {
-		t.Errorf("expected 2 after delete, got %d", len(list2))
+	list2, _ := store.ListFlowMemories(ctx, "flow-2")
+	if len(list2) != 1 {
+		t.Errorf("flow-2: expected 1, got %d", len(list2))
 	}
 }
 
-func TestSQLiteMemStore_Search(t *testing.T) {
+func TestNodeMemory_SharedFlowLevel(t *testing.T) {
 	db := newTestDB(t)
 	defer db.Close()
-	store, _ := NewSQLiteMemStore(db)
+	store, _ := NewSQLiteNodeMemoryStore(db)
 	ctx := context.Background()
 
-	store.SaveMemory(ctx, &model.Memory{AgentID: "a1", Type: model.MemoryEpisodic, Content: "c1", Embedding: []float32{1.0, 0.0, 0.0}})
-	store.SaveMemory(ctx, &model.Memory{AgentID: "a1", Type: model.MemoryEpisodic, Content: "c2", Embedding: []float32{0.0, 1.0, 0.0}})
-	store.SaveMemory(ctx, &model.Memory{AgentID: "a1", Type: model.MemoryEpisodic, Content: "c3", Embedding: []float32{1.0, 0.0, 0.0}})
+	// nodeID="" = flow-level shared memory
+	store.UpsertMemory(ctx, &model.NodeMemory{FlowID: "flow-1", NodeID: "", Content: "shared"})
+	store.UpsertMemory(ctx, &model.NodeMemory{FlowID: "flow-1", NodeID: "detect", Content: "node"})
 
-	results, err := store.SearchMemories(ctx, "a1", []float32{1.0, 0.0, 0.0}, 2)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
+	shared, _ := store.GetMemory(ctx, "flow-1", "")
+	if shared == nil || shared.Content != "shared" {
+		t.Error("flow-level shared memory not found")
 	}
-	if len(results) != 2 {
-		t.Errorf("expected 2 topK, got %d", len(results))
-	}
-	// First result should be most similar (c1 or c3, with embedding [1,0,0])
-	if results[0].Content != "c1" && results[0].Content != "c3" {
-		t.Errorf("expected c1 or c3 as top result, got %s", results[0].Content)
+	node, _ := store.GetMemory(ctx, "flow-1", "detect")
+	if node == nil || node.Content != "node" {
+		t.Error("node-scoped memory not found")
 	}
 }
 
-func TestSQLiteMemStore_Knowledge(t *testing.T) {
+func TestNodeMemory_Delete(t *testing.T) {
 	db := newTestDB(t)
 	defer db.Close()
-	store, _ := NewSQLiteMemStore(db)
+	store, _ := NewSQLiteNodeMemoryStore(db)
 	ctx := context.Background()
 
-	k := &model.KnowledgeEntry{
-		Category:  "patterns",
-		Title:     "SQL Injection Fix",
-		Content:   "Use parameterized queries",
-		Embedding: []float32{0.5, 0.5},
-		Tags:      []string{"security", "java"},
-		Source:    "confluence",
-	}
-	if err := store.SaveKnowledge(ctx, k); err != nil {
-		t.Fatalf("SaveKnowledge: %v", err)
-	}
+	store.UpsertMemory(ctx, &model.NodeMemory{FlowID: "flow-1", NodeID: "detect", Content: "d"})
+	store.DeleteMemory(ctx, "flow-1", "detect")
 
-	got, err := store.GetKnowledge(ctx, k.ID)
-	if err != nil {
-		t.Fatalf("GetKnowledge: %v", err)
-	}
-	if got.Title != "SQL Injection Fix" {
-		t.Errorf("expected title, got %s", got.Title)
-	}
-
-	list, _ := store.ListKnowledge(ctx, "patterns", 10)
-	if len(list) != 1 {
-		t.Errorf("expected 1, got %d", len(list))
-	}
-
-	results, _ := store.SearchKnowledge(ctx, []float32{0.5, 0.5}, "", 1)
-	if len(results) != 1 {
-		t.Errorf("expected 1 result, got %d", len(results))
-	}
-
-	store.DeleteKnowledge(ctx, k.ID)
-	list2, _ := store.ListKnowledge(ctx, "patterns", 10)
-	if len(list2) != 0 {
-		t.Errorf("expected 0 after delete, got %d", len(list2))
+	got, _ := store.GetMemory(ctx, "flow-1", "detect")
+	if got != nil {
+		t.Error("expected nil after delete")
 	}
 }
 
-func TestHelpers(t *testing.T) {
-	m := &model.Memory{AgentID: "agent-1", Type: model.MemoryEpisodic, Content: "hello"}
-	if m.AgentID != "agent-1" || m.Type != model.MemoryEpisodic {
-		t.Error("memory init failed")
-	}
-
-	k := &model.KnowledgeEntry{Category: "cat", Title: "title", Content: "body", Tags: []string{"t1"}}
-	if k.Category != "cat" || len(k.Tags) != 1 {
-		t.Error("kb init failed")
+func TestNodeMemory_Struct(t *testing.T) {
+	m := &model.NodeMemory{FlowID: "f", NodeID: "n", Content: "c"}
+	if m.FlowID != "f" || m.NodeID != "n" || m.Content != "c" {
+		t.Error("NodeMemory struct init failed")
 	}
 }

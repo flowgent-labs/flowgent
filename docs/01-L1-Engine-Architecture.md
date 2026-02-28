@@ -649,86 +649,77 @@ KubernetesHA), `StaticDiscoveryClient` (env-var based, for dev/CI).
 
 ---
 
-## 12. Agent Memory & Knowledge Store
+## 12. Agent Node Memory
 
-Flowgent agents accumulate **episodic memory** (per-execution) and **knowledge**
-(cross-run patterns). Memory enriches LLM prompts with relevant past context (RAG-style
-recall) and provides audit trails for retries and supervisor decisions.
+Each (flow_definition, node) pair accumulates a persistent memory entry. Unlike
+run-scoped memory, `NodeMemory` survives across ALL runs of the same flow —
+restarts and interruptions automatically benefit from prior execution context.
 
-### 12.1 Memory Types
-
-| Type | Scope | Retention | Example |
-|------|-------|-----------|---------|
-| **Episodic** | Per-node execution attempt | TTL (default 24h) or LRU cap | "Agent X output invalid JSON on retry 2" |
-| **Procedural** | Agent-specific instructions | Long-lived, updated by supervisor | "For Java repos, prefer java.security APIs" |
-| **Semantic** | Cross-flow knowledge | Quality-based eviction | "CVE-2024 pattern: sanitize input before logging" |
-
-### 12.2 Storage Structure (PG)
-
-```sql
-agent_memories (
-    id              UUID PRIMARY KEY,
-    agent_id        VARCHAR(255) NOT NULL,
-    agentflow_run_id VARCHAR(64) NOT NULL,
-    node_id         VARCHAR(255) NOT NULL,
-    type            VARCHAR(32) DEFAULT 'episodic',
-    content         TEXT NOT NULL,          -- prompt + response summary
-    embedding       JSONB,                 -- vector for similarity search
-    retry_count     INT DEFAULT 0,
-    status          VARCHAR(32),           -- success | failed | retrying
-    metadata        JSONB,                 -- token_usage, model, latency_ms, ...
-    ttl             TIMESTAMPTZ,           -- auto-expiry
-    created_at      TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_memories_agent_node ON agent_memories(agent_id, node_id);
-CREATE INDEX idx_memories_ttl ON agent_memories(ttl) WHERE ttl IS NOT NULL;
-
-knowledge_entries (
-    id        UUID PRIMARY KEY,
-    category  VARCHAR(255),
-    title     VARCHAR(500),
-    content   TEXT NOT NULL,
-    embedding JSONB,
-    source    VARCHAR(255),               -- which flow/node produced this
-    tags      TEXT[],
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-### 12.3 Memory Lifecycle
-
-```
-Node Execution:
-  1. BEFORE LLM call:
-     SearchMemory(agent_id, node_id, embedding, topK=3)
-     → enrich userPrompt with relevant past executions
-  2. AFTER each attempt (success or failure):
-     SaveMemory({ agent_id, node_id, content, retry_count, status, ttl })
-  3. Periodic eviction:
-     EvictExpiredMemories() — DELETE WHERE ttl < NOW()
-     LRU eviction — DELETE oldest N when count exceeds per-agent cap
-```
-
-### 12.4 Integration
-
-The `AgentExecutor` and `SupervisorExecutor` accept an optional `MemoryStore` interface.
-When present, memory is persisted after each attempt and searched before LLM calls.
-The TM passes the store's memory implementation through from `TaskManagerConfig`.
+### 12.1 Model
 
 ```go
-type MemoryStore interface {
-    SaveMemory(ctx, mem) error
-    SearchMemory(ctx, agentID, nodeID, embedding, topK) ([]Memory, error)
-    ListMemories(ctx, agentID, type, limit) ([]Memory, error)
-    EvictExpiredMemories(ctx) (int64, error)
-    SaveKnowledge(ctx, k) error
-    SearchKnowledge(ctx, embedding, category, topK) ([]KnowledgeEntry, error)
+type NodeMemory struct {
+    FlowID    string         // agentflow definition ID (NOT run ID)
+    NodeID    string         // DAG node ID (empty = flow-level shared)
+    Content   string         // accumulated execution context (appended each run)
+    Embedding []float32      // vector for similarity search
+    Metadata  map[string]any // {retry_count, last_error, last_model, token_usage, ...}
 }
 ```
 
+**Scoping rule**: memory is keyed by `(flow_id, node_id)` — same flow definition + same
+node, across all runs. Run ID is NOT part of the key. Cross-flow memory sharing is
+intentionally NOT supported (simplicity).
+
+### 12.2 Lifecycle
+
+```
+1. BEFORE LLM call:
+   GetMemory(flowID, nodeID)
+   → if found, append prior content to prompt as context
+
+2. AFTER each attempt:
+   UpsertMemory({ flowID, nodeID, content })  ← accumulates, doesn't replace
+
+3. Content grows monotonically:
+   "attempt=0 prompt=... response=... error=..."
+   "attempt=1 prompt=... response=..."
+   → Richer context for every subsequent run
+```
+
+### 12.3 PG Schema
+
+```sql
+CREATE TABLE node_memories (
+    flow_id    VARCHAR(255) NOT NULL,
+    node_id    VARCHAR(255) NOT NULL DEFAULT '',
+    content    TEXT NOT NULL,
+    embedding  JSONB,
+    metadata   JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (flow_id, node_id)
+);
+```
+
+### 12.4 Store Interface
+
+```go
+type NodeMemoryStore interface {
+    GetMemory(ctx, flowID, nodeID string) (*NodeMemory, error)
+    UpsertMemory(ctx, mem *NodeMemory) error
+    SearchMemory(ctx, flowID string, embedding []float32, topK int) ([]NodeMemory, error)
+    ListFlowMemories(ctx, flowID string) ([]NodeMemory, error)
+    DeleteMemory(ctx, flowID, nodeID string) error
+}
+```
+
+The `AgentExecutor` accepts an optional `NodeMemoryStore`; when present, memory is
+persisted after each attempt and queried before LLM calls.
+
 ---
 
-## 14. Metrics & Observability
+## 13. Metrics & Observability
 
 OpenTelemetry integration with configurable exporters:
 

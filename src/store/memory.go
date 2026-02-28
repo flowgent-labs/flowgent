@@ -6,22 +6,25 @@ import (
 	"github.com/flowgent-labs/flowgent/src/model"
 )
 
-// MemoryStore is the persistence interface for agent memories and knowledge base.
-type MemoryStore interface {
-	// Memories (episodic, procedural, semantic)
-	SaveMemory(ctx context.Context, m *model.Memory) error
-	GetMemory(ctx context.Context, id string) (*model.Memory, error)
-	ListMemories(ctx context.Context, agentID string, memType model.MemoryType, limit int) ([]model.Memory, error)
-	DeleteMemory(ctx context.Context, id string) error
-	UpdateMemory(ctx context.Context, m *model.Memory) error
-	SearchMemories(ctx context.Context, agentID string, embedding []float32, topK int) ([]model.Memory, error)
+// NodeMemoryStore persists execution context scoped by (flow_id, node_id).
+// Unlike run-scoped memory, NodeMemory persists across ALL runs of the same
+// flow definition — restarts and retries automatically benefit from prior context.
+//
+// When nodeID is empty, the entry is flow-level shared memory accessible to every node.
+type NodeMemoryStore interface {
+	// GetMemory returns the memory for (flowID, nodeID), or nil if not found.
+	GetMemory(ctx context.Context, flowID, nodeID string) (*model.NodeMemory, error)
 
-	// Knowledge base
-	SaveKnowledge(ctx context.Context, k *model.KnowledgeEntry) error
-	GetKnowledge(ctx context.Context, id string) (*model.KnowledgeEntry, error)
-	SearchKnowledge(ctx context.Context, embedding []float32, category string, topK int) ([]model.KnowledgeEntry, error)
-	ListKnowledge(ctx context.Context, category string, limit int) ([]model.KnowledgeEntry, error)
-	DeleteKnowledge(ctx context.Context, id string) error
+	// UpsertMemory creates or updates the memory entry for (flowID, nodeID).
+	UpsertMemory(ctx context.Context, mem *model.NodeMemory) error
 
-	Close() error
+	// SearchMemory returns the top-K memories within a flow most similar
+	// to the given embedding. Searches across all nodes in the flow.
+	SearchMemory(ctx context.Context, flowID string, embedding []float32, topK int) ([]model.NodeMemory, error)
+
+	// ListFlowMemories returns all memories for a flow definition, ordered by recency.
+	ListFlowMemories(ctx context.Context, flowID string) ([]model.NodeMemory, error)
+
+	// DeleteMemory removes the memory for (flowID, nodeID).
+	DeleteMemory(ctx context.Context, flowID, nodeID string) error
 }
