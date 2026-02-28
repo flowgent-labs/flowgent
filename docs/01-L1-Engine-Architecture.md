@@ -290,6 +290,17 @@ Session mode reuses the shared JM+TM pool (like Flink Session Mode).
 Application mode creates a dedicated K8s Namespace + JM Deployment + TM Deployment
 (like Flink Application Mode).
 
+**Key design: the SAME binary + code path runs in both modes.**
+
+The only difference is the `FLOWGENT_NAMESPACE` env var:
+- Session JM (namespace=""): runPoller only picks up runs with empty namespace
+- Application JM (namespace="flowgent-<id>"): runPoller only picks up runs in that namespace
+
+Both JMs use the identical `startRunPoller → BuildGraph → ExecutionPlan → Submit` pipeline.
+The Controller simply creates the dedicated JM pod and inserts a pending run — the JM does
+the rest via the standard code path. This avoids code duplication and ensures bug fixes
+apply uniformly.
+
 ### 3.1.6 CLI
 
 ```bash

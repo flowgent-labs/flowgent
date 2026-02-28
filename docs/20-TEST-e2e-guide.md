@@ -1,7 +1,7 @@
-# Flowgent E2E Test Guide — Security Autonomy Fixer
+# Flowgent E2E Test Guide — Full Production Mode
 
-**Date:** 2026-05-20
-**Status:** Verified (all-in-one + production modes + Standard DB loading)
+**Date:** 2026-05-21
+**Status:** Design verified — all 6 microservices defined, Controller+JM unification done
 
 ---
 
@@ -191,23 +191,54 @@ kubectl apply -f deploy/redis/docker-compose.yml  # or deploy via K8s
 
 ### 7.3 Deploy All Components
 
-```bash
-# 1. Controller (sharded flow driver — polls PG, dispatches flows)
-kubectl apply -f deploy/kubernetes/flowgent-controller.yaml
-kubectl scale deploy/flowgent-controller --replicas=3
+**One-shot deploy** (all 6 services):
 
-# 2. API Server (multi-tenant REST + A2A gateway)
+```bash
+kubectl apply -f deploy/kubernetes/flowgent-e2e-production.yaml
+```
+
+**Verify all pods running:**
+
+```bash
+kubectl get pods -l 'app in (flowgent-apiserver,flowgent-controller,flowgent-jobmanager,flowgent-taskmanager,flowgent-wallet,flowgent-notification)'
+```
+
+Expected:
+```
+NAME                                    READY   STATUS    RESTARTS   AGE
+flowgent-apiserver-xxx                  1/1     Running   0          30s
+flowgent-controller-xxx                 1/1     Running   0          30s
+flowgent-controller-yyy                 1/1     Running   0          30s
+flowgent-controller-zzz                 1/1     Running   0          30s
+flowgent-jobmanager-xxx                 1/1     Running   0          30s
+flowgent-taskmanager-xxx                1/1     Running   0          30s
+flowgent-taskmanager-yyy                1/1     Running   0          30s
+flowgent-taskmanager-zzz                1/1     Running   0          30s
+flowgent-taskmanager-www                1/1     Running   0          30s
+flowgent-wallet-xxx                     1/1     Running   0          30s
+flowgent-notification-xxx               1/1     Running   0          30s
+```
+
+**Individual component deploy** (if not using the all-in-one manifest):
+
+```bash
+# API Server (multi-tenant REST + A2A gateway)
 kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml
 
-# 3. JobManager (standalone session JM — shared pool)
-#    Started via: flowgent jobmanager start -c etc/flowgent-prod.yaml
+# Controller (sharded flow driver — polls PG, dispatches flows)
+kubectl apply -f deploy/kubernetes/flowgent-controller.yaml
 
-# 4. TaskManager (elastic worker pool)
-#    Started via: flowgent taskmanager start -c etc/flowgent-prod.yaml
-#    Scale: kubectl scale deploy/flowgent-taskmanager --replicas=4
+# JobManager (session + application mode — same binary, namespace-filtered)
+kubectl apply -f deploy/kubernetes/  # uses flowgent-e2e-production.yaml JM section
 
-# 5. (Optional) Facilitator for x402 payments
-kubectl apply -f deploy/kubernetes/facilitator-deployment.yaml
+# TaskManager (elastic worker pool, scale as needed)
+kubectl scale deploy/flowgent-taskmanager --replicas=4
+
+# Wallet (x402 payment signing)
+kubectl apply -f deploy/kubernetes/wallet-deployment.yaml
+
+# Notification (WS push + multi-channel)
+# Included in flowgent-e2e-production.yaml
 ```
 
 ### 7.4 Application Mode (Dedicated Cluster per VIP Flow)
@@ -253,14 +284,41 @@ all non-application flows via the shared pool.
 
 ---
 
-## 9. Verification Checklist
+## 9. Full Production Mode Verification Checklist
 
-- [ ] `curl localhost:9999/_/healthz` → `{"status":"ok"}`
-- [ ] `curl localhost:9999/api/v1/default/agentflows` → lists flows
-- [ ] Trigger `e2e-test` → COMPLETED (all-in-one mode)
-- [ ] Trigger `01-sample-security-autonomy-fix-v2` → COMPLETED (production mode)
-- [ ] PG has agentflow_runs records
-- [ ] MQTT/EMQX dashboard accessible at `:18083`
+All 6 microservices must be running in K3s with PG/EMQX/Redis backend.
+
+### 9.1 Pod Health
+
+| # | Service | Verify |
+|---|---------|--------|
+| 1 | API Server | `curl http://<apiserver-svc>:9999/_/healthz` → `{"status":"ok"}` |
+| 2 | Controller | `kubectl logs deploy/flowgent-controller` → `Controller starting ... shard=X/N` |
+| 3 | JobManager (session) | `kubectl logs deploy/flowgent-jobmanager` → `JobManager started (scheduler=local)` |
+| 4 | TaskManager | `kubectl logs deploy/flowgent-taskmanager` → `TaskManager ... started` |
+| 5 | Wallet | `curl http://<wallet-svc>:9901/health` → 200 |
+| 6 | Notification | `kubectl logs deploy/flowgent-notification` → `Notification service started` |
+
+### 9.2 Flow Execution E2E
+
+- [ ] `curl http://<apiserver-svc>:9999/api/v1/default/agentflows` → lists flows (static + DB)
+- [ ] Insert flow into PG: `INSERT INTO agentflow_definitions (agentflow_id, version, definition) VALUES ('e2e-prod-test', 1, '{"id":"e2e-prod-test",...}'::jsonb)`
+- [ ] Controller picks up flow within poll interval → `kubectl logs deploy/flowgent-controller | grep "dispatching flow"`
+- [ ] JM's runPoller picks up pending run → `kubectl logs deploy/flowgent-jobmanager | grep "jobmanager submit"`
+- [ ] TaskManager executes → `kubectl logs deploy/flowgent-taskmanager | grep "ExecutePlan"`
+- [ ] Run reaches COMPLETED → `SELECT status FROM agentflow_runs WHERE agentflow_id='e2e-prod-test'`
+
+### 9.3 Application Mode (Grade Priority)
+
+- [ ] Insert grade-priority flow into PG
+- [ ] Controller creates dedicated JM deployment → `kubectl get deploy flowgent-jm-<flow-id>`
+- [ ] Dedicated JM starts with `FLOWGENT_NAMESPACE=<ns>` → runPoller only processes runs in that namespace
+- [ ] Run reaches COMPLETED → `SELECT status FROM agentflow_runs WHERE namespace='flowgent-<flow-id>'`
+
+### 9.4 Infrastructure
+
+- [ ] PostgreSQL `agentflow_definitions` + `agentflow_runs` tables exist and are writable
+- [ ] MQTT/EMQX accessible at `:1883` (mqtt) + `:18083` (dashboard)
 - [ ] Redis cluster `redis-cli -a bitnami cluster info` → `cluster_state:ok`
 
 ---
