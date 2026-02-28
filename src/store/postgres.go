@@ -396,11 +396,73 @@ func (s *PostgresStore) DeleteSubscriptionRoute(ctx context.Context, id string) 
 func (s *PostgresStore) DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error { return nil }
 func (s *PostgresStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) { return 0, nil }
 
-// ─── ExecutionPlan + Checkpoint + Lease stubs ──────────────
+// ─── ExecutionPlan persistence ─────────────────────────────
 
-func (s *PostgresStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error { return nil }
-func (s *PostgresStore) LoadExecutionPlan(ctx context.Context, id string) (*model.ExecutionPlan, error) { return nil, nil }
-func (s *PostgresStore) ListExecutionPlans(ctx context.Context, runID string) ([]*model.ExecutionPlan, error) { return nil, nil }
+func (s *PostgresStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
+	now := time.Now()
+	if plan.CreatedAt.IsZero() {
+		plan.CreatedAt = now
+	}
+	output := map[string]any{}
+	errStr := ""
+	if plan.Result != nil {
+		output = plan.Result.Output
+		errStr = plan.Result.Error
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO task_runs (id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,created_at,updated_at,started_at,finished_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		 ON CONFLICT (id) DO UPDATE SET status=$4,input=$5,output=$6,error=$7,retry_count=$8,updated_at=$12,started_at=$13,finished_at=$14`,
+		plan.TaskID, plan.AgentFlowRunID, plan.NodeID, string(plan.State), toJSON(plan.Input), toJSON(output), errStr,
+		plan.RetryCount, plan.MaxRetries, plan.PlanID, plan.CreatedAt, now, plan.StartedAt, plan.FinishedAt)
+	return err
+}
+
+func (s *PostgresStore) LoadExecutionPlan(ctx context.Context, id string) (*model.ExecutionPlan, error) {
+	task, err := s.GetTaskRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &model.ExecutionPlan{
+		PlanID:         task.ExecID,
+		AgentFlowRunID: task.AgentFlowRunID,
+		TaskID:         task.ID,
+		NodeID:         task.NodeID,
+		State:          task.Status,
+		RetryCount:     task.RetryCount,
+		MaxRetries:     task.MaxRetries,
+		Input:          task.Input,
+		Result:         &model.TaskResult{Output: task.Output, Error: task.Error},
+		CreatedAt:      task.CreatedAt,
+		StartedAt:      task.StartedAt,
+		FinishedAt:     task.FinishedAt,
+	}, nil
+}
+
+func (s *PostgresStore) ListExecutionPlans(ctx context.Context, runID string) ([]*model.ExecutionPlan, error) {
+	tasks, err := s.GetTaskRunsByAgentFlowRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	plans := make([]*model.ExecutionPlan, len(tasks))
+	for i, t := range tasks {
+		plans[i] = &model.ExecutionPlan{
+			PlanID:         t.ExecID,
+			AgentFlowRunID: t.AgentFlowRunID,
+			TaskID:         t.ID,
+			NodeID:         t.NodeID,
+			State:          t.Status,
+			RetryCount:     t.RetryCount,
+			MaxRetries:     t.MaxRetries,
+			Input:          t.Input,
+			Result:         &model.TaskResult{Output: t.Output, Error: t.Error},
+			CreatedAt:      t.CreatedAt,
+			StartedAt:      t.StartedAt,
+			FinishedAt:     t.FinishedAt,
+		}
+	}
+	return plans, nil
+}
 func (s *PostgresStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error { return nil }
 func (s *PostgresStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) { return nil, nil }
 func (s *PostgresStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error { return nil }

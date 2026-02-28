@@ -964,6 +964,51 @@ edges:
 
 Reference from any flow: `type: agentflow`, `agentflow: dependency-scan`.
 
+### 13.4 Why Skill Instead of MCP Tool — The Nexus3 Case
+
+A real example from the Security Autonomy Fixer flow illustrates when to use a skill
+rather than a standalone MCP tool server.
+
+**Problem:** The flow needs to fetch the latest top-3 Maven dependency versions where
+SonatypeIQ `firewall.status=allow` (i.e., not quarantined). In a licensed enterprise
+Nexus3 deployment, the SonatypeIQ integration makes firewall status visible in both
+the Nexus3 UI and REST API. A simple MCP tool wrapping the Nexus3 swagger would suffice.
+
+However, Nexus3 open-source and personal deployments **lack the SonatypeIQ license**,
+so:
+- The Nexus3 UI shows no firewall status column
+- The Nexus3 REST API swagger does not return `firewall.status` in component listings
+- The MCP tool approach (`type: tool, tool: sonatype-nexus3`) simply cannot work
+
+**Solution:** Replace the Nexus3 MCP tool with a **skill** — a sub-AgentFlow that wraps
+existing copilot scripts. These scripts directly call:
+- `gh` CLI for GitHub API access
+- Nexus3 web API for component metadata
+- `gcloud` CLI for artifact registry queries
+
+The skill orchestrates these deterministic calls and returns the filtered top-3 versions,
+exactly as the MCP tool would — but without requiring the SonatypeIQ license.
+
+**Design principle:** When a third-party system's API varies between licensed and
+open-source editions, prefer a skill. Skills embed operational knowledge (which APIs
+to call, in what order, how to parse responses) that would otherwise become brittle
+configuration inside an MCP tool. Skills are also easier to customize per deployment
+environment (dev/staging/production) without rebuilding any binaries.
+
+```yaml
+# In the flow YAML — skill replaces MCP tool
+- id: fetch-safe-deps
+  type: skill                                  # was: type: tool, tool: sonatype-nexus3
+  skill: dependency-firewall-check
+  input:
+    repo: "${vars.repo}"
+    maven_coordinates: "${scan-sonatypeiq.maven_coords}"
+    top_n: 3
+```
+
+This is the same `type: skill` / `type: agentflow` mechanism described in §13.1–13.3.
+No new executors. No new abstractions. Just a flow referencing another flow.
+
 ---
 
 ## 14. Agent Definition — No Toolsets

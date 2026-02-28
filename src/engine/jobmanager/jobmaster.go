@@ -185,8 +185,8 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 		case <-ctx.Done(): return ctx.Err()
 		default:
 		}
-		if jm.IsComplete() { run.Status = model.RunCompleted; run.FinishedAt = TimePtr(); span.SetStatus(codes.Ok, "done"); return jm.store.UpdateAgentFlowRun(ctx, run) }
 		if jm.HasFailed() { run.Status = model.RunFailed; run.Error = jm.collectFirstError(); run.FinishedAt = TimePtr(); span.SetStatus(codes.Error, "failed"); return jm.store.UpdateAgentFlowRun(ctx, run) }
+		if jm.IsComplete() { run.Status = model.RunCompleted; run.FinishedAt = TimePtr(); span.SetStatus(codes.Ok, "done"); return jm.store.UpdateAgentFlowRun(ctx, run) }
 
 		ready := jm.Ready()
 		if len(ready) == 0 { break }

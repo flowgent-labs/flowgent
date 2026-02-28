@@ -11,17 +11,20 @@ Each use case links to its corresponding AgentFlow and Agent definition YAML fil
 
 Enterprise security vulnerability remediation with multi-agent team orchestration.
 
-**Flow**: CI trigger → scan repos (SonarQube, Sonatype IQ, Nexus3) → detect issues
-→ generate fixes → multi-agent review (security/quality/architecture) → vote →
-supervisor check → human approval → commit PR → notify.
+**Flow**: CI trigger → scan repos (SonarQube SAST, Sonatype IQ FOSS, skill-based
+Nexus3 dependency firewall check) → detect issues → generate fixes → multi-agent
+review (security/quality/architecture) → vote → supervisor check → human approval →
+commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 
 ### AgentFlow Definitions
 
 | File | Description |
 |------|-------------|
-| [`examples/flows/01-security-autonomy-fix-v1.yaml`](../examples/flows/01-security-autonomy-fix-v1.yaml) | V1: 11-phase pipeline (discovery → notify) |
-| [`examples/flows/01-security-autonomy-fix-v2.yaml`](../examples/flows/01-security-autonomy-fix-v2.yaml) | V2: Updated pipeline with refined review flow |
+| [`examples/flows/01-security-autonomy-fix-v1.yaml`](../examples/flows/01-security-autonomy-fix-v1.yaml) | **V1 Baseline** — 12-phase complete pipeline (discovery → notify) with iterative re-scan loop. GitHub webhook enabled. |
+| [`examples/flows/01-security-autonomy-fix-v2.yaml`](../examples/flows/01-security-autonomy-fix-v2.yaml) | **V2** — Identical to V1 except GitHub PR webhook trigger commented out (pending webhook→SonarQube integration). Deploy this version. |
 | [`examples/flows/01-sub-fix.yaml`](../examples/flows/01-sub-fix.yaml) | Sub-flow: analyze → patch → validate for individual issue |
+
+> **Note:** V3 (iterative re-scan loop) was merged into V1. V1 is now the single source of truth. Once webhook→SonarQube integration is complete, V2 can be removed and V1 deployed directly.
 
 ### Agent Definitions
 
@@ -41,27 +44,40 @@ supervisor check → human approval → commit PR → notify.
 
 ```
 Supervisor (per-repo)
-  ├── Discovery Agent → parallel fetch (SonarQube / IQ / Nexus3)
-  ├── Alpha Agent Group (parallel fix per issue type)
-  │     ├── Build/Test Alpha (broken builds)
-  │     ├── Cyberflow Alpha (runtime/container vulns)
-  │     ├── FOSS Alpha (dependency vulns via IQ)
-  │     └── Code Quality Alpha (SonarQube issues)
-  ├── Review Board (3-round voting: security + quality + architecture)
-  └── CI Verification Loop → Notifier
+  ├── Discovery Phase
+  │     ├── SonarQube MCP (SAST — get_issues)
+  │     ├── Sonatype IQ MCP (FOSS dependency vulns)
+  │     └── Skill: dependency-firewall-check (replaces Nexus3 MCP)
+  │           Uses copilot scripts (gh + nexus3 web API + gcloud)
+  │           to fetch top-3 non-quarantined Maven dep versions.
+  │           See §13.4 in architecture doc for design rationale.
+  ├── Analyze → Fix → Review Board (3-round voting)
+  │     ├── Security Reviewer
+  │     ├── Quality Reviewer
+  │     └── Architecture Reviewer
+  ├── Tribunal → Supervisor → Condition → Human Approval
+  ├── Commit & PR (branch → patch → pull request)
+  ├── SonarQube Re-Scan Loop (max 3 iterations)
+  │     ├── Trigger re-analysis → poll for completion
+  │     ├── Compare pre/post issue lists
+  │     └── Loop back to Fix if unresolved issues remain
+  └── Report → Multi-Channel Notify (PR comment + email + webhook)
 ```
 
-**Key features**: 11 DAG node types, parallel map fan-out, deterministic majority vote,
-supervisor-controlled autonomy (redirect/retry/inject/abort with quotas),
-human-in-the-loop approval gate, multi-channel notifier.
+**Key features**: 12 DAG node types, iterative re-scan verification loop,
+parallel review fan-out, deterministic majority vote, supervisor-controlled
+autonomy (redirect/retry/inject/abort with quotas), human-in-the-loop approval
+gate, skill-based dependency checking (no Nexus3 license required),
+multi-channel notifier.
 
-### MCP Tools Used
+### MCP Tools & Skills Used
 
-| MCP Server | Tools | Source |
-|------------|-------|--------|
+| Server/Skill | Tools | Source |
+|--------------|-------|--------|
 | GitHub | `get_latest_commit`, `create_branch`, `commit_and_push`, `create_pull_request` | `examples/mcp-github/` |
-| SonarQube | `get_issues` | `examples/mcp-sonarqube/` |
+| SonarQube | `scan/get_issues`, `scan/trigger_analysis`, `scan/get_status` | `examples/mcp-sonarqube/` |
 | Sonatype IQ | `get_jobs_by_commit`, `get_foss_solution` | `examples/mcp-sonatypeiq/` |
+| **Skill**: `dependency-firewall-check` | Nexus3 dependency firewall check via copilot scripts | Replaces `sonatype-nexus3` MCP (see §13.4) |
 | Sonatype Nexus3 | `get_foss_solution` | `examples/mcp-nexus3/` |
 
 ---

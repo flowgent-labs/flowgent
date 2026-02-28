@@ -3,11 +3,24 @@
 Flowgent E2E Verification Runner.
 
 Usage:
-  python3 tests/verification/runner.py                    # run all scenarios
-  python3 tests/verification/runner.py --scenario 01      # run specific scenario
-  python3 tests/verification/runner.py --list             # list available scenarios
+  python3 tests/verification/runner.py [--scenario N] [--list] [--api URL] [--pg DSN]
 
-Environment overrides: see config.py — all settings can be overridden via FLOWGENT_* env vars.
+Examples:
+  python3 tests/verification/runner.py                          # all scenarios, localhost defaults
+  python3 tests/verification/runner.py -s 03                    # only flow execution scenario
+  python3 tests/verification/runner.py -l                       # list available scenarios
+  python3 tests/verification/runner.py --api http://10.0.0.1:9999 --pg postgres://u:p@h/db
+  FLOWGENT_K3S_APISERVER=http://k3s:9999 python3 runner.py      # env var override
+
+Scenarios:
+  01 — REST API CRUD + Trigger + Run Lifecycle
+  02 — A2A Protocol (Agent Card + Task Submit)
+  03 — Flow Execution (Agent / Tribunal / Supervisor nodes)
+  04 — PG Storage (Run & Definition Persistence)
+  05 — Jaeger OTEL (Trace Export Verification)
+  06 — Notifier MQTT (EMQX Message Publishing)
+
+Config: see config.py for all FLOWGENT_* environment variables.
 """
 
 import sys
@@ -27,6 +40,7 @@ SCENARIOS = {
     "04": ("PG Storage — Run & Definition Persistence",    "scenarios.04_pg_storage"),
     "05": ("Jaeger OTEL — Trace Export Verification",      "scenarios.05_jaeger_tracing"),
     "06": ("Notifier MQTT — EMQX Message Publishing",      "scenarios.06_notifier_mqtt"),
+    "07": ("Security Fixer V2 — Full Pipeline White-Box",   "scenarios.07_security_fixer_v2"),
 }
 
 
