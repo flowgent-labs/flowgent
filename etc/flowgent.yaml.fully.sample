@@ -303,9 +303,9 @@ orchestration:
 # ── Sandbox ───────────────────────────────────────────────────────────────────
 #    Secure script execution worker (python3/bash/node) with network isolation.
 sandbox:
-  enabled: false                   # set true to enable sandbox worker
+  enabled: false
   image: "flowgent-sandbox:latest"
-  runtime_dir: "/tmp/flowgent-sandbox"
+  workspace: "/var/flowgent/workspace"   # single persistent volume, per-{tenant}/{flow_id} subdirs
   policy:
     network:
       mode: none                   # none | allowlist | denylist

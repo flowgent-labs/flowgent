@@ -23,7 +23,7 @@ func NewLocalResourceManager(cfg *ResourceManagerConfig) (*LocalResourceManager,
 	if poolSize <= 0 {
 		poolSize = 10
 	}
-	tm, err := taskmanager.NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: "tm-local", SlotCount: poolSize,
 		Store: cfg.Store, Agents: cfg.Agents,
 		MCPClients: cfg.MCPClients, LLMClient: cfg.LLMClient,

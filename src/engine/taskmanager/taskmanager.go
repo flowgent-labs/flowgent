@@ -8,13 +8,31 @@ import (
 
 	"github.com/flowgent-labs/flowgent/src/common/tracing"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
+	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
+	"github.com/flowgent-labs/flowgent/src/store"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
+
+// TaskManagerConfig is the startup configuration for a TaskManager.
+type TaskManagerConfig struct {
+	ID                string
+	SlotCount         int
+	Queue             queue.Queue
+	Store             store.Store
+	Agents            []*config.AgentDef
+	MCPClients        map[string]engine.MCPClient
+	LLMClient         engine.LLMClient
+	Logger            *utils.Logger
+	HeartbeatInterval time.Duration
+	SandboxQueue      queue.Queue
+	SandboxPolicy     *model.SandboxPolicy
+	SandboxWorkspace  string
+}
 
 // TaskManager is a persistent worker that consumes ExecutionPlans from
 // a queue (MQTT or local) and executes them via a pool of SlotWorkers.
@@ -24,7 +42,7 @@ type TaskManager struct {
 	slotWorkers []*SlotWorker
 	router      *executor.TaskExecutorRouter
 	queue       queue.Queue
-	store       engine.Store
+	store       store.Store
 	metrics     *TaskManagerMetrics
 	logger      *utils.Logger
 	mu          sync.Mutex
@@ -32,7 +50,7 @@ type TaskManager struct {
 	stopped     bool
 }
 
-func NewTaskManager(cfg *engine.TaskManagerConfig) (*TaskManager, error) {
+func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	if cfg.ID == "" { cfg.ID = fmt.Sprintf("tm-%d", time.Now().UnixNano()) }
 	if cfg.SlotCount <= 0 { cfg.SlotCount = 4 }
 
@@ -48,7 +66,7 @@ func NewTaskManager(cfg *engine.TaskManagerConfig) (*TaskManager, error) {
 	router.Register(executor.NewHumanExecutor(cfg.Store))
 	router.Register(&executor.NoopExecutor{})
 	router.Register(&executor.SkillExecutor{})
-	router.Register(executor.NewSandboxExecutor(cfg.SandboxQueue, cfg.SandboxPolicy))
+	router.Register(executor.NewSandboxExecutor(cfg.SandboxQueue, cfg.SandboxPolicy, cfg.SandboxWorkspace))
 
 	metrics := NewTaskManagerMetrics()
 

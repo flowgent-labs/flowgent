@@ -4,12 +4,11 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/src/common/utils"
-	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 
 func TestNewTaskManager_Defaults(t *testing.T) {
-	tm, err := NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := NewTaskManager(&TaskManagerConfig{
 		ID:    "test-tm",
 		Store: testutil.NewMockStore(),
 		Queue: testutil.NewTestQueue(),
@@ -30,7 +29,7 @@ func TestNewTaskManager_Defaults(t *testing.T) {
 }
 
 func TestNewTaskManager_ZeroSlotCount(t *testing.T) {
-	tm, err := NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := NewTaskManager(&TaskManagerConfig{
 		SlotCount: 0,
 		Store:     testutil.NewMockStore(),
 		Queue:     testutil.NewTestQueue(),
@@ -44,7 +43,7 @@ func TestNewTaskManager_ZeroSlotCount(t *testing.T) {
 }
 
 func TestNewTaskManager_CustomSlots(t *testing.T) {
-	tm, err := NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := NewTaskManager(&TaskManagerConfig{
 		ID: "tm-custom", SlotCount: 3,
 		Store: testutil.NewMockStore(), Queue: testutil.NewTestQueue(),
 	})
@@ -57,7 +56,7 @@ func TestNewTaskManager_CustomSlots(t *testing.T) {
 }
 
 func TestNewTaskManager_AutoID(t *testing.T) {
-	tm, err := NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := NewTaskManager(&TaskManagerConfig{
 		Store: testutil.NewMockStore(), Queue: testutil.NewTestQueue(),
 	})
 	if err != nil {
@@ -69,7 +68,7 @@ func TestNewTaskManager_AutoID(t *testing.T) {
 }
 
 func TestTaskManager_StartStop(t *testing.T) {
-	tm, err := NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := NewTaskManager(&TaskManagerConfig{
 		ID: "tm-startstop", SlotCount: 2,
 		Store:   testutil.NewMockStore(),
 		Queue:   testutil.NewTestQueue(),

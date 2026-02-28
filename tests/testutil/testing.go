@@ -149,6 +149,25 @@ func (s *MockStore) ReleaseLease(ctx context.Context, planID string) error {
 	s.Mu.Lock(); defer s.Mu.Unlock(); delete(s.Leases, planID); return nil
 }
 
+func (s *MockStore) DeleteAgentFlowDefinition(ctx context.Context, id string) error { return nil }
+func (s *MockStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, by, comment string) error { return nil }
+func (s *MockStore) GetAgentFlowSpec(ctx context.Context, id string) (*model.AgentFlowSpec, error) { return nil, nil }
+func (s *MockStore) SaveAgent(ctx context.Context, a *model.AgentDef) error { return nil }
+func (s *MockStore) GetAgent(ctx context.Context, name string) (*model.AgentDef, error) { return nil, nil }
+func (s *MockStore) ListAgents(ctx context.Context, tenantID string) ([]model.AgentDef, error) { return nil, nil }
+func (s *MockStore) DeleteAgent(ctx context.Context, name string) error { return nil }
+func (s *MockStore) DeleteAgentFlowRun(ctx context.Context, id string) error { return nil }
+func (s *MockStore) CancelAgentFlowRun(ctx context.Context, id string) error { return nil }
+func (s *MockStore) SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error { return nil }
+func (s *MockStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error) { return nil, nil }
+func (s *MockStore) ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error) { return nil, nil }
+func (s *MockStore) DeleteNotificationChannel(ctx context.Context, id string) error { return nil }
+func (s *MockStore) SaveSubscriptionRoute(ctx context.Context, r *model.SubscriptionRoute) error { return nil }
+func (s *MockStore) GetSubscriptionRoutesByAgentFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) { return nil, nil }
+func (s *MockStore) DeleteSubscriptionRoute(ctx context.Context, id string) error { return nil }
+func (s *MockStore) DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error { return nil }
+func (s *MockStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) { return 0, nil }
+
 var _ engine.Store = (*MockStore)(nil)
 
 // ─── Test helpers ──────────────────────────────────────

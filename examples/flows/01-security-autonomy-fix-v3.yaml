@@ -1,0 +1,301 @@
+# Security Autonomy Fixer V3 — Iterative Fix Loop with SonarQube Re-Scan
+#
+# Real-world E2E flow for K3s distributed mode:
+#   1. Fetch SonarQube issues for Rengine project
+#   2. Analyze & normalize findings
+#   3. Generate patches (fixer agent)
+#   4. Multi-agent review (security + quality + architecture)
+#   5. Deterministic majority vote
+#   6. Supervisor safety check
+#   7. If approved → commit patches, trigger SonarQube re-scan, check resolution
+#   8. If unresolved issues remain → loop back to fix (max 3 iterations)
+#   9. If all resolved → summary report
+#  10. Human approval gate before merge (optional safety net)
+
+id: security-autonomy-fixer-v3
+priority: high
+tenant_id: default
+description: |
+  Iterative security fixer with SonarQube re-scan loop.
+  After committing fixes, triggers SonarQube re-analysis and checks
+  whether target issues are resolved. If not, loops back for up to
+  3 iterations. Designed for K3s distributed mode E2E testing.
+
+triggers:
+  - type: webhook
+    provider: github
+    events: [push, pull_request]
+
+vars:
+  repo: "rengine"
+  repo_path: "/home/agent/rengine"
+  max_iterations: 3
+  target_severities: "BLOCKER,CRITICAL,MAJOR"
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 1: DISCOVERY — Fetch SonarQube issues
+  # ═══════════════════════════════════════════════════════════════
+  - id: fetch-sq-issues
+    type: tool
+    tool: sonarqube
+    input:
+      action: "scan/get_issues"
+      project_key: "${vars.repo}"
+      severities: "${vars.target_severities}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 2: ANALYZE — Parse and deduplicate findings
+  # ═══════════════════════════════════════════════════════════════
+  - id: analyze-issues
+    type: agent
+    agent: issue-detector
+    input:
+      repo: "${vars.repo}"
+      sonarqube_issues: "${fetch-sq-issues}"
+    instruction: |
+      Parse the SonarQube issues JSON. For each issue extract:
+      - rule ID, severity, file path, line number, message
+      - Deduplicate by file+rule (keep highest severity)
+      - Sort by severity (BLOCKER > CRITICAL > MAJOR)
+      - Select top 5 issues to fix (prioritize BLOCKER/CRITICAL)
+      Output STRICT JSON: {"issues":[{"rule":"...","severity":"...","file":"...","line":N,"message":"..."}]}
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 3: FIX — Generate secure patches
+  # ═══════════════════════════════════════════════════════════════
+  - id: generate-fixes
+    type: agent
+    agent: fixer-agent
+    input:
+      issues: "${analyze-issues.issues}"
+      repo_path: "${vars.repo_path}"
+    instruction: |
+      For each issue, read the source file at the reported line,
+      understand the root cause, and generate a minimal secure patch.
+      Output STRICT JSON: {"patches":[{"file":"...","rule":"...","patch":"unified diff"}]}
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 4: REVIEW — Multi-agent review board
+  # ═══════════════════════════════════════════════════════════════
+  - id: review-security
+    type: agent
+    agent: security-reviewer
+    input:
+      patches: "${generate-fixes.patches}"
+    instruction: |
+      Review each patch for security correctness. Does it fix the root cause?
+      Could it introduce new vulnerabilities?
+      Output STRICT JSON: {"decision":true|false,"confidence":0-1,"risk_level":"low|medium|high","reason":"..."}
+
+  - id: review-quality
+    type: agent
+    agent: quality-reviewer
+    input:
+      patches: "${generate-fixes.patches}"
+    instruction: |
+      Review each patch for code quality. Is it minimal? Does it follow best practices?
+      Output STRICT JSON: {"decision":true|false,"confidence":0-1,"reason":"..."}
+
+  - id: review-arch
+    type: agent
+    agent: arch-reviewer
+    input:
+      patches: "${generate-fixes.patches}"
+    instruction: |
+      Review each patch for architectural impact. Does it break any design patterns?
+      Could it affect system behavior?
+      Output STRICT JSON: {"decision":true|false,"confidence":0-1,"reason":"..."}
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 5: VOTE — Deterministic majority vote
+  # ═══════════════════════════════════════════════════════════════
+  - id: vote
+    type: tribunal
+    strategy:
+      type: majority
+    input:
+      votes:
+        - "${review-security.decision}"
+        - "${review-quality.decision}"
+        - "${review-arch.decision}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 6: SUPERVISOR — Safety gate
+  # ═══════════════════════════════════════════════════════════════
+  - id: supervisor
+    type: supervisor
+    agent: supervisor
+    supervisor_config:
+      max_retries: 3
+      max_nodes: 50
+      max_injections: 5
+      allowed_actions: ["continue", "retry", "inject", "abort"]
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 7: CONDITION — Vote outcome routing
+  # ═══════════════════════════════════════════════════════════════
+  - id: is-approved
+    type: condition
+    expression: "${vote.decision == true}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 8: COMMIT — Write patches to repo
+  # ═══════════════════════════════════════════════════════════════
+  - id: commit-patches
+    type: agent
+    agent: git-agent
+    input:
+      repo: "${vars.repo}"
+      repo_path: "${vars.repo_path}"
+      patches: "${generate-fixes.patches}"
+      iteration: "${vars.iteration}"
+    instruction: |
+      Apply each patch to the source files in ${vars.repo_path}.
+      Write the patched files back to disk. Report which files were modified.
+      Output STRICT JSON: {"modified_files":["path/to/file1","path/to/file2"],"commit_message":"..."}
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 9: RE-SCAN — Trigger SonarQube re-analysis
+  # ═══════════════════════════════════════════════════════════════
+  - id: trigger-rescan
+    type: tool
+    tool: sonarqube
+    input:
+      action: "scan/trigger_analysis"
+      project_key: "${vars.repo}"
+
+  # Simulate wait for scan completion (SonarQube analysis takes time).
+  # In production this would poll the SonarQube API for task completion.
+  - id: wait-rescan
+    type: sandbox
+    runtime: bash
+    timeout: 120s
+    script: |
+      #!/bin/bash
+      # Poll SonarQube CE task until analysis completes
+      SQ_URL="${SONARQUBE_URL:-http://localhost:9000}"
+      SQ_TOKEN="${SONARQUBE_TOKEN}"
+      PROJECT_KEY="rengine"
+      MAX_WAIT=120
+      INTERVAL=10
+      ELAPSED=0
+      while [ $ELAPSED -lt $MAX_WAIT ]; do
+        STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" "$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1" | python3 -c "import sys,json; tasks=json.load(sys.stdin).get('tasks',[]); print(tasks[0]['status'] if tasks else 'PENDING')" 2>/dev/null || echo "PENDING")
+        if [ "$STATUS" = "SUCCESS" ]; then
+          echo '{"status":"completed","elapsed":'$ELAPSED'}'
+          exit 0
+        fi
+        sleep $INTERVAL
+        ELAPSED=$((ELAPSED + INTERVAL))
+      done
+      echo '{"status":"timeout","elapsed":'$ELAPSED'}'
+    network_policy:
+      mode: allowlist
+      allowed:
+        - "localhost:9000"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 10: CHECK — Did we fix the issues?
+  # ═══════════════════════════════════════════════════════════════
+  - id: check-resolved
+    type: tool
+    tool: sonarqube
+    input:
+      action: "scan/get_issues"
+      project_key: "${vars.repo}"
+      severities: "${vars.target_severities}"
+
+  - id: compare-results
+    type: agent
+    agent: issue-detector
+    input:
+      before_issues: "${analyze-issues.issues}"
+      after_issues: "${check-resolved}"
+      iteration: "${vars.iteration}"
+      max_iterations: "${vars.max_iterations}"
+    instruction: |
+      Compare pre-fix and post-fix SonarQube issue lists.
+      Count how many of the original issues are now resolved (no longer appear).
+      If ALL target issues are resolved → resolution="complete"
+      If SOME are resolved but not all → resolution="partial"
+      If NONE are resolved → resolution="none"
+      If iteration >= max_iterations → resolution="max_iterations_reached"
+      Output STRICT JSON: {"resolution":"complete|partial|none|max_iterations_reached","resolved_count":N,"remaining_count":N,"resolved_issues":["rule1","rule2"],"remaining_issues":["rule3"]}
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 11: LOOP — Continue or iterate?
+  # ═══════════════════════════════════════════════════════════════
+  - id: fix-complete
+    type: condition
+    expression: "${compare-results.resolution == complete || compare-results.resolution == max_iterations_reached}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 12: HUMAN — Approval gate (optional safety net)
+  # ═══════════════════════════════════════════════════════════════
+  - id: human-approval
+    type: human
+    approval:
+      timeout: 24h
+      on_approve: continue
+      on_reject: "to: end"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 13: REPORT — Final summary
+  # ═══════════════════════════════════════════════════════════════
+  - id: summary-report
+    type: agent
+    agent: issue-detector
+    input:
+      repo: "${vars.repo}"
+      original_issues: "${analyze-issues.issues}"
+      patches: "${generate-fixes.patches}"
+      vote_decision: "${vote.decision}"
+      compare_result: "${compare-results}"
+    instruction: |
+      Generate a final summary report.
+      Include: total issues found, patches applied, review votes, fix resolution status.
+      Output STRICT JSON: {"report":"markdown summary...","status":"completed|partial|failed"}
+
+  - id: end
+    type: noop
+
+edges:
+  # Discovery → Analyze
+  - { from: fetch-sq-issues, to: analyze-issues }
+
+  # Analyze → Fix
+  - { from: analyze-issues, to: generate-fixes }
+
+  # Fix → Review (parallel fan-out)
+  - { from: generate-fixes, to: review-security }
+  - { from: generate-fixes, to: review-quality }
+  - { from: generate-fixes, to: review-arch }
+
+  # Review → Vote
+  - { from: review-security, to: vote }
+  - { from: review-quality, to: vote }
+  - { from: review-arch, to: vote }
+
+  # Vote → Supervisor → Condition
+  - { from: vote, to: supervisor }
+  - { from: supervisor, to: is-approved }
+
+  # If approved → Commit → Re-scan → Check → Loop/Complete
+  - { from: is-approved, to: commit-patches, condition: true }
+  - { from: commit-patches, to: trigger-rescan }
+  - { from: trigger-rescan, to: wait-rescan }
+  - { from: wait-rescan, to: check-resolved }
+  - { from: check-resolved, to: compare-results }
+  - { from: compare-results, to: fix-complete }
+
+  # If fix complete → Human → Report → End
+  - { from: fix-complete, to: human-approval, condition: true }
+  - { from: human-approval, to: summary-report }
+  - { from: summary-report, to: end }
+
+  # If fix NOT complete AND iteration < max → Loop back to Fix
+  - { from: fix-complete, to: generate-fixes, condition: false }
+
+  # If vote rejected → Loop back to Fix
+  - { from: is-approved, to: generate-fixes, condition: false }

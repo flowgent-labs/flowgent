@@ -29,9 +29,11 @@ const (
 // through the system. It is serializable, resumable, retryable, and
 // reassignable between TaskManagers.
 type ExecutionPlan struct {
-	PlanID         string     `json:"plan_id"`
-	AgentFlowRunID string     `json:"agentflow_run_id"`
-	TaskID         string     `json:"task_id"`
+	PlanID               string     `json:"plan_id"`
+	AgentFlowRunID       string     `json:"agentflow_run_id"`         // the run instance this plan belongs to
+	AgentFlowDefinitionID string    `json:"agentflow_definition_id"`  // the flow spec this run was created from
+	TenantID             string     `json:"tenant_id,omitempty"`      // tenant isolation + workspace path routing
+	TaskID               string     `json:"task_id"`
 	TaskType       TaskType   `json:"task_type"`
 	NodeID         string     `json:"node_id"`
 
@@ -77,9 +79,11 @@ type NodeSpec struct {
 	// Sandbox fields
 	Runtime       string            `json:"runtime,omitempty"`
 	Script        string            `json:"script,omitempty"`
+	ScriptPath    string            `json:"script_path,omitempty"`    // set at runtime by SandboxExecutor (not from YAML)
 	Timeout       string            `json:"timeout,omitempty"`
 	Resources     *SandboxResources `json:"resources,omitempty"`
 	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty"`
+	Workspace     string            `json:"workspace,omitempty"`      // optional data directory for file I/O
 }
 
 // TaskResult holds the outcome of a single task execution.
@@ -130,6 +134,7 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Timeout:          n.Timeout,
 		Resources:        n.Resources,
 		NetworkPolicy:    n.NetworkPolicy,
+		Workspace:        n.Workspace,
 		RawInput:         n.Input,
 		OutputSchema:     n.OutputSchema,
 	}

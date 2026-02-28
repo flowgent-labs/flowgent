@@ -8,6 +8,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
+	"github.com/flowgent-labs/flowgent/src/store"
 	"github.com/flowgent-labs/flowgent/src/model"
 )
 
@@ -16,10 +17,10 @@ import (
 type SupervisorExecutor struct {
 	llmClient engine.LLMClient
 	agents    map[string]*config.AgentDef
-	store     engine.Store
+	store     store.Store
 }
 
-func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef, store engine.Store) *SupervisorExecutor {
+func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef, store store.Store) *SupervisorExecutor {
 	m := make(map[string]*config.AgentDef)
 	for _, a := range agents {
 		m[a.Name] = a

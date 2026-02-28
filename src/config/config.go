@@ -200,10 +200,10 @@ type OrchestrationConfig struct {
 
 // SandboxConfig configures the sandbox execution environment (global).
 type SandboxConfig struct {
-	Enabled    bool                `json:"enabled" yaml:"enabled"`
-	Image      string              `json:"image" yaml:"image"`
-	RuntimeDir string              `json:"runtime_dir" yaml:"runtime_dir"`
-	Policy     *model.SandboxPolicy `json:"policy" yaml:"policy"`
+	Enabled   bool                 `json:"enabled" yaml:"enabled"`
+	Image     string               `json:"image" yaml:"image"`
+	Workspace string               `json:"workspace" yaml:"workspace"` // persistent volume, per-{tenant}/{flow_id} subdirs
+	Policy    *model.SandboxPolicy `json:"policy" yaml:"policy"`
 }
 
 // QueueConfig configures the message queue for inter-component communication.

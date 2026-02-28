@@ -29,6 +29,9 @@ Services (all default to 2 replicas for HA):
 {{- if .Values.taskmanager.enabled }}
   ✅ TaskManager      — {{ .Values.taskmanager.replicas }} replicas, {{ .Values.taskmanager.slots }} slots each
 {{- end }}
+{{- if .Values.sandbox.enabled }}
+  ✅ Sandbox          — {{ .Values.sandbox.replicas }} replicas, {{ .Values.sandbox.slots }} slots each
+{{- end }}
 {{- if .Values.wallet.enabled }}
   ✅ Wallet           — {{ .Values.wallet.replicas }} replicas, port {{ .Values.wallet.service.port }}
 {{- end }}

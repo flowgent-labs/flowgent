@@ -3,25 +3,32 @@ package jobmanager
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/src/config"
-	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/store"
+	"time"
 )
+
+// JobManagerConfig is the startup configuration for a JobManager, extracted
+// from the full ServiceConfig to decouple JM from YAML layout changes.
+type JobManagerConfig struct {
+	FlowExecutionTimeout time.Duration
+	MaxNodeRetries       int
+	MaxConcurrentFlows   int
+}
 
 // JobManager is the singleton JobManager (like Flink's Dispatcher in session mode).
 // It receives agentflow run submissions and spawns a JobMaster per run.
 type JobManager struct {
-	store  engine.Store
+	store  store.Store
 	rm     scheduler.ResourceManager
 	logger *utils.Logger
-	cfg    *config.ServiceConfig
+	cfg    *JobManagerConfig
 }
 
 // NewJobManager creates the shared JobManager singleton.
-// Returns an error if the RM fails validation.
-func NewJobManager(store engine.Store, rm scheduler.ResourceManager, logger *utils.Logger, cfg *config.ServiceConfig) (*JobManager, error) {
+func NewJobManager(store store.Store, rm scheduler.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
 	if errs := scheduler.ValidateComponents(rm, store); len(errs) > 0 {
 		for _, e := range errs {
 			logger.Error("component validation failed", "error", e.Error())

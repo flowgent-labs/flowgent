@@ -108,6 +108,40 @@ taskmanager:
     limits:   { cpu: "2", memory: "2Gi" }
 
 # ═══════════════════════════════════════════════════════════════
+# Sandbox — Secure Script Execution Worker
+# ═══════════════════════════════════════════════════════════════
+sandbox:
+  enabled: true
+  replicas: 1
+  image: ""
+  slots: 4
+  # workspace is the single persistent volume for scripts + file I/O.
+  # Session mode: one cluster-wide volume, subdirs by {tenant}/{flow_id}.
+  # Application mode: Controller creates per-flow PVC.
+  workspace: "/var/flowgent/workspace"
+  policy:
+    network:
+      mode: "none"
+      allowed: []
+      denied: []
+    allowedRuntimes:
+      - python3
+      - bash
+      - node
+    bannedCommands: []
+    defaultTimeout: "120s"
+    maxTimeout: "600s"
+    defaultResources:
+      cpu: "500m"
+      memory: "256Mi"
+    maxResources:
+      cpu: "2000m"
+      memory: "1Gi"
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "1", memory: "1Gi" }
+
+# ═══════════════════════════════════════════════════════════════
 # Wallet — Stateless Key Management & Payment Signing
 # ═══════════════════════════════════════════════════════════════
 wallet:

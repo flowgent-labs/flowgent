@@ -47,11 +47,15 @@ type Node struct {
 	AgentFlowID      string              `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
 	OutputSchema     map[string]any      `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
 	// Sandbox fields
-	Runtime       string            `json:"runtime,omitempty" yaml:"runtime,omitempty"`
-	Script        string            `json:"script,omitempty" yaml:"script,omitempty"`
-	Timeout       string            `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Runtime       string            `json:"runtime,omitempty" yaml:"runtime,omitempty"`   // python3 | bash | node
+	Script        string            `json:"script,omitempty" yaml:"script,omitempty"`     // inline script (YAML-authored or agent-generated via ${agent.output})
+	Timeout       string            `json:"timeout,omitempty" yaml:"timeout,omitempty"`   // e.g. "120s"
 	Resources     *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
 	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty" yaml:"network_policy,omitempty"`
+	// Workspace is the optional host/data directory the sandbox can read/write.
+	// For code-fix scenarios this is the git repo path (e.g. "/home/agent/rengine").
+	// Mounted read-write; original files are snapshotted to {script_path}/original/ before modification.
+	Workspace     string            `json:"workspace,omitempty" yaml:"workspace,omitempty"`
 }
 
 // Edge represents a directed edge in the DAG, with an optional condition for branching.

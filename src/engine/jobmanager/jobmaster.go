@@ -1,7 +1,6 @@
 package jobmanager
 
 import (
-	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
 	"context"
 	"fmt"
@@ -9,9 +8,9 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/common/tracing"
-	"github.com/flowgent-labs/flowgent/src/config"
 	"go.opentelemetry.io/otel/metric"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/store"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -27,7 +26,7 @@ type EdgeCondition struct {
 // from an AgentFlowSpec and dispatches plans via scheduler.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
-	store     engine.Store
+	store     store.Store
 	rm        scheduler.ResourceManager
 	logger    *utils.Logger
 	tracer    trace.Tracer
@@ -53,14 +52,14 @@ type JobMaster struct {
 }
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
-func NewJobMaster(store engine.Store, rm scheduler.ResourceManager, logger *utils.Logger, cfg *config.ServiceConfig) *JobMaster {
-	timeout, _ := time.ParseDuration(cfg.Orchestration.FlowExecutionTimeout)
+func NewJobMaster(store store.Store, rm scheduler.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
+	timeout := cfg.FlowExecutionTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
 	return &JobMaster{
 		store: store, rm: rm, logger: logger,
-		timeout: timeout, nodeLimit: cfg.Orchestration.MaxNodeRetries,
+		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
 		nodeOutputs: make(map[string]map[string]any),
 	}
 }
@@ -146,11 +145,14 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
 		jm.planMap[n.ID] = &model.ExecutionPlan{
-			PlanID: fmt.Sprintf("plan-%s-%s", runID, n.ID), AgentFlowRunID: runID,
-			TaskID: fmt.Sprintf("task-%s-%s", runID, n.ID),
-			TaskType: NodeToTaskType(n.Type), NodeID: n.ID,
-			State: model.TaskPending, MaxRetries: RetryMax(n.Retry),
-			NodeSpec: model.NodeSpecFromNode(n), CreatedAt: time.Now(),
+			PlanID:               fmt.Sprintf("plan-%s-%s", runID, n.ID),
+			AgentFlowRunID:       runID,
+			AgentFlowDefinitionID: spec.ID,
+			TenantID:             spec.TenantID,
+			TaskID:               fmt.Sprintf("task-%s-%s", runID, n.ID),
+			TaskType:             NodeToTaskType(n.Type), NodeID: n.ID,
+			State:                model.TaskPending, MaxRetries: RetryMax(n.Retry),
+			NodeSpec:             model.NodeSpecFromNode(n), CreatedAt: time.Now(),
 		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
+	"github.com/flowgent-labs/flowgent/src/store"
 )
 
 // ─── ResourceManager interface ─────────────────────────────────
@@ -40,7 +41,7 @@ type ResourceManagerConfig struct {
 	PoolSize       int
 
 	Queue      queue.Queue
-	Store      engine.Store
+	Store      store.Store
 	Agents     []*config.AgentDef
 	MCPClients map[string]engine.MCPClient
 	LLMClient  engine.LLMClient
@@ -84,7 +85,7 @@ var _ ResourceManager = (*KubernetesResourceManager)(nil)
 // ─── Validation ───────────────────────────────────────────────
 
 // ValidateComponents checks cross-component compatibility. Returns fatal errors.
-func ValidateComponents(rm ResourceManager, store engine.Store) []error {
+func ValidateComponents(rm ResourceManager, store store.Store) []error {
 	var errs []error
 	if rm == nil {
 		return append(errs, fmt.Errorf("resource manager is nil"))
@@ -101,7 +102,7 @@ func ValidateComponents(rm ResourceManager, store engine.Store) []error {
 }
 
 // WarnCompatibility logs warnings for unusual but non-fatal configurations.
-func WarnCompatibility(rm ResourceManager, store engine.Store) {
+func WarnCompatibility(rm ResourceManager, store store.Store) {
 	if rm == nil || store == nil {
 		return
 	}

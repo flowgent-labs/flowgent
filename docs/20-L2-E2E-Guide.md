@@ -1,515 +1,550 @@
-# Flowgent E2E Test Guide — Full Production Mode
+# Flowgent E2E Test Guide — Full Distributed Mode on K3s
 
-**Date:** 2026-05-22
-**Status:** Helm chart + IDiscoveryClient + Notification queue consumer + Distributed test specs
+**Date:** 2026-05-23
+**Status:** 7 microservices (apiserver, controller, jobmanager, taskmanager, sandbox, wallet, notification) — Helm + K3s
 
 ---
 
-## 1. Prerequisites
+## 1. Architecture Summary
 
-### Infrastructure
+Flowgent runs as 7 microservices on K3s. All are deployed via a single Helm chart.
+
+```
+kubectl get pods -l 'app.kubernetes.io/name=flowgent'
+```
+
+Expected (session mode, 2 replicas per service, 14 pods total):
+
+```
+NAME                                    READY   STATUS    RESTARTS   AGE
+flowgent-apiserver-xxx                  1/1     Running   0          30s
+flowgent-apiserver-yyy                  1/1     Running   0          30s
+flowgent-controller-xxx                 1/1     Running   0          30s
+flowgent-controller-yyy                 1/1     Running   0          30s
+flowgent-jobmanager-xxx                 1/1     Running   0          30s
+flowgent-jobmanager-yyy                 1/1     Running   0          30s
+flowgent-taskmanager-xxx                1/1     Running   0          30s
+flowgent-taskmanager-yyy                1/1     Running   0          30s
+flowgent-sandbox-xxx                    1/1     Running   0          30s
+flowgent-sandbox-yyy                    1/1     Running   0          30s
+flowgent-wallet-xxx                     1/1     Running   0          30s
+flowgent-wallet-yyy                     1/1     Running   0          30s
+flowgent-notification-xxx               1/1     Running   0          30s
+flowgent-notification-yyy               1/1     Running   0          30s
+```
+
+### 1.1 Component Responsibilities
+
+| # | Service | Port | Role |
+|---|---------|------|------|
+| 1 | **API Server** | 9999 (REST), 9992 (A2A), 9991 (mgmt) | Multi-tenant gateway: CRUD, auth, triggers, A2A agent card |
+| 2 | **Controller** | — | Polls PG `agentflow_definitions`, hash-mod sharding, inserts PENDING runs, creates K8s JM for application mode |
+| 3 | **JobManager** | — | Polls `agentflow_runs` (PENDING), parses flow JSON, builds DAG + ExecutionPlans, calls RM.Schedule() |
+| 4 | **TaskManager** | — | Consumes ExecutionPlans from MQTT, executes via router (12 node types) |
+| 5 | **Sandbox** | — | Consumes sandbox ExecutionPlans from queue, executes scripts in isolated env with network restrictions |
+| 6 | **Wallet** | 9901 | x402 Ed25519 key management, payment signing |
+| 7 | **Notification** | 9993 (WS) | Multi-channel push (Telegram, Slack, DingTalk, Email, Webhook) + WS SSE |
+
+---
+
+## 2. Prerequisites
+
+### 2.1 Infrastructure
+
 | Service | Address | Auth |
 |---------|---------|------|
-| PostgreSQL | 172.29.235.101:5432 | test/test, db=flowgent |
+| PostgreSQL | 172.29.235.101:5432 | flowgent/flowgent, db=flowgent |
 | EMQX MQTT | 172.29.235.101:1883 | anonymous |
 | Redis Cluster | 127.0.0.1:6379-6381 | password=bitnami |
-| SonarQube | localhost:9000 | admin (token required for scanner) |
+| K3s | — | `kubectl` access |
 
-### LLM Providers
-| Provider | Endpoint | Model | Key Env |
-|----------|----------|-------|---------|
-| Bailian (Aliyun) | dashscope.aliyuncs.com/compatible-mode/v1/chat/completions | qwen-plus | BAILIAN_API_KEY |
-| DeepSeek | api.deepseek.com/v1/chat/completions | deepseek-chat | ANTHROPIC_AUTH_TOKEN |
+### 2.2 LLM Providers
 
-### MCP Binaries (in `/bin/`)
+| Provider | Key Env | Endpoint |
+|----------|---------|----------|
+| Bailian (Aliyun) | `BAILIAN_API_KEY` | dashscope.aliyuncs.com/compatible-mode/v1/chat/completions |
+| DeepSeek | `DEEPSEEK_API_KEY` | api.deepseek.com/v1/chat/completions |
+
+### 2.3 MCP Binaries (optional, in `/bin/`)
+
 - `/bin/test-mcp` — Test MCP (echo, run_integration, get_report)
-- `/bin/github-mcp` — GitHub API (GH_TOKEN)
+- `/bin/github-mcp` — GitHub API
 - `/bin/sonarqube-mcp` — SonarQube API
 - `/bin/sonatypeiq-mcp` — Sonatype IQ API
 - `/bin/nexus3-mcp` — Sonatype Nexus3 API
 
 ---
 
-## 2. Session Mode (PG + MQTT + Redis — Shared Cluster)
+## 3. Build & Deploy
 
-Full distributed deployment on k3s:
+### 3.1 Build Binary & Image
 
 ```bash
 cd /home/agent/flowgent
+go build -o bin/flowgent ./src/cmd/flowgent/
 
-# Ensure PG schema is current
-/usr/local/go/bin/go run -mod=mod scripts/init_pg.go
+# Build Docker image
+podman build -t localhost/flowgent:latest -f deploy/docker/Dockerfile .
 
-# Start daemon with production config
-./bin/flowgent daemon start -c etc/flowgent-prod.yaml &
+# Import into K3s
+sudo k3s ctr images import /path/to/flowgent-image.tar
+```
 
-# Health check
-curl http://localhost:9999/_/healthz
+### 3.2 Infrastructure Secrets
 
-# List available flows
-curl http://localhost:9999/api/v1/default/agentflows | python3 -m json.tool
+```bash
+kubectl create secret generic flowgent-pg \
+  --from-literal=url="postgres://flowgent:flowgent@172.29.235.101:5432/flowgent?sslmode=disable"
 
-# Trigger 01-sample-security-autonomy-fix-v2 (agent-only, works without SonarQube)
-curl -X POST http://localhost:9999/api/v1/default/agentflows/trigger \
+kubectl create secret generic flowgent-mqtt \
+  --from-literal=broker="tcp://172.29.235.101:1883"
+```
+
+### 3.3 Deploy All Components
+
+```bash
+helm install flowgent deploy/helm/flowgent \
+  --set global.image.repository=localhost/flowgent \
+  --set global.image.tag=latest \
+  --set postgresql.host=172.29.235.101 \
+  --set postgresql.password=flowgent \
+  --set emqx.broker=tcp://172.29.235.101:1883
+```
+
+### 3.4 Verify Deployment
+
+```bash
+# All 7 components (14 pods with replicas=2)
+kubectl get pods -l 'app.kubernetes.io/name=flowgent'
+
+# Component-level verification:
+kubectl get deploy -l 'app.kubernetes.io/name=flowgent'
+# Expected: apiserver, controller, jobmanager, taskmanager, sandbox, wallet, notification
+```
+
+---
+
+## 4. Session Mode — E2E Flow Execution
+
+### 4.1 Trigger a Flow
+
+```bash
+# List available flows (loaded from examples/flows/)
+curl http://<apiserver-svc>:9999/api/v1/default/agentflows | python3 -m json.tool
+
+# Trigger the simplified security fixer (works with LLM only, no MCP tools needed)
+curl -X POST http://<apiserver-svc>:9999/api/v1/default/agentflows/trigger \
   -H 'Content-Type: application/json' \
-  -d '{"agentflow_id":"01-sample-security-autonomy-fix-v2","vars":{"repo":"rengine","repo_path":"/home/agent/rengine"},"trigger":{"type":"api","source":"k3s-e2e"}}'
+  -d '{"agentflow_id":"01-security-autonomy-fix-v2","vars":{"repo":"rengine"},"trigger":{"type":"api","source":"e2e-test"}}'
+# Response: {"run_id":"<RUN_ID>","status":"PENDING"}
+```
 
-# Monitor execution (takes ~2-5 min for 11 nodes)
+### 4.2 Monitor Execution
+
+```bash
 RUN_ID="<from-response>"
 for i in $(seq 1 60); do
     sleep 5
-    STATUS=$(curl -s "http://localhost:9999/api/v1/default/runs/$RUN_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+    STATUS=$(curl -s "http://<apiserver-svc>:9999/api/v1/default/runs/$RUN_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
     echo "[$i] $STATUS"
-    [ "$STATUS" = "COMPLETED" ] && break
+    [ "$STATUS" = "COMPLETED" ] || [ "$STATUS" = "FAILED" ] && break
 done
 ```
 
----
-
-## 4. Triggering the Full Security-Autonomy-Fixer
-
-The full pipeline (21 nodes, 25 edges) requires SonarQube/Sonatype MCP tools.
-
-### 4.1 SonarQube Scan (Manual Simulation)
-
-Since SonarQube external access is not yet configured, the PR-triggered scan
-is simulated via CLI:
+### 4.3 Trace Execution in Logs
 
 ```bash
-cd ~/rengine
+# Controller: should show flow dispatch
+kubectl logs -l app.kubernetes.io/component=controller | grep "dispatching"
 
-# Run SonarQube scan (requires auth token)
-sonar-scanner \
-  -Dsonar.host.url=http://localhost:9000 \
-  -Dsonar.projectKey=rengine \
-  -Dsonar.sources=. \
-  -Dsonar.java.binaries="*/target/classes" \
-  -Dsonar.token="<SONARQUBE_TOKEN>"
+# JobManager: should show run submission
+kubectl logs -l app.kubernetes.io/component=jobmanager | grep "Submit\|JobMaster"
 
-# NOTE: SonarQube admin password was changed from default.
-# To reset: podman exec sonarqube ... (see SonarQube docs)
-# Without a token, flow nodes that call sonarqube MCP will fail.
-# Use the simplified flow (01-sample-security-autonomy-fix-v2) instead.
-```
-
-### 4.2 Trigger Full Flow (when MCP tools are available)
-
-```bash
-curl -X POST http://localhost:9999/api/v1/default/agentflows/trigger \
-  -H 'Content-Type: application/json' \
-  -d '{"agentflow_id":"security-autonomy-fixer","vars":{"repos":["rengine"]},"trigger":{"type":"webhook","source":"github","payload":{"repo":"rengine","pr_number":42}}}'
+# TaskManager: should show plan execution
+kubectl logs -l app.kubernetes.io/component=taskmanager | grep "ExecutePlan\|slot"
 ```
 
 ---
 
-## 5. Flow Versions
+## 5. Application Mode — Dedicated Cluster per VIP Flow
 
-| File | ID | Nodes | Description |
-|------|-----|-------|-------------|
-| `etc/flows/01-sample-security-autonomy-fix-v1.yaml` | `security-autonomy-fixer` | 21 | **Full original** — 11 phases. Requires SonarQube/Sonatype MCP tools. |
-| `etc/flows/01-sample-security-autonomy-fix-v2.yaml` | `security-autonomy-fixer-simple` | 11 | **Simplified** — agent-only + `.cyberbot` metadata. Works with LLM only. |
-| `etc/flows/02-sample-autotest-generation-v1.yaml` | `autotest-generation` | 9 | **Auto-test generation** — Confluence-driven test code generation. |
-
----
-
-## 6. `.cyberbot` Metadata
-
-The simplified flow includes a `generate-cyberbot` node that produces metadata JSON:
-
-```json
-{
-  "version": "1.0",
-  "project": "rengine",
-  "run_id": "<flowgent-run-id>",
-  "timestamp": "<ISO8601>",
-  "fixes": [{"issue_id":"...","file":"...","severity":"...","status":"patched|reviewed|merged"}],
-  "reviewers": [{"name":"...","decision":true|false,"confidence":0-1}],
-  "vote_outcome": true|false,
-  "status": "completed|needs_review|rejected"
-}
-```
-
-This file should be committed to the target repo as `.cyberbot` for audit trail.
-
----
-
-## 7. K3s Full Production Mode Deployment
-
-Deploy all 5 components: Controller, API Server, JobManager, TaskManager, and infrastructure.
-
-### 7.1 Build & Import Image
-
-```bash
-cd /home/agent/flowgent
-/usr/local/go1.26.1.linux-amd64/bin/go build -o bin/flowgent ./src/cmd/flowgent/
-podman build -t localhost/flowgent:latest -f deploy/Dockerfile.jobmanager .
-sudo k3s ctr images import /path/to/image.tar
-```
-
-### 7.2 Infrastructure (PG, EMQX, Redis)
-
-```bash
-# PostgreSQL (required for Controller + Standard mode)
-kubectl create secret generic flowgent-pg \
-  --from-literal=url="postgres://test:test@172.29.235.101:5432/flowgent?sslmode=disable"
-
-# EMQX MQTT (for JM↔TM dispatch)
-kubectl apply -f deploy/emqx/docker-compose.yml  # or deploy via K8s
-
-# Redis Cluster (for distributed cache/lock)
-kubectl apply -f deploy/redis/docker-compose.yml  # or deploy via K8s
-```
-
-### 7.3 Deploy All Components
-
-**One-shot deploy** (all 6 services):
-
-```bash
-helm install flowgent deploy/helm/flowgent
-```
-
-**Verify all pods running:**
-
-```bash
-kubectl get pods -l 'app in (flowgent-apiserver,flowgent-controller,flowgent-jobmanager,flowgent-taskmanager,flowgent-wallet,flowgent-notification)'
-```
-
-Expected:
-```
-NAME                                    READY   STATUS    RESTARTS   AGE
-flowgent-apiserver-xxx                  1/1     Running   0          30s
-flowgent-controller-xxx                 1/1     Running   0          30s
-flowgent-controller-yyy                 1/1     Running   0          30s
-flowgent-controller-zzz                 1/1     Running   0          30s
-flowgent-jobmanager-xxx                 1/1     Running   0          30s
-flowgent-taskmanager-xxx                1/1     Running   0          30s
-flowgent-taskmanager-yyy                1/1     Running   0          30s
-flowgent-taskmanager-zzz                1/1     Running   0          30s
-flowgent-taskmanager-www                1/1     Running   0          30s
-flowgent-wallet-xxx                     1/1     Running   0          30s
-flowgent-notification-xxx               1/1     Running   0          30s
-```
-
-**Individual component scaling** (after Helm install):
-
-```bash
-# Scale individual components as needed:
-kubectl scale deploy/flowgent-controller --replicas=3
-kubectl scale deploy/flowgent-taskmanager --replicas=4
-
-# Enable/disable components via Helm values:
-helm upgrade flowgent deploy/helm/flowgent \
-  --set wallet.enabled=true \
-  --set notification.enabled=true
-```
-
-### 7.4 Application Mode (Dedicated Cluster per VIP Flow)
-
-For grade-priority flows, the Controller auto-creates dedicated JM+TM:
+For `priority: grade` flows, the Controller creates a dedicated K8s JM Deployment.
 
 ```bash
 # Create application namespace
 kubectl create namespace flowgent-rengine
 
-# The Controller creates JM deployment automatically when a grade flow is found.
-# Manual deploy (if needed):
-helm install flowgent-rengine deploy/helm/flowgent -n flowgent-rengine
-kubectl scale deploy/flowgent-taskmanager --replicas=4 -n flowgent-rengine
+# Insert a grade-priority flow definition into PG
+psql -h 172.29.235.101 -U flowgent -d flowgent -c "
+INSERT INTO agentflow_definitions (agentflow_id, version, definition, priority, namespace)
+VALUES ('vip-security-fixer', 1,
+  '{\"id\":\"vip-security-fixer\",\"nodes\":[...],\"edges\":[...]}'::jsonb,
+  'grade', 'flowgent-rengine')
+"
+
+# Controller detects grade priority → creates JM Deployment automatically
+kubectl get deploy -n flowgent-rengine flowgent-jm-vip-security-fixer
+# Expected: 1 JM pod running in the tenant namespace
+
+# JM picks up PENDING run → dispatches to TM → COMPLETED
 ```
 
-The existing k3s deployment (session mode, JM+TM in `default` namespace) handles
-all non-application flows via the shared pool.
+---
+
+## 6. Flow Versions
+
+Flow definitions live under `examples/flows/`. Use case details: see `docs/10-USE-CASES.md`.
+
+| File | ID | Nodes | Requires |
+|------|-----|-------|----------|
+| `examples/flows/01-security-autonomy-fix-v1.yaml` | `security-autonomy-fixer` | 21 | SonarQube/Sonatype MCP tools |
+| `examples/flows/01-security-autonomy-fix-v2.yaml` | `01-security-autonomy-fix-v2` | 11 | LLM only |
+| `examples/flows/00-e2e-sonarqube-real.yaml` | `e2e-sonarqube-real` | — | SonarQube MCP |
+| `examples/flows/20-autotest-generation-v1.yaml` | `autotest-generation` | 9 | Confluence MCP |
 
 ---
 
-## 8. Known Issues & Workarounds
+## 7. Sandbox E2E — Script Execution
 
-1. **SonarQube auth**: Admin password changed from default. Generate a token via
-   SonarQube UI or reset via podman exec. Until resolved, use simplified flow.
+### 7.1 Sandbox Node in a Flow
 
-2. **Sonatype IQ/Nexus3**: External enterprise services not available in test env.
-   Full flow nodes referencing these tools will fail.
+```yaml
+nodes:
+  - id: run-audit
+    type: sandbox
+    runtime: python3
+    script: |
+      import json
+      print(json.dumps({"status": "ok", "findings": []}))
+    timeout: 30s
+    resources:
+      cpu: "250m"
+      memory: "128Mi"
+    network_policy:
+      mode: none
+```
 
-3. **Docker Hub blocked**: Cannot build new k3s images. Use host-based daemon
-   for testing until network access is restored.
+### 7.2 Verify Sandbox Execution
 
-4. **Supervisor action empty**: LLM may return JSON without `action` field.
-   Code now defaults to `"continue"` as defensive fallback. If using Bailian,
-   ensure account has sufficient balance.
+```bash
+# Sandbox worker log
+kubectl logs -l app.kubernetes.io/component=sandbox | grep "sandbox"
 
-5. **ALL_PROXY env**: Set to `socks5h://127.0.0.1:1080`. Use `unset ALL_PROXY`
-   or `curl --noproxy '*'` for local API calls.
+# TaskManager log (sandbox plan dispatch)
+kubectl logs -l app.kubernetes.io/component=taskmanager | grep "sandbox"
 
-6. **TopK bug (fixed)**: Previously `topk: 5` in model config would override
-   temperature to 5.0, causing API error `'temperature' must be Float`.
-   Fixed in `src/llm/llm.go` — TopK is now set as separate `top_k` field.
-
----
-
-## 9. Full Production Mode Verification Checklist
-
-All 6 microservices must be running in K3s with PG/EMQX/Redis backend.
-
-### 9.1 Pod Health
-
-| # | Service | Verify |
-|---|---------|--------|
-| 1 | API Server (REST) | `curl http://<apiserver-svc>:9999/_/healthz` → `{"status":"ok"}` |
-| 2 | API Server (A2A) | `curl http://<apiserver-svc>:9992/.well-known/agent.json` → agent card JSON |
-| 3 | Controller | `kubectl logs deploy/flowgent-controller` → `Controller starting ... shard=X/N` |
-| 4 | JobManager (session) | `kubectl logs deploy/flowgent-jobmanager` → `JobManager started` |
-| 5 | TaskManager | `kubectl logs deploy/flowgent-taskmanager` → `TaskManager ... started` |
-| 6 | Wallet | `curl http://<wallet-svc>:9901/health` → 200 |
-| 7 | Notification | `kubectl logs deploy/flowgent-notification` → `Notification service started` |
-
-### 9.2 Flow Execution E2E
-
-- [ ] `curl http://<apiserver-svc>:9999/api/v1/default/agentflows` → lists flows (static + DB)
-- [ ] Insert flow into PG: `INSERT INTO agentflow_definitions (agentflow_id, version, definition) VALUES ('e2e-prod-test', 1, '{"id":"e2e-prod-test",...}'::jsonb)`
-- [ ] Controller picks up flow within poll interval → `kubectl logs deploy/flowgent-controller | grep "dispatching flow"`
-- [ ] JM's runPoller picks up pending run → `kubectl logs deploy/flowgent-jobmanager | grep "jobmanager submit"`
-- [ ] TaskManager executes → `kubectl logs deploy/flowgent-taskmanager | grep "ExecutePlan"`
-- [ ] Run reaches COMPLETED → `SELECT status FROM agentflow_runs WHERE agentflow_id='e2e-prod-test'`
-
-### 9.3 Application Mode (Grade Priority)
-
-- [ ] Insert grade-priority flow into PG
-- [ ] Controller creates dedicated JM deployment → `kubectl get deploy flowgent-jm-<flow-id>`
-- [ ] Dedicated JM starts with `FLOWGENT_NAMESPACE=<ns>` → runPoller only processes runs in that namespace
-- [ ] Run reaches COMPLETED → `SELECT status FROM agentflow_runs WHERE namespace='flowgent-<flow-id>'`
-
-### 9.4 Infrastructure
-
-- [ ] PostgreSQL `agentflow_definitions` + `agentflow_runs` tables exist and are writable
-- [ ] MQTT/EMQX accessible at `:1883` (mqtt) + `:18083` (dashboard)
-- [ ] Redis cluster `redis-cli -a bitnami cluster info` → `cluster_state:ok`
+# PG check
+psql -h 172.29.235.101 -U flowgent -d flowgent -c \
+  "SELECT plan_id, task_type, state FROM execution_plans WHERE task_type='sandbox'"
+```
 
 ---
 
-## 10. AgentFlow Loading Modes: Static YAML vs Dynamic DB (JSON)
+## 8. Per-Component Verification Checklist
 
-Flowgent supports two agentflow loading paths, controlled by `orchestration.agentflows` config:
+| # | Service | Command | Expected |
+|---|---------|---------|----------|
+| 1 | API Server | `curl http://<svc>:9999/_/healthz` | `{"status":"ok"}` |
+| 2 | API Server (A2A) | `curl http://<svc>:9992/.well-known/agent.json` | Agent card JSON |
+| 3 | Controller | `kubectl logs -l app.kubernetes.io/component=controller` | `shard=X/N, dispatching flow` |
+| 4 | JobManager | `kubectl logs -l app.kubernetes.io/component=jobmanager` | `JobManager started` |
+| 5 | TaskManager | `kubectl logs -l app.kubernetes.io/component=taskmanager` | `task manager started, slots=N` |
+| 6 | Sandbox | `kubectl logs -l app.kubernetes.io/component=sandbox` | `Sandbox worker started` |
+| 7 | Wallet | `curl http://<svc>:9901/health` | `200` |
+| 8 | Notification | `kubectl logs -l app.kubernetes.io/component=notification` | `Notification service started` |
 
-### Static Mode (YAML — File System)
+---
+
+## 9. Infrastructure Verification
+
+```bash
+# PostgreSQL
+psql -h 172.29.235.101 -U flowgent -d flowgent -c "\dt"
+# Expected: agentflow_definitions, agentflow_runs, execution_plans, task_runs, ...
+
+# EMQX
+curl http://172.29.235.101:18083/api/v5/status
+
+# Redis
+redis-cli -h 127.0.0.1 -p 6379 -a bitnami ping
+```
+
+---
+
+## 10. AgentFlow Loading: Static YAML vs Dynamic DB
+
+### Static Mode (YAML files)
 
 ```yaml
 orchestration:
   agentflows:
     static:
       enabled: true
-      load-dir: "examples/flows/"    # relative to config file
-      refresh: 1m                    # hot-reload interval
+      load-dir: "examples/flows/"
+      refresh: 1m
 ```
 
-- **Format**: YAML files loaded via `yaml.Unmarshal` → `model.AgentFlowSpec`
-- **Storage**: Files on disk in the configured `load-dir`
-- **Use case**: GitOps / manifests committed alongside code (like K8s static pod YAML)
-- **Hot reload**: `LoadAgentFlows()` is called periodically at the `refresh` interval
-
-### Standard Mode (JSON — PostgreSQL)
+### Standard Mode (PostgreSQL)
 
 ```yaml
 orchestration:
   agentflows:
     standard:
-      enabled: true   # reads from agentflow_definitions table
+      enabled: true
 ```
 
-- **Format**: JSON stored in `agentflow_definitions.definition` (JSONB column) via `json.Marshal` → `json.Unmarshal`
-- **Storage**: PostgreSQL table `agentflow_definitions` with versioning `(agentflow_id, version)` composite key
-- **Use case**: Future Flowgent UI writes flow definitions; engine reads them at startup
-- **Schema** (from `migration/postgres/20250926/01_init.ddl.sql`):
+Schema:
 
 ```sql
 CREATE TABLE agentflow_definitions (
     agentflow_id VARCHAR(255) NOT NULL,
     version      BIGINT NOT NULL DEFAULT 1,
     definition   JSONB NOT NULL,
-    created_by   VARCHAR(255),
-    comment      TEXT,
     priority     VARCHAR(16) DEFAULT 'medium',
     tenant_id    VARCHAR(255) DEFAULT 'default',
     namespace    VARCHAR(255) DEFAULT '',
-    mode         VARCHAR(32) DEFAULT '',
-    labels       JSONB DEFAULT '{}',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (agentflow_id, version)
 );
 ```
 
-### Dual Format — Same Struct
-
-Both modes share the same `model.AgentFlowSpec` struct, which carries both tags:
-
-```go
-type AgentFlowSpec struct {
-    ID          string         `json:"id" yaml:"id"`
-    Nodes       []Node         `json:"nodes" yaml:"nodes"`
-    Edges       []Edge         `json:"edges" yaml:"edges"`
-    // ... all fields dual-tagged json: + yaml:
-}
-```
-
-### Startup Merge Flow
-
-In `launch.go → startServer()`:
-
-1. Static YAML loaded via `config.LoadAgentFlows(serviceCfg, cfgPath)`
-2. Store initialized (PG or SQLite)
-3. If `standard.enabled`: DB definitions loaded via `loadAgentFlowsFromDB(ctx, storeImpl)`, which calls `store.ListAgentFlowDefinitions()`, deduplicates by `agentflow_id` (latest version wins), and unmarshals JSON
-4. Merged list passed to `api.NewAgentFlowHandler()`
-5. Same for agents: static YAML loaded first, then `store.ListAgents()` merged if `standard.enabled`
-
-### Store Layer (PG CRUD)
-
-- `UpdateAgentFlowSpec(ctx, spec, createdBy, comment)` — `json.Marshal` + INSERT with auto-increment version
-- `GetAgentFlowSpec(ctx, agentFlowID)` — `json.Unmarshal` latest version
-- `DeleteAgentFlowDefinition(ctx, agentFlowID)` — DELETE all versions
-- Agents: `SaveAgent()`, `GetAgent()`, `ListAgents()`, `DeleteAgent()`
-
-Full CRUD is implemented in both `PostgresStore` and `SQLiteStore` (`src/store/store_agents.go`).
+Both modes share `model.AgentFlowSpec` (dual-tagged `json:` + `yaml:`). At startup, static YAML is loaded first, then DB definitions are merged (latest version per `agentflow_id` wins).
 
 ---
 
-## 11. Distributed Mode Testing Requirements (Next Iteration)
+## 11. Scenarios to Test (Next Iteration)
 
-Tests that verify distributed behavior across multiple pods with real
-infrastructure (PG, EMQX, Redis, K3s).
+| # | Test | Components | What It Verifies |
+|---|------|-----------|------------------|
+| T1 | JM HA Leader Election | JM × 2 | Leader election via IDiscoveryClient, standby takeover within 30s |
+| T2 | Controller Hash-Mod Sharding | Controller × 3 | hash(flow_id) % N partition, no overlap, no gaps |
+| T3 | TM Distributed Plan Execution | TM × 4 | MQTT dispatch, slot allocation, lease claiming, orphan re-claim |
+| T4 | Sandbox Script Execution | Sandbox × 2 + TM | Queue dispatch, policy enforcement, result collection |
+| T5 | Notification Load-Balancing | Notification × 2 | MQTT shared subscription, dedup, channel delivery |
+| T6 | Application Mode | Controller + K8s | Auto-create JM Deployment on grade-priority flow, cleanup on completion |
+| T7 | Full E2E | All 7 services | Trigger → Controller → JM → RM → TM/Sandbox → Notification |
 
-### 11.1 Test Matrix
+---
 
-| # | Test | Components | Replicas | Verifies |
-|---|------|-----------|----------|----------|
-| T1 | JM HA Leader Election | JM × 2 | 2 | K8s discovery, leader election, standby takeover |
-| T2 | Controller Hash-Mod Sharding | Controller × 3 | 3 | hash(flow_id) % N distribution, no overlap, no gaps |
-| T3 | TM Distributed Plan Execution | TM × 4 | 4 | MQTT dispatch, slot allocation, lease claiming |
-| T4 | Notification Queue Load-Balancing | Notification × 2 | 2 | MQTT shared subscription, dedup, channel delivery |
-| T5 | Full End-to-End (All Services) | All 6 | 2 each | Complete flow: UI→API→PG→Controller→JM→TM→Notification |
-| T6 | Scale-Up/Down Rebalance | Controller × 3→2 | 3→2 | Shard redistribution on pod removal |
+## 12. Real E2E: Security Autonomy Fixer V3 — Iterative Fix Loop
 
-### 11.2 T1: JM HA Leader Election
+This is the core E2E scenario: deploy Flowgent on K3s, let the engine discover
+Rengine's SonarQube issues, fix them, re-scan, and iterate until resolved.
 
-**Setup:**
-```bash
-helm install flowgent ./deploy/helm/flowgent --set jobmanager.replicas=2 --set jobmanager.ha.enabled=true
+### 12.1 Architecture
+
+```
+SonarQube (localhost:9000, rengine project, 700+ issues)
+     │
+     ▼ fetch issues (MCP tool)
+┌─────────────┐     ┌──────────┐     ┌──────────┐     ┌──────────────┐
+│ analyze     │────→│ generate │────→│ review   │────→│ vote         │
+│ issues      │     │ fixes    │     │ (3 agents)│    │ (majority)   │
+└─────────────┘     └──────────┘     └──────────┘     └──────┬───────┘
+                                                             │
+                              ┌──────────────────────────────┘
+                              ▼
+                       ┌────────────┐     ┌──────────────┐
+                       │ supervisor │────→│ is-approved? │
+                       └────────────┘     └──┬──────┬────┘
+                                        true│      │false
+                                            │      └──→ back to generate-fixes
+                                            ▼
+                                     ┌──────────────┐
+                                     │ commit       │
+                                     │ patches      │
+                                     └──────┬───────┘
+                                            │
+                                            ▼
+                                     ┌──────────────┐
+                                     │ trigger      │
+                                     │ SonarQube    │
+                                     │ re-analysis  │
+                                     └──────┬───────┘
+                                            │
+                                            ▼
+                                     ┌──────────────┐
+                                     │ wait/poll    │ ← sandbox (bash,
+                                     │ CE task      │   allowlist network)
+                                     └──────┬───────┘
+                                            │
+                                            ▼
+                                     ┌──────────────┐
+                                     │ check        │
+                                     │ resolved?    │
+                                     └──┬──────┬────┘
+                               resolved │      │ not resolved
+                                        │      │ (iteration < max)
+                                        ▼      ▼
+                                   ┌─────────┐  ┌──────────────┐
+                                   │ human   │  │ back to       │
+                                   │ approval│  │ generate-fixes│
+                                   └────┬────┘  └──────────────┘
+                                        ▼
+                                   ┌─────────┐
+                                   │ report  │
+                                   └─────────┘
 ```
 
-**Test steps:**
-1. Verify both JM pods Running: `kubectl get pods -l app.kubernetes.io/component=jobmanager`
-2. Verify only ONE JM is leader: check logs for `leader elected: true`
-3. Kill leader pod: `kubectl delete pod <leader-jm>`
-4. Verify standby takes over within `leaseDuration` (30s by default)
-5. Verify no runs are lost during failover (check `agentflow_runs` table)
+### 12.2 Prerequisites
 
-**Expected:**
-- Only one JM runs runPoller at any time
-- Leader election uses `IDiscoveryClient.IsLeader()` → lexicographic name ordering
-- Standby JM polls `agentflow_runs` but skips if not leader
-- Failover time < leaseDuration + 2×pollInterval
-
-### 11.3 T2: Controller Hash-Mod Sharding
-
-**Setup:**
 ```bash
-# Insert test flows with known IDs into PG
-for i in $(seq 1 20); do
-  psql -c "INSERT INTO agentflow_definitions (agentflow_id, version, definition)
-    VALUES ('test-flow-$i', 1, '{\"id\":\"test-flow-$i\",\"nodes\":[...]}'::jsonb)"
-done
+# 1. SonarQube is running with rengine project analyzed
+curl -s --noproxy '*' http://localhost:9000/api/system/status
+# {"status":"UP"}
 
-helm install flowgent ./deploy/helm/flowgent --set controller.replicas=3
+# 2. Verify Rengine has analyzable issues
+curl -s --noproxy '*' -u "squ_eab3ac9428573619417b0b3bd90ca986e87cbd11:" \
+  "http://localhost:9000/api/issues/search?projectKeys=rengine&severities=BLOCKER,CRITICAL,MAJOR&ps=5"
+# {"total":700,...}
+
+# 3. Rengine source is accessible
+ls /home/agent/rengine/
+# pom.xml, src/, ...
+
+# 4. Flowgent deployed on K3s (Section 3)
+helm install flowgent deploy/helm/flowgent \
+  --set global.image.repository=localhost/flowgent \
+  --set global.image.tag=latest \
+  --set sandbox.enabled=true \
+  --set sandbox.replicas=2
 ```
 
-**Test steps:**
-1. Wait for all 3 controller pods to discover each other
-2. Check each pod's log for `shard=X/3` message
-3. Verify each pod only dispatches flows in its shard:
-   - Pod 0: `hash(flow_id) % 3 == 0`
-   - Pod 1: `hash(flow_id) % 3 == 1`
-   - Pod 2: `hash(flow_id) % 3 == 2`
-4. Verify NO flow is dispatched by two pods (no overlap)
-5. Verify ALL 20 flows are dispatched (no gaps)
+### 12.3 Deploy the V3 Flow
 
-**Expected:**
-- Flows partitioned uniformly (±1) across controller pods
-- No duplicate dispatches (each flow handled by exactly one pod)
-- Discovery rebalances on scale events (within pollInterval)
-
-### 11.4 T3: TM Distributed Plan Execution
-
-**Setup:**
 ```bash
-helm install flowgent ./deploy/helm/flowgent --set taskmanager.replicas=4 --set taskmanager.slots=4
+# Copy V3 flow to the examples flows directory (auto-loaded by static loader)
+cp examples/flows/01-security-autonomy-fix-v3.yaml examples/flows/
+
+# Or insert into PostgreSQL for Standard mode:
+psql -h 172.29.235.101 -U flowgent -d flowgent <<'SQL'
+INSERT INTO agentflow_definitions (agentflow_id, version, definition, priority, tenant_id)
+VALUES ('security-autonomy-fixer-v3', 1,
+  '{"id":"security-autonomy-fixer-v3","nodes":[...]}'::jsonb,
+  'high', 'default')
+ON CONFLICT (agentflow_id, version) DO NOTHING;
+SQL
 ```
 
-**Test steps:**
-1. Submit a flow with 16 map items (parallel tasks)
-2. Verify all 4 TMs receive execution plans via MQTT
-3. Check each TM's slot utilization: `kubectl logs <tm-pod> | grep "slot"`
-4. Verify execution plans are evenly distributed
-5. Kill one TM pod mid-execution
-6. Verify remaining TMs pick up orphaned plans (lease expiry)
+### 12.4 Trigger & Monitor
 
-**Expected:**
-- 4 TMs × 4 slots = 16 concurrent executions
-- MQTT topics per TM: `flowgent/exec/tm/{tmID}`
-- Lease-based plan claiming (PG `claim_lease`)
-- Orphaned plans automatically re-claimed after lease timeout
-
-### 11.5 T4: Notification Queue Load-Balancing
-
-**Setup:**
 ```bash
-helm install flowgent ./deploy/helm/flowgent --set notification.replicas=2
+# Trigger the V3 flow
+curl -X POST http://<apiserver-svc>:9999/api/v1/default/agentflows/trigger \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agentflow_id": "security-autonomy-fixer-v3",
+    "vars": {
+      "repo": "rengine",
+      "repo_path": "/home/agent/rengine",
+      "max_iterations": 3
+    },
+    "trigger": {"type": "api", "source": "e2e-test"}
+  }'
+
+# Response: {"run_id":"<RUN_ID>","status":"PENDING"}
 ```
 
-**Test steps:**
-1. Publish 10 notification messages to `/flowgent/notify/queue/default/test-flow`
-2. Verify each notification pod receives ~5 messages (load-balanced)
-3. Check external channel delivery logs
-4. Verify no duplicate deliveries
+### 12.5 Trace Execution (per component)
 
-**Expected:**
-- MQTT shared subscription distributes messages across pods
-- Each message processed exactly once
-- Channel delivery logged per message
-
-### 11.6 T5: Full End-to-End
-
-**Setup:**
 ```bash
-helm install flowgent ./deploy/helm/flowgent \
-  --set apiserver.replicas=2 \
-  --set controller.replicas=2 \
-  --set jobmanager.replicas=2 \
-  --set taskmanager.replicas=2 \
-  --set wallet.replicas=2 \
-  --set notification.replicas=2
+RUN_ID="<from-response>"
+
+# Phase 1-2: Controller → JM picks up run
+kubectl logs -l app.kubernetes.io/component=controller | grep "$RUN_ID"
+kubectl logs -l app.kubernetes.io/component=jobmanager | grep "$RUN_ID"
+
+# Phase 3: TM executes fetch-sq-issues (SonarQube MCP call)
+kubectl logs -l app.kubernetes.io/component=taskmanager | grep -A2 "fetch-sq-issues"
+
+# Phase 4-6: Analyze → Fix → Review (agent LLM calls)
+kubectl logs -l app.kubernetes.io/component=taskmanager | grep -E "analyze-issues|generate-fixes|review-"
+
+# Phase 7-8: Commit → Re-scan → Wait
+kubectl logs -l app.kubernetes.io/component=taskmanager | grep -E "commit-patches|trigger-rescan"
+
+# Phase 9: Sandbox polls SonarQube CE task
+kubectl logs -l app.kubernetes.io/component=sandbox | grep "wait-rescan"
+
+# Phase 10-11: Check resolved → Loop or Complete
+kubectl logs -l app.kubernetes.io/component=taskmanager | grep -E "check-resolved|compare-results|fix-complete"
+
+# Track iterations via PG
+psql -h 172.29.235.101 -U flowgent -d flowgent -c \
+  "SELECT task_type, node_id, state, created_at FROM execution_plans
+   WHERE agentflow_run_id='$RUN_ID' ORDER BY created_at"
 ```
 
-**Test steps:**
-1. Build and import image to K3s
-2. Deploy all 6 services via Helm (12 pods total)
-3. Verify all pods Running: `kubectl get pods | grep flowgent | wc -l` == 12
-4. Insert test flow via API: `curl -X POST http://<apiserver>/api/v1/default/agentflows/definitions ...`
-5. Controller picks up flow → creates pending run
-6. JM runPoller picks up run → dispatches to TM
-7. TM executes plans → run COMPLETED
-8. Notification service detects completion → posts to configured channels
+### 12.6 Expected Outcomes
 
-**Expected:**
-- All 6 services discover peers via IDiscoveryClient (K8s label selector)
-- Wallet auto-generates key, printed in Helm NOTES.txt
-- Flow completes end-to-end within timeout
-- PG has `agentflow_runs` record with status=COMPLETED
-- Notification queue messages consumed and dispatched
+| Iteration | Action | Expected |
+|-----------|--------|----------|
+| 1 | fetch-sq-issues | Returns 700 issues, agent selects top 5 (BLOCKER/CRITICAL) |
+| 1 | generate-fixes | Agent reads source files, generates patches |
+| 1 | review-* (3 agents) | Each returns `{"decision":true|false,...}` |
+| 1 | vote (tribunal) | Majority vote: ≥2 approve → decision=true |
+| 1 | commit-patches | Applies patches to /home/agent/rengine/*.java |
+| 1 | trigger-rescan | SonarQube begins re-analysis |
+| 1 | wait-rescan | Sandbox polls CE task (bash, allowlist: localhost:9000) |
+| 1 | check-resolved | Fetches new issue list |
+| 1 | compare-results | If resolved_count > 0 → resolution=partial |
+| 1 | fix-complete (false) | Loops back to generate-fixes |
+| 2 | generate-fixes | Fixes remaining issues from iteration 1 |
+| 2 | ... | Repeat review→vote→commit→rescan→check |
+| N | compare-results | resolution=complete OR iteration=max_iterations |
+| N | human-approval | Token-based async gate (25h timeout) |
+| N | summary-report | Final markdown report with fix history |
 
-### 11.7 Infrastructure Requirements
+### 12.7 Verify Fixes in Rengine
 
-| Service | Version | Access |
-|---------|---------|--------|
-| PostgreSQL | 16+ | `172.29.235.101:5432`, test/test, db=flowgent |
-| EMQX MQTT | 5.5+ | `172.29.235.101:1883` (mqtt), `:18083` (dashboard) |
-| Redis Cluster | 7.0+ | `127.0.0.1:6379-6381`, password=bitnami |
-| K3s | 1.35+ | `kubectl` access to cluster |
-| Go | 1.26+ | `CGO_ENABLED=0 go build` (static binary) |
+```bash
+cd /home/agent/rengine
+
+# Check which files were modified by the fixer
+git diff --name-only
+
+# Re-run SonarQube scanner to verify fixes persist
+sonar-scanner \
+  -Dsonar.host.url=http://localhost:9000 \
+  -Dsonar.token=squ_eab3ac9428573619417b0b3bd90ca986e87cbd11 \
+  -Dsonar.projectKey=rengine \
+  -Dsonar.sources=.
+
+# Wait for analysis, then check resolved issues
+sleep 30
+curl -s --noproxy '*' -u "squ_eab3ac9428573619417b0b3bd90ca986e87cbd11:" \
+  "http://localhost:9000/api/issues/search?projectKeys=rengine&resolved=true&ps=10"
+```
+
+### 12.8 Flow Completion Verification
+
+```bash
+# Final run status
+curl -s http://<apiserver-svc>:9999/api/v1/default/runs/$RUN_ID | python3 -c "
+import sys,json
+r=json.load(sys.stdin)
+print(f'Status: {r[\"status\"]}')
+print(f'Iterations: check execution_plans for loop count')
+"
+
+# All execution plans for this run
+psql -h 172.29.235.101 -U flowgent -d flowgent -c \
+  "SELECT node_id, task_type, state, retry_count, created_at, finished_at
+   FROM execution_plans WHERE agentflow_run_id='$RUN_ID'
+   ORDER BY created_at"
+
+# Count iterations (number of times generate-fixes was executed)
+psql -h 172.29.235.101 -U flowgent -d flowgent -t -c \
+  "SELECT COUNT(*) FROM execution_plans
+   WHERE agentflow_run_id='$RUN_ID' AND node_id='generate-fixes'"
+```
+
+---
+
+## 13. Known Issues
+
+1. **SonarQube auth**: Token required for full security-fixer flow. Without it, use simplified flow.
+2. **Sonatype IQ/Nexus3**: External enterprise services unavailable in test env.
+3. **Docker Hub blocked**: Build images locally, import to K3s via `ctr images import`.
+4. **Sandbox network**: Default policy is `mode: none` (no egress). Scripts requiring network access need `allowlist` mode with explicit targets.
+5. **Wallet key**: Auto-generated via Helm `genPrivateKey`. Printed in NOTES.txt on install.

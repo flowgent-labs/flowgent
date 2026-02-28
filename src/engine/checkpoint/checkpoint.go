@@ -1,7 +1,7 @@
 package checkpoint
 
 import (
-	"github.com/flowgent-labs/flowgent/src/engine"
+	"github.com/flowgent-labs/flowgent/src/store"
 	"context"
 	"time"
 
@@ -16,10 +16,10 @@ import (
 // Default strategy: CheckpointPerTask — persist at task boundary.
 // AgentExecutor can call Save in its inner loop for incremental checkpoints.
 type Checkpointer struct {
-	store engine.Store
+	store store.Store
 }
 
-func NewCheckpointer(store engine.Store) *Checkpointer {
+func NewCheckpointer(store store.Store) *Checkpointer {
 	return &Checkpointer{store: store}
 }
 

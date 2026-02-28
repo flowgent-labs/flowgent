@@ -221,7 +221,7 @@ orchestration:
       args: ["--transport", "stdio", "-v", "10"]
       env:
         SONARQUBE_URL: "http://localhost:9000"
-        SONARQUBE_TOKEN: "<YOUR_SONARQUBE_TOKEN>"
+        SONARQUBE_TOKEN: "squ_eab3ac9428573619417b0b3bd90ca986e87cbd11"
         SONARQUBE_PASSWORD: "<YOUR_SONARQUBE_PASSWORD>"
         ALL_PROXY: ""
         HTTP_PROXY: ""
@@ -305,7 +305,7 @@ orchestration:
 sandbox:
   enabled: false                   # set true to enable sandbox worker
   image: "flowgent-sandbox:latest"
-  runtime_dir: "/tmp/flowgent-sandbox"
+  workspace: "/var/flowgent/workspace"   # single persistent volume, per-{tenant}/{flow_id} subdirs
   policy:
     network:
       mode: none                   # none | allowlist | denylist

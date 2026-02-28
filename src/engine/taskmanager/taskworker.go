@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/store"
 	"github.com/flowgent-labs/flowgent/src/queue"
 
 	"go.opentelemetry.io/otel/metric"
@@ -24,11 +24,11 @@ type SlotWorker struct {
 	tmID     string
 	q        queue.Queue
 	router   *executor.TaskExecutorRouter
-	store    engine.Store
+	store    store.Store
 	metrics  *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q queue.Queue, router *executor.TaskExecutorRouter, store engine.Store, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID string, q queue.Queue, router *executor.TaskExecutorRouter, store store.Store, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:      id,
 		tmID:    tmID,

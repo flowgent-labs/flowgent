@@ -3,7 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/flowgent-labs/flowgent/src/engine"
+	"github.com/flowgent-labs/flowgent/src/store"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"time"
 )
@@ -11,10 +11,10 @@ import (
 // ─── Human Executor ────────────────────────────────────
 
 type HumanExecutor struct {
-	store engine.Store
+	store store.Store
 }
 
-func NewHumanExecutor(store engine.Store) *HumanExecutor {
+func NewHumanExecutor(store store.Store) *HumanExecutor {
 	return &HumanExecutor{store: store}
 }
 
