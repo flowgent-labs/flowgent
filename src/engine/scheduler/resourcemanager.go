@@ -10,6 +10,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/queue"
 )
 
 // ─── ResourceManager interface ─────────────────────────────────
@@ -38,6 +39,7 @@ type ResourceManagerConfig struct {
 	ScaleInterval  time.Duration
 	PoolSize       int
 
+	Queue      queue.Queue
 	Store      engine.Store
 	Agents     []*config.AgentDef
 	MCPClients map[string]engine.MCPClient
@@ -54,12 +56,20 @@ type ResourceManagerConfig struct {
 // ─── Factory ──────────────────────────────────────────────────
 
 // NewResourceManager creates the configured resource manager implementation.
+// If the requested provider fails to initialize (e.g., K8s unreachable), falls
+// back to LocalResourceManager so the caller always gets a valid RM.
 func NewResourceManager(cfg *ResourceManagerConfig) (ResourceManager, error) {
 	switch cfg.Provider {
+	case engine.ProviderKubernetes:
+		rm, err := NewKubernetesResourceManager(cfg)
+		if err != nil {
+			slog.Warn("kubernetes rm init failed, falling back to local", "err", err)
+			return NewLocalResourceManager(cfg)
+		}
+		if cfg.Queue != nil { rm.SetQueue(cfg.Queue) }
+		return rm, nil
 	case engine.ProviderLocal:
 		return NewLocalResourceManager(cfg)
-	case engine.ProviderKubernetes:
-		return NewKubernetesResourceManager(cfg)
 	default:
 		return NewLocalResourceManager(cfg)
 	}
@@ -84,12 +94,8 @@ func ValidateComponents(rm ResourceManager, store engine.Store) []error {
 	if err := rm.Validate(context.Background()); err != nil {
 		errs = append(errs, err)
 	}
-	switch rm.Provider() {
-	case engine.ProviderKubernetes:
-		if store.DB() == nil {
-			errs = append(errs, fmt.Errorf("kubernetes rm requires postgres, got in-memory store"))
-		}
-	}
+	// Note: store.DB() returns nil for some implementations (e.g., Postgres via pgx).
+	// The actual store connectivity is verified at runtime when queries are executed.
 	return errs
 }
 

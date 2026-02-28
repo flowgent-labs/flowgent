@@ -76,7 +76,7 @@ func ensureMigrationTable(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT NOT NULL,
 		filename   TEXT NOT NULL,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+		applied_at TEXT NOT NULL,
 		PRIMARY KEY (version, filename)
 	)`)
 	return err
@@ -85,7 +85,7 @@ func ensureMigrationTable(db *sql.DB) error {
 func checkApplied(db *sql.DB, version, filename string) (bool, error) {
 	var count int
 	err := db.QueryRow(
-		`SELECT COUNT(1) FROM schema_migrations WHERE version = ? AND filename = ?`,
+		`SELECT COUNT(1) FROM schema_migrations WHERE version = $1 AND filename = $2`,
 		version, filename,
 	).Scan(&count)
 	return count > 0, err
@@ -93,7 +93,7 @@ func checkApplied(db *sql.DB, version, filename string) (bool, error) {
 
 func recordMigration(db *sql.DB, version, filename string) error {
 	_, err := db.Exec(
-		`INSERT INTO schema_migrations (version, filename) VALUES (?, ?)`,
+		`INSERT INTO schema_migrations (version, filename, applied_at) VALUES ($1, $2, datetime('now'))`,
 		version, filename,
 	)
 	return err

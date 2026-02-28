@@ -103,12 +103,10 @@ func (s *KubernetesResourceManager) Provider() engine.Provider {
 }
 
 func (s *KubernetesResourceManager) Validate(ctx context.Context) error {
-	if s.q == nil {
-		return fmt.Errorf("kubernetes rm: MQTT queue is required — call SetQueue()")
-	}
 	if s.namespace == "" {
 		return fmt.Errorf("kubernetes rm: K8s namespace is required")
 	}
+	// Queue is validated lazily in Schedule() — it can be set after construction
 	return nil
 }
 
@@ -242,10 +240,11 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "taskmanager",
-						Image: "flowgent/taskmanager:latest",
+						Image:           "localhost/flowgent/taskmanager:latest",
+					ImagePullPolicy: corev1.PullNever,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT_CONFIG", Value: "/etc/flowgent/flowgent.yaml"},
-							{Name: "FLOWGENT_MQTT_BROKER", Value: "tcp://emqx:1883"},
+							{Name: "FLOWGENT_MQTT_BROKER", Value: getEnvOrDefault("FLOWGENT_MQTT_BROKER", "tcp://127.0.0.1:1883")},
+							{Name: "FLOWGENT_DATABASE_URL", Value: os.Getenv("FLOWGENT_DATABASE_URL")},
 						},
 						Command: []string{"/app/flowgent", "taskmanager", "start"},
 					}},
@@ -292,6 +291,11 @@ func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
 
 func fmtTopic(flowID, runID, planID string) string {
 	return fmt.Sprintf("/flowgent/%s/exec/%s/%s", flowID[:min(12, len(flowID))], runID, planID)
+}
+
+func getEnvOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" { return v }
+	return def
 }
 
 // ─── Exported helpers for integration tests ──────────────

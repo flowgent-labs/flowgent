@@ -695,7 +695,9 @@ func startJobManager() error {
 
 	var storeImpl engine.Store
 	if dbURL := envOr("FLOWGENT_DATABASE_URL", ""); dbURL != "" {
-		storeImpl = store.NewPostgresStore(dbURL)
+		pg := store.NewPostgresStore(dbURL)
+		if err := pg.Init(context.Background()); err != nil { return fmt.Errorf("init postgres: %w", err) }
+		storeImpl = pg
 	} else {
 		sqliteDir := "/tmp/flowgent/sqlite"
 		if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" { sqliteDir = svcCfg.Storage.SQLite.Dir }
@@ -710,7 +712,7 @@ func startJobManager() error {
 			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
 			K8sNamespace: envOr("KUBERNETES_NAMESPACE", "default"),
 			K8sDeploymentName: envOr("FLOWGENT_TM_DEPLOY", "flowgent-taskmanager"),
-			Store: storeImpl, Logger: logger,
+			Store: storeImpl, Logger: logger, Queue: q,
 		})
 	}
 	if rm == nil {
