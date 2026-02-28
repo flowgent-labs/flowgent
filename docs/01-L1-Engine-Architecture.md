@@ -1,70 +1,109 @@
 # Flowgent Distributed Engine Architecture
 
-**Date:** 2026-05-21
-**Status:** Implemented — Controller + Standard mode DB loading, x402 SDK refactor, all tests passing
+**Date:** 2026-05-22
+**Status:** Implemented — Helm chart deployment, Controller≈FlinkOperator, multi-tenant naming, E2E verified on k3s
 
 ---
 
 ## 1. Architecture Overview
 
-Flowgent is a multi-tenant AI agent orchestration platform, modeled after Apache Flink's
-session/application mode separation. It has **five** first-class runtime components:
+Flowgent is a distributed multi-tenant AI agent orchestration engine, modeled after
+Apache Flink's session/application separation. Five runtime components:
 
 ```
-   External: REST / A2A / Webhook / Cron
-
-   ┌──────────────────────────────────────────────────────────┐
-   │                    Controller (sharded)                   │  ← L2 app driver
-   │            polls PG, dispatches session/application flows │
-   └──────────────────────────┬───────────────────────────────┘
+  External: REST / A2A / Webhook / Cron
                               │
                               ▼
-                         API Server
-                    (multi-tenant gateway,
-                     Flink-Operator-like)
-                              │
-                    ┌─────────┴──────────┐
-                    ▼                    ▼
-              JobManager            JobManager              ── per-tenant or
-              (session A)           (session B)                per-application
-                    │                    │
-                    ▼                    ▼
-               Scheduler             Scheduler
-                    │                    │
-                    ▼                    ▼
-              TaskManager(s)        TaskManager(s)          ── elastic K8s Deployments
-                    │                    │
-                    ▼                    ▼
-               MQTT Event Bus       MQTT Event Bus
-                    │                    │
-                    ▼                    ▼
-          ┌─────────────────────────────────────┐
-          │  TaskExecutors (agent/tool/vote/…)  │
-          └─────────────────────────────────────┘
+  ┌───────────────────────────────────────────────────────────┐
+  │  Controller (≈ Flink Operator, sharded PG scan)          │  ← L2 app driver
+  │  polls agentflow_definitions, hash-mod shards across pods │
+  └──────────────────────────┬────────────────────────────────┘
+                             │ INSERT agentflow_runs / create K8s JM Deployments
+                             ▼
+                        API Server
+                   (multi-tenant gateway)
+                             │
+               ┌─────────────┴──────────────┐
+               ▼                            ▼
+         JobManager (session)         JobManager (application)
+         ─ Helm-deployed, shared       ─ Controller-created, per-tenant-flow
+               │                            │
+               ▼                            ▼
+          Scheduler                     Scheduler
+               │                            │
+               ▼                            ▼
+         TaskManager(s)               TaskManager(s)
+         ─ manual scale               ─ JM auto-scale
+               │                            │
+               ▼                            ▼
+          MQTT Event Bus              MQTT Event Bus
+               │                            │
+               ▼                            ▼
+     ┌──────────────────────────────────────────┐
+     │  TaskExecutors (agent / tool / vote / …) │
+     └──────────────────────────────────────────┘
 ```
 
-### 1.1 Session Mode (Multi-Tenant Shared Cluster)
+### 1.1 Session vs Application — The Only Difference Is JM Lifecycle
 
-Default deployment. Analogous to Flink session mode.
+Both modes use the **same binary, same poller, same DAG execution logic**.
+The sole architectural difference is **who starts the JM and when**:
 
-- One shared API Server + JobManager cluster
-- TaskManagers are a shared elastic pool
-- Multiple tenants/agentflows share resources
-- API Server handles auth, rate limiting, webhook routing per tenant
+| | Session Mode | Application Mode |
+|---|---|---|
+| **JM started by** | Helm / Admin (platform init) | Controller (on flow discovery) |
+| **JM naming** | `flowgent-{release}-jobmanager` | `flowgent-jm-{tenant}-{flow}` |
+| **JM lifecycle** | Persistent, shared across tenants | Per-flow, destroyed on completion |
+| **TM scale** | **Manual** (admin-managed capacity) | **Auto** (JM's K8s RM scales TMs) |
+| **Slot exhaustion** | Run stays PENDING, admin adds TMs | JM auto-scales TM replicas |
+| **Resource isolation** | Logical (tenant_id + rate limit) | Physical (dedicated K8s namespace) |
+| **Flink analogy** | Session Cluster | Application Cluster |
 
-### 1.2 Application Mode (VIP Dedicated Cluster)
+**TM scaling design decision**: Session mode TMs are admin-managed (Helm `replicas`).
+If slots are exhausted, the JM returns `INSUFFICIENT_RESOURCES` — the run stays PENDING
+until the admin scales capacity. This creates a clear economic boundary: shared =
+economy class (fixed capacity), application = first class (elastic, isolated).
 
-For high-tier tenants requiring isolated resources. Analogous to Flink application mode.
+### 1.2 Controller ≈ Flink Operator (Key Differences)
 
-- API Server provisions a **dedicated JobManager + TaskManager cluster** per tenant/application
-- Each VIP tenant gets its own MQTT topic namespace, Postgres schema, and K8s namespace
-- API Server acts like a **Flink Operator**: creates/destroys clusters, manages lifecycle
-- Noisy-neighbor isolation guaranteed at K8s node/pod level
+The Controller is Flowgent's equivalent of Flink's Operator/Dispatcher, but with
+two fundamental differences:
 
-| Mode | API Server | JobManager | TaskManager | Isolation |
-|------|-----------|------------|-------------|-----------|
-| Session | Shared | Shared | Shared pool | Logical (auth + rate limit) |
-| Application | Shared (operator) | Dedicated per tenant | Dedicated per tenant | Physical (separate K8s ns) |
+| Flink Operator | Flowgent Controller |
+|---|---|
+| Watches K8s CRDs (FlinkDeployment) | **Polls PG** (`agentflow_definitions` table) |
+| Single active (leader-elected) | **N-way sharded** (hash-mod across pods) |
+| CRD-driven reconciliation | **DB-scan reconciliation** (Apache ShardingSphere style) |
+
+The Controller uses PG shard-scanning instead of K8s CRD watching because Flowgent's
+application-layer flows are authored via the future UI → saved as JSON to PG →
+discovered by the Controller. This avoids CRD complexity and keeps the flow catalog
+in a single transactional store (PG).
+
+### 1.3 Multi-Tenant Pod Naming
+
+Tenant isolation uses **K8s namespaces**: each tenant gets its own namespace.
+Pod names carry `tenant_id` and `flow_id` for observability within 63-char limit:
+
+```
+Session pods (shared pool, platform namespace):
+  flowgent-{release}-apiserver-{hash}
+  flowgent-{release}-jobmanager-{hash}
+  flowgent-{release}-taskmanager-{hash}
+
+Application pods (per-tenant namespace, dedicated):
+  flowgent-jm-{tenant}-{flow}-{hash}
+  flowgent-tm-{tenant}-{flow}-{hash}
+```
+
+Labels on all pods:
+```yaml
+flowgent.io/tenant: "default"
+flowgent.io/flow:   "security-fixer"   # empty for session pods
+flowgent.io/mode:   "session" | "application"
+```
+
+This keeps names short while making `kubectl get pods -l flowgent.io/tenant=X` work.
 
 ---
 
@@ -215,93 +254,55 @@ each `Submit()` call.
 
 ---
 
-## 3.1 Controller — Distributed Flow Driver (Sharded)
+## 3.1 Controller — Distributed Flow Driver (≈ Flink Operator)
 
-The Controller is the **Layer 2 application driver** — it polls PostgreSQL for
-agentflow definitions (saved by the future Flowgent UI via API Server as JSON) and
-dispatches their execution in a distributed, sharded manner.
+The Controller is Flowgent's equivalent of Flink's Operator, polling PG for
+agentflow definitions and dispatching execution. Unlike Flink which watches K8s CRDs,
+the Controller uses **PG shard-scanning** (inspired by Apache ShardingSphere) —
+each pod scans the shared `agentflow_definitions` table but only processes its
+hash-mod shard.
 
-### 3.1.1 Architecture
-
-```
-  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-  │ Controller-0 │  │ Controller-1 │  │ Controller-2 │   ← K8s Deployment (replicas=N)
-  │ shard 0,3,6  │  │ shard 1,4,7  │  │ shard 2,5,8  │   ← hash(flow_id) % N
-  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-         │                 │                 │
-         └─────────────────┼─────────────────┘
-                           │
-             ┌─────────────┴─────────────┐
-             │   PostgreSQL (shared)      │
-             │   agentflow_definitions    │
-             │   agentflow_runs           │
-             └───────────────────────────┘
-```
-
-### 3.1.2 Hash-Mod Sharding
-
-Each controller pod owns a subset of flows determined by:
+### 3.1.1 Hash-Mod Sharding
 
 ```
 shard(flow_id) = fnv64a(flow_id) % total_controller_pods
 ```
 
-- Uses FNV-64a hash (consistent with PG's `hashtext()` for portability)
-- Each pod **only** processes flows where `shard == pod_index`
-- On scale-up/down, flows naturally rebalance (no explicit rebalance needed —
-  the new pod picks up new flows, old flows complete on current owners)
+Each pod discovers total count via `IDiscoveryClient` (K8s label selector or env vars).
+Only processes flows where `shard == pod_index`. Scale-up/down rebalances naturally.
 
-### 3.1.3 K8s Service Discovery
-
-Pods discover their peers via the K8s API:
-
-```go
-pods, _ := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-    LabelSelector: "app=flowgent-controller",
-})
-totalPods = len(pods.Items)
-podIndex  = indexOf(podName, pods)
-```
-
-Fallback: `FLOWGENT_CONTROLLER_INDEX` / `FLOWGENT_CONTROLLER_TOTAL` env vars
-for non-K8s deployments.
-
-### 3.1.4 Reconciliation Loop
+### 3.1.2 Reconciliation Loop
 
 ```
 Every 10s:
-  1. Re-discover pod count (handles scale events)
+  1. IDiscoveryClient.DiscoverPeers(labelSelector)
   2. SELECT * FROM agentflow_definitions (latest version per flow_id)
-  3. For each flow in my shard:
-     a. If already running → skip
-     b. If priority=grade → Application Mode (dedicated JM+TM K8s cluster)
-     c. Else → Session Mode (create pending run for shared JM pool)
-  4. Poll agentflow_runs for completion, then clean up
+  3. For each flow where shard(flow_id) == my_index:
+     a. priority=grade → Application: create K8s JM Deployment + pending run
+     b. else → Session: INSERT INTO agentflow_runs (empty namespace)
+  4. Poll runs for completion, clean up
 ```
 
-### 3.1.5 Session vs Application Dispatch
+### 3.1.3 Dispatch Detail
 
-| Priority | Mode | Dispatch Mechanism |
-|----------|------|-------------------|
-| low / medium / high | Session | `INSERT INTO agentflow_runs` → shared JM's runPoller picks up |
-| grade | Application | `kubectl create deployment flowgent-jm-{flow_id}` + dedicated TM |
+| Priority | Mode | Controller Action | JM | TM |
+|----------|------|-------------------|----|----|
+| low/medium/high | Session | `INSERT agentflow_runs` (namespace="") | Shared (Helm-deployed) | Admin-managed pool |
+| grade | Application | `kubectl create deploy flowgent-jm-{tenant}-{flow}` + `INSERT agentflow_runs` (namespace={tenant}) | Dedicated (Controller-created) | JM auto-scales |
 
-Session mode reuses the shared JM+TM pool (like Flink Session Mode).
-Application mode creates a dedicated K8s Namespace + JM Deployment + TM Deployment
-(like Flink Application Mode).
+**TM scaling policy**: Session TMs are admin-managed (Helm `replicas`). If slots
+are exhausted, JM returns `INSUFFICIENT_RESOURCES`; the run stays PENDING until
+the admin adds capacity. Application TMs are auto-scaled by the dedicated JM's
+KubernetesResourceManager.
 
-**Key design: the SAME binary + code path runs in both modes.**
+### 3.1.4 JM Unification
 
-The only difference is the `FLOWGENT_NAMESPACE` env var:
-- Session JM (namespace=""): runPoller only picks up runs with empty namespace
-- Application JM (namespace="flowgent-<id>"): runPoller only picks up runs in that namespace
+Both session and application JMs run the **same binary + same code path**. The only
+difference is `FLOWGENT_NAMESPACE`: session JM processes only namespace="" runs;
+application JM processes only its own namespace. Both use `startRunPoller →
+BuildGraph → ExecutionPlan → Submit`.
 
-Both JMs use the identical `startRunPoller → BuildGraph → ExecutionPlan → Submit` pipeline.
-The Controller simply creates the dedicated JM pod and inserts a pending run — the JM does
-the rest via the standard code path. This avoids code duplication and ensures bug fixes
-apply uniformly.
-
-### 3.1.6 CLI
+### 3.1.5 CLI
 
 ```bash
 flowgent controller start -c etc/flowgent.yaml
