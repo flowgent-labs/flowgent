@@ -19,6 +19,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
+	"github.com/x402-foundation/x402/go/types"
 
 	"github.com/flowgent-labs/flowgent/src/payments"
 )
@@ -89,18 +90,10 @@ func (c *Client) Supported(ctx context.Context) (*x402.SupportedResponse, error)
 
 // ─── Verify ────────────────────────────────────────────────
 
-// VerifyRequest is the HTTP body sent to POST /verify.
-type VerifyRequest struct {
-	Scheme    string `json:"scheme"`
-	Network   string `json:"network"`
-	Recipient string `json:"recipient"`
-	Amount    string `json:"amount"`
-	Asset     string `json:"asset"`
-}
-
 // Verify sends a payment verification request to the facilitator.
+// Uses the official x402 SDK PaymentRequirements type (V2) as the request body.
 // Returns the SDK's VerifyResponse type.
-func (c *Client) Verify(ctx context.Context, req *VerifyRequest) (*x402.VerifyResponse, error) {
+func (c *Client) Verify(ctx context.Context, req *types.PaymentRequirements) (*x402.VerifyResponse, error) {
 	if c.endpoint == "" {
 		return nil, &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
 	}
@@ -131,30 +124,19 @@ func (c *Client) Verify(ctx context.Context, req *VerifyRequest) (*x402.VerifyRe
 
 // ─── Settle ────────────────────────────────────────────────
 
-// SettleRequest is the HTTP body sent to POST /settle.
-type SettleRequest struct {
-	Network   string `json:"network"`
-	Recipient string `json:"recipient"`
-	Amount    string `json:"amount"`
-	Signature string `json:"signature"`
-}
-
-// Authorize sends a signed PaymentAuthorization to the facilitator's
+// Authorize sends a signed PaymentPayload (V2) to the facilitator's
 // POST /settle endpoint and returns a PaymentReceipt.
-func (c *Client) Authorize(ctx context.Context, auth *payments.PaymentAuthorization) (*payments.PaymentReceipt, error) {
+// Uses the official x402 SDK types.PaymentPayload as the transport body.
+func (c *Client) Authorize(ctx context.Context, payload *types.PaymentPayload) (*payments.PaymentReceipt, error) {
 	if c.endpoint == "" {
 		return nil, &payments.PaymentError{
 			Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured",
 		}
 	}
 
-	settleReq := &SettleRequest{
-		Signature: auth.Signature,
-	}
-
-	body, err := json.Marshal(settleReq)
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal settle request: %w", err)
+		return nil, fmt.Errorf("marshal settle payload: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+"/settle", bytes.NewReader(body))
@@ -181,10 +163,10 @@ func (c *Client) Authorize(ctx context.Context, auth *payments.PaymentAuthorizat
 	}
 
 	return &payments.PaymentReceipt{
-		ID:            auth.IntentID,
-		IntentID:      auth.IntentID,
+		ID:            payload.Accepted.PayTo + "-" + sr.Transaction,
+		IntentID:      payload.Accepted.PayTo + "-" + sr.Transaction,
 		TxHash:        sr.Transaction,
-		Authorization: auth.Signature,
+		Authorization: sr.Transaction,
 		PaidAt:        time.Now(),
 	}, nil
 }

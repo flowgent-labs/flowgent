@@ -7,46 +7,18 @@
 package payments
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
 )
 
 // ─── x402 types ────────────────────────────────────────────────
-
-// X402PaymentRequest represents a parsed x402 payment request from an HTTP 402 response.
-type X402PaymentRequest struct {
-	Asset       string          `json:"asset"`
-	Amount      decimal.Decimal `json:"amount"`
-	Chain       string          `json:"chain"`
-	Recipient   string          `json:"recipient"`
-	Settlement  string          `json:"settlement"`
-	Facilitator string          `json:"facilitator"`
-}
-
-// Validate checks that all required fields are present and valid.
-func (pr *X402PaymentRequest) Validate() error {
-	if pr.Asset == "" {
-		return fmt.Errorf("x402: asset is required")
-	}
-	if pr.Amount.LessThanOrEqual(decimal.Zero) {
-		return fmt.Errorf("x402: amount must be positive")
-	}
-	if pr.Chain == "" {
-		return fmt.Errorf("x402: chain is required")
-	}
-	if pr.Recipient == "" {
-		return fmt.Errorf("x402: recipient is required")
-	}
-	if pr.Settlement != "" && pr.Settlement != "x402" {
-		return fmt.Errorf("x402: unsupported settlement protocol: %s", pr.Settlement)
-	}
-	if pr.Facilitator == "" {
-		return fmt.Errorf("x402: facilitator URL is required")
-	}
-	return nil
-}
+// Payment request parsing uses the official x402 SDK types (V2):
+//   - types.PaymentRequired  — 402 HTTP response body
+//   - types.PaymentRequirements — individual payment option within Accepts[]
+//
+// Flowgent-internal tracking types follow (PaymentIntent, PaymentReceipt, etc.)
+// These are NOT in the SDK — they track the payment lifecycle within the engine.
 
 // ─── Payment intent ────────────────────────────────────────────
 

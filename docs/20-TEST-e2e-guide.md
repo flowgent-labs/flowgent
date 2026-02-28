@@ -1,7 +1,7 @@
 # Flowgent E2E Test Guide — Security Autonomy Fixer
 
-**Date:** 2026-05-18
-**Status:** Verified (all-in-one + production modes)
+**Date:** 2026-05-20
+**Status:** Verified (all-in-one + production modes + Standard DB loading)
 
 ---
 
@@ -162,25 +162,65 @@ This file should be committed to the target repo as `.cyberbot` for audit trail.
 
 ---
 
-## 7. K3s Application Mode Deployment
+## 7. K3s Full Production Mode Deployment
 
-When Docker Hub access is available, build and deploy to k3s:
+Deploy all 5 components: Controller, API Server, JobManager, TaskManager, and infrastructure.
+
+### 7.1 Build & Import Image
 
 ```bash
-# Build image
 cd /home/agent/flowgent
-podman build -t localhost/flowgent/jobmanager:latest \
-  -f deploy/Dockerfile.jobmanager .
-
-# Import into k3s containerd
+/usr/local/go1.26.1.linux-amd64/bin/go build -o bin/flowgent ./src/cmd/flowgent/
+podman build -t localhost/flowgent:latest -f deploy/Dockerfile.jobmanager .
 sudo k3s ctr images import /path/to/image.tar
+```
 
-# Create application-mode namespace and deploy
+### 7.2 Infrastructure (PG, EMQX, Redis)
+
+```bash
+# PostgreSQL (required for Controller + Standard mode)
+kubectl create secret generic flowgent-pg \
+  --from-literal=url="postgres://test:test@172.29.235.101:5432/flowgent?sslmode=disable"
+
+# EMQX MQTT (for JM↔TM dispatch)
+kubectl apply -f deploy/emqx/docker-compose.yml  # or deploy via K8s
+
+# Redis Cluster (for distributed cache/lock)
+kubectl apply -f deploy/redis/docker-compose.yml  # or deploy via K8s
+```
+
+### 7.3 Deploy All Components
+
+```bash
+# 1. Controller (sharded flow driver — polls PG, dispatches flows)
+kubectl apply -f deploy/kubernetes/flowgent-controller.yaml
+kubectl scale deploy/flowgent-controller --replicas=3
+
+# 2. API Server (multi-tenant REST + A2A gateway)
+kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml
+
+# 3. JobManager (standalone session JM — shared pool)
+#    Started via: flowgent jobmanager start -c etc/flowgent-prod.yaml
+
+# 4. TaskManager (elastic worker pool)
+#    Started via: flowgent taskmanager start -c etc/flowgent-prod.yaml
+#    Scale: kubectl scale deploy/flowgent-taskmanager --replicas=4
+
+# 5. (Optional) Facilitator for x402 payments
+kubectl apply -f deploy/kubernetes/facilitator-deployment.yaml
+```
+
+### 7.4 Application Mode (Dedicated Cluster per VIP Flow)
+
+For grade-priority flows, the Controller auto-creates dedicated JM+TM:
+
+```bash
+# Create application namespace
 kubectl create namespace flowgent-rengine
-kubectl apply -f deploy/kubernetes/flowgent-jm-application.yaml -n flowgent-rengine
-kubectl apply -f deploy/kubernetes/flowgent-tm.yaml -n flowgent-rengine
 
-# Scale TM for high priority
+# The Controller creates JM deployment automatically when a grade flow is found
+# Manual deploy (if needed):
+kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml -n flowgent-rengine
 kubectl scale deploy/flowgent-taskmanager --replicas=4 -n flowgent-rengine
 ```
 
@@ -222,3 +262,88 @@ all non-application flows via the shared pool.
 - [ ] PG has agentflow_runs records
 - [ ] MQTT/EMQX dashboard accessible at `:18083`
 - [ ] Redis cluster `redis-cli -a bitnami cluster info` → `cluster_state:ok`
+
+---
+
+## 10. AgentFlow Loading Modes: Static YAML vs Dynamic DB (JSON)
+
+Flowgent supports two agentflow loading paths, controlled by `orchestration.agentflows` config:
+
+### Static Mode (YAML — File System)
+
+```yaml
+orchestration:
+  agentflows:
+    static:
+      enabled: true
+      load-dir: "examples/flows/"    # relative to config file
+      refresh: 1m                    # hot-reload interval
+```
+
+- **Format**: YAML files loaded via `yaml.Unmarshal` → `model.AgentFlowSpec`
+- **Storage**: Files on disk in the configured `load-dir`
+- **Use case**: GitOps / manifests committed alongside code (like K8s static pod YAML)
+- **Hot reload**: `LoadAgentFlows()` is called periodically at the `refresh` interval
+
+### Standard Mode (JSON — PostgreSQL)
+
+```yaml
+orchestration:
+  agentflows:
+    standard:
+      enabled: true   # reads from agentflow_definitions table
+```
+
+- **Format**: JSON stored in `agentflow_definitions.definition` (JSONB column) via `json.Marshal` → `json.Unmarshal`
+- **Storage**: PostgreSQL table `agentflow_definitions` with versioning `(agentflow_id, version)` composite key
+- **Use case**: Future Flowgent UI writes flow definitions; engine reads them at startup
+- **Schema** (from `migration/postgres/20250926/01_init.ddl.sql`):
+
+```sql
+CREATE TABLE agentflow_definitions (
+    agentflow_id VARCHAR(255) NOT NULL,
+    version      BIGINT NOT NULL DEFAULT 1,
+    definition   JSONB NOT NULL,
+    created_by   VARCHAR(255),
+    comment      TEXT,
+    priority     VARCHAR(16) DEFAULT 'medium',
+    tenant_id    VARCHAR(255) DEFAULT 'default',
+    namespace    VARCHAR(255) DEFAULT '',
+    mode         VARCHAR(32) DEFAULT '',
+    labels       JSONB DEFAULT '{}',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (agentflow_id, version)
+);
+```
+
+### Dual Format — Same Struct
+
+Both modes share the same `model.AgentFlowSpec` struct, which carries both tags:
+
+```go
+type AgentFlowSpec struct {
+    ID          string         `json:"id" yaml:"id"`
+    Nodes       []Node         `json:"nodes" yaml:"nodes"`
+    Edges       []Edge         `json:"edges" yaml:"edges"`
+    // ... all fields dual-tagged json: + yaml:
+}
+```
+
+### Startup Merge Flow
+
+In `launch.go → startServer()`:
+
+1. Static YAML loaded via `config.LoadAgentFlows(serviceCfg, cfgPath)`
+2. Store initialized (PG or SQLite)
+3. If `standard.enabled`: DB definitions loaded via `loadAgentFlowsFromDB(ctx, storeImpl)`, which calls `store.ListAgentFlowDefinitions()`, deduplicates by `agentflow_id` (latest version wins), and unmarshals JSON
+4. Merged list passed to `api.NewAgentFlowHandler()`
+5. Same for agents: static YAML loaded first, then `store.ListAgents()` merged if `standard.enabled`
+
+### Store Layer (PG CRUD)
+
+- `UpdateAgentFlowSpec(ctx, spec, createdBy, comment)` — `json.Marshal` + INSERT with auto-increment version
+- `GetAgentFlowSpec(ctx, agentFlowID)` — `json.Unmarshal` latest version
+- `DeleteAgentFlowDefinition(ctx, agentFlowID)` — DELETE all versions
+- Agents: `SaveAgent()`, `GetAgent()`, `ListAgents()`, `DeleteAgent()`
+
+Full CRUD is implemented in both `PostgresStore` and `SQLiteStore` (`src/store/store_agents.go`).

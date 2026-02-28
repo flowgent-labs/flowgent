@@ -9,8 +9,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go"
-
-	"github.com/flowgent-labs/flowgent/src/payments"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 func TestClient_Health_Success(t *testing.T) {
@@ -77,9 +76,9 @@ func TestClient_Verify(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, 5*time.Second)
-	vr, err := client.Verify(context.Background(), &VerifyRequest{
+	vr, err := client.Verify(context.Background(), &types.PaymentRequirements{
 		Scheme: "exact", Network: "eip155:84532",
-		Recipient: "0x1234", Amount: "0.01", Asset: "USDC",
+		PayTo: "0x1234", Amount: "0.01", Asset: "USDC",
 	})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -98,9 +97,9 @@ func TestClient_Verify_Invalid(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, 5*time.Second)
-	vr, err := client.Verify(context.Background(), &VerifyRequest{
+	vr, err := client.Verify(context.Background(), &types.PaymentRequirements{
 		Scheme: "exact", Network: "eip155:84532",
-		Recipient: "0x1234", Amount: "1000.0", Asset: "USDC",
+		PayTo: "0x1234", Amount: "1000.0", Asset: "USDC",
 	})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -123,17 +122,18 @@ func TestClient_Authorize(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, 5*time.Second)
-	auth := &payments.PaymentAuthorization{
-		IntentID: "int-1", Wallet: "0xwallet",
-		Signature: "sig-data", Payload: "payload",
+	payload := &types.PaymentPayload{
+		X402Version: 2,
+		Payload:     map[string]interface{}{"intent_id": "int-1"},
+		Accepted: types.PaymentRequirements{
+			Scheme: "exact", Network: "eip155:84532",
+			PayTo: "0xwallet", Amount: "0.01", Asset: "USDC",
+		},
 	}
 
-	receipt, err := client.Authorize(context.Background(), auth)
+	receipt, err := client.Authorize(context.Background(), payload)
 	if err != nil {
 		t.Fatalf("Authorize: %v", err)
-	}
-	if receipt.IntentID != "int-1" {
-		t.Errorf("expected int-1, got %s", receipt.IntentID)
 	}
 	if receipt.TxHash != "0xtx123" {
 		t.Errorf("expected tx 0xtx123, got %s", receipt.TxHash)
@@ -142,7 +142,7 @@ func TestClient_Authorize(t *testing.T) {
 
 func TestClient_Authorize_NoEndpoint(t *testing.T) {
 	client := New("", 5*time.Second)
-	_, err := client.Authorize(context.Background(), &payments.PaymentAuthorization{})
+	_, err := client.Authorize(context.Background(), &types.PaymentPayload{})
 	if err == nil {
 		t.Fatal("expected error for empty endpoint")
 	}
@@ -155,7 +155,7 @@ func TestClient_Authorize_FacilitatorError(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, 5*time.Second)
-	_, err := client.Authorize(context.Background(), &payments.PaymentAuthorization{})
+	_, err := client.Authorize(context.Background(), &types.PaymentPayload{})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}

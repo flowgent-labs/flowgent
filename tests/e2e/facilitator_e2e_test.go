@@ -1,11 +1,11 @@
-// Package e2e provides integration tests against a real x402 facilitator.
-// Requires: docker run -d --name x402-facilitator -p 8085:8080 ...
 package e2e
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/x402-foundation/x402/go/types"
 
 	"github.com/flowgent-labs/flowgent/src/payments/facilitator"
 )
@@ -55,22 +55,18 @@ func TestE2E_FacilitatorVerify_RejectsInvalidPayment(t *testing.T) {
 	skipIfNoFacilitator(t)
 
 	client := facilitator.New(facilitatorURL, 5*time.Second)
-	vr, err := client.Verify(context.Background(), &facilitator.VerifyRequest{
-		Scheme:    "exact",
-		Network:   "eip155:84532",
-		Recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-		Amount:    "1000.0",
-		Asset:     "ETH",
+	vr, err := client.Verify(context.Background(), &types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:84532",
+		PayTo:   "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+		Amount:  "1000.0",
+		Asset:   "ETH",
 	})
 	if err != nil {
 		t.Fatalf("Verify request failed: %v", err)
 	}
 
-	// Expect verification to be invalid — dev signer has no real funds on Base Sepolia
 	t.Logf("Verify response: isValid=%v, reason=%s, message=%s", vr.IsValid, vr.InvalidReason, vr.InvalidMessage)
-
-	// The verify endpoint succeeded (HTTP 200), even if payment is invalid
-	// This is correct x402 behavior — verification failures are returned as valid HTTP responses
 }
 
 func TestE2E_FacilitatorVerify_InvalidRequest(t *testing.T) {
@@ -78,8 +74,7 @@ func TestE2E_FacilitatorVerify_InvalidRequest(t *testing.T) {
 
 	client := facilitator.New(facilitatorURL, 5*time.Second)
 
-	// Send an empty request — should get an error response
-	vr, err := client.Verify(context.Background(), &facilitator.VerifyRequest{
+	vr, err := client.Verify(context.Background(), &types.PaymentRequirements{
 		Scheme: "nonexistent-scheme",
 	})
 	if err != nil {
@@ -97,25 +92,22 @@ func TestE2E_FacilitatorConnection(t *testing.T) {
 
 	client := facilitator.New(facilitatorURL, 5*time.Second)
 
-	// Health
 	if err := client.Health(context.Background()); err != nil {
 		t.Fatalf("Health: %v", err)
 	}
 
-	// Supported
 	supported, err := client.Supported(context.Background())
 	if err != nil {
 		t.Fatalf("Supported: %v", err)
 	}
 	t.Logf("Supported: %+v", supported)
 
-	// Verify (will fail validation but connectivity works)
-	vr, err := client.Verify(context.Background(), &facilitator.VerifyRequest{
-		Scheme:    "exact",
-		Network:   "eip155:84532",
-		Recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-		Amount:    "0.001",
-		Asset:     "ETH",
+	vr, err := client.Verify(context.Background(), &types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:84532",
+		PayTo:   "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+		Amount:  "0.001",
+		Asset:   "ETH",
 	})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)

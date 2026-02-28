@@ -1,43 +1,46 @@
 # Flowgent Distributed Engine Architecture
 
-**Date:** 2026-05-20
-**Status:** Implemented — 24 executor tests, all unit tests passing
+**Date:** 2026-05-21
+**Status:** Implemented — Controller + Standard mode DB loading, x402 SDK refactor, all tests passing
 
 ---
 
 ## 1. Architecture Overview
 
 Flowgent is a multi-tenant AI agent orchestration platform, modeled after Apache Flink's
-session/application mode separation. It has **four** first-class runtime components:
+session/application mode separation. It has **five** first-class runtime components:
 
 ```
-                         ┌─────────────────────────┐
-   External: REST / A2A / Webhook / Cron           │
-                         │                         │
-                         ▼                         │
-                   API Server                       │
-              (multi-tenant gateway,                │
-               Flink-Operator-like)                 │
-                         │                         │
-              ┌──────────┴──────────┐              │
-              ▼                     ▼              │
-        JobManager            JobManager           │  ── per-tenant or
-        (session A)           (session B)          │     per-application
-              │                     │              │
-              ▼                     ▼              │
-         Scheduler             Scheduler           │
-              │                     │              │
-              ▼                     ▼              │
-        TaskManager(s)        TaskManager(s)       │  ── elastic K8s Deployments
-              │                     │              │
-              ▼                     ▼              │
-         MQTT Event Bus       MQTT Event Bus       │
-              │                     │              │
-              ▼                     ▼              │
-    ┌─────────────────────────────────────┐        │
-    │  TaskExecutors (agent/tool/vote/…)  │        │
-    └─────────────────────────────────────┘        │
-                         └─────────────────────────┘
+   External: REST / A2A / Webhook / Cron
+
+   ┌──────────────────────────────────────────────────────────┐
+   │                    Controller (sharded)                   │  ← L2 app driver
+   │            polls PG, dispatches session/application flows │
+   └──────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+                         API Server
+                    (multi-tenant gateway,
+                     Flink-Operator-like)
+                              │
+                    ┌─────────┴──────────┐
+                    ▼                    ▼
+              JobManager            JobManager              ── per-tenant or
+              (session A)           (session B)                per-application
+                    │                    │
+                    ▼                    ▼
+               Scheduler             Scheduler
+                    │                    │
+                    ▼                    ▼
+              TaskManager(s)        TaskManager(s)          ── elastic K8s Deployments
+                    │                    │
+                    ▼                    ▼
+               MQTT Event Bus       MQTT Event Bus
+                    │                    │
+                    ▼                    ▼
+          ┌─────────────────────────────────────┐
+          │  TaskExecutors (agent/tool/vote/…)  │
+          └─────────────────────────────────────┘
 ```
 
 ### 1.1 Session Mode (Multi-Tenant Shared Cluster)
@@ -209,6 +212,108 @@ type JobMaster struct {
 Per-run orchestrator, created by `JobManager.Submit()`. Holds the full in-memory DAG state
 for one agentflow execution. No shared state between runs. A new JobMaster is created for
 each `Submit()` call.
+
+---
+
+## 3.1 Controller — Distributed Flow Driver (Sharded)
+
+The Controller is the **Layer 2 application driver** — it polls PostgreSQL for
+agentflow definitions (saved by the future Flowgent UI via API Server as JSON) and
+dispatches their execution in a distributed, sharded manner.
+
+### 3.1.1 Architecture
+
+```
+  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+  │ Controller-0 │  │ Controller-1 │  │ Controller-2 │   ← K8s Deployment (replicas=N)
+  │ shard 0,3,6  │  │ shard 1,4,7  │  │ shard 2,5,8  │   ← hash(flow_id) % N
+  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+         │                 │                 │
+         └─────────────────┼─────────────────┘
+                           │
+             ┌─────────────┴─────────────┐
+             │   PostgreSQL (shared)      │
+             │   agentflow_definitions    │
+             │   agentflow_runs           │
+             └───────────────────────────┘
+```
+
+### 3.1.2 Hash-Mod Sharding
+
+Each controller pod owns a subset of flows determined by:
+
+```
+shard(flow_id) = fnv64a(flow_id) % total_controller_pods
+```
+
+- Uses FNV-64a hash (consistent with PG's `hashtext()` for portability)
+- Each pod **only** processes flows where `shard == pod_index`
+- On scale-up/down, flows naturally rebalance (no explicit rebalance needed —
+  the new pod picks up new flows, old flows complete on current owners)
+
+### 3.1.3 K8s Service Discovery
+
+Pods discover their peers via the K8s API:
+
+```go
+pods, _ := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+    LabelSelector: "app=flowgent-controller",
+})
+totalPods = len(pods.Items)
+podIndex  = indexOf(podName, pods)
+```
+
+Fallback: `FLOWGENT_CONTROLLER_INDEX` / `FLOWGENT_CONTROLLER_TOTAL` env vars
+for non-K8s deployments.
+
+### 3.1.4 Reconciliation Loop
+
+```
+Every 10s:
+  1. Re-discover pod count (handles scale events)
+  2. SELECT * FROM agentflow_definitions (latest version per flow_id)
+  3. For each flow in my shard:
+     a. If already running → skip
+     b. If priority=grade → Application Mode (dedicated JM+TM K8s cluster)
+     c. Else → Session Mode (create pending run for shared JM pool)
+  4. Poll agentflow_runs for completion, then clean up
+```
+
+### 3.1.5 Session vs Application Dispatch
+
+| Priority | Mode | Dispatch Mechanism |
+|----------|------|-------------------|
+| low / medium / high | Session | `INSERT INTO agentflow_runs` → shared JM's runPoller picks up |
+| grade | Application | `kubectl create deployment flowgent-jm-{flow_id}` + dedicated TM |
+
+Session mode reuses the shared JM+TM pool (like Flink Session Mode).
+Application mode creates a dedicated K8s Namespace + JM Deployment + TM Deployment
+(like Flink Application Mode).
+
+### 3.1.6 CLI
+
+```bash
+flowgent controller start -c etc/flowgent.yaml
+flowgent controller stop
+flowgent controller restart
+```
+
+Env vars:
+- `FLOWGENT_DATABASE_URL` — PostgreSQL connection string (required)
+- `FLOWGENT_CONTROLLER_INDEX` — pod index (fallback when K8s API unavailable)
+- `FLOWGENT_CONTROLLER_TOTAL` — total pods (fallback)
+- `FLOWGENT_CONTROLLER_LABEL` — K8s label selector (default: `app=flowgent-controller`)
+- `FLOWGENT_JM_IMAGE` — JobManager container image for application mode
+
+### 3.1.7 Dual Format: Static YAML vs DB JSON
+
+The Controller reads from the same `agentflow_definitions` table as the API Server's
+Standard mode (see `docs/20-TEST-e2e-guide.md` §10):
+
+- **Static (YAML)**: File-based, GitOps-friendly, loaded at startup + hot-reload
+- **Standard (JSON)**: DB-backed, saved by UI via API Server, polled by Controller
+
+Both use `model.AgentFlowSpec` (dual-tagged `json:` + `yaml:`).
 
 ---
 

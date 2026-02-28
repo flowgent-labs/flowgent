@@ -8,7 +8,8 @@
 *.so
 *.dylib
 bin/
-flowgent-*
+/flowgent
+/flowgent-*
 /server
 /core
 

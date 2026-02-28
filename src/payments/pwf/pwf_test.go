@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/x402-foundation/x402/go/types"
 
 	"github.com/flowgent-labs/flowgent/src/payments"
 	"github.com/flowgent-labs/flowgent/src/payments/facilitator"
 	"github.com/flowgent-labs/flowgent/src/payments/policy"
 	"github.com/flowgent-labs/flowgent/src/payments/wallet"
-	"github.com/flowgent-labs/flowgent/src/payments/x402"
 )
 
 type testWallet struct{}
@@ -35,7 +35,6 @@ func (a *testApprover) RequestApproval(ctx context.Context, intent *payments.Pay
 }
 
 func TestRuntime_Fetch_NormalResponse(t *testing.T) {
-	// Server that returns 200 (no payment required)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"data":"ok"}`))
@@ -59,23 +58,24 @@ func TestRuntime_Fetch_NormalResponse(t *testing.T) {
 }
 
 func TestRuntime_Fetch_402PolicyDenies(t *testing.T) {
-	// Server that always returns 402
-	paymentReq := payments.X402PaymentRequest{
-		Asset: "USDC", Amount: decimal.NewFromFloat(100.0),
-		Chain: "base", Recipient: "0xbad", Settlement: "x402",
-		Facilitator: "http://facilitator",
-	}
-	headerVal, _ := json.Marshal(paymentReq)
-
+	// Server returns V2 402 with a $100 payment requirement
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check if this is a retry with auth header
-		if r.Header.Get(x402.HeaderX402Auth) != "" {
+		// Check if retry with auth header
+		if r.Header.Get("X402-Authorization") != "" {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"paid":true}`))
 			return
 		}
-		w.Header().Set(x402.HeaderX402Payment, string(headerVal))
+		pr := types.PaymentRequired{
+			X402Version: 2,
+			Accepts: []types.PaymentRequirements{{
+				Scheme: "x402", Network: "base", Asset: "USDC",
+				Amount: "100.0", PayTo: "0xbad",
+			}},
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusPaymentRequired)
+		json.NewEncoder(w).Encode(pr)
 	}))
 	defer server.Close()
 
@@ -123,5 +123,4 @@ func TestRuntime_Fetch_NoPaymentNeeded(t *testing.T) {
 	}
 }
 
-// Ensure httptest is used
 var _ = httptest.NewServer

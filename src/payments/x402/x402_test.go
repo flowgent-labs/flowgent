@@ -1,38 +1,45 @@
 package x402
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/shopspring/decimal"
-
-	"github.com/flowgent-labs/flowgent/src/payments"
+	"github.com/x402-foundation/x402/go/types"
 )
 
-func TestParse_Valid(t *testing.T) {
-	pr := payments.X402PaymentRequest{
-		Asset: "USDC", Amount: decimal.NewFromFloat(0.01),
-		Chain: "base", Recipient: "0x1234",
-		Settlement: "x402", Facilitator: "https://f.example.com",
+func TestParse_V2Body(t *testing.T) {
+	pr := types.PaymentRequired{
+		X402Version: 2,
+		Accepts: []types.PaymentRequirements{{
+			Scheme: "x402", Network: "base", Asset: "USDC",
+			Amount: "0.01", PayTo: "0x1234",
+		}},
 	}
-	headerVal, _ := json.Marshal(pr)
+	body, _ := json.Marshal(pr)
 
 	resp := &http.Response{
 		StatusCode: http.StatusPaymentRequired,
-		Header:     http.Header{HeaderX402Payment: []string{string(headerVal)}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
 
 	parsed, err := Parse(resp)
 	if err != nil {
-		t.Fatalf("Parse: %v", err)
+		t.Fatalf("Parse V2 body: %v", err)
 	}
-	if parsed.Asset != "USDC" {
-		t.Errorf("expected USDC, got %s", parsed.Asset)
+	if len(parsed.Accepts) != 1 {
+		t.Fatalf("expected 1 accept, got %d", len(parsed.Accepts))
 	}
-	if !parsed.Amount.Equals(decimal.NewFromFloat(0.01)) {
-		t.Errorf("expected 0.01, got %s", parsed.Amount)
+	accept := parsed.Accepts[0]
+	if accept.Asset != "USDC" {
+		t.Errorf("expected USDC, got %s", accept.Asset)
+	}
+	if accept.Amount != "0.01" {
+		t.Errorf("expected 0.01, got %s", accept.Amount)
 	}
 }
 
@@ -44,54 +51,45 @@ func TestParse_Not402(t *testing.T) {
 	}
 }
 
-func TestParse_MissingHeader(t *testing.T) {
+func TestParse_V1HeaderFallback(t *testing.T) {
 	resp := &http.Response{
 		StatusCode: http.StatusPaymentRequired,
-		Header:     http.Header{},
+		Header: http.Header{
+			"X402-Payment": []string{`{"asset":"USDC","amount":"0.05","chain":"base","recipient":"0x1234","settlement":"x402","facilitator":"http://f.example.com"}`},
+		},
+		Body: io.NopCloser(bytes.NewReader([]byte(`not valid json`))),
 	}
-	_, err := Parse(resp)
-	if err == nil {
-		t.Fatal("expected error for missing X402-Payment header")
+
+	parsed, err := Parse(resp)
+	if err != nil {
+		t.Fatalf("Parse V1 fallback: %v", err)
+	}
+	accept := parsed.Accepts[0]
+	if accept.Asset != "USDC" {
+		t.Errorf("expected USDC, got %s", accept.Asset)
 	}
 }
 
-func TestParse_InvalidJSON(t *testing.T) {
+func TestParse_EmptyResponse(t *testing.T) {
 	resp := &http.Response{
 		StatusCode: http.StatusPaymentRequired,
-		Header:     http.Header{HeaderX402Payment: []string{"not-json"}},
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte{})),
 	}
 	_, err := Parse(resp)
 	if err == nil {
-		t.Fatal("expected error for invalid JSON")
+		t.Fatal("expected error for empty 402 response")
 	}
 }
 
 func TestIsX402Response(t *testing.T) {
-	resp := &http.Response{
-		StatusCode: http.StatusPaymentRequired,
-		Header:     http.Header{HeaderX402Payment: []string{`{"asset":"USDC","amount":"0.01","chain":"base","recipient":"0x","settlement":"x402","facilitator":"http://f"}`}},
-	}
+	resp := &http.Response{StatusCode: http.StatusPaymentRequired}
 	if !IsX402Response(resp) {
-		t.Fatal("should detect x402 response")
+		t.Fatal("should detect x402 response by 402 status")
 	}
 	resp2 := &http.Response{StatusCode: http.StatusOK}
 	if IsX402Response(resp2) {
 		t.Fatal("should NOT detect x402 on 200")
-	}
-	resp3 := &http.Response{StatusCode: http.StatusPaymentRequired, Header: http.Header{}}
-	if IsX402Response(resp3) {
-		t.Fatal("should NOT detect x402 without header")
-	}
-}
-
-func TestParseFromResponse(t *testing.T) {
-	resp := &http.Response{StatusCode: http.StatusOK}
-	pr, err := ParseFromResponse(resp)
-	if err != nil {
-		t.Fatalf("ParseFromResponse: %v", err)
-	}
-	if pr != nil {
-		t.Fatal("should return nil for non-402")
 	}
 }
 
@@ -103,21 +101,23 @@ func TestSetAuthorizationHeader(t *testing.T) {
 	}
 }
 
-func TestFormatPaymentHeader(t *testing.T) {
-	pr := &payments.X402PaymentRequest{
-		Asset: "USDC", Amount: decimal.NewFromFloat(0.1),
-		Chain: "base", Recipient: "0x", Facilitator: "http://f",
+func TestFirstAccept(t *testing.T) {
+	pr := &types.PaymentRequired{
+		Accepts: []types.PaymentRequirements{
+			{Scheme: "exact", Asset: "USDC"},
+			{Scheme: "permit2", Asset: "ETH"},
+		},
 	}
-	s, err := FormatPaymentHeader(pr)
-	if err != nil {
-		t.Fatalf("FormatPaymentHeader: %v", err)
+	first := FirstAccept(pr)
+	if first.Asset != "USDC" {
+		t.Errorf("expected USDC, got %s", first.Asset)
 	}
-	var back payments.X402PaymentRequest
-	if err := json.Unmarshal([]byte(s), &back); err != nil {
-		t.Fatalf("round-trip unmarshal: %v", err)
+
+	if a := FirstAccept(&types.PaymentRequired{}); a != nil {
+		t.Error("expected nil for empty accepts")
 	}
-	if back.Asset != "USDC" {
-		t.Error("round-trip failed")
+	if a := FirstAccept(nil); a != nil {
+		t.Error("expected nil for nil")
 	}
 }
 
@@ -131,5 +131,4 @@ func TestParseAssetAmount(t *testing.T) {
 	}
 }
 
-// Ensure httptest is used for future HTTP server tests
 var _ = httptest.NewServer

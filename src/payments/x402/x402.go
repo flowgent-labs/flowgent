@@ -1,4 +1,6 @@
 // Package x402 provides parsing and validation for x402 payment protocol responses.
+// Uses the official x402 SDK types (github.com/x402-foundation/x402/go/types) for
+// protocol-level structures (PaymentRequired, PaymentRequirements, PaymentPayload).
 package x402
 
 import (
@@ -8,46 +10,70 @@ import (
 	"strings"
 
 	"github.com/shopspring/decimal"
-
-	"github.com/flowgent-labs/flowgent/src/payments"
+	"github.com/x402-foundation/x402/go/types"
 )
 
 const (
-	HeaderX402Payment = "X402-Payment"
-	HeaderX402Auth    = "X402-Authorization"
+	HeaderX402Auth = "X402-Authorization"
 )
 
-// Parse extracts an X402PaymentRequest from an HTTP 402 response.
-// It reads the X402-Payment header and unmarshals the JSON body.
-func Parse(resp *http.Response) (*payments.X402PaymentRequest, error) {
+// Parse extracts a V2 PaymentRequired from an HTTP 402 response body.
+// Falls back to V1 header parsing if the body isn't valid V2 JSON.
+func Parse(resp *http.Response) (*types.PaymentRequired, error) {
 	if resp.StatusCode != http.StatusPaymentRequired {
 		return nil, fmt.Errorf("x402: expected 402 status, got %d", resp.StatusCode)
 	}
 
-	headerVal := resp.Header.Get(HeaderX402Payment)
-	if headerVal == "" {
-		return nil, fmt.Errorf("x402: missing %s header", HeaderX402Payment)
+	// Try V2 body parsing first
+	if resp.Body != nil {
+		var pr types.PaymentRequired
+		if err := json.NewDecoder(resp.Body).Decode(&pr); err == nil && pr.X402Version >= 2 {
+			if len(pr.Accepts) == 0 {
+				return nil, fmt.Errorf("x402: PaymentRequired has empty accepts array")
+			}
+			return &pr, nil
+		}
+		// If V2 parse fails, try V1 header fallback below
 	}
 
-	var pr payments.X402PaymentRequest
-	if err := json.Unmarshal([]byte(headerVal), &pr); err != nil {
-		return nil, fmt.Errorf("x402: invalid %s header: %w", HeaderX402Payment, err)
-	}
-
-	if err := pr.Validate(); err != nil {
-		return nil, fmt.Errorf("x402: validation failed: %w", err)
-	}
-
-	return &pr, nil
+	// V1 fallback: parse X402-Payment header
+	return parseV1Header(resp)
 }
 
-// ParseFromResponse is a convenience function that checks for a 402 status
-// and parses the x402 payment request if present. Returns nil if not a payment request.
-func ParseFromResponse(resp *http.Response) (*payments.X402PaymentRequest, error) {
-	if resp.StatusCode != http.StatusPaymentRequired {
-		return nil, nil
+// parseV1Header parses a V1-style X402-Payment header into a PaymentRequired.
+func parseV1Header(resp *http.Response) (*types.PaymentRequired, error) {
+	const headerX402Payment = "X402-Payment"
+	headerVal := resp.Header.Get(headerX402Payment)
+	if headerVal == "" {
+		return nil, fmt.Errorf("x402: missing %s header and body is not valid V2", headerX402Payment)
 	}
-	return Parse(resp)
+
+	var v1 struct {
+		Asset       string `json:"asset"`
+		Amount      string `json:"amount"`
+		Chain       string `json:"chain"`
+		Recipient   string `json:"recipient"`
+		Settlement  string `json:"settlement"`
+		Facilitator string `json:"facilitator"`
+	}
+	if err := json.Unmarshal([]byte(headerVal), &v1); err != nil {
+		return nil, fmt.Errorf("x402: invalid %s header: %w", headerX402Payment, err)
+	}
+
+	if v1.Asset == "" || v1.Amount == "" || v1.Recipient == "" {
+		return nil, fmt.Errorf("x402: V1 header missing required fields")
+	}
+
+	return &types.PaymentRequired{
+		X402Version: 1,
+		Accepts: []types.PaymentRequirements{{
+			Scheme:  v1.Settlement,
+			Network: v1.Chain,
+			Asset:   v1.Asset,
+			Amount:  v1.Amount,
+			PayTo:   v1.Recipient,
+		}},
+	}, nil
 }
 
 // SetAuthorizationHeader adds the x402 authorization token to an HTTP request.
@@ -55,19 +81,17 @@ func SetAuthorizationHeader(req *http.Request, token string) {
 	req.Header.Set(HeaderX402Auth, token)
 }
 
-// IsX402Response checks if an HTTP response is an x402 payment request.
+// IsX402Response checks if an HTTP response is an x402 payment request (402 status).
 func IsX402Response(resp *http.Response) bool {
-	return resp.StatusCode == http.StatusPaymentRequired &&
-		resp.Header.Get(HeaderX402Payment) != ""
+	return resp.StatusCode == http.StatusPaymentRequired
 }
 
-// FormatPaymentHeader serializes the payment request to the X402-Payment header format.
-func FormatPaymentHeader(pr *payments.X402PaymentRequest) (string, error) {
-	data, err := json.Marshal(pr)
-	if err != nil {
-		return "", err
+// FirstAccept returns the first accepted payment requirement, or nil if empty.
+func FirstAccept(pr *types.PaymentRequired) *types.PaymentRequirements {
+	if pr == nil || len(pr.Accepts) == 0 {
+		return nil
 	}
-	return string(data), nil
+	return &pr.Accepts[0]
 }
 
 // ParseAssetAmount parses a decimal amount from a string.

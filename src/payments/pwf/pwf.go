@@ -7,11 +7,13 @@ package pwf
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/x402-foundation/x402/go/types"
 
 	"github.com/flowgent-labs/flowgent/src/payments"
 	"github.com/flowgent-labs/flowgent/src/payments/facilitator"
@@ -82,21 +84,26 @@ func (r *Runtime) fetchWithRetry(ctx context.Context, req *http.Request, attempt
 		return resp, nil
 	}
 
-	// Parse x402 payment request
+	// Parse x402 payment request (uses official SDK types.PaymentRequired)
 	paymentReq, err := x402.Parse(resp)
 	if err != nil {
 		return nil, fmt.Errorf("pwf: parse x402 response: %w", err)
 	}
+	accept := x402.FirstAccept(paymentReq)
+	if accept == nil {
+		return nil, fmt.Errorf("pwf: no payment option in 402 response")
+	}
 
-	// Create payment intent
+	// Create payment intent (flowgent-internal tracking)
+	amt, _ := x402.ParseAssetAmount(accept.Amount)
 	intent := &payments.PaymentIntent{
 		ID:          uuid.NewString(),
 		URL:         req.URL.String(),
-		Asset:       paymentReq.Asset,
-		Amount:      paymentReq.Amount,
-		Chain:       paymentReq.Chain,
-		Recipient:   paymentReq.Recipient,
-		Facilitator: paymentReq.Facilitator,
+		Asset:       accept.Asset,
+		Amount:      amt,
+		Chain:       accept.Network,
+		Recipient:   accept.PayTo,
+		Facilitator: req.URL.Host, // V2: facilitator is the server that returned 402
 		Status:      payments.IntentPending,
 		CreatedAt:   time.Now(),
 	}
@@ -123,15 +130,32 @@ func (r *Runtime) fetchWithRetry(ctx context.Context, req *http.Request, attempt
 		}
 	}
 
-	// Sign payment authorization
-	auth, err := r.walletMgr.SignPaymentAuthorization(ctx, r.defaultAddr, intent)
+	// Build V2 PaymentPayload for the facilitator using the SDK types from 402 response
+	payload := &types.PaymentPayload{
+		X402Version: 2,
+		Payload: map[string]interface{}{
+			"intent_id": intent.ID,
+			"url":       intent.URL,
+		},
+		Accepted: *accept, // reuse the PaymentRequirements from the 402 response
+	}
+
+	// Sign the payload
+	payloadBytes, _ := json.Marshal(payload)
+	wallet, err := r.walletMgr.Get(r.defaultAddr)
+	if err != nil {
+		intent.Status = payments.IntentFailed
+		return nil, fmt.Errorf("pwf: get wallet: %w", err)
+	}
+	sig, err := wallet.SignAuthorization(ctx, payloadBytes)
 	if err != nil {
 		intent.Status = payments.IntentFailed
 		return nil, fmt.Errorf("pwf: sign authorization: %w", err)
 	}
+	payload.Payload["signature"] = string(sig)
 
 	// Send to facilitator
-	receipt, err := r.facilitator.Authorize(ctx, auth)
+	receipt, err := r.facilitator.Authorize(ctx, payload)
 	if err != nil {
 		intent.Status = payments.IntentFailed
 		return nil, fmt.Errorf("pwf: facilitator authorize: %w", err)
@@ -140,7 +164,7 @@ func (r *Runtime) fetchWithRetry(ctx context.Context, req *http.Request, attempt
 	intent.Status = payments.IntentPaid
 
 	// Record spend for budget tracking
-	_ = r.policyEngine.RecordSpend(ctx, auth.Wallet, intent.Amount)
+	_ = r.policyEngine.RecordSpend(ctx, r.defaultAddr, intent.Amount)
 
 	// Retry original request with payment token
 	return r.retryWithToken(ctx, req, receipt.Authorization)
