@@ -3,17 +3,17 @@
 # Source: https://github.com/x402-rs/x402-rs
 #
 # Pre-built binary copied from host build:
-#   cd deploy/facilitator/x402-rs
+#   cd deploy/docker/facilitator/x402-rs
 #   cargo build --package x402-facilitator --features chain-eip155 --release
-#   cp target/release/x402-facilitator deploy/facilitator/
+#   cp target/release/x402-facilitator deploy/docker/facilitator/
 #
 # Build:
-#   docker build -t x402_facilitator:1.4.9 deploy/facilitator/
+#   docker build -t x402_facilitator:1.4.9 deploy/docker/facilitator/
 #   docker tag x402_facilitator:1.4.9 registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 #   docker push registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 #
 # Run:
-#   docker run -p 8085:8080 -v $(pwd)/deploy/facilitator/config.json:/app/config.json:ro \
+#   docker run -p 8085:8080 -v $(pwd)/deploy/docker/facilitator/config.json:/app/config.json:ro \
 #     registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/rust:1.93-slim

@@ -37,8 +37,7 @@ src/payments/
     └── vault.go          # Hashicorp Vault provider (contract, SDK wiring deferred)
 
 src/cmd/core/wallet.go     # flowgent wallet daemon (subcommand)
-deploy/facilitator/        # Standalone facilitator docker-compose
-deploy/kubernetes/         # wallet + facilitator k8s manifests
+deploy/docker/facilitator/  # Facilitator Dockerfile + k8s manifest + x402-rs source
 ```
 
 ---
@@ -253,14 +252,16 @@ docker compose -f deploy/docker-compose.all-in-one.yml up
 # flowgent + wallet + facilitator (+ postgres/emqx with --profile distributed)
 ```
 
-### Kubernetes
+### Kubernetes (Helm)
 ```bash
-kubectl apply -f deploy/kubernetes/wallet-deployment.yaml
-kubectl apply -f deploy/kubernetes/facilitator-deployment.yaml
-kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml
-# Creates: flowgent-apiserver (2), flowgent-worker (3), flowgent-a2a (1),
-#          flowgent-wallet (1), facilitator (1)
-# Secret: flowgent-master-key
+helm install flowgent deploy/helm/flowgent \
+  --set wallet.enabled=true
+# Creates all Flowgent services (apiserver, controller, jobmanager,
+# taskmanager, wallet, notification). See deploy/helm/flowgent/values.yaml
+# for full configuration.
+#
+# Facilitator (local dev only):
+kubectl apply -f deploy/docker/facilitator/k8s-deployment.yaml
 ```
 
 ---

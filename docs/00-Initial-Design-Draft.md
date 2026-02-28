@@ -1,4 +1,7 @@
-# Flowgent - An Autonomous, Flexible, Predictable Agents Orchestration Engine
+# Flowgent — Initial Design Draft (Original Human-Authored)
+
+**Date:** 2026-05-10
+**Status:** Original spec capturing raw requirements and design ideas before implementation.
 
 ## 🎯 目标
 

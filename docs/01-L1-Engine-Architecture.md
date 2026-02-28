@@ -773,4 +773,172 @@ Histogram boundaries (from sample config):
 | `src/notification/` | Notification service + channel senders |
 | `src/model/` | Shared types: AgentFlowSpec, Node, Edge, Run, etc. |
 | `deploy/helm/flowgent/` | Helm chart (6 microservices × 2 replicas) |
-| `deploy/kubernetes/` | Standalone K8s manifests |
+
+---
+
+## 13. Skills = Sub-AgentFlow
+
+### 13.1 Core Insight
+
+**A Skill is a sub-AgentFlow.** Nothing more. A "skill" accomplishes a task — which inherently means orchestrating multiple tools and/or agents. That's exactly what an AgentFlow is. Users migrating from Claude Code, Codex, Copilot, or any other agent framework can drop their existing skills into Flowgent as AgentFlow YAML files and reference them as `type: agentflow` nodes.
+
+No new abstractions. No new executors. No ReAct loop. No mandatory schema.
+
+### 13.2 AgentFlowSpec — Optional Fields for Skills
+
+```go
+type AgentFlowSpec struct {
+    ID           string         `json:"id" yaml:"id"`
+    Kind         string         `json:"kind,omitempty" yaml:"kind,omitempty"`           // "skill" | "" (empty = regular flow)
+    Description  string         `json:"description,omitempty" yaml:"description,omitempty"`
+    Summary      string         `json:"summary,omitempty" yaml:"summary,omitempty"`     // one-liner for A2A card
+    InputSchema  *JSONSchema    `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
+    OutputSchema *JSONSchema    `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+    Vars         map[string]any `json:"vars,omitempty" yaml:"vars,omitempty"`
+    Nodes        []Node         `json:"nodes" yaml:"nodes"`
+    Edges        []Edge         `json:"edges" yaml:"edges"`
+    Triggers     []TriggerDef   `json:"triggers,omitempty" yaml:"triggers,omitempty"`
+}
+```
+
+`input_schema` and `output_schema` are entirely optional. Schemas are purely for A2A discovery and optional validation.
+
+### 13.3 Migration — Zero Friction
+
+```yaml
+# etc/skills/01-dependency-scan.yaml
+id: dependency-scan
+kind: skill
+summary: "Scan project dependencies for known CVEs"
+nodes:
+  - id: clone
+    type: tool
+    tool: github
+    input: { action: clone_repo, url: "${input.repo_url}" }
+  - id: scan
+    type: tool
+    tool: dependency-checker
+    input: { path: "${clone.output.path}" }
+  - id: normalize
+    type: agent
+    agent: issue-detector
+    input: { raw_output: "${scan.output}" }
+edges:
+  - { from: clone, to: scan }
+  - { from: scan, to: normalize }
+```
+
+Reference from any flow: `type: agentflow`, `agentflow: dependency-scan`.
+
+---
+
+## 14. Agent Definition — No Toolsets
+
+### 14.1 Tools Belong to the DAG, Not the Agent
+
+Tools are deterministic DAG nodes (`type: tool`). The flow designer decides which tool to call, at which step, with which inputs. The agent receives tool output and reasons about it — it never decides to call a tool itself. This is the architectural line between enterprise orchestration (DAG-controlled) and personal AI assistants (ReAct loop).
+
+### 14.2 AgentDef — Structured Additions
+
+```go
+type AgentDef struct {
+    Name         string      `json:"name" yaml:"name"`
+    Model        string      `json:"model" yaml:"model"`
+    Soul         string      `json:"soul" yaml:"soul"`
+    Instruction  string      `json:"instruction" yaml:"instruction"`
+    OutputSchema *JSONSchema `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+    Temperature  *float64    `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+    MaxTokens    int         `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`
+}
+```
+
+| Field | Why |
+|-------|-----|
+| `output_schema` | Structured output contract — replaces prose "Output STRICT JSON: {...}" in `instruction`. Enables validation. |
+| `temperature` | Per-agent override. Supervisor needs 0.2; creative reviewer may want 0.5. |
+| `max_tokens` | Output length control per agent role. |
+
+---
+
+## 15. Sandbox — Secure Script Execution
+
+### 15.1 CLI
+
+```bash
+./bin/flowgent sandbox                    # local Docker
+./bin/flowgent sandbox --provider k8s     # K8s pod per task
+```
+
+### 15.2 Sandbox Node Type
+
+```yaml
+nodes:
+  - id: run-audit
+    type: sandbox
+    runtime: python3              # python3 | bash | node
+    script: |
+      import subprocess, json
+      result = subprocess.run(["pip-audit", "--format", "json"], capture_output=True, text=True)
+      print(result.stdout)
+    timeout: 120s
+    resources:
+      cpu: "500m"
+      memory: "256Mi"
+    output: "${stdout}"
+```
+
+The JobManager inspects subflow content during `buildGraph()`. If any node has `type: sandbox` or a tool with `script:` field, the subflow is flagged for sandbox execution.
+
+### 15.3 Execution Model
+
+- **K8s**: `KubernetesScheduler` creates `batch/v1 Job` per sandbox task. Elastic, on-demand — pods only exist during execution.
+- **Local**: `LocalScheduler` runs via `docker run --rm` with CPU/memory limits.
+
+---
+
+## 16. Directory-Based Configuration
+
+### 16.1 Config Layout
+
+```yaml
+orchestration:
+  mcps: [...]
+  agents:
+    static:  { enabled: true, load-dir: "agents/",  refresh: 30s }
+    standard: { enabled: false }   # DB-backed (future UI)
+  skills:
+    static:  { enabled: true, load-dir: "skills/",  refresh: 30s }
+    standard: { enabled: false }
+  agentflows:
+    static:  { enabled: true, load-dir: "flows/",   refresh: 1m }
+    standard: { enabled: false }
+```
+
+### 16.2 Directory Layout
+
+```
+etc/
+├── flowgent.yaml
+├── agents/              # 01-supervisor.yaml, 02-issue-detector.yaml, ...
+├── skills/              # 01-dependency-scan.yaml, ...
+└── flows/               # 01-security-autonomy-fixer.yaml, ...
+```
+
+`01-` prefix is a convention for human readability and deterministic load order. The loader sorts files alphabetically.
+
+### 16.3 Generic Loader
+
+```go
+func loadResourceDir[T any](dir string) ([]T, error) {
+    entries, _ := os.ReadDir(dir)
+    var result []T
+    for _, e := range entries {
+        if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" { continue }
+        data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+        var item T
+        yaml.Unmarshal(data, &item)
+        result = append(result, item)
+    }
+    return result, nil
+}
+```

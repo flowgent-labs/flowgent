@@ -22,8 +22,8 @@ with multi-chain support (EVM, Solana, Aptos).
 
 ```bash
 # Clone official repo and build via Dockerfile
-git clone https://github.com/x402-rs/x402-rs.git deploy/facilitator/x402-rs
-docker build -t x402_facilitator:1.4.9 deploy/facilitator/
+git clone https://github.com/x402-rs/x402-rs.git deploy/docker/facilitator/x402-rs
+docker build -t x402_facilitator:1.4.9 deploy/docker/facilitator/
 docker tag x402_facilitator:1.4.9 registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 docker push registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 ```
@@ -32,7 +32,7 @@ docker push registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 
 ```bash
 docker run -d --name facilitator-dev -p 8085:8080 \
-    -v $(pwd)/deploy/facilitator/config.json:/app/config.json:ro \
+    -v $(pwd)/deploy/docker/facilitator/config.json:/app/config.json:ro \
     registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
 
 curl --noproxy '*' http://localhost:8085/health          # {"status":"ok"}
@@ -50,7 +50,7 @@ curl --noproxy '*' http://localhost:8085/supported       # lists chains + signer
 
 ### Configuration
 
-`deploy/facilitator/config.json` — JSON format with chains and schemes:
+`deploy/docker/facilitator/config.json` — JSON format with chains and schemes:
 
 ```json
 {
@@ -99,8 +99,8 @@ curl -sSLo foundry.tar.gz \
   https://github.com/foundry-rs/foundry/releases/download/v1.7.1/foundry_v1.7.1_alpine_amd64.tar.gz
 
 # Build image
-cp foundry.tar.gz deploy/anvil/
-docker build -t foundry_anvil:1.7.1 deploy/anvil/
+cp foundry.tar.gz deploy/docker/anvil/
+docker build -t foundry_anvil:1.7.1 deploy/docker/anvil/
 docker tag foundry_anvil:1.7.1 registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1
 docker push registry.cn-shenzhen.aliyuncs.com/wl4g/foundry_anvil:1.7.1
 ```
@@ -146,8 +146,8 @@ curl -sSLo solana-release.tar.bz2 \
   https://github.com/anza-xyz/agave/releases/download/v3.1.14/solana-release-x86_64-unknown-linux-gnu.tar.bz2
 
 # Build image
-cp solana-release.tar.bz2 deploy/solana/
-docker build -t anza_solana:3.1.14 deploy/solana/
+cp solana-release.tar.bz2 deploy/docker/solana/
+docker build -t anza_solana:3.1.14 deploy/docker/solana/
 docker tag anza_solana:3.1.14 registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
 docker push registry.cn-shenzhen.aliyuncs.com/wl4g/anza_solana:3.1.14
 ```
@@ -177,13 +177,13 @@ Start all three middleware services for local x402 development:
 
 ```bash
 # Start EVM node (anvil)
-docker compose -f deploy/anvil/docker-compose.yml up -d
+docker compose -f deploy/docker/anvil/docker-compose.yml up -d
 
 # Start Solana validator
-docker compose -f deploy/solana/docker-compose.yml up -d
+docker compose -f deploy/docker/solana/docker-compose.yml up -d
 
 # Start facilitator (depends on anvil + solana RPC endpoints)
-docker compose -f deploy/facilitator/docker-compose.yml up -d
+docker compose -f deploy/docker/facilitator/docker-compose.yml up -d
 ```
 
 Verify all services:
@@ -205,7 +205,7 @@ curl --noproxy '*' http://localhost:8085/health
 
 ### Facilitator Config for Local Dev
 
-Create `deploy/facilitator/config.json` pointing to local nodes:
+Create `deploy/docker/facilitator/config.json` pointing to local nodes:
 
 ```json
 {

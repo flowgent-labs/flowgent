@@ -18,7 +18,7 @@ func skipIfNoFacilitator(t *testing.T) {
 	t.Helper()
 	client := facilitator.New(facilitatorURL, 2*time.Second)
 	if err := client.Health(context.Background()); err != nil {
-		t.Skipf("facilitator not available at %s: %v (start with: docker compose -f deploy/facilitator/docker-compose.yml up -d)", facilitatorURL, err)
+		t.Skipf("facilitator not available at %s: %v (start with: docker compose -f deploy/docker/facilitator/docker-compose.yml up -d)", facilitatorURL, err)
 	}
 }
 

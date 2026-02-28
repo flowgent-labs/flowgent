@@ -165,7 +165,7 @@ kubectl apply -f deploy/redis/docker-compose.yml  # or deploy via K8s
 **One-shot deploy** (all 6 services):
 
 ```bash
-kubectl apply -f deploy/kubernetes/flowgent-e2e-production.yaml
+helm install flowgent deploy/helm/flowgent
 ```
 
 **Verify all pods running:**
@@ -190,26 +190,17 @@ flowgent-wallet-xxx                     1/1     Running   0          30s
 flowgent-notification-xxx               1/1     Running   0          30s
 ```
 
-**Individual component deploy** (if not using the all-in-one manifest):
+**Individual component scaling** (after Helm install):
 
 ```bash
-# API Server (multi-tenant REST + A2A gateway)
-kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml
-
-# Controller (sharded flow driver — polls PG, dispatches flows)
-kubectl apply -f deploy/kubernetes/flowgent-controller.yaml
-
-# JobManager (session + application mode — same binary, namespace-filtered)
-kubectl apply -f deploy/kubernetes/  # uses flowgent-e2e-production.yaml JM section
-
-# TaskManager (elastic worker pool, scale as needed)
+# Scale individual components as needed:
+kubectl scale deploy/flowgent-controller --replicas=3
 kubectl scale deploy/flowgent-taskmanager --replicas=4
 
-# Wallet (x402 payment signing)
-kubectl apply -f deploy/kubernetes/wallet-deployment.yaml
-
-# Notification (WS push + multi-channel)
-# Included in flowgent-e2e-production.yaml
+# Enable/disable components via Helm values:
+helm upgrade flowgent deploy/helm/flowgent \
+  --set wallet.enabled=true \
+  --set notification.enabled=true
 ```
 
 ### 7.4 Application Mode (Dedicated Cluster per VIP Flow)
@@ -220,9 +211,9 @@ For grade-priority flows, the Controller auto-creates dedicated JM+TM:
 # Create application namespace
 kubectl create namespace flowgent-rengine
 
-# The Controller creates JM deployment automatically when a grade flow is found
+# The Controller creates JM deployment automatically when a grade flow is found.
 # Manual deploy (if needed):
-kubectl apply -f deploy/kubernetes/flowgent-deployment.yaml -n flowgent-rengine
+helm install flowgent-rengine deploy/helm/flowgent -n flowgent-rengine
 kubectl scale deploy/flowgent-taskmanager --replicas=4 -n flowgent-rengine
 ```
 
