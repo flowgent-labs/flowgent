@@ -37,14 +37,11 @@ make example-mcps      # example MCP servers (for e2e testing)
 Run with a config file (required):
 
 ```bash
-# All-in-one (SQLite + memory queue)
-./bin/flowgent daemon start -c examples/scenario-e2e-allinone.yaml
-
-# Production (PostgreSQL + MQTT + Redis)
-./bin/flowgent daemon start -c examples/scenario-e2e-production.yaml
+# Development (SQLite + memory queue)
+./bin/flowgent daemon start -c etc/flowgent-dev.yaml
 
 # Use the fully annotated sample as a starting point
-cp etc/flowgent.yaml.fully.sample my-config.yaml
+cp etc/flowgent-dev.yaml my-config.yaml
 ./bin/flowgent daemon start -c my-config.yaml
 ```
 
@@ -83,24 +80,23 @@ Full architecture → [docs/01-DESIGN-engine-architecture.md](docs/01-DESIGN-eng
 
 ## Examples
 
-Built-in examples are under `examples/` — agents, flows, MCP servers, and scenario configs.
+Built-in examples are under `examples/` — agents, flows, MCP servers, and skills.
 
 ### AgentFlows (L2)
 
 | Flow | Description | File |
 |------|-------------|------|
-| Security Autonomy Fixer v1 | 21-node full pipeline (SonarQube + Sonatype MCPs) | `examples/flows/01-security-autonomy-fix-v1.yaml` |
-| Security Autonomy Fixer v2 | 11-node simplified (agent-only + `.cyberbot` metadata) | `examples/flows/01-security-autonomy-fix-v2.yaml` |
+| Security Autonomy Fixer V1 | Baseline 22-node 12-phase pipeline (all MCPs + skill + re-scan) | `examples/flows/01-security-autonomy-fix-v1.yaml` |
+| Security Autonomy Fixer V2 | V1 with GitHub webhook trigger commented out (current deploy target) | `examples/flows/01-security-autonomy-fix-v2.yaml` |
 | AutoTest Generation | Confluence → Cucumber pipeline | `examples/flows/20-autotest-generation-v1.yaml` |
 
-### Scenario Configs
+### Skills
 
-| Config | Storage | Cache | Queue | Use |
-|--------|---------|-------|-------|-----|
-| `examples/scenario-e2e-allinone.yaml` | SQLite | Memory | Memory | Dev / CI |
-| `examples/scenario-e2e-production.yaml` | PostgreSQL | Redis | MQTT | K8s / Prod |
+| Skill | Description | File |
+|-------|-------------|------|
+| dependency-firewall-check | Nexus3 dependency firewall check via copilot scripts (replaces sonatype-nexus3 MCP) | `examples/skills/dependency-firewall-check.yaml` |
 
-Full e2e guide → [docs/20-TEST-e2e-guide.md](docs/20-TEST-e2e-guide.md)
+Full e2e guide → [docs/20-L2-E2E-Guide.md](docs/20-L2-E2E-Guide.md)
 
 ---
 
@@ -134,7 +130,7 @@ src/model/          — domain types (AgentFlowSpec, ExecutionPlan, NodeSpec, et
 src/store/          — persistence (SQLite, PostgreSQL)
 src/llm/            — LLM client (OpenAI-compatible) + MCP factory
 src/notification/   — notification service (Telegram, DingTalk, Slack, Email, Webhook)
-examples/           — agents, flows, MCP servers, scenario configs
+examples/           — agents, flows, MCP servers, skills
 docs/               — design docs, e2e guide
 ```
 

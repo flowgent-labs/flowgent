@@ -262,17 +262,6 @@ orchestration:
         HTTP_PROXY: ""
         HTTPS_PROXY: ""
 
-    - name: test
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/test-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        TEST_WORKSPACE: "/workspace"
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
   # -- Agent Definitions -------------------------------------------------------
   agents:
     static:
@@ -285,7 +274,7 @@ orchestration:
   # -- Skill Definitions -------------------------------------------------------
   skills:
     static:
-      enabled: false
+      enabled: true
       load-dir: "../examples/skills/"
       refresh: 30s
     standard:

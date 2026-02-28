@@ -108,28 +108,21 @@ type (Spring Boot / Flask / React) → commit.
 
 | MCP Server | Tools | Source |
 |------------|-------|--------|
-| MCP Test | `analyze_requirements`, `plan_tests`, `generate_cucumber` | `examples/mcp-test/` |
+| Confluence | `analyze_requirements`, `plan_tests`, `generate_cucumber` | `examples/mcp-confluence/` (external) |
+
+> Note: The `examples/mcp-test/` directory was removed. AutoTest generation uses the
+> Confluence MCP for requirement fetching. Test planning and Cucumber generation are
+> handled by the `test-planner` and `test-generator` agents directly.
 
 ---
 
-## 3. E2E SonarQube Real Scan
+## Config Files
 
-End-to-end flow connecting to a real SonarQube instance to fetch and analyze issues.
-
-| File | Description |
-|------|-------------|
-| [`examples/flows/00-e2e-sonarqube-real.yaml`](../examples/flows/00-e2e-sonarqube-real.yaml) | Direct SonarQube issue fetch + analysis |
-
----
-
-## Scenario Configs
-
-Quick-start YAML configs for running Flowgent in different modes:
-
-| File | Mode | Backend |
-|------|------|---------|
-| [`examples/scenario-e2e-allinone.yaml`](../examples/scenario-e2e-allinone.yaml) | All-in-one (single binary) | SQLite + memory queue |
-| [`examples/scenario-e2e-production.yaml`](../examples/scenario-e2e-production.yaml) | Distributed (K8s) | PostgreSQL + MQTT + Redis |
+| File | Mode | Backend | Use |
+|------|------|---------|-----|
+| `etc/flowgent-dev.yaml` | All-in-one (single binary) | SQLite + memory queue | Dev / CI |
+| `etc/flowgent.yaml.fully.sample` | Reference (annotated) | Configurable | Starting point for custom configs |
+| `deploy/helm/flowgent/values.yaml` | Distributed (K8s) | PostgreSQL + MQTT + Redis | Production |
 
 ---
 
