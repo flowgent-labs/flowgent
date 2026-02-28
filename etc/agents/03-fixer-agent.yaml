@@ -1,5 +1,5 @@
 name: fixer-agent
-model: bailian-codeplan/qwen3.5-coder
+model: bailian/qwen-plus
 soul: |-
   You are a secure coding expert.
 instruction: |-

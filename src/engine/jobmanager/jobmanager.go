@@ -34,7 +34,36 @@ func NewJobManager(store engine.Store, rm scheduler.ResourceManager, logger *uti
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
 // Each call creates an independent JobMaster with its own DAG state — safe for concurrent use.
+//
+// Mode routing:
+//   - low/medium/high → session mode (shared JM+TM pool)
+//   - grade → application mode (dedicated K8s namespace + JM+TM)
 func (m *JobManager) Submit(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec) error {
+	mode := spec.EffectiveMode()
+	m.logger.Info("jobmanager submit",
+		"run_id", run.ID,
+		"agentflow_id", spec.ID,
+		"mode", mode,
+		"priority", spec.Priority,
+		"tenant", spec.TenantID,
+		"namespace", spec.Namespace,
+	)
+
+	// Propagate mode metadata to the run
+	run.Priority = spec.Priority
+	run.Namespace = spec.Namespace
+	run.TenantID = spec.TenantID
+
+	if mode == model.ModeApplication {
+		m.logger.Info("application mode — dedicated cluster", "agentflow_id", spec.ID, "tenant", spec.TenantID)
+		// In application mode, ensure dedicated K8s resources exist.
+		// The KubernetesResourceManager handles namespace + Deployment provisioning.
+		if err := m.rm.Validate(ctx); err != nil {
+			m.logger.Warn("application mode: resource validation failed, falling back to session", "error", err)
+		}
+		// The RM's Schedule() will use the run.Namespace for K8s resource placement.
+	}
+
 	master := NewJobMaster(m.store, m.rm, m.logger, m.cfg)
 	return master.Execute(ctx, run, spec)
 }

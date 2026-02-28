@@ -43,9 +43,9 @@ func TestKubernetesResourceManager_Validate_NoQueue(t *testing.T) {
 		kubeClient: fakeClient, namespace: "default",
 		deployName: "flowgent-taskmanager",
 	}
-	err := rm.Validate(context.Background())
-	if err == nil {
-		t.Fatal("expected error for missing queue")
+	// Queue is validated lazily in Schedule() — Validate() should pass with nil queue.
+	if err := rm.Validate(context.Background()); err != nil {
+		t.Fatalf("unexpected Validate error (queue is lazy-validated): %v", err)
 	}
 }
 

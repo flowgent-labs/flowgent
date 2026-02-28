@@ -27,8 +27,10 @@ type ServiceConfig struct {
 	Cache         CacheConfig         `json:"cache" yaml:"cache"`
 	Storage       StorageConfig       `json:"storage" yaml:"storage"`
 	LLM           LLMConfig           `json:"llm" yaml:"llm"`
-	Orchestration OrchestrationConfig `json:"orchestration" yaml:"orchestration"`
+	Orchestration OrchestrationConfig      `json:"orchestration" yaml:"orchestration"`
 	Payments      *payments.PaymentsConfig `json:"payments" yaml:"payments"`
+	Notification  NotificationConfig       `json:"notification" yaml:"notification"`
+	Tenant        TenantConfig             `json:"tenant" yaml:"tenant"`
 }
 
 // ─── Server ──────────────────────────────────────────────────
@@ -232,17 +234,35 @@ type MCPDef struct {
 	Env     map[string]string `json:"env" yaml:"env"`
 }
 
-type AgentDef struct {
-	Name         string         `json:"name" yaml:"name"`
-	Model        string         `json:"model" yaml:"model"`
-	Soul         string         `json:"soul" yaml:"soul"`
-	Instruction  string         `json:"instruction" yaml:"instruction"`
-	OutputSchema map[string]any `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // optional JSON Schema
-	Temperature  *float64       `json:"temperature,omitempty" yaml:"temperature,omitempty"`     // override model default
-	MaxTokens    int            `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`       // output length control
+// AgentDef is aliased from model for backward compatibility.
+// All agent-related code should use model.AgentDef directly.
+type AgentDef = model.AgentDef
+
+// ─── Notification ─────────────────────────────────────────────
+
+// NotificationConfig configures the notification service and its channels.
+type NotificationConfig struct {
+	Enabled  bool                        `json:"enabled" yaml:"enabled"`
+	Channels []NotificationChannelConfig `json:"channels" yaml:"channels"`
 }
 
-// ResourceCfg is dual-source config for a resource type (agents, skills, flows).
+// NotificationChannelConfig defines a single notification channel.
+type NotificationChannelConfig struct {
+	Name    string         `json:"name" yaml:"name"`
+	Type    string         `json:"type" yaml:"type"` // telegram, dingtalk, slack, email, webhook
+	Enabled bool           `json:"enabled" yaml:"enabled"`
+	Config  map[string]any `json:"config" yaml:"config"`
+}
+
+// ─── Tenant ────────────────────────────────────────────────────
+
+// TenantConfig configures multi-tenant isolation.
+type TenantConfig struct {
+	DefaultTenant   string `json:"default_tenant" yaml:"default_tenant"`
+	NamespacePrefix string `json:"namespace_prefix" yaml:"namespace_prefix"`
+}
+
+// ─── AgentCfg / SkillCfg / AgentFlowCfg ────────────────────────
 type ResourceCfg struct {
 	Static   StaticResourceCfg `json:"static" yaml:"static"`
 	Standard StandardAgentCfg  `json:"standard" yaml:"standard"`
@@ -250,9 +270,9 @@ type ResourceCfg struct {
 
 // StaticResourceCfg is shared config for directory-based static resource loading.
 type StaticResourceCfg struct {
-	Enabled bool   `json:"enabled" yaml:"enabled"`
-	LoadDir string `json:"load-dir" yaml:"load-dir"`
-	Refresh string `json:"refresh" yaml:"refresh"` // e.g. "30s", "1m"
+	Enabled bool   `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	LoadDir string `json:"load-dir" yaml:"load-dir" mapstructure:"load-dir"`
+	Refresh string `json:"refresh" yaml:"refresh" mapstructure:"refresh"`
 }
 
 // StandardAgentCfg enables DB-backed resource definitions (future Flowgent UI).

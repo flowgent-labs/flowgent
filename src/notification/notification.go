@@ -1,0 +1,324 @@
+package notification
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/flowgent-labs/flowgent/src/model"
+)
+
+// Store is the subset of store.Store needed by the notification service.
+type Store interface {
+	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
+	ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error)
+	SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error
+	GetSubscriptionRoutesByAgentFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error)
+	DeleteSubscriptionRoute(ctx context.Context, id string) error
+	CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error)
+}
+
+// MQTTClient is the interface for publishing notification messages to MQTT.
+type MQTTClient interface {
+	Subscribe(ctx context.Context, topic string, handler func(topic string, payload []byte)) error
+	Publish(ctx context.Context, topic string, payload []byte) error
+}
+
+// Service is the notification & WebSocket push service. It runs:
+//   - A scanner goroutine that detects pending human approvals
+//   - A WebSocket hub that manages client connections with MQTT-based routing
+//     for clustered multi-pod deployment
+//
+// Each pod subscribes to its own MQTT channel /flowgent/notify/pod/{podID}/ws/+
+// and pushes messages to local WS connections. The scanner publishes to
+// the correct pod's channel based on the subscription routing table.
+type Service struct {
+	store      Store
+	mqtt       MQTTClient
+	senders    map[string]Sender
+	podID      string
+	wsClients  map[string]*wsConn
+	mu         sync.RWMutex
+	logger     *slog.Logger
+}
+
+// WSConn is an active WebSocket client connection.
+type WSConn interface {
+	ReadMessages() <-chan []byte
+	Done() <-chan struct{}
+}
+
+type wsConn struct {
+	ID          string
+	AgentFlowID string
+	MsgCh       chan []byte
+	done        chan struct{}
+}
+
+// ReadMessages returns a receive-only channel for incoming WS messages.
+func (c *wsConn) ReadMessages() <-chan []byte { return c.MsgCh }
+
+// Done returns a channel that is closed when the connection is terminated.
+func (c *wsConn) Done() <-chan struct{} { return c.done }
+
+// Close signals the connection to shut down.
+func (c *wsConn) Close() { close(c.done) }
+
+// NewService creates a notification service with the given store and optional MQTT client.
+func NewService(s Store, mqtt MQTTClient) *Service {
+	hostname, _ := os.Hostname()
+	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
+
+	svc := &Service{
+		store:     s,
+		mqtt:      mqtt,
+		senders:   make(map[string]Sender),
+		podID:     podID,
+		wsClients: make(map[string]*wsConn),
+		logger:    slog.Default().With("component", "notification"),
+	}
+
+	// Register built-in senders
+	svc.senders["telegram"] = &TelegramSender{}
+	svc.senders["dingtalk"] = &DingTalkSender{}
+	svc.senders["slack"] = &SlackSender{}
+	svc.senders["email"] = &EmailSender{}
+	svc.senders["webhook"] = &WebhookSender{}
+
+	return svc
+}
+
+// PodID returns the unique pod identifier for MQTT routing.
+func (s *Service) PodID() string { return s.podID }
+
+// Start begins the scanner goroutine, MQTT listener, and cleanup loop.
+func (s *Service) Start(ctx context.Context) error {
+	if s.mqtt != nil {
+		// Subscribe to this pod's notification channel
+		topic := fmt.Sprintf("/flowgent/notify/pod/%s/ws/+", s.podID)
+		if err := s.mqtt.Subscribe(ctx, topic, s.onMQTTMessage); err != nil {
+			s.logger.Warn("mqtt subscribe failed, WS push disabled", "topic", topic, "error", err)
+		} else {
+			s.logger.Info("notification service subscribed", "topic", topic)
+		}
+	}
+
+	go s.scanHumanApprovals(ctx)
+	go s.cleanupLoop(ctx)
+
+	s.logger.Info("notification service started", "pod_id", s.podID)
+	return nil
+}
+
+// RegisterSender adds or overrides a named sender implementation.
+func (s *Service) RegisterSender(name string, sender Sender) {
+	s.senders[name] = sender
+}
+
+func (s *Service) onMQTTMessage(topic string, payload []byte) {
+	// topic: /flowgent/notify/pod/{podID}/ws/{wsID}
+	var msg model.WSMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		s.logger.Warn("mqtt message unmarshal", "error", err)
+		return
+	}
+
+	// Find local WS connection
+	s.mu.RLock()
+	conn, ok := s.wsClients[msg.TaskID] // TaskID reused as routing key
+	s.mu.RUnlock()
+
+	if ok {
+		b, _ := json.Marshal(msg)
+		select {
+		case conn.MsgCh <- b:
+		default:
+			s.logger.Debug("ws client buffer full, dropping", "ws_id", conn.ID)
+		}
+	}
+}
+
+// RegisterWS adds a WebSocket client and creates a subscription route.
+func (s *Service) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error) {
+	conn := &wsConn{
+		ID:          uuid.New().String(),
+		AgentFlowID: agentFlowID,
+		MsgCh:       make(chan []byte, 64),
+		done:        make(chan struct{}),
+	}
+
+	// Persist subscription route
+	route := &model.SubscriptionRoute{
+		ID:          uuid.New().String(),
+		AgentFlowID: agentFlowID,
+		WSID:        conn.ID,
+		PodID:       s.podID,
+	}
+	if err := s.store.SaveSubscriptionRoute(ctx, route); err != nil {
+		return nil, fmt.Errorf("save subscription route: %w", err)
+	}
+
+	s.mu.Lock()
+	s.wsClients[conn.ID] = conn
+	s.mu.Unlock()
+
+	s.logger.Info("ws client registered", "ws_id", conn.ID, "agentflow_id", agentFlowID)
+	return conn, nil
+}
+
+// UnregisterWS removes a WebSocket client and its subscription route.
+func (s *Service) UnregisterWS(ctx context.Context, wsID string) {
+	s.mu.Lock()
+	delete(s.wsClients, wsID)
+	s.mu.Unlock()
+
+	// Find and delete the route
+	_ = s.store.DeleteSubscriptionRoute(ctx, wsID) // wsID == route ID in our convention
+}
+
+// scanHumanApprovals polls for pending human approvals and dispatches notifications.
+func (s *Service) scanHumanApprovals(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	seen := make(map[string]bool) // deduplicate within this pod's lifetime
+
+	for {
+		select {
+		case <-ticker.C:
+			approvals, err := s.store.GetPendingApprovals(ctx)
+			if err != nil {
+				s.logger.Error("scan pending approvals", "error", err)
+				continue
+			}
+
+			for _, a := range approvals {
+				if seen[a.Token] {
+					continue
+				}
+				seen[a.Token] = true
+
+				afRunID := a.AgentFlowRunID
+				if afRunID == "" {
+					afRunID = a.TaskRunID // fallback
+				}
+
+				msg := model.WSMessage{
+					Type:    model.WSHumanApprovalCreated,
+					RunID:   afRunID,
+					TaskID:  a.TaskRunID,
+					Payload: map[string]any{
+						"token":  a.Token,
+						"status": a.Status,
+					},
+				}
+
+				// Push via MQTT to all subscribed pods
+				if s.mqtt != nil {
+					s.pushToSubscribers(ctx, afRunID, &msg)
+				}
+
+				// Also send via configured notification channels
+				s.notifyChannels(ctx, a.Token, "Human Approval Required",
+					fmt.Sprintf("A human approval is pending for task %s. Token: %s", a.TaskRunID, a.Token))
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// pushToSubscribers looks up the subscription routing table and publishes
+// to each subscriber pod's MQTT channel.
+func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
+	routes, err := s.store.GetSubscriptionRoutesByAgentFlow(ctx, agentFlowID)
+	if err != nil {
+		s.logger.Error("lookup subscription routes", "error", err)
+		return
+	}
+
+	b, _ := json.Marshal(msg)
+	for _, route := range routes {
+		topic := fmt.Sprintf("/flowgent/notify/pod/%s/ws/%s", route.PodID, route.WSID)
+		if err := s.mqtt.Publish(ctx, topic, b); err != nil {
+			s.logger.Warn("mqtt publish", "topic", topic, "error", err)
+		}
+	}
+}
+
+// notifyChannels sends a notification through all configured notification channels.
+func (s *Service) notifyChannels(ctx context.Context, recipient, title, body string) {
+	channels, err := s.store.ListNotificationChannels(ctx, "")
+	if err != nil {
+		s.logger.Error("list notification channels", "error", err)
+		return
+	}
+
+	for _, ch := range channels {
+		if !ch.Enabled {
+			continue
+		}
+		sender, ok := s.senders[string(ch.Type)]
+		if !ok {
+			s.logger.Warn("unknown channel type", "type", ch.Type)
+			continue
+		}
+
+		// Configure sender with channel config
+		if err := configureSender(sender, ch.Config); err != nil {
+			s.logger.Warn("configure sender", "channel", ch.Name, "error", err)
+			continue
+		}
+
+		go func(ch model.NotificationChannel, sender Sender) {
+			if err := sender.Send(ctx, recipient, title, body); err != nil {
+				s.logger.Error("send notification", "channel", ch.Name, "error", err)
+			}
+		}(ch, sender)
+	}
+}
+
+// cleanupLoop periodically removes orphaned subscription routes.
+func (s *Service) cleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			n, err := s.store.CleanupOrphanedRoutes(ctx, s.podID, 5*time.Minute)
+			if err != nil {
+				s.logger.Error("cleanup orphaned routes", "error", err)
+			} else if n > 0 {
+				s.logger.Info("cleaned up orphaned routes", "count", n)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// Shutdown gracefully stops the notification service.
+func (s *Service) Shutdown() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, conn := range s.wsClients {
+		conn.Close()
+		delete(s.wsClients, id)
+	}
+	s.logger.Info("notification service shut down")
+}
+
+func configureSender(sender Sender, config map[string]any) error {
+	b, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, sender)
+}

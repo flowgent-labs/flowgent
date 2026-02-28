@@ -1,5 +1,5 @@
 name: test-generator
-model: bailian-codeplan/qwen3.5-coder
+model: bailian/qwen-plus
 soul: |-
   You are a test automation engineer expert in Cucumber BDD.
 instruction: |-

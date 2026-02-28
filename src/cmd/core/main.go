@@ -55,12 +55,13 @@ and auditable autonomous workflows.`,
 // ─── Shared PID file flags (per service) ──────────────────────
 
 var (
-	pidDaemon      string
-	pidAPIServer   string
-	pidA2A         string
-	pidWallet      string
-	pidTaskManager string
-	pidJobManager  string
+	pidDaemon       string
+	pidAPIServer    string
+	pidA2A          string
+	pidWallet       string
+	pidTaskManager  string
+	pidJobManager   string
+	pidNotification string
 )
 
 // ─── daemon ───────────────────────────────────────────────────
@@ -286,6 +287,38 @@ var jobmanagerRestartCmd = &cobra.Command{
 	},
 }
 
+// ─── notification ────────────────────────────────────────────
+
+var notificationCmd = &cobra.Command{
+	Use:   "notification",
+	Short: "Manage the notification service (scanner + WS push + channels)",
+	Long:  "Start, stop, or restart the standalone notification service with WebSocket push.",
+}
+
+var notificationStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the notification service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runNotification("start", pidNotification)
+	},
+}
+
+var notificationStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a running notification service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runNotification("stop", pidNotification)
+	},
+}
+
+var notificationRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the notification service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runNotification("restart", pidNotification)
+	},
+}
+
 // ─── console ──────────────────────────────────────────────────
 
 var consoleCmd = &cobra.Command{
@@ -362,6 +395,13 @@ func main() {
 	jobmanagerCmd.AddCommand(jobmanagerStartCmd)
 	jobmanagerCmd.AddCommand(jobmanagerStopCmd)
 	jobmanagerCmd.AddCommand(jobmanagerRestartCmd)
+
+	// notification
+	rootCmd.AddCommand(notificationCmd)
+	notificationCmd.AddCommand(notificationStartCmd)
+	notificationCmd.AddCommand(notificationStopCmd)
+	notificationCmd.AddCommand(notificationRestartCmd)
+	notificationStartCmd.Flags().StringVar(&pidNotification, "pid-file", "", "PID file")
 
 	// console
 	rootCmd.AddCommand(consoleCmd)

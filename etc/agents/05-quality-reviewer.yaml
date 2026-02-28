@@ -1,4 +1,4 @@
 name: quality-reviewer
-model: bailian-codeplan/qwen3.6-plus
+model: bailian/qwen-plus
 soul: |-
   You are a code quality reviewer.

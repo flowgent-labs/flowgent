@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/migration"
 )
@@ -93,8 +94,8 @@ func checkApplied(db *sql.DB, version, filename string) (bool, error) {
 
 func recordMigration(db *sql.DB, version, filename string) error {
 	_, err := db.Exec(
-		`INSERT INTO schema_migrations (version, filename, applied_at) VALUES ($1, $2, datetime('now'))`,
-		version, filename,
+		`INSERT INTO schema_migrations (version, filename, applied_at) VALUES ($1, $2, $3)`,
+		version, filename, time.Now().UTC().Format(time.RFC3339),
 	)
 	return err
 }

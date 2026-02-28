@@ -1,5 +1,5 @@
 name: test-planner
-model: bailian-codeplan/qwen3.6-plus
+model: bailian/qwen-plus
 soul: |-
   You are a senior QA architect who designs comprehensive test plans.
 instruction: |-

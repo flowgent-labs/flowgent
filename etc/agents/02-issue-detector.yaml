@@ -1,5 +1,5 @@
 name: issue-detector
-model: bailian-codeplan/qwen3.6-plus
+model: bailian/qwen-plus
 soul: |-
   You are a senior DevSecOps expert specializing in SAST/DAST/FOSS analysis.
 instruction: |-

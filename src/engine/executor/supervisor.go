@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
@@ -38,14 +40,21 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *model.ExecutionP
 		return nil, fmt.Errorf("supervisor LLM call failed: %w", err)
 	}
 
+	// Extract JSON from LLM response (may have preamble text like "Based on analysis...")
+	jsonStr := extractJSON(resp)
 	var decision map[string]any
-	if err := json.Unmarshal([]byte(resp), &decision); err != nil {
-		return nil, fmt.Errorf("supervisor output invalid JSON: %w", err)
+	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
+		return nil, fmt.Errorf("supervisor output invalid JSON: %w (raw: %s)", err, resp[:min(len(resp),200)])
 	}
 
 	_ = e.store.LogSupervisorDecision(ctx, plan.AgentFlowRunID, plan.TaskID, plan.Input, decision)
 
 	action, _ := decision["action"].(string)
+	// Default to "continue" if action is missing or empty (defensive)
+	if action == "" {
+		action = "continue"
+		decision["action"] = "continue"
+	}
 	if plan.NodeSpec.SupervisorConfig != nil && len(plan.NodeSpec.SupervisorConfig.AllowedActions) > 0 {
 		allowed := plan.NodeSpec.SupervisorConfig.AllowedActions
 		found := false
@@ -61,5 +70,22 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *model.ExecutionP
 	}
 
 	return &model.TaskResult{Output: decision}, nil
+}
+
+// extractJSON finds the first balanced JSON object in text, handling LLM preamble.
+func extractJSON(s string) string {
+	start := strings.IndexByte(s, '{')
+	end := strings.LastIndexByte(s, '}')
+	if start == -1 || end == -1 || end <= start {
+		return s
+	}
+	return s[start : end+1]
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 

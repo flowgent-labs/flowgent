@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
@@ -47,8 +48,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 	}
 
 	var out map[string]any
-	if err := json.Unmarshal([]byte(resp), &out); err != nil {
-		return nil, fmt.Errorf("agent output is not valid JSON: %w", err)
+	jsonStr := extractJSON(resp)
+	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
+		return nil, fmt.Errorf("agent output is not valid JSON: %w (raw: %s)", err, resp[:min(len(resp), 200)])
 	}
 	return &model.TaskResult{Output: out}, nil
 }

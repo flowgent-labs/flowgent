@@ -1,0 +1,246 @@
+version: '1.0'
+id: security-autonomy-fixer
+description: "Simulates a complete developer remediation agentflow for security vulnerabilities:\n1. DISCOVERY — Fetches the\
+  \ latest commit for each target repository and runs\n   three independent scans: SonarQube (SAST/DAST), Sonatype IQ (FOSS\
+  \ dependency\n   vulnerabilities), and Sonatype Nexus3 (artifact-level compliance). This mirrors\n   a developer who runs\
+  \ local scans before opening a PR.\n2. ANALYZE — An LLM agent (issue-detector) parses, normalizes, deduplicates, and\n \
+  \  assigns severity to all findings, just as a developer would triage scan reports.\n3. FIX — For each issue, a sub-agentflow\
+  \ (sub-fix) delegates to a fixer-agent to\n   analyze the root cause and generate a secure patch, without breaking business\n\
+  \   logic. Nested map nodes allow parallel processing of multiple issues per repo.\n4. REVIEW — Three independent agents\
+  \ (security, quality, architecture) review the\n   proposed fixes in parallel, simulating a multi-expert peer-review process.\n\
+  5. VOTE — A deterministic majority vote decides whether to proceed, reflecting a\n   team consensus before merging risky\
+  \ changes.\n6. SUPERVISOR — A supervisor agent monitors execution for safety, with bounded\n   retries, node injection limits,\
+  \ and the ability to abort unsafe runs.\n7. CONDITIONAL — Based on the vote outcome, the agentflow either proceeds to human\n\
+  \   approval or loops back to re-generate fixes.\n8. HUMAN APPROVAL — An async approval gate (24h timeout) ensures a real\
+  \ developer\n   signs off before any code is pushed.\n9. COMMIT & PR — Creates a dedicated branch, pushes the patches, and\
+  \ opens a\n   pull request with a clear security-fix title — exactly what a developer would\n   do after completing their\
+  \ remediation work.\n10. REPORT — An agent compiles a final summary report: issues found, fixes applied,\n    PR links,\
+  \ and scan results — just as a developer would document their work.\n11. NOTIFY — Multi-channel parallel notification: PR\
+  \ comment on GitHub, email to\n    security team, and webhook push to Microsoft Teams — ensuring all stakeholders\n    are\
+  \ informed regardless of which channel they monitor.\n"
+triggers:
+- type: schedule
+  cron: 0 */6 * * *
+- type: webhook
+  provider: github
+  events:
+  - push
+  - pull_request
+- type: webhook
+  provider: gitlab
+  events:
+  - push
+  - merge_request
+vars:
+  repos:
+  - org/repo1
+  - org/repo2
+  notify_email_to: security-team@company.com
+  notify_webhook_url: https://outlook.office.com/webhook/xxxxx
+nodes:
+- id: get-commit
+  type: tool
+  tool: github
+  input:
+    action: get_latest_commit
+    repo: ${item}
+    branch: main
+- id: scan-sonarqube
+  type: tool
+  tool: sonarqube
+  input:
+    action: get_issues
+    project_key: ${item}
+    branch: main
+- id: scan-sonatypeiq
+  type: tool
+  tool: sonatype-iq
+  input:
+    action: get_jobs_by_commit
+    repo: ${item}
+    commit_sha: ${get-commit.commit_sha}
+- id: scan-nexus3
+  type: tool
+  tool: sonatype-nexus3
+  input:
+    action: get_foss_solution
+    repo: ${item}
+- id: aggregate-issues
+  type: map
+  source: ${vars.repos}
+  concurrency: 5
+  node:
+    type: agent
+    agent: issue-detector
+    input:
+      repo: ${item}
+      sonarqube_issues: ${scan-sonarqube.issues}
+      sonatypeiq_issues: ${scan-sonatypeiq.issues}
+- id: generate-fixes
+  type: map
+  source: ${aggregate-issues.results}
+  concurrency: 5
+  node:
+    type: map
+    source: ${item.issues}
+    node:
+      type: agentflow
+      agentflow: sub-fix
+- id: review-sec
+  type: agent
+  agent: security-reviewer
+- id: review-quality
+  type: agent
+  agent: quality-reviewer
+- id: review-arch
+  type: agent
+  agent: arch-reviewer
+- id: tribunal
+  type: tribunal
+  strategy:
+    type: majority
+  input:
+    votes:
+    - ${review-sec.decision}
+    - ${review-quality.decision}
+    - ${review-arch.decision}
+- id: supervisor-check
+  type: supervisor
+  agent: supervisor
+  supervisor_config:
+    max_retries: 3
+    max_nodes: 50
+    max_injections: 5
+    allowed_actions:
+    - continue
+    - retry
+    - inject
+    - abort
+- id: approved
+  type: condition
+  expression: ${tribunal.decision == true}
+- id: human-approval
+  type: human
+  approval:
+    timeout: 24h
+    on_approve: continue
+    on_reject: 'to: fix'
+- id: create-branch
+  type: tool
+  tool: github
+  input:
+    action: create_branch
+    repo: ${item}
+    branch: security-bot/fix-${timestamp}
+    base_branch: main
+- id: commit-fixes
+  type: tool
+  tool: github
+  input:
+    action: commit_and_push
+    repo: ${item}
+    branch: security-bot/fix-${timestamp}
+    changes: ${generate-fixes.results}
+- id: create-pr
+  type: tool
+  tool: github
+  input:
+    action: create_pull_request
+    repo: ${item}
+    title: '[Security Fix] Auto-generated security fix'
+    head: security-bot/fix-${timestamp}
+    base: main
+    body: Automatically generated by Flowgent Security Autonomy Fixer
+- id: summary-report
+  type: agent
+  agent: issue-detector
+  input:
+    agentflow_id: ${vars.agentflow_id}
+    run_id: ${vars.run_id}
+    issues_found: ${aggregate-issues.results}
+    pr_links: ${create-pr.pr_url}
+    scan_results:
+      sonarqube: ${scan-sonarqube}
+      sonatypeiq: ${scan-sonatypeiq}
+      nexus3: ${scan-nexus3}
+- id: notify-pr
+  type: tool
+  tool: github
+  input:
+    action: create_issue_comment
+    repo: ${item}
+    pr_number: ${create-pr.pr_number}
+    body: ${summary-report.report}
+- id: notify-email
+  type: tool
+  tool: github
+  input:
+    action: send_email
+    to: ${vars.notify_email_to}
+    subject: '[Security Fix] Remediation report'
+    body: ${summary-report.report}
+- id: notify-teams
+  type: tool
+  tool: github
+  input:
+    action: webhook_notify
+    webhook_url: ${vars.notify_webhook_url}
+    title: Security Fix Report
+    body: ${summary-report.report}
+- id: end
+  type: noop
+edges:
+- from: get-commit
+  to: aggregate-issues
+- from: scan-sonarqube
+  to: aggregate-issues
+- from: scan-sonatypeiq
+  to: aggregate-issues
+- from: scan-nexus3
+  to: aggregate-issues
+- from: aggregate-issues
+  to: generate-fixes
+- from: generate-fixes
+  to: review-sec
+- from: generate-fixes
+  to: review-quality
+- from: generate-fixes
+  to: review-arch
+- from: review-sec
+  to: tribunal
+- from: review-quality
+  to: tribunal
+- from: review-arch
+  to: tribunal
+- from: tribunal
+  to: supervisor-check
+- from: supervisor-check
+  to: approved
+- from: approved
+  to: human-approval
+  condition: true
+- from: approved
+  to: generate-fixes
+  condition: false
+- from: human-approval
+  to: create-branch
+- from: create-branch
+  to: commit-fixes
+- from: commit-fixes
+  to: create-pr
+- from: create-pr
+  to: summary-report
+- from: summary-report
+  to: notify-pr
+- from: summary-report
+  to: notify-email
+- from: summary-report
+  to: notify-teams
+- from: notify-pr
+  to: end
+- from: notify-email
+  to: end
+- from: notify-teams
+  to: end
+priority: high
+tenant_id: default

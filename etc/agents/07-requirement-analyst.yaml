@@ -1,5 +1,5 @@
 name: requirement-analyst
-model: bailian-codeplan/qwen3.6-plus
+model: bailian/qwen-plus
 soul: |-
   You are a senior business analyst who extracts structured requirements from Confluence.
 instruction: |-

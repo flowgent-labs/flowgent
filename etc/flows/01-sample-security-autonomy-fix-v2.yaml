@@ -1,0 +1,109 @@
+id: security-autonomy-fixer-simple
+priority: high
+tenant_id: default
+namespace: flowgent-rengine
+description: |
+  Simplified security fixer: agent-only pipeline with .cyberbot metadata step.
+  For scenarios where SonarQube/Sonatype MCP tools are not available.
+  The SonarQube scan is triggered externally via sonar-scanner CLI (see docs).
+
+triggers:
+  - type: webhook
+    provider: github
+    events: [push, pull_request]
+
+vars:
+  repo: "rengine"
+  repo_path: "/home/agent/rengine"
+
+nodes:
+  - id: analyze-issues
+    type: agent
+    agent: issue-detector
+    input:
+      repo: "${vars.repo}"
+      repo_path: "${vars.repo_path}"
+
+  - id: generate-fixes
+    type: agent
+    agent: fixer-agent
+    input:
+      issues: "${analyze-issues.issues}"
+
+  - id: review-security
+    type: agent
+    agent: security-reviewer
+    input:
+      patches: "${generate-fixes.patches}"
+
+  - id: review-quality
+    type: agent
+    agent: quality-reviewer
+    input:
+      patches: "${generate-fixes.patches}"
+
+  - id: review-arch
+    type: agent
+    agent: arch-reviewer
+    input:
+      patches: "${generate-fixes.patches}"
+
+  - id: vote
+    type: tribunal
+    strategy:
+      type: majority
+    input:
+      votes:
+        - "${review-security.decision}"
+        - "${review-quality.decision}"
+        - "${review-arch.decision}"
+
+  - id: supervisor-check
+    type: supervisor
+    agent: supervisor
+    supervisor_config:
+      max_retries: 3
+      max_nodes: 50
+      max_injections: 5
+      allowed_actions: ["continue", "retry", "inject", "abort"]
+
+  - id: is-approved
+    type: condition
+    expression: "${vote.decision == true}"
+
+  - id: generate-cyberbot
+    type: agent
+    agent: issue-detector
+    input:
+      repo: "${vars.repo}"
+      vote_decision: "${vote.decision}"
+      patches: "${generate-fixes.patches}"
+    instruction: |
+      Generate .cyberbot metadata JSON for this automated fix run.
+      {"version":"1.0","project":"${vars.repo}","fixes":[...],"reviewers":[...],"vote_outcome":true|false,"status":"completed|needs_review|rejected"}
+      Output STRICT JSON.
+
+  - id: summary-report
+    type: agent
+    agent: issue-detector
+    input:
+      cyberbot_metadata: "${generate-cyberbot}"
+      repo: "${vars.repo}"
+
+  - id: end
+    type: noop
+
+edges:
+  - { from: analyze-issues, to: generate-fixes }
+  - { from: generate-fixes, to: review-security }
+  - { from: generate-fixes, to: review-quality }
+  - { from: generate-fixes, to: review-arch }
+  - { from: review-security, to: vote }
+  - { from: review-quality, to: vote }
+  - { from: review-arch, to: vote }
+  - { from: vote, to: supervisor-check }
+  - { from: supervisor-check, to: is-approved }
+  - { from: is-approved, to: generate-cyberbot, condition: true }
+  - { from: is-approved, to: summary-report, condition: false }
+  - { from: generate-cyberbot, to: summary-report }
+  - { from: summary-report, to: end }

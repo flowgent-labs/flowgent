@@ -67,18 +67,57 @@ type Edge struct {
 	Condition *bool  `json:"condition,omitempty" yaml:"condition,omitempty"`
 }
 
+// ExecutionMode defines whether a flow runs on a shared cluster or a dedicated one.
+type ExecutionMode string
+
+const (
+	ModeSession     ExecutionMode = "session"
+	ModeApplication ExecutionMode = "application"
+)
+
+// Priority defines the scheduling precedence of an agentflow.
+type Priority string
+
+const (
+	PriorityLow    Priority = "low"
+	PriorityMedium Priority = "medium"
+	PriorityHigh   Priority = "high"
+	PriorityGrade  Priority = "grade" // application mode — dedicated JM+TM cluster
+)
+
+// IsApplication returns true if the priority demands a dedicated cluster.
+func (p Priority) IsApplication() bool { return p == PriorityGrade }
+
 // AgentFlowSpec contains the full specification of an agentflow (nodes, edges, triggers, etc.).
 type AgentFlowSpec struct {
 	ID           string         `json:"id" yaml:"id"`
-	Kind         string         `json:"kind,omitempty" yaml:"kind,omitempty"` // "skill" | "" (regular flow)
+	Kind         string         `json:"kind,omitempty" yaml:"kind,omitempty"`           // "skill" | "" (regular flow)
 	Description  string         `json:"description,omitempty" yaml:"description,omitempty"`
-	Summary      string         `json:"summary,omitempty" yaml:"summary,omitempty"`       // one-liner for A2A card
+	Summary      string         `json:"summary,omitempty" yaml:"summary,omitempty"`     // one-liner for A2A card
 	InputSchema  map[string]any `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`   // optional JSON Schema
 	OutputSchema map[string]any `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // optional JSON Schema
 	Vars         map[string]any `json:"vars,omitempty" yaml:"vars,omitempty"`
 	Nodes        []Node         `json:"nodes" yaml:"nodes"`
 	Edges        []Edge         `json:"edges" yaml:"edges"`
 	Triggers     []TriggerDef   `json:"triggers,omitempty" yaml:"triggers,omitempty"`
+
+	// Multi-tenant & scheduling metadata
+	Priority  Priority       `json:"priority,omitempty" yaml:"priority,omitempty"`   // low|medium|high|grade; grade→application mode
+	TenantID  string         `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"` // owning tenant
+	Namespace string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`  // K8s namespace for application mode
+	Mode      ExecutionMode  `json:"mode,omitempty" yaml:"mode,omitempty"`           // "session" | "application"
+	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`    // extensible key-value tags
+}
+
+// EffectiveMode returns the execution mode, deriving from priority if not explicitly set.
+func (s *AgentFlowSpec) EffectiveMode() ExecutionMode {
+	if s.Mode != "" {
+		return s.Mode
+	}
+	if s.Priority.IsApplication() {
+		return ModeApplication
+	}
+	return ModeSession
 }
 
 // TriggerDef defines a trigger for an agentflow (schedule or webhook).

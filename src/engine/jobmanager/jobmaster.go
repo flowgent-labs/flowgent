@@ -44,6 +44,7 @@ type JobMaster struct {
 	completed      map[string]bool
 	skipped        map[string]bool
 	failed         map[string]bool
+	nodeErrors     map[string]string // nodeID → error message
 	pending        map[string]bool
 	conditions     map[string]bool
 
@@ -72,7 +73,7 @@ func (jm *JobMaster) BuildGraphNodes(nodes []string, rawEdges [][2]string) {
 	jm.deps = make(map[string][]string); jm.children = make(map[string][]string)
 	jm.completed = make(map[string]bool); jm.skipped = make(map[string]bool)
 	jm.failed = make(map[string]bool); jm.pending = make(map[string]bool)
-	jm.conditions = make(map[string]bool)
+	jm.conditions = make(map[string]bool); jm.nodeErrors = make(map[string]string)
 	jm.nodeOutputs = make(map[string]map[string]any)
 	jm.planMap = make(map[string]*model.ExecutionPlan)
 	for _, n := range nodes { jm.deps[n] = []string{}; jm.children[n] = []string{}; jm.pending[n] = true }
@@ -131,7 +132,7 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 	jm.deps = make(map[string][]string); jm.children = make(map[string][]string)
 	jm.completed = make(map[string]bool); jm.skipped = make(map[string]bool)
 	jm.failed = make(map[string]bool); jm.pending = make(map[string]bool)
-	jm.conditions = make(map[string]bool)
+	jm.conditions = make(map[string]bool); jm.nodeErrors = make(map[string]string)
 	jm.nodeOutputs = make(map[string]map[string]any)
 	jm.planMap = make(map[string]*model.ExecutionPlan)
 
@@ -183,7 +184,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 		default:
 		}
 		if jm.IsComplete() { run.Status = model.RunCompleted; run.FinishedAt = TimePtr(); span.SetStatus(codes.Ok, "done"); return jm.store.UpdateAgentFlowRun(ctx, run) }
-		if jm.HasFailed() { run.Status = model.RunFailed; run.Error = "node failed"; run.FinishedAt = TimePtr(); span.SetStatus(codes.Error, "failed"); return jm.store.UpdateAgentFlowRun(ctx, run) }
+		if jm.HasFailed() { run.Status = model.RunFailed; run.Error = jm.collectFirstError(); run.FinishedAt = TimePtr(); span.SetStatus(codes.Error, "failed"); return jm.store.UpdateAgentFlowRun(ctx, run) }
 
 		ready := jm.Ready()
 		if len(ready) == 0 { break }
@@ -196,8 +197,8 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 			_ = jm.store.SaveExecutionPlan(ctx, plan)
 
 			result, err := jm.rm.Schedule(ctx, plan)
-			if err != nil { jm.logger.Error("submit failed", "node", nodeID, "err", err); jm.Fail(nodeID); continue }
-			if result.Error != "" { jm.Fail(nodeID); continue }
+			if err != nil { jm.logger.Error("submit failed", "node", nodeID, "err", err); jm.nodeErrors[nodeID] = err.Error(); jm.Fail(nodeID); continue }
+			if result.Error != "" { jm.logger.Error("node execution failed", "node", nodeID, "err", result.Error); jm.nodeErrors[nodeID] = result.Error; jm.Fail(nodeID); continue }
 
 			if result.Output != nil { jm.nodeOutputs[nodeID] = result.Output }
 			jm.Done(nodeID)
@@ -219,6 +220,11 @@ func (jm *JobMaster) resolveInput(nodeID string) map[string]any {
 	in := make(map[string]any)
 	for _, dep := range jm.Deps(nodeID) { if o, ok := jm.nodeOutputs[dep]; ok { in[dep] = o } }
 	return in
+}
+
+func (jm *JobMaster) collectFirstError() string {
+	for _, err := range jm.nodeErrors { return err }
+	return "node failed"
 }
 
 func (jm *JobMaster) applySupervisorConfig(spec *model.AgentFlowSpec) {

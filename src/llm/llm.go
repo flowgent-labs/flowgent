@@ -110,9 +110,6 @@ func (a *Adapter) Generate(ctx context.Context, systemPrompt, userPrompt, provid
 		if md.Temperature > 0 {
 			temperature = md.Temperature
 		}
-		if md.TopK > 0 {
-			temperature = float64(md.TopK) // some APIs use top_k
-		}
 	}
 
 	reqBody := map[string]any{
@@ -121,7 +118,7 @@ func (a *Adapter) Generate(ctx context.Context, systemPrompt, userPrompt, provid
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
-		"temperature": temperature,
+		"temperature": float64(temperature),
 	}
 
 	if md, ok := pc.models[modelName]; ok {

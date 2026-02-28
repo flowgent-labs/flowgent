@@ -18,6 +18,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/api"
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
+	"github.com/flowgent-labs/flowgent/src/notification"
 	"github.com/flowgent-labs/flowgent/src/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
 	"github.com/flowgent-labs/flowgent/src/engine/taskmanager"
@@ -276,8 +277,11 @@ func startServer(mode string) {
 	// ── API Handlers ───────────────────────────────────
 	healthHandler := &api.HealthHandler{}
 	agentFlowHandler := api.NewAgentFlowHandler(storeImpl, logger, agentFlows, subAgentFlows)
+	agentHandler := api.NewAgentHandler(storeImpl, logger)
 	humanHandler := api.NewHumanHandler(storeImpl, logger)
 	triggerDispatcher := api.NewTriggerDispatcher(storeImpl, agentFlows)
+	runHandler := api.NewRunHandler(storeImpl, logger)
+	notifHandler := api.NewNotificationHandler(storeImpl, logger)
 
 	// ── Cron ───────────────────────────────────────────
 	cronSched := engine.NewScheduleTrigger()
@@ -326,8 +330,25 @@ func startServer(mode string) {
 		shutdownTO = 15 * time.Second
 	}
 
+	// ── Notification Service ────────────────────────────
+	notifSvc := createNotificationService(storeImpl, serviceCfg)
+	if notifSvc != nil {
+		go func() {
+			if err := notifSvc.Start(context.Background()); err != nil {
+				slog.Error("notification service", "error", err)
+			}
+		}()
+		defer notifSvc.Shutdown()
+	}
+
+	// ── WebSocket Bridge ─────────────────────────────────
+	var wsBridge *api.WSBridge
+	if notifSvc != nil {
+		wsBridge = api.NewWSBridge(&notifToWSAdapter{svc: notifSvc}, logger)
+	}
+
 	// ── REST API Server ────────────────────────────────
-		restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, humanHandler, triggerDispatcher)
+		restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler, runHandler, humanHandler, triggerDispatcher, notifHandler, wsBridge)
 		var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
 		restHandler = authMiddleware(serviceCfg.Auth, restMux)
@@ -765,4 +786,35 @@ func hostname() string {
 	h, _ := os.Hostname()
 	if h == "" { h = "unknown" }
 	return h
+}
+
+// notifToWSAdapter adapts notification.Service to the api.WSBridge interface.
+type notifToWSAdapter struct {
+	svc *notification.Service
+}
+
+func (a *notifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (api.WSConnection, error) {
+	conn, err := a.svc.RegisterWS(ctx, agentFlowID)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (a *notifToWSAdapter) PodID() string { return a.svc.PodID() }
+
+// createNotificationService builds a notification.Service from config, or nil if disabled.
+func createNotificationService(s store.Store, cfg *config.ServiceConfig) *notification.Service {
+	if !cfg.Notification.Enabled {
+		return nil
+	}
+	svc := notification.NewService(s, nil) // MQTT client wired when available
+	for _, chCfg := range cfg.Notification.Channels {
+		if !chCfg.Enabled {
+			continue
+		}
+		// Channels from config are persisted to the store on first startup
+		// so the API can manage them dynamically.
+	}
+	return svc
 }

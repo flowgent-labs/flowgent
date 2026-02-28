@@ -16,12 +16,25 @@ type Store interface {
 	GetAgentFlowDefinition(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error)
 	ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error)
 
+	// AgentFlow definitions — dynamic CRUD (DB-backed standard path)
+	DeleteAgentFlowDefinition(ctx context.Context, agentFlowID string) error
+	UpdateAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error
+	GetAgentFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error)
+
+	// Agent definitions (DB-backed)
+	SaveAgent(ctx context.Context, agent *model.AgentDef) error
+	GetAgent(ctx context.Context, name string) (*model.AgentDef, error)
+	ListAgents(ctx context.Context, tenantID string) ([]model.AgentDef, error)
+	DeleteAgent(ctx context.Context, name string) error
+
 	// AgentFlow runs
 	CreateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error
 	UpdateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error
 	GetAgentFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error)
 	ListAgentFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error)
 	ListActiveRuns(ctx context.Context) ([]model.AgentFlowRun, error)
+	DeleteAgentFlowRun(ctx context.Context, id string) error
+	CancelAgentFlowRun(ctx context.Context, id string) error
 
 	// Task runs
 	CreateTaskRun(ctx context.Context, task *model.TaskRun) error
@@ -36,9 +49,21 @@ type Store interface {
 	UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error
 	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
 
-
 	// Supervisor log
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error
+
+	// Notification channels
+	SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error
+	GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error)
+	ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error)
+	DeleteNotificationChannel(ctx context.Context, id string) error
+
+	// Subscription routes (clustered WebSocket delivery)
+	SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error
+	GetSubscriptionRoutesByAgentFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error)
+	DeleteSubscriptionRoute(ctx context.Context, id string) error
+	DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error
+	CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error)
 
 	// ExecutionPlan methods
 	SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error

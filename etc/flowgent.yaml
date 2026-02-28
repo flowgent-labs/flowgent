@@ -211,3 +211,31 @@ orchestration:
       refresh: 1m
     standard:
       enabled: false  # DB-backed agentflows (future Flowgent UI)
+
+# ── Notification Service ──────────────────────────────────────
+notification:
+  enabled: true
+  channels:
+    - name: telegram-ops
+      type: telegram
+      enabled: false
+      config:
+        bot_token: "${TELEGRAM_BOT_TOKEN}"
+        chat_id: "-1001234567890"
+    - name: dingtalk-ops
+      type: dingtalk
+      enabled: false
+      config:
+        webhook_url: "${DINGTALK_WEBHOOK_URL}"
+        secret: "${DINGTALK_SECRET}"
+    - name: slack-ops
+      type: slack
+      enabled: false
+      config:
+        webhook_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#flowgent-alerts"
+
+# ── Multi-Tenant Configuration ────────────────────────────────
+tenant:
+  default_tenant: "default"
+  namespace_prefix: "flowgent-"
