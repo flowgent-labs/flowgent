@@ -39,3 +39,4 @@ go.work.sum
 .idea/
 .vscode/
 ca-certificates.crt
+__pycache__/
