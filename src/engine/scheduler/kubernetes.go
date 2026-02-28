@@ -26,7 +26,8 @@ import (
 )
 
 // KubernetesResourceManager dispatches plans to TM pods via MQTT with elastic
-// scaling. It calls the real K8s API to scale the TM Deployment up/down.
+// scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
+// is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
 type KubernetesResourceManager struct {
 	q            queue.Queue
 	namespace    string
@@ -38,6 +39,7 @@ type KubernetesResourceManager struct {
 	currentTMs   int32
 	idleTimeout  time.Duration
 	planTimeout  time.Duration
+	autoScale    bool // true=application mode (JM auto-scale), false=session (admin-managed)
 
 	mu           sync.Mutex
 	pendingPlans int64
@@ -72,6 +74,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		namespace:    cfg.K8sNamespace,
 		deployName:   cfg.K8sDeploymentName,
 		kubeClient:   clientset,
+		autoScale:    cfg.AutoScale,
 		slotsPerTM:   cfg.SlotsPerTM,
 		minTMs:       cfg.MinTMs,
 		maxTMs:       cfg.MaxTMs,
@@ -158,6 +161,9 @@ func (s *KubernetesResourceManager) scalingLoop(ctx context.Context) {
 }
 
 func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
+	if !s.autoScale {
+		return // session mode: admin manages TM capacity manually
+	}
 	pending := atomic.LoadInt64(&s.pendingPlans)
 	currentTMs := int(atomic.LoadInt32(&s.currentTMs))
 	currentSlots := currentTMs * s.slotsPerTM

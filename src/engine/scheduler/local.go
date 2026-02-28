@@ -46,10 +46,15 @@ func (s *LocalResourceManager) Validate(ctx context.Context) error {
 	return nil
 }
 
-// Schedule acquires a slot, executes the plan via the local TM, and returns the result.
+// Schedule acquires a slot (non-blocking), executes the plan via the local TM.
+// Returns INSUFFICIENT_RESOURCES if all slots are occupied (session mode capacity).
 func (s *LocalResourceManager) Schedule(ctx context.Context, plan *model.ExecutionPlan) (*model.TaskResult, error) {
-	s.sem <- struct{}{}
-	defer func() { <-s.sem }()
+	select {
+	case s.sem <- struct{}{}:
+		defer func() { <-s.sem }()
+	default:
+		return nil, fmt.Errorf("INSUFFICIENT_RESOURCES: all %d local slots occupied", s.poolSize)
+	}
 
 	slog.Debug("local rm schedule", "plan", plan.PlanID, "node", plan.NodeID)
 
