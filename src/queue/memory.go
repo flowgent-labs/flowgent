@@ -101,6 +101,16 @@ func (q *MemoryQueue) Nack(ctx context.Context, msgID string) error {
 	return nil
 }
 
+func (q *MemoryQueue) PublishHeartbeat(ctx context.Context, hb *Heartbeat) error {
+	// In-memory heartbeat is a no-op; sufficient for local mode testing.
+	return nil
+}
+
+func (q *MemoryQueue) ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*Heartbeat, error) {
+	// In-memory mode does not consume heartbeats.
+	return nil, nil
+}
+
 func (q *MemoryQueue) Close() error {
 	close(q.ch)
 	return nil

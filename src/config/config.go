@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -50,11 +51,12 @@ type ServerConfig struct {
 }
 
 type MgmtConfig struct {
-	Enabled bool        `json:"enabled" yaml:"enabled"`
-	Host    string      `json:"host" yaml:"host"`
-	Port    int         `json:"port" yaml:"port"`
-	PProf   PProfConfig `json:"pprof" yaml:"pprof"`
-	OTEL    OTELConfig  `json:"otel" yaml:"otel"`
+	Enabled bool          `json:"enabled" yaml:"enabled"`
+	Host    string        `json:"host" yaml:"host"`
+	Port    int           `json:"port" yaml:"port"`
+	PProf   PProfConfig   `json:"pprof" yaml:"pprof"`
+	OTEL    OTELConfig    `json:"otel" yaml:"otel"`
+	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
 }
 
 type PProfConfig struct {
@@ -63,10 +65,25 @@ type PProfConfig struct {
 }
 
 type OTELConfig struct {
-	Enabled  bool   `json:"enabled" yaml:"enabled"`
-	Endpoint string `json:"endpoint" yaml:"endpoint"`
-	Protocol string `json:"protocol" yaml:"protocol"`
-	Timeout  int    `json:"timeout" yaml:"timeout"`
+	Enabled    bool    `json:"enabled" yaml:"enabled"`
+	Endpoint   string  `json:"endpoint" yaml:"endpoint"`
+	Protocol   string  `json:"protocol" yaml:"protocol"`
+	Timeout    int     `json:"timeout" yaml:"timeout"`
+	SampleRate float64 `json:"sample_rate" yaml:"sample_rate"`
+}
+
+type MetricsConfig struct {
+	Enabled              bool              `json:"enabled" yaml:"enabled"`
+	Prometheus           bool              `json:"prometheus" yaml:"prometheus"`
+	ExportInterval       time.Duration     `json:"export_interval" yaml:"export_interval"`
+	HistogramBoundaries  MetricsBoundaries `json:"histogram_boundaries" yaml:"histogram_boundaries"`
+	Labels               map[string]string `json:"labels" yaml:"labels"`
+}
+
+type MetricsBoundaries struct {
+	Task  []float64 `json:"task" yaml:"task"`
+	LLM   []float64 `json:"llm" yaml:"llm"`
+	Queue []float64 `json:"queue" yaml:"queue"`
 }
 
 // ─── Logging / Auth ──────────────────────────────────────────

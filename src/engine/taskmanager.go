@@ -2,35 +2,20 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/queue"
 	"github.com/flowgent-labs/flowgent/src/util"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
-// TaskManager executes individual nodes. It is stateless — receives a node +
-// input, executes blindly, returns result. The JobManager handles all DAG
-// orchestration and scheduling.
-type TaskManager struct {
-	store         Store
-	mcpClients    map[string]MCPClient
-	agents        map[string]*config.AgentDef
-	llmClient     LLMClient
-	logger        *util.Logger
-	mu            sync.Mutex
-	agentFlowDesc string
-}
-
-// Store is the interface for the persistence layer used by the engine.
-type Store interface {
+// Store is the persistence layer interface, aliased from the store package.
+// Engine tests use MockStore (in testing.go) which also implements this type.
+type Store = interface {
 	model.HumanApprovalStore
 	CreateTaskRun(ctx context.Context, task *model.TaskRun) error
 	UpdateTaskRun(ctx context.Context, task *model.TaskRun) error
@@ -43,6 +28,20 @@ type Store interface {
 	GetTaskRunsByAgentFlowRun(ctx context.Context, agentFlowRunID string) ([]model.TaskRun, error)
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error
 	GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error)
+
+	SaveAgentFlowDefinition(ctx context.Context, d *model.AgentFlowVersion) error
+	ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error)
+	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
+
+	SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error
+	LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error)
+	ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error)
+	SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error
+	LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error)
+	ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error
+	ReleaseLease(ctx context.Context, planID string) error
+
+	DB() *sql.DB
 }
 
 type MCPClient interface {
@@ -53,414 +52,97 @@ type LLMClient interface {
 	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64) (string, error)
 }
 
-func NewTaskManager(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient, logger *util.Logger) *TaskManager {
-	agentMap := make(map[string]*config.AgentDef)
-	for _, a := range agents {
-		agentMap[a.Name] = a
-	}
-	return &TaskManager{
-		store:      store,
-		mcpClients: mcp,
-		agents:     agentMap,
-		llmClient:  llm,
-		logger:     logger,
-	}
+// TaskManager is a persistent worker that consumes ExecutionPlans from
+// a queue (MQTT or local) and executes them via a pool of SlotWorkers.
+// Designed as a long-lived K8s Deployment pod.
+type TaskManager struct {
+	ID          string
+	slotWorkers []*SlotWorker
+	router      *TaskExecutorRouter
+	heartbeat   *HeartbeatPump
+	queue       queue.Queue
+	store       Store
+	metrics     *TaskManagerMetrics
+	logger      *util.Logger
+	mu          sync.Mutex
+	stopCh      chan struct{}
+	stopped     bool
 }
 
-func (tm *TaskManager) SetAgentFlowContext(desc string) {
-	tm.agentFlowDesc = desc
+// TaskManagerConfig configures a TaskManager.
+type TaskManagerConfig struct {
+	ID              string
+	SlotCount       int
+	Queue           queue.Queue
+	Store           Store
+	Agents          []*config.AgentDef
+	MCPClients      map[string]MCPClient
+	LLMClient       LLMClient
+	Logger          *util.Logger
+	HeartbeatInterval time.Duration
 }
 
-// ExecuteNode executes a single node and persists the result via the store.
-// This is the sole public entry point, callable from both local execution
-// (LocalScheduler) and distributed execution (KubernetesScheduler / remote pod).
-func (tm *TaskManager) ExecuteNode(ctx context.Context, task *model.TaskRun, node *model.Node, scope map[string]map[string]any) error {
-	ctx, span := otel.Tracer("flowgent/taskmanager").Start(ctx, "taskmanager.node",
-		trace.WithAttributes(
-			attribute.String("node.id", node.ID),
-			attribute.String("node.type", string(node.Type)),
-			attribute.String("node.agent", node.Agent),
-			attribute.String("node.tool", node.Tool),
-			attribute.String("task.id", task.ID),
-		),
-	)
-	defer span.End()
-
-	resolvedInput := resolveInput(node.Input, scope)
-	task.Input = resolvedInput
-
-	span.AddEvent("node.input", trace.WithAttributes(
-		attribute.String("input.json", util.TruncateJSON(resolvedInput, 2000)),
-	))
-
-	now := time.Now()
-	task.StartedAt = &now
-	task.Status = model.Running
-	if err := tm.store.UpdateTaskRun(ctx, task); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return err
+func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
+	if cfg.ID == "" {
+		cfg.ID = fmt.Sprintf("tm-%d", time.Now().UnixNano())
+	}
+	if cfg.SlotCount <= 0 {
+		cfg.SlotCount = 4
 	}
 
-	var out map[string]any
-	var err error
+	router := NewTaskExecutorRouter()
+	router.Register(NewAgentExecutor(cfg.LLMClient, cfg.Agents))
+	router.Register(&ConditionExecutor{})
+	router.Register(NewToolExecutor(cfg.MCPClients))
+	router.Register(NewSupervisorExecutor(cfg.LLMClient, cfg.Agents, cfg.Store))
+	router.Register(&TribunalExecutor{})
+	router.Register(&MapExecutor{})
+	router.Register(&JoinExecutor{})
+	router.Register(&SubflowExecutor{})
+	router.Register(NewHumanExecutor(cfg.Store))
+	router.Register(&NoopExecutor{})
 
-	switch node.Type {
-	case model.AgentNode:
-		out, err = tm.executeAgent(ctx, node, resolvedInput, scope)
-	case model.ToolNode:
-		out, err = tm.executeTool(ctx, node, resolvedInput)
-	case model.MapNode:
-		out = resolvedInput
-	case model.AgentFlowNode:
-		out = resolvedInput
-	case model.ConditionNode:
-		out, err = tm.executeCondition(node, resolvedInput, scope)
-	case model.TribunalNode:
-		out, err = tm.executeTribunal(node, resolvedInput)
-	case model.HumanNode:
-		return tm.executeHuman(ctx, task, node)
-	case model.SupervisorNode:
-		return tm.executeSupervisor(ctx, task, node, resolvedInput, scope)
-	case model.NoopNode:
-		out = nil
-	default:
-		err = fmt.Errorf("unknown node type: %s", node.Type)
+	metrics := NewTaskManagerMetrics()
+
+	hb := NewHeartbeatPump(cfg.ID, cfg.Queue, cfg.HeartbeatInterval)
+
+	tm := &TaskManager{
+		ID:        cfg.ID,
+		router:    router,
+		heartbeat: hb,
+		queue:     cfg.Queue,
+		store:     cfg.Store,
+		metrics:   metrics,
+		logger:    cfg.Logger,
+		stopCh:    make(chan struct{}),
 	}
 
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return tm.finishTask(ctx, task, nil, err)
+	// Create slot workers
+	for i := 0; i < cfg.SlotCount; i++ {
+		slotID := fmt.Sprintf("%s-slot-%d", cfg.ID, i)
+		sw := NewSlotWorker(slotID, cfg.ID, cfg.Queue, router, cfg.Store, metrics)
+		tm.slotWorkers = append(tm.slotWorkers, sw)
 	}
 
-	if out != nil {
-		span.AddEvent("node.output", trace.WithAttributes(
-			attribute.String("output.json", util.TruncateJSON(out, 4000)),
-		))
-	}
-	return tm.finishTask(ctx, task, out, nil)
+	return tm, nil
 }
 
-func (tm *TaskManager) executeAgent(ctx context.Context, node *model.Node, input map[string]any, scope map[string]map[string]any) (map[string]any, error) {
-	agent := tm.agents[node.Agent]
-	if agent == nil {
-		return nil, fmt.Errorf("agent not found: %s", node.Agent)
+// Start begins the heartbeat pump and all slot workers.
+func (tm *TaskManager) Start(ctx context.Context) error {
+	tm.heartbeat.Start(ctx)
+	for _, sw := range tm.slotWorkers {
+		go sw.Loop(ctx)
 	}
-
-	userPrompt := formatInput(input)
-	instruction := node.Instruction
-	if instruction == "" {
-		instruction = agent.Instruction
-	}
-	if instruction != "" {
-		userPrompt = instruction + "\n\n" + userPrompt
-	}
-
-	resp, err := tm.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, 0.3)
-	if err != nil {
-		return nil, fmt.Errorf("LLM call failed: %w", err)
-	}
-
-	var out map[string]any
-	if err := parseJSON(resp, &out); err != nil {
-		return nil, fmt.Errorf("agent output is not valid JSON: %w", err)
-	}
-	return out, nil
+	tm.logger.Info("task manager started", "id", tm.ID, "slots", len(tm.slotWorkers))
+	return nil
 }
 
-func (tm *TaskManager) executeTool(ctx context.Context, node *model.Node, input map[string]any) (map[string]any, error) {
-	client, ok := tm.mcpClients[node.Tool]
-	if !ok {
-		return nil, fmt.Errorf("MCP client not found: %s", node.Tool)
+// Stop signals all workers to gracefully finish in-flight tasks and stop.
+func (tm *TaskManager) Stop() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if !tm.stopped {
+		tm.stopped = true
+		close(tm.stopCh)
 	}
-
-	toolName := "call"
-	if action, ok := input["action"].(string); ok {
-		toolName = action
-		delete(input, "action")
-	}
-
-	return client.CallTool(ctx, toolName, input)
-}
-
-func (tm *TaskManager) executeCondition(node *model.Node, input map[string]any, scope map[string]map[string]any) (map[string]any, error) {
-	expr := node.Expression
-	if expr == "" {
-		expr = "${input.result == true}"
-	}
-	result := util.EvalCondition(expr, scope)
-	return map[string]any{"result": result}, nil
-}
-
-func (tm *TaskManager) executeTribunal(node *model.Node, input map[string]any) (map[string]any, error) {
-	strategy := node.Strategy
-	decisionType := "majority"
-	if strategy != nil {
-		if t, ok := strategy["type"].(string); ok {
-			decisionType = t
-		}
-	}
-
-	votes, ok := input["votes"].([]map[string]any)
-	if !ok {
-		reviews := extractReviews(input)
-		votes = make([]map[string]any, len(reviews))
-		for i, r := range reviews {
-			if dec, ok := r["decision"].(bool); ok {
-				votes[i] = map[string]any{"decision": dec}
-			} else {
-				votes[i] = map[string]any{"decision": false}
-			}
-		}
-	}
-
-	approveCount := 0
-	totalCount := len(votes)
-	for _, v := range votes {
-		if dec, ok := v["decision"].(bool); ok && dec {
-			approveCount++
-		}
-	}
-
-	var approved bool
-	switch decisionType {
-	case "majority":
-		approved = approveCount > totalCount/2
-	case "unanimous":
-		approved = approveCount == totalCount
-	case "any":
-		approved = approveCount >= 1
-	case "majority_strict":
-		approved = approveCount >= (totalCount*2)/3
-	default:
-		approved = approveCount > totalCount/2
-	}
-
-	confidence := 0.0
-	if totalCount > 0 {
-		confidence = float64(approveCount) / float64(totalCount)
-	}
-
-	return map[string]any{
-		"decision":   approved,
-		"confidence": confidence,
-		"approve":    approveCount,
-		"total":      totalCount,
-		"strategy":   decisionType,
-	}, nil
-}
-
-func (tm *TaskManager) executeHuman(ctx context.Context, task *model.TaskRun, node *model.Node) error {
-	timeout := 24 * time.Hour
-	if node.Approval != nil && node.Approval.Timeout > 0 {
-		timeout = node.Approval.Timeout
-	}
-
-	task.Status = model.WaitingHuman
-
-	approval := &model.HumanApproval{
-		TaskRunID: task.ID,
-		Timeout:   timeout,
-		Status:    "PENDING",
-	}
-
-	if err := tm.store.CreateHumanApproval(ctx, approval); err != nil {
-		return fmt.Errorf("create human approval: %w", err)
-	}
-
-	task.Output = map[string]any{
-		"approval_token": approval.Token,
-		"timeout":        timeout.String(),
-		"status":         "WAITING_HUMAN",
-		"on_approve":     resolveApprovalAction(node.Approval.OnApprove),
-		"on_reject":      resolveApprovalAction(node.Approval.OnReject),
-	}
-
-	return tm.store.UpdateTaskRun(ctx, task)
-}
-
-func resolveApprovalAction(action string) string {
-	switch action {
-	case "continue", "abort", "skip":
-		return action
-	default:
-		return "continue"
-	}
-}
-
-func (tm *TaskManager) executeSupervisor(ctx context.Context, task *model.TaskRun, node *model.Node, input map[string]any, scope map[string]map[string]any) error {
-	ctx, span := otel.Tracer("flowgent/taskmanager").Start(ctx, "taskmanager.supervisor",
-		trace.WithAttributes(
-			attribute.String("supervisor.agent", node.Agent),
-			attribute.String("agentflow.description", tm.agentFlowDesc),
-		),
-	)
-	defer span.End()
-
-	agent := tm.agents[node.Agent]
-	if agent == nil {
-		return fmt.Errorf("supervisor agent not found: %s", node.Agent)
-	}
-
-	systemPrompt := agent.Soul
-	if tm.agentFlowDesc != "" {
-		systemPrompt = fmt.Sprintf("%s\n\n## AgentFlow Context\n%s", agent.Soul, tm.agentFlowDesc)
-	}
-
-	userPrompt := formatInput(input)
-	resp, err := tm.llmClient.Generate(ctx, systemPrompt, userPrompt, agent.Model, 0.2)
-	if err != nil {
-		return fmt.Errorf("supervisor LLM call failed: %w", err)
-	}
-
-	var decision map[string]any
-	if err := parseJSON(resp, &decision); err != nil {
-		return fmt.Errorf("supervisor output invalid JSON: %w", err)
-	}
-
-	_ = tm.store.LogSupervisorDecision(ctx, task.AgentFlowRunID, task.ID, input, decision)
-
-	span.AddEvent("supervisor.decision", trace.WithAttributes(
-		attribute.String("decision.action", fmt.Sprintf("%v", decision["action"])),
-		attribute.String("decision.target", fmt.Sprintf("%v", decision["target"])),
-		attribute.String("decision.reason", fmt.Sprintf("%v", decision["reason"])),
-	))
-
-	action, _ := decision["action"].(string)
-	target, _ := decision["target"].(string)
-
-	if node.SupervisorConfig != nil && len(node.SupervisorConfig.AllowedActions) > 0 {
-		if !containsAction(node.SupervisorConfig.AllowedActions, action) {
-			return fmt.Errorf("supervisor action %q not in allowed_actions: %v", action, node.SupervisorConfig.AllowedActions)
-		}
-	}
-
-	task.Output = decision
-
-	switch action {
-	case "continue":
-		return tm.finishTask(ctx, task, decision, nil)
-	case "retry":
-		return tm.retryFromSupervisor(ctx, task, target, decision)
-	case "redirect":
-		task.Output = decision
-		if err := tm.finishTask(ctx, task, decision, nil); err != nil {
-			return err
-		}
-		return nil
-	case "inject":
-		return tm.injectFromSupervisor(ctx, task, target, decision)
-	case "abort":
-		task.Output = decision
-		if err := tm.finishTask(ctx, task, decision, nil); err != nil {
-			return err
-		}
-		return ErrSupervisorAbort
-	default:
-		return tm.finishTask(ctx, task, decision, nil)
-	}
-}
-
-func (tm *TaskManager) retryFromSupervisor(ctx context.Context, task *model.TaskRun, target string, decision map[string]any) error {
-	task.Output = decision
-	if err := tm.finishTask(ctx, task, decision, nil); err != nil {
-		return err
-	}
-	return &SupervisorActionError{
-		Action: "retry",
-		Target: target,
-		Reason: getString(decision, "reason"),
-	}
-}
-
-func (tm *TaskManager) injectFromSupervisor(ctx context.Context, task *model.TaskRun, target string, decision map[string]any) error {
-	task.Output = decision
-	if err := tm.finishTask(ctx, task, decision, nil); err != nil {
-		return err
-	}
-
-	injectedNodes, ok := decision["injected_nodes"].([]map[string]any)
-	if !ok || len(injectedNodes) == 0 {
-		return nil
-	}
-
-	var toInject []InjectedNode
-	for _, n := range injectedNodes {
-		id, _ := n["id"].(string)
-		nodeType, _ := n["type"].(string)
-		dependsOn, _ := n["depends_on"].([]string)
-		toInject = append(toInject, InjectedNode{
-			ID:        id,
-			NodeType:  nodeType,
-			DependsOn: dependsOn,
-		})
-	}
-
-	return &SupervisorActionError{
-		Action:        "inject",
-		Target:        target,
-		Reason:        getString(decision, "reason"),
-		InjectedNodes: toInject,
-	}
-}
-
-func (tm *TaskManager) finishTask(ctx context.Context, task *model.TaskRun, out map[string]any, err error) error {
-	now := time.Now()
-	task.FinishedAt = &now
-	if err != nil {
-		task.Status = model.Failed
-		task.Error = err.Error()
-	} else {
-		task.Status = model.Success
-		task.Output = out
-	}
-	task.UpdatedAt = now
-	return tm.store.UpdateTaskRun(ctx, task)
-}
-
-func resolveInput(input map[string]any, scope map[string]map[string]any) map[string]any {
-	if input == nil {
-		return make(map[string]any)
-	}
-	resolved := make(map[string]any)
-	for k, v := range input {
-		resolved[k] = util.Resolve(v, scope)
-	}
-	return resolved
-}
-
-func formatInput(input map[string]any) string {
-	b, _ := json.Marshal(input)
-	return string(b)
-}
-
-func extractReviews(input map[string]any) []map[string]any {
-	var reviews []map[string]any
-	for _, v := range input {
-		if m, ok := v.(map[string]any); ok {
-			reviews = append(reviews, m)
-		}
-	}
-	return reviews
-}
-
-func getString(m map[string]any, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func parseJSON(data string, v any) error {
-	return json.Unmarshal([]byte(data), v)
-}
-
-func containsAction(actions []string, action string) bool {
-	for _, a := range actions {
-		if a == action {
-			return true
-		}
-	}
-	return false
 }

@@ -2,42 +2,19 @@ package engine
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/queue"
 	"github.com/flowgent-labs/flowgent/src/util"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
-
-var (
-	ErrSupervisorAbort = errors.New("supervisor abort")
-)
-
-// SupervisorActionError is returned by supervisor node actions that require
-// JobManager-level handling (retry, redirect, inject, abort).
-type SupervisorActionError struct {
-	Action        string
-	Target        string
-	Reason        string
-	InjectedNodes []InjectedNode
-}
-
-func (e *SupervisorActionError) Error() string {
-	return fmt.Sprintf("supervisor action: %s (target=%s, reason=%s)", e.Action, e.Target, e.Reason)
-}
-
-// InjectedNode describes a node to be dynamically injected by a supervisor.
-type InjectedNode struct {
-	ID        string
-	NodeType  string
-	DependsOn []string
-}
 
 // EdgeCondition stores an edge-level condition for routing.
 type EdgeCondition struct {
@@ -46,69 +23,22 @@ type EdgeCondition struct {
 	Condition *bool
 }
 
-// SchedulerType identifies the scheduling backend.
-type SchedulerType string
-
-const (
-	SchedulerTypeLocal       SchedulerType = "local"
-	SchedulerTypeKubernetes  SchedulerType = "kubernetes"
-)
-
-// TaskSubmit carries the parameters needed for a single node execution.
-// In Flink terms, this is the Task that the JobManager submits to a TaskManager.
-// The ClusterID identifies the resource pool for all tasks of a given job.
-type TaskSubmit struct {
-	ClusterID   string                       `json:"cluster_id"`
-	AgentFlowID string                       `json:"agentflow_id"`
-	RunID       string                       `json:"run_id"`
-	NodeID      string                       `json:"node_id"`
-	TaskID      string                       `json:"task_id"`
-	Node        *model.Node                  `json:"node"`
-	Input       map[string]any               `json:"input"`
-}
-
-// TaskResult carries the outcome of a submitted task.
-type TaskResult struct {
-	Output map[string]any `json:"output,omitempty"`
-	Error  string         `json:"error,omitempty"`
-}
-
-// Scheduler is the abstraction for dispatching tasks to TaskManagers.
-// Inspired by Flink's pluggable scheduler (Standalone, Kubernetes, YARN).
+// JobManager is the control-plane orchestrator for a single agent flow run.
+// It builds ExecutionPlans from the AgentFlowSpec, dispatches them via
+// the queue (MQTT), and monitors completion via status callbacks.
 //
-// Implementations:
-//   - LocalScheduler — goroutine pool, for dev/test/all-in-one mode
-//   - KubernetesScheduler       — Kubernetes pod per task, for production distributed mode
-type Scheduler interface {
-	Type() SchedulerType
-	SubmitTask(ctx context.Context, submit *TaskSubmit) (*TaskResult, error)
-	Close() error
-}
-
-// NewScheduler creates a Scheduler by type.
-func NewScheduler(schedType SchedulerType, tm *TaskManager, poolSize int, k8sCfg *KubernetesSchedulerConfig) (Scheduler, error) {
-	switch schedType {
-	case SchedulerTypeLocal:
-		return NewLocalScheduler(tm, poolSize), nil
-	case SchedulerTypeKubernetes:
-		return NewKubernetesScheduler(k8sCfg)
-	default:
-		return nil, fmt.Errorf("unknown scheduler type: %s", schedType)
-	}
-}
-
-// JobManager is the master orchestrator for a single agent flow execution.
-// It corresponds to a Flink JobManager:
-//   - Builds the DAG execution graph from an AgentFlowSpec
-//   - Drives the topological execution loop
-//   - Dispatches individual node tasks to a Scheduler (→ TaskManager)
-//   - Handles condition routing, supervisor actions, and completion
-//   - Each StartJob call creates a ClusterID for resource tracking
-//
-// The execution loop is:
-//
-//	Ready nodes → SubmitTask via Scheduler → Collect results → Mark done → Repeat
+// The JM never executes tasks directly — all execution flows through
+// TaskManager slot workers consuming from the queue.
 type JobManager struct {
+	store     Store
+	q         queue.Queue
+	logger    *util.Logger
+	tracer    trace.Tracer
+	timeout   time.Duration
+	nodeLimit int
+	maxNodes  int
+
+	// DAG state (tracked by the JM, not executed by it)
 	mu             sync.Mutex
 	nodes          []string
 	edges          [][2]string
@@ -120,74 +50,33 @@ type JobManager struct {
 	failed         map[string]bool
 	pending        map[string]bool
 	conditions     map[string]bool
-	injected       map[string][]string
 
-	store       Store
-	scheduler   Scheduler
-	taskManager *TaskManager // used for inline map node execution
-	logger      *util.Logger
-	tracer      trace.Tracer
-
-	timeout        time.Duration
-	injectionLimit int
-	injectionCount int
-	nodeLimit      int
-	maxNodes       int
-
+	// Plan tracking
+	planMap     map[string]*model.ExecutionPlan // nodeID → plan
 	nodeOutputs map[string]map[string]any
 }
 
-// NewJobManager creates a JobManager with the given store, scheduler, and logger.
-func NewJobManager(store Store, scheduler Scheduler, logger *util.Logger) *JobManager {
+// NewJobManager creates a control-plane-only JobManager.
+func NewJobManager(store Store, q queue.Queue, logger *util.Logger) *JobManager {
 	return &JobManager{
-		store:          store,
-		scheduler:      scheduler,
-		logger:         logger,
-		deps:           make(map[string][]string),
-		children:       make(map[string][]string),
-		completed:      make(map[string]bool),
-		skipped:        make(map[string]bool),
-		failed:         make(map[string]bool),
-		pending:        make(map[string]bool),
-		conditions:     make(map[string]bool),
-		injected:       make(map[string][]string),
-		nodeOutputs:    make(map[string]map[string]any),
-		injectionLimit: 10,
+		store:    store,
+		q:        q,
+		logger:   logger,
+		nodeOutputs: make(map[string]map[string]any),
 	}
 }
 
-// NewJobManagerFromSpec creates a JobManager pre-loaded with DAG state from a spec.
-func NewJobManagerFromSpec(spec *model.AgentFlowSpec, store Store, scheduler Scheduler, logger *util.Logger) *JobManager {
-	jm := NewJobManager(store, scheduler, logger)
-	jm.buildGraph(spec)
-	return jm
-}
+func (jm *JobManager) SetTimeout(t time.Duration) { jm.timeout = t }
+func (jm *JobManager) SetNodeLimit(n int)         { jm.nodeLimit = n }
 
-// buildGraph initializes the DAG from the spec's nodes and edges.
-func (jm *JobManager) buildGraph(spec *model.AgentFlowSpec) {
-	nodeIDs := make([]string, len(spec.Nodes))
-	for i, n := range spec.Nodes {
-		nodeIDs[i] = n.ID
-	}
-	var edges [][2]string
-	var edgeConds []EdgeCondition
-	for _, e := range spec.Edges {
-		edges = append(edges, [2]string{e.From, e.To})
-		edgeConds = append(edgeConds, EdgeCondition{From: e.From, To: e.To, Condition: e.Condition})
-	}
-	jm.BuildGraphNodes(nodeIDs, edges)
-	jm.SetEdgeConditions(edgeConds)
-}
+// ─── DAG state methods ──────────────────────────────────
 
-// BuildGraphNodes initializes DAG state from raw node and edge lists.
-// Exported for testing; use buildGraph in production.
 func (jm *JobManager) BuildGraphNodes(nodes []string, rawEdges [][2]string) {
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
 
 	jm.nodes = nodes
 	jm.edges = rawEdges
-
 	jm.deps = make(map[string][]string)
 	jm.children = make(map[string][]string)
 	jm.completed = make(map[string]bool)
@@ -195,9 +84,8 @@ func (jm *JobManager) BuildGraphNodes(nodes []string, rawEdges [][2]string) {
 	jm.failed = make(map[string]bool)
 	jm.pending = make(map[string]bool)
 	jm.conditions = make(map[string]bool)
-	jm.injected = make(map[string][]string)
 	jm.nodeOutputs = make(map[string]map[string]any)
-	jm.injectionCount = 0
+	jm.planMap = make(map[string]*model.ExecutionPlan)
 
 	for _, n := range nodes {
 		jm.deps[n] = []string{}
@@ -209,8 +97,6 @@ func (jm *JobManager) BuildGraphNodes(nodes []string, rawEdges [][2]string) {
 		jm.children[e[0]] = append(jm.children[e[0]], e[1])
 	}
 }
-
-// ─── DAG state methods ──────────────────────────────────
 
 func (jm *JobManager) SetEdgeConditions(ecs []EdgeCondition) {
 	jm.mu.Lock()
@@ -234,11 +120,6 @@ func (jm *JobManager) GetChildCondition(from, to string) *bool {
 	return jm.edgeConditions[key]
 }
 
-func (jm *JobManager) SetTimeout(t time.Duration)      { jm.timeout = t }
-func (jm *JobManager) SetNodeLimit(n int)               { jm.nodeLimit = n }
-func (jm *JobManager) SetInjectionLimit(n int)          { jm.injectionLimit = n }
-func (jm *JobManager) SetTaskManager(tm *TaskManager)   { jm.taskManager = tm }
-
 func (jm *JobManager) Ready() []string {
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
@@ -255,11 +136,7 @@ func (jm *JobManager) Ready() []string {
 }
 
 func (jm *JobManager) allDepsDone(node string) bool {
-	deps := jm.deps[node]
-	if injDeps, ok := jm.injected[node]; ok {
-		deps = append(deps, injDeps...)
-	}
-	for _, dep := range deps {
+	for _, dep := range jm.deps[node] {
 		if jm.skipped[dep] {
 			continue
 		}
@@ -326,12 +203,11 @@ func (jm *JobManager) ConditionResult(node string) (bool, bool) {
 	return r, ok
 }
 
-func (jm *JobManager) Inject(node string, dependsOn []string) {
+func (jm *JobManager) Inject(node string, depsOn []string) {
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
-	jm.injected[node] = dependsOn
 	jm.nodes = append(jm.nodes, node)
-	jm.deps[node] = dependsOn
+	jm.deps[node] = depsOn
 	jm.children[node] = []string{}
 	jm.pending[node] = true
 }
@@ -348,48 +224,103 @@ func (jm *JobManager) Deps(node string) []string {
 	return jm.deps[node]
 }
 
-// ─── Execution ──────────────────────────────────────────
+// ─── Execution Plan Build + Dispatch ────────────────────
 
-// StartJob drives full DAG execution for the given run and spec.
-// It generates a ClusterID for this job's resource pool.
+// buildGraph initializes DAG from spec.
+func (jm *JobManager) buildGraph(spec *model.AgentFlowSpec) {
+	nodeIDs := make([]string, len(spec.Nodes))
+	for i, n := range spec.Nodes {
+		nodeIDs[i] = n.ID
+	}
+	var edges [][2]string
+	var edgeConds []EdgeCondition
+	for _, e := range spec.Edges {
+		edges = append(edges, [2]string{e.From, e.To})
+		edgeConds = append(edgeConds, EdgeCondition{From: e.From, To: e.To, Condition: e.Condition})
+	}
+	jm.BuildGraphNodes(nodeIDs, edges)
+	jm.SetEdgeConditions(edgeConds)
+}
+
+// buildExecutionPlans creates an ExecutionPlan for every node in the spec.
+func (jm *JobManager) buildExecutionPlans(runID string, spec *model.AgentFlowSpec) {
+	jm.mu.Lock()
+	defer jm.mu.Unlock()
+
+	for i := range spec.Nodes {
+		n := &spec.Nodes[i]
+		nodeSpec := model.NodeSpecFromNode(n)
+		plan := &model.ExecutionPlan{
+			PlanID:         fmt.Sprintf("plan-%s-%s", runID, n.ID),
+			AgentFlowRunID: runID,
+			TaskID:         fmt.Sprintf("task-%s-%s", runID, n.ID),
+			TaskType:       nodeTypeToTaskType(n.Type),
+			NodeID:         n.ID,
+			State:          model.TaskPending,
+			MaxRetries:     maxRetry(n.Retry),
+			NodeSpec:       nodeSpec,
+			CreatedAt:      time.Now(),
+		}
+		jm.planMap[n.ID] = plan
+	}
+}
+
+func nodeTypeToTaskType(nt model.NodeType) model.TaskType {
+	switch nt {
+	case model.AgentNode:
+		return model.TaskAgent
+	case model.ToolNode:
+		return model.TaskTool
+	case model.ConditionNode:
+		return model.TaskCondition
+	case model.TribunalNode:
+		return model.TaskTribunal
+	case model.SupervisorNode:
+		return model.TaskSupervisor
+	case model.MapNode:
+		return model.TaskMap
+	case model.HumanNode:
+		return model.TaskHuman
+	case model.AgentFlowNode:
+		return model.TaskSubflow
+	case model.NoopNode:
+		return model.TaskNoop
+	default:
+		return model.TaskNoop
+	}
+}
+
+func maxRetry(r *model.RetryPolicy) int {
+	if r == nil {
+		return 3
+	}
+	return r.Max
+}
+
+// ─── Start Job (control-plane entry point) ──────────────
+
+// StartJob builds the DAG and execution plans, then dispatches initially
+// ready nodes into the queue. It then enters a status-monitoring loop,
+// dispatching newly-ready nodes as dependencies are satisfied.
 func (jm *JobManager) StartJob(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec) error {
 	if jm.tracer == nil {
 		jm.tracer = otel.Tracer("flowgent/jobmanager")
 	}
 
 	jm.buildGraph(spec)
+	jm.buildExecutionPlans(run.ID, spec)
+	jm.applySupervisorConfig(spec)
 
 	clusterID := fmt.Sprintf("cluster-%s-%s", run.AgentFlowID, run.ID)
 	ctx, span := jm.tracer.Start(ctx, "jobmanager.startjob",
 		trace.WithAttributes(
 			attribute.String("agentflow.id", spec.ID),
-			attribute.String("agentflow.description", spec.Description),
 			attribute.String("run.id", run.ID),
 			attribute.String("cluster.id", clusterID),
-			attribute.String("scheduler.type", string(jm.scheduler.Type())),
-			attribute.String("trigger.type", run.Trigger.Type),
-			attribute.String("trigger.source", run.Trigger.Source),
 			attribute.Int("node_count", len(spec.Nodes)),
-			attribute.Int("edge_count", len(spec.Edges)),
 		),
 	)
 	defer span.End()
-
-	nodeMap := make(map[string]*model.Node)
-	for i := range spec.Nodes {
-		n := &spec.Nodes[i]
-		nodeMap[n.ID] = n
-	}
-
-	jm.applySupervisorConfig(spec)
-	if jm.maxNodes > 0 && len(spec.Nodes) > jm.maxNodes {
-		jm.logger.Warn("supervisor max_nodes exceeded", "max", jm.maxNodes, "actual", len(spec.Nodes))
-	}
-
-	scope := make(map[string]map[string]any)
-	if spec.Vars != nil {
-		scope["vars"] = spec.Vars
-	}
 
 	run.Status = model.RunRunning
 	now := time.Now()
@@ -404,6 +335,59 @@ func (jm *JobManager) StartJob(ctx context.Context, run *model.AgentFlowRun, spe
 		defer cancel()
 	}
 
+	// Dispatch initial ready nodes
+	jm.dispatchReadyPlans(ctx, run, spec)
+
+	// Consume status updates until complete or failed
+	return jm.monitorStatus(ctx, run, spec, span)
+}
+
+// dispatchReadyPlans sends ExecutionPlans for all currently ready nodes to the queue.
+func (jm *JobManager) dispatchReadyPlans(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec) {
+	ready := jm.Ready()
+	nodeMap := specNodeMap(spec)
+
+	for _, nodeID := range ready {
+		plan, ok := jm.planMap[nodeID]
+		if !ok {
+			continue
+		}
+
+		// Resolve input from upstream node outputs
+		plan.Input = jm.buildPlanInput(nodeID, nodeMap)
+		plan.State = model.TaskPending
+
+		// Persist plan
+		_ = jm.store.SaveExecutionPlan(ctx, plan)
+
+		// Serialize and enqueue
+		b, _ := json.Marshal(plan)
+		_ = jm.q.Push(ctx, &queue.Message{
+			ID:        plan.PlanID,
+			TaskRunID: run.ID,
+			NodeID:    nodeID,
+			Payload:   b,
+		})
+
+		jm.logger.Debug("dispatched execution plan", "plan_id", plan.PlanID, "node", nodeID)
+	}
+}
+
+// buildPlanInput resolves JSONPath references in the node's input spec
+// against upstream node outputs.
+func (jm *JobManager) buildPlanInput(nodeID string, nodeMap map[string]*model.Node) map[string]any {
+	input := make(map[string]any)
+	deps := jm.Deps(nodeID)
+	for _, dep := range deps {
+		if out, ok := jm.nodeOutputs[dep]; ok {
+			input[dep] = out
+		}
+	}
+	return input
+}
+
+// monitorStatus consumes status updates from the queue and updates DAG state.
+func (jm *JobManager) monitorStatus(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec, span trace.Span) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -411,258 +395,114 @@ func (jm *JobManager) StartJob(ctx context.Context, run *model.AgentFlowRun, spe
 		default:
 		}
 
+		// Check for completion or failure after dispatching this wave
 		if jm.IsComplete() {
 			run.Status = model.RunCompleted
-			run.FinishedAt = ptrTime()
-			run.Output = jm.aggregateOutput()
+			run.FinishedAt = timePtr()
 			span.SetStatus(codes.Ok, "job completed")
 			return jm.store.UpdateAgentFlowRun(ctx, run)
 		}
-
 		if jm.HasFailed() {
 			run.Status = model.RunFailed
 			run.Error = "one or more nodes failed"
-			run.FinishedAt = ptrTime()
+			run.FinishedAt = timePtr()
 			span.SetStatus(codes.Error, "node failed")
 			return jm.store.UpdateAgentFlowRun(ctx, run)
 		}
 
-		ready := jm.Ready()
-		if len(ready) == 0 {
-			break
+		// Poll for status messages
+		msg, err := jm.q.Pop(ctx, 2*time.Second)
+		if err != nil || msg == nil {
+			continue
 		}
 
-		for _, nodeID := range ready {
-			node, ok := nodeMap[nodeID]
-			if !ok {
-				jm.logger.Error("node not found in spec", "node", nodeID)
-				continue
+		var status map[string]any
+		if err := json.Unmarshal(msg.Payload, &status); err != nil {
+			continue
+		}
+
+		nodeID, _ := status["node_id"].(string)
+		state, _ := status["state"].(string)
+
+		switch state {
+		case string(model.Success):
+			// Load the completed plan to get its output
+			if plan, err := jm.store.LoadExecutionPlan(ctx, msg.ID); err == nil && plan != nil && plan.Result != nil {
+				jm.nodeOutputs[nodeID] = plan.Result.Output
 			}
+			jm.Done(nodeID)
 
-			if err := jm.executeNode(ctx, clusterID, run, node, nodeMap, scope); err != nil {
-				var saErr *SupervisorActionError
-				if errors.As(err, &saErr) {
-					if err := jm.handleSupervisorAction(ctx, saErr, nodeMap, scope); err != nil {
-						jm.logger.Error("supervisor action failed", "error", err)
-					}
-					continue
-				}
+			// Condition routing
+			jm.handleConditionRouting(nodeID)
+			// Supervisor handling
+			jm.handleSupervisorResult(nodeID)
 
-				if errors.Is(err, ErrSupervisorAbort) {
-					run.Status = model.RunFailed
-					run.Error = "supervisor aborted"
-					run.FinishedAt = ptrTime()
-					_ = jm.store.UpdateAgentFlowRun(ctx, run)
-					return nil
-				}
+			// Dispatch newly ready nodes (this wave's dependencies satisfied)
+			jm.dispatchReadyPlans(ctx, run, spec)
 
-				jm.logger.Error("node execution failed", "node", nodeID, "error", err)
+		case string(model.Failed), string(model.Skipped):
+			if state == string(model.Failed) {
 				jm.Fail(nodeID)
+			} else {
+				jm.Skip(nodeID)
+				jm.dispatchReadyPlans(ctx, run, spec)
 			}
 		}
-	}
 
-	return nil
+		_ = jm.q.Ack(ctx, msg.ID)
+	}
 }
 
-func (jm *JobManager) executeNode(ctx context.Context, clusterID string, run *model.AgentFlowRun, node *model.Node, nodeMap map[string]*model.Node, scope map[string]map[string]any) error {
-	ctx, span := jm.tracer.Start(ctx, "jobmanager.node",
-		trace.WithAttributes(
-			attribute.String("node.id", node.ID),
-			attribute.String("node.type", string(node.Type)),
-			attribute.String("run.id", run.ID),
-			attribute.String("cluster.id", clusterID),
-			attribute.String("agentflow.id", run.AgentFlowID),
-		),
-	)
-	defer span.End()
-
-	startTime := time.Now()
-	task := &model.TaskRun{
-		AgentFlowRunID: run.ID,
-		NodeID:         node.ID,
-		Status:         model.TaskPending,
-		ExecID:         fmt.Sprintf("%s-%s-%s", run.ID, node.ID, time.Now().Format("20060102150405")),
+func (jm *JobManager) handleConditionRouting(nodeID string) {
+	r, ok := jm.ConditionResult(nodeID)
+	if !ok {
+		return
 	}
-	if node.Retry != nil {
-		task.MaxRetries = node.Retry.Max
-	}
-
-	if err := jm.store.CreateTaskRun(ctx, task); err != nil {
-		return err
-	}
-
-	existing, err := jm.store.GetTaskRunByExecID(ctx, task.ExecID)
-	if err == nil && existing != nil && existing.Status == model.Success {
-		jm.logger.Debug("idempotent replay", "task", existing.ID)
-		jm.Done(node.ID)
-		return nil
-	}
-
-	// Map nodes are handled inline — each child dispatched directly to TaskManager
-	if node.Type == model.MapNode {
-		mapRunner := newMapRunner(jm.store, jm.logger)
-		if err := mapRunner.runMap(ctx, task, node, scope, jm.taskManager); err != nil {
-			return err
-		}
-		if task.Output != nil {
-			scope[node.ID] = task.Output
-		}
-		jm.Done(node.ID)
-		return nil
-	}
-
-	// Resolve input from upstream node outputs
-	nodeScope := jm.buildNodeScope(node.ID, scope, nodeMap)
-
-	submit := &TaskSubmit{
-		ClusterID:   clusterID,
-		AgentFlowID: run.AgentFlowID,
-		RunID:       run.ID,
-		NodeID:      node.ID,
-		TaskID:      task.ID,
-		Node:        node,
-		Input:       nodeScope["input"],
-	}
-
-	retryPolicy := ModelRetry(node.Retry)
-	if jm.nodeLimit > 0 && retryPolicy.Max > jm.nodeLimit {
-		retryPolicy.Max = jm.nodeLimit
-	}
-
-	var result *TaskResult
-	submitErr := RetryWithBackoff(ctx, retryPolicy, func() error {
-		r, err := jm.scheduler.SubmitTask(ctx, submit)
-		if err != nil {
-			return err
-		}
-		result = r
-		if r.Error != "" {
-			return fmt.Errorf("%s", r.Error)
-		}
-		return nil
-	})
-
-	if submitErr != nil {
-		if task.Status == model.WaitingHuman {
-			jm.logger.Info("node waiting for human approval", "node", node.ID, "token", task.Output)
-			span.SetAttributes(attribute.String("node.status", "waiting_human"))
-			return nil
-		}
-
-		task.Status = model.Failed
-		task.Error = submitErr.Error()
-		_ = jm.store.UpdateTaskRun(ctx, task)
-		jm.Fail(node.ID)
-		span.SetStatus(codes.Error, submitErr.Error())
-		span.SetAttributes(
-			attribute.String("node.status", "failed"),
-			attribute.Float64("duration_ms", float64(time.Since(startTime).Milliseconds())),
-		)
-		return submitErr
-	}
-
-	if result != nil && result.Output != nil {
-		scope[node.ID] = result.Output
-		jm.nodeOutputs[node.ID] = result.Output
-	}
-
-	if node.Type == model.ConditionNode {
-		if result != nil {
-			if r, ok := result.Output["result"].(bool); ok {
-				jm.SetConditionResult(node.ID, r)
-				span.SetAttributes(attribute.Bool("condition.result", r))
-				for _, child := range jm.Children(node.ID) {
-					cond := jm.GetChildCondition(node.ID, child)
-					if cond != nil && *cond != r {
-						jm.Skip(child)
-						span.AddEvent("node skipped", trace.WithAttributes(attribute.String("skipped.node", child)))
-					}
-				}
-			}
+	for _, child := range jm.Children(nodeID) {
+		cond := jm.GetChildCondition(nodeID, child)
+		if cond != nil && *cond != r {
+			jm.Skip(child)
 		}
 	}
-
-	span.SetStatus(codes.Ok, "node completed")
-	span.SetAttributes(
-		attribute.String("node.status", "completed"),
-		attribute.Float64("duration_ms", float64(time.Since(startTime).Milliseconds())),
-	)
-	jm.Done(node.ID)
-	return nil
 }
 
-func (jm *JobManager) buildNodeScope(nodeID string, scope map[string]map[string]any, nodeMap map[string]*model.Node) map[string]map[string]any {
-	nodeScope := make(map[string]map[string]any)
-	for k, v := range scope {
-		nodeScope[k] = v
+func (jm *JobManager) handleSupervisorResult(nodeID string) {
+	plan, ok := jm.planMap[nodeID]
+	if !ok || plan.Result == nil {
+		return
 	}
-	deps := jm.Deps(nodeID)
-	for _, dep := range deps {
-		if output, ok := jm.nodeOutputs[dep]; ok {
-			nodeScope[dep] = output
-		}
-	}
-	return nodeScope
-}
-
-func (jm *JobManager) handleSupervisorAction(ctx context.Context, action *SupervisorActionError, nodeMap map[string]*model.Node, scope map[string]map[string]any) error {
-	jm.injectionCount++
-	if jm.injectionCount > jm.injectionLimit {
-		return fmt.Errorf("supervisor injection limit exceeded (%d)", jm.injectionLimit)
-	}
-
-	switch action.Action {
-	case "retry":
-		jm.logger.Info("supervisor retry", "target", action.Target, "reason", action.Reason)
-		jm.Done(action.Target)
-		return nil
-	case "redirect":
-		jm.logger.Info("supervisor redirect", "target", action.Target, "reason", action.Reason)
-		return nil
+	action, _ := plan.Result.Output["action"].(string)
+	switch action {
 	case "inject":
-		jm.logger.Info("supervisor inject", "nodes", len(action.InjectedNodes), "reason", action.Reason)
-		for _, inj := range action.InjectedNodes {
-			injNode := &model.Node{
-				ID:   inj.ID,
-				Type: model.NodeType(inj.NodeType),
-			}
-			nodeMap[inj.ID] = injNode
-			jm.Inject(inj.ID, inj.DependsOn)
-			jm.logger.Debug("node injected", "id", inj.ID, "type", inj.NodeType)
+		// JM handles injection by marking the target as done
+		if target, ok := plan.Result.Output["target"].(string); ok && target != "" {
+			jm.logger.Info("supervisor inject", "target", target)
 		}
-		return nil
 	}
-	return nil
 }
+
+// ─── helpers ────────────────────────────────────────────
 
 func (jm *JobManager) applySupervisorConfig(spec *model.AgentFlowSpec) {
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
 		if n.Type == model.SupervisorNode && n.SupervisorConfig != nil {
-			sc := n.SupervisorConfig
-			if sc.MaxInjections > 0 {
-				jm.injectionLimit = sc.MaxInjections
-			}
-			if sc.MaxRetries > 0 && (jm.nodeLimit == 0 || sc.MaxRetries < jm.nodeLimit) {
-				jm.nodeLimit = sc.MaxRetries
-			}
-			if sc.MaxNodes > 0 {
-				jm.maxNodes = sc.MaxNodes
+			if n.SupervisorConfig.MaxNodes > 0 {
+				jm.maxNodes = n.SupervisorConfig.MaxNodes
 			}
 		}
 	}
 }
 
-func (jm *JobManager) aggregateOutput() map[string]any {
-	output := make(map[string]any)
-	for nodeID, out := range jm.nodeOutputs {
-		output[nodeID] = out
+func specNodeMap(spec *model.AgentFlowSpec) map[string]*model.Node {
+	m := make(map[string]*model.Node)
+	for i := range spec.Nodes {
+		m[spec.Nodes[i].ID] = &spec.Nodes[i]
 	}
-	return output
+	return m
 }
 
-func ptrTime() *time.Time {
+func timePtr() *time.Time {
 	t := time.Now()
 	return &t
 }

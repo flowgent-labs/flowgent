@@ -327,3 +327,11 @@ func topKKnowledgeBySimilarity(entries []model.KnowledgeEntry, query []float32, 
 	}
 	return result
 }
+// ExecutionPlan stubs (TODO: full implementation)
+func (s *SQLiteMemStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error { return nil }
+func (s *SQLiteMemStore) LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) { return nil, nil }
+func (s *SQLiteMemStore) ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) { return nil, nil }
+func (s *SQLiteMemStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error { return nil }
+func (s *SQLiteMemStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) { return nil, nil }
+func (s *SQLiteMemStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error { return nil }
+func (s *SQLiteMemStore) ReleaseLease(ctx context.Context, planID string) error { return nil }

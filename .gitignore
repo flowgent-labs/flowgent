@@ -9,8 +9,8 @@
 *.dylib
 bin/
 flowgent-*
-server
-core
+/server
+/core
 
 # Test binary, built with `go test -c`
 *.test

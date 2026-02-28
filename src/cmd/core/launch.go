@@ -22,6 +22,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/mcp"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
+	"github.com/flowgent-labs/flowgent/src/common/tracing"
 	"github.com/flowgent-labs/flowgent/src/store"
 	"github.com/flowgent-labs/flowgent/src/util"
 )
@@ -182,7 +183,7 @@ func startServer(mode string) {
 		if endpoint == "" {
 			endpoint = "localhost:4317"
 		}
-		oc, err := newOTEL(serviceCfg.ServiceName, Version, endpoint, serviceCfg.Mgmt.OTEL.Timeout)
+		oc, err := tracing.NewProvider(context.Background(), serviceCfg.ServiceName, Version, &serviceCfg.Mgmt.OTEL, &serviceCfg.Mgmt.Metrics)
 		if err != nil {
 			slog.Warn("OTEL initialization failed", "error", err)
 		} else {
@@ -217,7 +218,8 @@ func startServer(mode string) {
 	for i := range serviceCfg.Orchestration.Agents {
 		agents[i] = &serviceCfg.Orchestration.Agents[i]
 	}
-	tm := engine.NewTaskManager(storeImpl, mcpMap, agents, llmClient, logger)
+	q := queue.NewMemoryQueue(1000)
+	tm, _ := engine.NewTaskManager(&engine.TaskManagerConfig{ID: "tm-main", SlotCount: 10, Queue: q, Store: storeImpl, MCPClients: mcpMap, Agents: agents, LLMClient: llmClient, Logger: logger})
 
 	// ── API Handlers ───────────────────────────────────
 	healthHandler := &api.HealthHandler{}
@@ -249,7 +251,8 @@ func startServer(mode string) {
 		flowTimeout = 30 * time.Minute
 	}
 	maxRetries := serviceCfg.Orchestration.MaxNodeRetries
-	q := queue.NewMemoryQueue(1000)
+	// TaskManager.Start is called later with agents/LLM already configured
+	_ = tm.Start(context.Background())
 	go startRunPoller(context.Background(), storeImpl, tm, agentFlowHandler.AgentFlows(), q, logger,
 		flowTimeout, maxRetries, serviceCfg.Orchestration.MaxConcurrentFlows)
 
@@ -555,9 +558,7 @@ func startRunPoller(ctx context.Context, s engine.Store, tm *engine.TaskManager,
 					continue
 				}
 				sem <- struct{}{}
-				scheduler := engine.NewLocalScheduler(tm, maxConcurrent)
-				jm := engine.NewJobManager(s, scheduler, logger)
-				jm.SetTaskManager(tm)
+				jm := engine.NewJobManager(s, q, logger)
 				jm.SetTimeout(flowTimeout)
 				if maxRetries > 0 {
 					jm.SetNodeLimit(maxRetries)

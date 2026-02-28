@@ -2,22 +2,27 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/model"
+	"github.com/flowgent-labs/flowgent/src/queue"
 	"github.com/flowgent-labs/flowgent/src/util"
 )
 
-// ─── VisibleForTesting — mock implementations exported for e2e test access ───
+// ─── MockStore ─────────────────────────────────────────
 
-// MockStore is an in-memory Store for testing engine components.
 type MockStore struct {
 	Mu     sync.Mutex
 	Runs   map[string]*model.AgentFlowRun
 	Tasks  map[string]*model.TaskRun
 	Humans map[string]*model.HumanApproval
+	Plans  map[string]*model.ExecutionPlan
+	Checks map[string]*model.TaskCheckpoint
+	Leases map[string]string
 }
 
 func NewMockStore() *MockStore {
@@ -25,9 +30,13 @@ func NewMockStore() *MockStore {
 		Runs:   make(map[string]*model.AgentFlowRun),
 		Tasks:  make(map[string]*model.TaskRun),
 		Humans: make(map[string]*model.HumanApproval),
+		Plans:  make(map[string]*model.ExecutionPlan),
+		Checks: make(map[string]*model.TaskCheckpoint),
+		Leases: make(map[string]string),
 	}
 }
 
+// Standard CRUD
 func (s *MockStore) CreateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
 	s.Mu.Lock(); defer s.Mu.Unlock(); s.Runs[run.ID] = run; return nil
 }
@@ -67,6 +76,8 @@ func (s *MockStore) GetTaskRunsByAgentFlowRun(ctx context.Context, rid string) (
 	}
 	return out, nil
 }
+
+// Human approval
 func (s *MockStore) CreateHumanApproval(ctx context.Context, a *model.HumanApproval) error {
 	s.Mu.Lock(); defer s.Mu.Unlock(); s.Humans[a.TaskRunID] = a; return nil
 }
@@ -80,12 +91,16 @@ func (s *MockStore) GetHumanApproval(ctx context.Context, token string) (*model.
 func (s *MockStore) UpdateHumanApproval(ctx context.Context, a *model.HumanApproval) error {
 	s.Mu.Lock(); defer s.Mu.Unlock(); s.Humans[a.TaskRunID] = a; return nil
 }
+
+// Supervisor
 func (s *MockStore) LogSupervisorDecision(ctx context.Context, arID, trID string, input, decision map[string]any) error {
 	return nil
 }
 func (s *MockStore) GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error) {
 	s.Mu.Lock(); defer s.Mu.Unlock(); return s.Tasks[execID], nil
 }
+
+// AgentFlow definitions
 func (s *MockStore) SaveAgentFlowDefinition(ctx context.Context, d *model.AgentFlowVersion) error { return nil }
 func (s *MockStore) GetLatestAgentFlowDefinition(ctx context.Context, id string) (*model.AgentFlowVersion, error) {
 	return nil, nil
@@ -95,31 +110,106 @@ func (s *MockStore) GetAgentFlowDefinition(ctx context.Context, id string, v int
 }
 func (s *MockStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error) { return nil, nil }
 func (s *MockStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) { return nil, nil }
-func (s *MockStore) DB() interface{ Close() error } { return nil }
+func (s *MockStore) DB() *sql.DB { return nil }
+
+// ExecutionPlan
+func (s *MockStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
+	s.Mu.Lock(); defer s.Mu.Unlock(); s.Plans[plan.PlanID] = plan; return nil
+}
+func (s *MockStore) LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) {
+	s.Mu.Lock(); defer s.Mu.Unlock(); return s.Plans[planID], nil
+}
+func (s *MockStore) ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) {
+	s.Mu.Lock(); defer s.Mu.Unlock()
+	var out []*model.ExecutionPlan
+	for _, p := range s.Plans {
+		if p.AgentFlowRunID == agentFlowRunID {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// Checkpoint
+func (s *MockStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error {
+	s.Mu.Lock(); defer s.Mu.Unlock(); s.Checks[planID] = cp; return nil
+}
+func (s *MockStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) {
+	s.Mu.Lock(); defer s.Mu.Unlock(); return s.Checks[planID], nil
+}
+
+// Lease
+func (s *MockStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error {
+	s.Mu.Lock(); defer s.Mu.Unlock(); s.Leases[planID] = tmID; return nil
+}
+func (s *MockStore) ReleaseLease(ctx context.Context, planID string) error {
+	s.Mu.Lock(); defer s.Mu.Unlock(); delete(s.Leases, planID); return nil
+}
 
 var _ Store = (*MockStore)(nil)
 
 // ─── Test helpers ──────────────────────────────────────
 
-// NewTestTaskManager creates a TaskManager with a test logger.
 func NewTestTaskManager(store Store, mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) *TaskManager {
-	return NewTaskManager(store, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
+	tm, _ := NewTaskManager(&TaskManagerConfig{
+		ID:         "test-tm",
+		SlotCount:  2,
+		Queue:      NewTestQueue(),
+		Store:      store,
+		Agents:     agents,
+		MCPClients: mcp,
+		LLMClient:  llm,
+		Logger:     util.NewLogger("JSON", "DEBUG"),
+	})
+	return tm
 }
 
-// NewTestJobManager creates a JobManager backed by an in-memory MockStore
-// and a LocalScheduler with pool size 10. Returns the shared store
-// and the JobManager — both reference the same in-memory store.
 func NewTestJobManager(mcp map[string]MCPClient, agents []*config.AgentDef, llm LLMClient) (*MockStore, *JobManager) {
 	s := NewMockStore()
-	tm := NewTaskManager(s, mcp, agents, llm, util.NewLogger("JSON", "DEBUG"))
-	scheduler := NewLocalScheduler(tm, 10)
-	jm := NewJobManager(s, scheduler, util.NewLogger("JSON", "DEBUG"))
-	jm.SetTaskManager(tm)
+	q := NewTestQueue()
+	jm := NewJobManager(s, q, util.NewLogger("JSON", "DEBUG"))
 	return s, jm
 }
 
-// BoolPtr returns a pointer to a bool.
 func BoolPtr(b bool) *bool { return &b }
-
-// MustJSON marshals v to JSON or panics.
 func MustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+// ─── TestQueue (in-memory, implements queue.Queue) ─────
+
+type TestQueue struct {
+	ch chan *queue.Message
+}
+
+func NewTestQueue() *TestQueue {
+	return &TestQueue{ch: make(chan *queue.Message, 100)}
+}
+
+func (q *TestQueue) Push(ctx context.Context, msg *queue.Message) error {
+	select {
+	case q.ch <- msg:
+	default:
+	}
+	return nil
+}
+func (q *TestQueue) Pop(ctx context.Context, timeout time.Duration) (*queue.Message, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case msg := <-q.ch:
+		return msg, nil
+	case <-timer.C:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+func (q *TestQueue) Dequeue(ctx context.Context, group string) (*queue.Message, error) {
+	return q.Pop(ctx, 10*time.Second)
+}
+func (q *TestQueue) PublishHeartbeat(ctx context.Context, hb *queue.Heartbeat) error { return nil }
+func (q *TestQueue) ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*queue.Heartbeat, error) {
+	return nil, nil
+}
+func (q *TestQueue) Ack(ctx context.Context, id string) error  { return nil }
+func (q *TestQueue) Nack(ctx context.Context, id string) error { return nil }
+func (q *TestQueue) Close() error                              { return nil }

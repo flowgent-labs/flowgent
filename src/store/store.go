@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/src/model"
 )
@@ -39,6 +40,19 @@ type Store interface {
 	// Supervisor log
 	LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error
 
-	// DB access for memory store
+	// ExecutionPlan methods
+	SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error
+	LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error)
+	ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error)
+
+	// Checkpoint methods
+	SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error
+	LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error)
+
+	// Lease methods
+	ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error
+	ReleaseLease(ctx context.Context, planID string) error
+
+	// DB access for memory store and RAG
 	DB() *sql.DB
 }

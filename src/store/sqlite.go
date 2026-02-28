@@ -419,3 +419,11 @@ func scanHumanApprovalRow(r rowsScanner) (*model.HumanApproval, error) {
 	return scanHumanApproval(r)
 }
 
+// ExecutionPlan stubs (TODO: full implementation)
+func (s *SQLiteStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error { return nil }
+func (s *SQLiteStore) LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) { return nil, nil }
+func (s *SQLiteStore) ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) { return nil, nil }
+func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error { return nil }
+func (s *SQLiteStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) { return nil, nil }
+func (s *SQLiteStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error { return nil }
+func (s *SQLiteStore) ReleaseLease(ctx context.Context, planID string) error { return nil }

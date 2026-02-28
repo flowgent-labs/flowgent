@@ -28,6 +28,13 @@ type AgentFlowRun struct {
 	UpdatedAt   time.Time      `json:"updated_at" yaml:"updated_at"`
 	StartedAt   *time.Time     `json:"started_at" yaml:"started_at"`
 	FinishedAt  *time.Time     `json:"finished_at" yaml:"finished_at"`
+
+	// SharedMemory is visible to all ExecutionPlans in this run.
+	// Used for cross-node data exchange (e.g., scan results → fix plans).
+	SharedMemory map[string]any `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty"`
+
+	// ExecPlans holds all ExecutionPlans for this run, keyed by plan_id.
+	ExecPlans map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty"`
 }
 
 type TriggerInfo struct {
@@ -45,6 +52,7 @@ const (
 	Failed       TaskStatus = "FAILED"
 	WaitingHuman TaskStatus = "WAITING_HUMAN"
 	Skipped      TaskStatus = "SKIPPED"
+	TaskRetrying TaskStatus = "RETRYING"
 )
 
 type TaskRun struct {

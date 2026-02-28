@@ -328,3 +328,11 @@ func toPGArray(ss []string) string {
 	result += "}"
 	return result
 }
+// ExecutionPlan stubs (TODO: full implementation)
+func (s *PgMemStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error { return nil }
+func (s *PgMemStore) LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) { return nil, nil }
+func (s *PgMemStore) ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) { return nil, nil }
+func (s *PgMemStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error { return nil }
+func (s *PgMemStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) { return nil, nil }
+func (s *PgMemStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error { return nil }
+func (s *PgMemStore) ReleaseLease(ctx context.Context, planID string) error { return nil }

@@ -163,6 +163,25 @@ func (q *MQTTQueue) Dequeue(ctx context.Context, consumerGroup string) (*Message
 	}
 }
 
+func (q *MQTTQueue) PublishHeartbeat(ctx context.Context, hb *Heartbeat) error {
+	data, err := json.Marshal(hb)
+	if err != nil {
+		return err
+	}
+	token := q.client.Publish("flowgent/heartbeat/"+hb.TMID, 0, false, data)
+	if token.WaitTimeout(3*time.Second) && token.Error() != nil {
+		return token.Error()
+	}
+	return nil
+}
+
+func (q *MQTTQueue) ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*Heartbeat, error) {
+	// Heartbeat consumption is handled by the HeartbeatMonitor subscribing
+	// to the heartbeat topic. For simplicity, this returns nil.
+	// Production: use shared MQTT subscription to flowgent/heartbeat/#
+	return nil, nil
+}
+
 func (q *MQTTQueue) Ack(ctx context.Context, msgID string) error {
 	return nil // MQTT QoS 1 handles ack
 }

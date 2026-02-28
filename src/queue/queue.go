@@ -15,6 +15,14 @@ type Message struct {
 	Status    string `json:"status"`
 }
 
+// Heartbeat is a TM liveness signal published periodically.
+type Heartbeat struct {
+	TMID      string    `json:"tm_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Load      int       `json:"load"`
+	Capacity  int       `json:"capacity"`
+}
+
 // Queue is the message queue interface for distributed task processing.
 type Queue interface {
 	// Push enqueues a message for processing.
@@ -27,6 +35,12 @@ type Queue interface {
 	// semantics. In local mode this reads from a channel; in MQTT mode this
 	// subscribes to a topic and blocks for the next publication.
 	Dequeue(ctx context.Context, consumerGroup string) (*Message, error)
+
+	// PublishHeartbeat sends a TM heartbeat to the heartbeat topic.
+	PublishHeartbeat(ctx context.Context, hb *Heartbeat) error
+
+	// ConsumeHeartbeat blocks for the next heartbeat from any TM.
+	ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*Heartbeat, error)
 
 	// Ack acknowledges successful processing of a message.
 	Ack(ctx context.Context, msgID string) error

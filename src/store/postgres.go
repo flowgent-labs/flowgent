@@ -327,3 +327,11 @@ func (s *PostgresStore) LogSupervisorDecision(ctx context.Context, agentFlowRunI
 		agentFlowRunID, taskRunID, toJSON(input), toJSON(decision))
 	return err
 }
+// ExecutionPlan stubs (TODO: full SQL implementation)
+func (s *PostgresStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error { return nil }
+func (s *PostgresStore) LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) { return nil, nil }
+func (s *PostgresStore) ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) { return nil, nil }
+func (s *PostgresStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error { return nil }
+func (s *PostgresStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) { return nil, nil }
+func (s *PostgresStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error { return nil }
+func (s *PostgresStore) ReleaseLease(ctx context.Context, planID string) error { return nil }
