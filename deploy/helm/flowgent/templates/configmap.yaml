@@ -22,7 +22,11 @@ data:
       host: "0.0.0.0"
       port: {{ .Values.apiserver.service.mgmtPort }}
       pprof: { enabled: true, server-bind: "0.0.0.0:6669" }
-      otel: { enabled: true, endpoint: "172.29.235.101:4318", protocol: "grpc", sample_rate: 1.0 }
+      otel:
+        enabled: true
+        endpoint: "{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.otlpHttp }}"
+        protocol: "http"
+        sample_rate: 1.0
       metrics: { enabled: false }
     logging:
       mode: JSON

@@ -33,7 +33,9 @@ func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *confi
 		endpoint = "localhost:4317"
 	}
 
-	exp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure())
+	exp, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithInsecure())
 	if err != nil {
 		return nil, err
 	}

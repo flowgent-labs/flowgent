@@ -38,6 +38,21 @@ redis:
   enabled: false           # true = deploy Redis in-cluster
   externalSecret: ""       # name of existing secret with key "nodes"
 
+# ═══════════════════════════════════════════════════════════════
+# Jaeger — Distributed Tracing (OTEL Collector)
+# ═══════════════════════════════════════════════════════════════
+jaeger:
+  enabled: true             # true = deploy Jaeger all-in-one in-cluster
+  mode: all-in-one          # all-in-one | distributed (TODO)
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0
+  service:
+    otlpGrpc: 4317
+    otlpHttp: 4318
+    ui: 16686
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
 # Queue config
 queue:
   type: mqtt
@@ -125,7 +140,7 @@ taskmanager:
 # Sandbox — [session] Secure Script Execution Worker
 # ═══════════════════════════════════════════════════════════════
 sandbox:
-  replicas: 1
+  replicas: 2
   image: ""
   slots: 4
   workspace: "/var/flowgent/workspace"
