@@ -1,0 +1,91 @@
+{{- if .Values.redis.enabled }}
+{{- $fullname := include "flowgent.fullname" . }}
+{{- $password := randAlphaNum 16 }}
+{{- $svcName := printf "%s-redis" $fullname }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullname }}-redis
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ $password | quote }}
+  nodes: {{ printf "%s-0.%s:6379,%s-1.%s:6380,%s-2.%s:6381" $svcName $svcName $svcName $svcName $svcName $svcName | quote }}
+---
+# Redis Cluster — 3 master nodes with 1 replica each (6 pods total)
+{{- range $i := until 6 }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}-{{ $i }}
+  labels:
+    {{- include "flowgent.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: redis
+    redis-node: "{{ $i }}"
+spec:
+  clusterIP: None
+  ports:
+    - port: {{ add 6379 $i }}
+      targetPort: {{ add 6379 $i }}
+      name: redis
+    - port: {{ add 16379 $i }}
+      targetPort: {{ add 16379 $i }}
+      name: bus
+  selector:
+    app.kubernetes.io/component: redis
+    redis-node: "{{ $i }}"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $svcName }}-{{ $i }}
+  labels:
+    {{- include "flowgent.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: redis
+    redis-node: "{{ $i }}"
+spec:
+  serviceName: {{ $svcName }}-{{ $i }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: redis
+      redis-node: "{{ $i }}"
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: redis
+        redis-node: "{{ $i }}"
+    spec:
+      containers:
+        - name: redis
+          image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+          env:
+            - name: BITNAMI_DEBUG
+              value: "true"
+            - name: REDIS_PASSWORD
+              value: {{ $password | quote }}
+            - name: REDIS_NODES
+              value: {{ printf "%s-0.%s:6379 %s-1.%s:6380 %s-2.%s:6381 %s-3.%s:7379 %s-4.%s:7380 %s-5.%s:7381" $svcName $svcName $svcName $svcName $svcName $svcName $svcName $svcName $svcName $svcName $svcName $svcName | quote }}
+            - name: REDIS_PORT_NUMBER
+              value: {{ add 6379 $i | quote }}
+            - name: REDIS_CLUSTER_ANNOUNCE_IP
+              value: {{ printf "%s-%d.%s" $svcName $i $svcName | quote }}
+            - name: REDIS_CLUSTER_DYNAMIC_IPS
+              value: "no"
+            {{- if eq $i 5 }}
+            - name: REDIS_CLUSTER_REPLICAS
+              value: "1"
+            - name: REDIS_CLUSTER_CREATOR
+              value: "yes"
+            - name: REDISCLI_AUTH
+              value: {{ $password | quote }}
+            {{- end }}
+          ports:
+            - containerPort: {{ add 6379 $i }}
+              name: redis
+            - containerPort: {{ add 16379 $i }}
+              name: bus
+{{- end }}
+{{- end }}

@@ -2,75 +2,46 @@
 # Flowgent Helm Chart — Default Values
 # ═══════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════
-# Deployment Mode — determines which components Helm pre-deploys
-# ═══════════════════════════════════════════════════════════════
-# session:     Pre-deploy shared pool: apiserver, jobmanager, taskmanager,
-#             sandbox, notifier. API Server handles triggers directly;
-#             JM poller picks up PENDING runs. TM scaling is manual.
-#
-# application: Helm deploys apiserver + controller + notifier.
-#             Controller polls PG, creates per-flow jobmanager/taskmanager/
-#             sandbox dynamically (dedicated K8s namespace, auto-scale).
-#             replicas/slots below are IGNORED in this mode.
-#
-# all-in-one:  Single-process dev mode — not applicable to Helm.
+# Deployment mode: session | application
 mode: session
 
 # Application-mode settings (used by Controller when creating dedicated JMs)
 application:
   namespacePrefix: "flowgent"
-  autoCleanup: true       # delete JM Deployment when flow completes
+  autoCleanup: true
   taskmanager:
-    slots: 4              # slots per dynamically-created TM pod
+    slots: 4
   sandbox:
-    slots: 4              # slots per dynamically-created sandbox pod
+    slots: 4
 
-# =========================================================================
-# NOTE: The following component sections are grouped by deployment scope.
-# [always]  = deployed in BOTH session and application modes
-# [session] = only pre-deployed in session mode (application: dynamic)
-# [optional] = disabled by default, enable via --set <name>.enabled=true
-# =========================================================================
-
-# Global settings
 global:
   image:
-    repository: localhost/flowgent
+    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent
     tag: latest
     pullPolicy: IfNotPresent
-  # Shared secrets (overridden by --set or external secrets)
-  databaseUrl: ""
-  mqttBroker: ""
 
 # ═══════════════════════════════════════════════════════════════
-# Infrastructure Dependencies
+# Middleware — enabled=true deploys as part of this chart.
+# enabled=false uses existing external middleware via K8s Secret.
 # ═══════════════════════════════════════════════════════════════
+
 postgresql:
-  enabled: true
-  host: ""
-  port: 5432
-  database: flowgent
-  username: flowgent
-  password: ""
-  ssl: false
-  poolMin: 2
-  poolMax: 20
+  enabled: false          # true = deploy PG in-cluster
+  externalSecret: ""      # name of existing secret with key "url"
+  # When enabled, the secret is auto-created. Internal only — no passwords here.
 
 emqx:
-  enabled: true
-  broker: ""
-  dashboardPort: 18083
+  enabled: false           # true = deploy EMQX in-cluster
+  externalSecret: ""       # name of existing secret with key "broker"
 
-# Queue config — embedded in flowgent.yaml
+redis:
+  enabled: false           # true = deploy Redis in-cluster
+  externalSecret: ""       # name of existing secret with key "nodes"
+
+# Queue config
 queue:
   type: mqtt
   topicPrefix: "flowgent/exec"
-
-redis:
-  enabled: true
-  nodes: []
-  password: ""
 
 # ═══════════════════════════════════════════════════════════════
 # API Server — [always] Multi-tenant REST Gateway
@@ -111,12 +82,8 @@ a2a:
 # ═══════════════════════════════════════════════════════════════
 # Controller — [application] Distributed Sharded Flow Driver
 # ═══════════════════════════════════════════════════════════════
-# Deployed by Helm only in application mode.
-# Polls PG agentflow_definitions, creates dedicated JM Deployments via K8s API
-# for grade-priority flows, and manages their lifecycle (create/cleanup).
-# Not needed in session mode — API Server handles triggers directly.
 controller:
-  replicas: 2          # [application] controller pool for sharding
+  replicas: 2
   image: ""
   pollInterval: "10s"
   serviceAccount:
@@ -131,31 +98,25 @@ controller:
 # ═══════════════════════════════════════════════════════════════
 # JobManager — [session] DAG Orchestration Control Plane
 # ═══════════════════════════════════════════════════════════════
-# Pre-deployed by Helm only in session mode.
-# In application mode, Controller creates dedicated JMs dynamically.
 jobmanager:
-  replicas: 2          # [session] shared pool size
+  replicas: 2
   image: ""
-  # [session] JM HA: when replicas > 1, pods use leader election via K8s labels.
-  # Standby JMs poll and take over if leader fails.
   ha:
     enabled: true
     leaseDuration: "30s"
     renewDeadline: "15s"
     retryPeriod: "5s"
-  resources:           # [always] applies to both session and dynamic JMs
+  resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "1", memory: "1Gi" }
 
 # ═══════════════════════════════════════════════════════════════
 # TaskManager — [session] Elastic Worker Pool
 # ═══════════════════════════════════════════════════════════════
-# Pre-deployed by Helm only in session mode (admin-managed scaling).
-# In application mode, JM's K8s ResourceManager auto-scales TMs dynamically.
 taskmanager:
-  replicas: 2          # [session] admin-managed pool size
+  replicas: 2
   image: ""
-  slots: 4             # [session] slots per TM pod; application mode uses application.taskmanager.slots
+  slots: 4
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2", memory: "2Gi" }
@@ -163,23 +124,17 @@ taskmanager:
 # ═══════════════════════════════════════════════════════════════
 # Sandbox — [session] Secure Script Execution Worker
 # ═══════════════════════════════════════════════════════════════
-# Pre-deployed by Helm only in session mode.
-# In application mode, sandbox workers are created dynamically with the JM.
 sandbox:
-  replicas: 1          # [session] shared sandbox pool size
+  replicas: 1
   image: ""
-  slots: 4             # [session] slots per sandbox pod; application mode uses application.sandbox.slots
-  # [session] Shared workspace volume. Application mode uses per-flow PVCs.
+  slots: 4
   workspace: "/var/flowgent/workspace"
   policy:
     network:
       mode: "none"
       allowed: []
       denied: []
-    allowedRuntimes:
-      - python3
-      - bash
-      - node
+    allowedRuntimes: [python3, bash, node]
     bannedCommands: []
     defaultTimeout: "120s"
     maxTimeout: "600s"
@@ -194,7 +149,7 @@ sandbox:
     limits:   { cpu: "1", memory: "1Gi" }
 
 # ═══════════════════════════════════════════════════════════════
-# Wallet — [optional] Stateless Key Management & Payment Signing
+# Wallet — [optional] x402 Key Management & Payment Signing
 # ═══════════════════════════════════════════════════════════════
 wallet:
   enabled: false
@@ -202,10 +157,8 @@ wallet:
   image: ""
   service:
     port: 9901
-  # Auto-generate root Ed25519 private key if not provided
-  # The generated key is printed in NOTES.txt after install
   autoGenerateKey: true
-  masterKey: ""        # leave empty to auto-generate
+  masterKey: ""
   keyFile: "/var/secrets/flowgent/master.key"
   persistence:
     size: 1Gi
@@ -216,8 +169,6 @@ wallet:
 # ═══════════════════════════════════════════════════════════════
 # Notifier — [always] WS Push + Multi-Channel Notification
 # ═══════════════════════════════════════════════════════════════
-# Deployed in both modes. Session mode mounts a shared workspace volume;
-# application mode uses a dedicated per-flow workspace.
 notifier:
   enabled: true
   replicas: 2
@@ -225,13 +176,6 @@ notifier:
   service:
     port: 9993
   channels: []
-  # Example:
-  # channels:
-  #   - name: slack-ops
-  #     type: slack
-  #     config:
-  #       webhook_url: "https://hooks.slack.com/..."
-  #       channel: "#alerts"
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }

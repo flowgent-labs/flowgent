@@ -1,0 +1,48 @@
+{{- if .Values.emqx.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flowgent.fullname" . }}-emqx
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: emqx
+spec:
+  ports:
+    - name: mqtt
+      port: 1883
+    - name: dashboard
+      port: 18083
+  selector:
+    app.kubernetes.io/component: emqx
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-emqx
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: emqx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: emqx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: emqx
+    spec:
+      containers:
+        - name: emqx
+          image: registry.cn-shenzhen.aliyuncs.com/wl4g/emqx_emqx:5.5.0-elixir-amd64
+          ports:
+            - containerPort: 1883
+              name: mqtt
+            - containerPort: 18083
+              name: dashboard
+          env:
+            - name: EMQX_NODE__NAME
+              value: "emqx@{{ include "flowgent.fullname" . }}-emqx"
+            - name: EMQX_NODE__COOKIE
+              value: "flowgent-emqx-cookie"
+{{- end }}

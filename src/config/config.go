@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -393,10 +392,9 @@ func Load(path string) (*ServiceConfig, error) {
 	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
 
-	// Environment variable overrides — FLOWGENT_SERVER_PORT → server.port
-	v.SetEnvPrefix("FLOWGENT")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
+	// NOTE: AutomaticEnv disabled because K3s injects service env vars
+	// (FLOWGENT_A2A_PORT=tcp://...) that collide with config fields.
+	// Env overrides are handled via os.Getenv() in launch.go directly.
 
 	// Read YAML config file
 	if err := v.ReadInConfig(); err != nil {

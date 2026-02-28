@@ -1,7 +1,66 @@
 # Flowgent — Implementation Progress
 
-**Date:** 2026-05-23
-**Status:** Sandbox microservice implemented (CLI + worker + executor + policy model). Skill + sandbox wired into TM router. Build clean.
+**Date:** 2026-05-25
+**Status:** Helm chart with embedded PG/EMQX/Redis. K3s DNS fixed via Alibaba Cloud mirror. Global rename complete (notifier, resourcemanager, sandboxrunner).
+
+---
+
+## 0. Image Mirroring — Alibaba Cloud Registry Transfer
+
+Docker Hub is blocked in this environment. All images must be mirrored via
+`ssh root@8.219.71.91` (a jump box with Docker Hub access and Alibaba Cloud
+registry credentials).
+
+### Naming Convention
+
+Alibaba Cloud Container Registry free tier supports **2-level** paths:
+
+```
+registry.cn-shenzhen.aliyuncs.com/{namespace}/{underscore_name}:{tag}
+```
+
+- `{namespace}`: `wl4g` (flowgent infra) or `wl4g-k8s` (K8s addons)
+- `{underscore_name}`: use underscores for path separators, e.g. `rancher/mirrored-coredns-coredns:1.14.2` → `rancher_mirrored_coredns_coredns:1.14.2`
+
+### Mirroring Process
+
+```bash
+# Step 1: Pull from Docker Hub on the jump box
+ssh root@8.219.71.91 "docker pull rancher/mirrored-coredns-coredns:1.14.2"
+
+# Step 2: Tag with Alibaba Cloud naming
+ssh root@8.219.71.91 "docker tag rancher/mirrored-coredns-coredns:1.14.2 \
+  registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2"
+
+# Step 3: Push to Alibaba Cloud
+ssh root@8.219.71.91 "docker push registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2"
+
+# Step 4: Use the Alibaba Cloud image in K3s
+kubectl set image deploy/coredns -n kube-system \
+  coredns=registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2
+```
+
+### Mirrored Images Registry
+
+| Original (docker.io) | Alibaba Cloud Mirror |
+|-----------------------|---------------------|
+| `rancher/mirrored-coredns-coredns:1.14.2` | `wl4g/rancher_mirrored_coredns_coredns:1.14.2` |
+| `rancher/local-path-provisioner:v0.0.35` | `wl4g/rancher_local_path_provisioner:v0.0.35` |
+| `rancher/mirrored-metrics-server:v0.8.1` | `wl4g/rancher_mirrored_metrics_server:v0.8.1` |
+| `bitnami/postgresql:18.3` | `wl4g/bitnami_postgresql:18.3` |
+| `emqx/emqx:5.5.0-elixir` | `wl4g/emqx_emqx:5.5.0-elixir-amd64` |
+| `bitnami/redis-cluster:7.0.14` | `wl4g-k8s/bitnami_redis-cluster:7.0.14` |
+| `alpine:3.21` | `wl4g/alpine:3.21` |
+| flowgent (local build) | `wl4g/flowgent:latest` |
+
+### Flowgent Image Build & Push
+
+```bash
+CGO_ENABLED=0 go build -o bin/flowgent ./src/cmd/flowgent/
+sudo podman build -t registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest -f deploy/docker/Dockerfile .
+sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
+  ssh root@8.219.71.91 "docker load && docker push registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest"
+```
 
 ---
 

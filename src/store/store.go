@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/model"
@@ -79,5 +78,5 @@ type Store interface {
 	ReleaseLease(ctx context.Context, planID string) error
 
 	// DB access for memory store and RAG
-	DB() *sql.DB
+	DB() any
 }

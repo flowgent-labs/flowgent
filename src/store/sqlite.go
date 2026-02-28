@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
-
 	"github.com/flowgent-labs/flowgent/src/model"
+
 )
 
 type SQLiteStore struct {
@@ -24,7 +24,7 @@ func NewSQLiteStore(dir string) *SQLiteStore {
 	return &SQLiteStore{dir: dir}
 }
 
-func (s *SQLiteStore) DB() *sql.DB {
+func (s *SQLiteStore) DB() any {
 	return s.db
 }
 
@@ -305,13 +305,6 @@ func (s *SQLiteStore) LogSupervisorDecision(ctx context.Context, agentFlowRunID,
 type scanner interface{ Scan(...any) error }
 type rowsScanner interface{ Scan(...any) error }
 
-func toJSON(v any) []byte {
-	if v == nil {
-		return nil
-	}
-	b, _ := json.Marshal(v)
-	return b
-}
 
 func scanAgentFlowVersion(s scanner) (*model.AgentFlowVersion, error) {
 	var d model.AgentFlowVersion
@@ -427,3 +420,51 @@ func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, planID string, cp *mod
 func (s *SQLiteStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) { return nil, nil }
 func (s *SQLiteStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error { return nil }
 func (s *SQLiteStore) ReleaseLease(ctx context.Context, planID string) error { return nil }
+
+func (s *SQLiteStore) CancelAgentFlowRun(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE agentflow_runs SET status='CANCELLED' WHERE id=?`, id)
+	return err
+}
+func (s *SQLiteStore) DeleteAgentFlowRun(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agentflow_runs WHERE id=?`, id)
+	return err
+}
+func (s *SQLiteStore) SaveNotificationChannel(ctx context.Context, ch *model.NotifierChannel) error { return nil }
+func (s *SQLiteStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotifierChannel, error) { return nil, nil }
+func (s *SQLiteStore) ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) { return nil, nil }
+func (s *SQLiteStore) DeleteNotificationChannel(ctx context.Context, id string) error { return nil }
+func (s *SQLiteStore) SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error { return nil }
+func (s *SQLiteStore) GetSubscriptionRoutesByAgentFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) { return nil, nil }
+func (s *SQLiteStore) DeleteSubscriptionRoute(ctx context.Context, id string) error { return nil }
+func (s *SQLiteStore) DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error { return nil }
+func (s *SQLiteStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) { return 0, nil }
+func (s *SQLiteStore) DeleteAgent(ctx context.Context, name string) error { _, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE name=?`, name); return err }
+
+func (s *SQLiteStore) DeleteAgentFlowDefinition(ctx context.Context, agentFlowID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agentflow_definitions WHERE agentflow_id=?`, agentFlowID)
+	return err
+}
+func (s *SQLiteStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
+	defJSON, _ := json.Marshal(spec)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment) VALUES (?,1,?,?,?)`, spec.ID, defJSON, createdBy, comment)
+	return err
+}
+func (s *SQLiteStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
+	ver, err := s.GetLatestAgentFlowDefinition(ctx, agentFlowID)
+	if err != nil { return nil, err }
+	var spec model.AgentFlowSpec
+	if err := json.Unmarshal(ver.Definition, &spec); err != nil { return nil, err }
+	return &spec, nil
+}
+func (s *SQLiteStore) DeleteNotifierChannel(ctx context.Context, id string) error { return nil }
+func (s *SQLiteStore) GetAgent(ctx context.Context, name string) (*model.AgentDef, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s *SQLiteStore) ListAgents(ctx context.Context, tenantID string) ([]model.AgentDef, error) {
+	return nil, nil
+}
+
+func (s *SQLiteStore) SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error { return nil }
+func (s *SQLiteStore) GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error) { return nil, nil }
+func (s *SQLiteStore) ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) { return nil, nil }
+func (s *SQLiteStore) SaveAgent(ctx context.Context, agent *model.AgentDef) error { return nil }

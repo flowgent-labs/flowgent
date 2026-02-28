@@ -135,6 +135,14 @@ func (h *AgentFlowHandler) TriggerWithVars(w http.ResponseWriter, r *http.Reques
 	tenant := r.PathValue("tenant")
 	spec := h.agentFlows[agentFlowID]
 	if spec == nil {
+		// Fallback: look up from store (PG/SQLite) for flows created via API
+		if h.store != nil {
+			if dbSpec, err := h.store.GetAgentFlowSpec(r.Context(), agentFlowID); err == nil && dbSpec != nil {
+				spec = dbSpec
+			}
+		}
+	}
+	if spec == nil {
 		http.Error(w, "agentflow not found", http.StatusNotFound)
 		return
 	}

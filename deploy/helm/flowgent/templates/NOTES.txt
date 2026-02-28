@@ -8,55 +8,70 @@ Mode: {{ .Values.mode }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔑 Wallet Root Private Key (auto-generated)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 {{ .Values.wallet.generatedMasterKey }}
-
-⚠️  SAVE THIS KEY SECURELY. It is NOT stored in plaintext after install.
-   To re-encrypt or rotate: helm upgrade --set wallet.masterKey=<new-key>
+⚠️  SAVE THIS KEY. Not stored in plaintext after install.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {{- end }}
 
+━━━ Middleware ━━━
+{{- if .Values.postgresql.enabled }}
+  ✅ PostgreSQL       — in-cluster
+{{- else }}
+  ⚠️  PostgreSQL       — external (secret: {{ include "flowgent.pgSecretName" . }})
+{{- end }}
+{{- if .Values.emqx.enabled }}
+  ✅ EMQX             — in-cluster
+{{- else }}
+  ⚠️  EMQX             — external (secret: {{ include "flowgent.mqttSecretName" . }})
+{{- end }}
+{{- if .Values.redis.enabled }}
+  ✅ Redis            — in-cluster
+{{- else }}
+  ⚠️  Redis            — external (secret: {{ .Values.redis.externalSecret }})
+{{- end }}
+
+━━━ Components ━━━
 {{- if eq .Values.mode "session" }}
-━━━ Session Mode — Pre-deployed Shared Pool ━━━
-{{- if .Values.apiserver.enabled }}
-  ✅ API Server      — {{ .Values.apiserver.replicas }} replicas, port {{ .Values.apiserver.service.restPort }}
-{{- end }}
-  ✅ JobManager       — {{ .Values.jobmanager.replicas }} replicas {{ if .Values.jobmanager.ha.enabled }}(HA leader election){{ end }}
-  ✅ TaskManager      — {{ .Values.taskmanager.replicas }} replicas, {{ .Values.taskmanager.slots }} slots each
-  ✅ Sandbox          — {{ .Values.sandbox.replicas }} replicas, {{ .Values.sandbox.slots }} slots each
-{{- if .Values.notifier.enabled }}
-  ✅ Notifier         — {{ .Values.notifier.replicas }} replicas, port {{ .Values.notifier.service.port }}
-{{- end }}
-  ℹ️  API Server handles triggers directly → JM poller picks up PENDING runs.
+━━━ Session Mode — Shared Pool ━━━
+  API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
+  JobManager       — {{ .Values.jobmanager.replicas }} replicas{{ if .Values.jobmanager.ha.enabled }} (HA){{ end }}
+  TaskManager      — {{ .Values.taskmanager.replicas }} replicas × {{ .Values.taskmanager.slots }} slots
+  Sandbox          — {{ .Values.sandbox.replicas }} replicas × {{ .Values.sandbox.slots }} slots
+  Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
 {{- else }}
 ━━━ Application Mode — Controller-Managed ━━━
-{{- if .Values.apiserver.enabled }}
-  ✅ API Server      — {{ .Values.apiserver.replicas }} replicas, port {{ .Values.apiserver.service.restPort }}
+  API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
+  Controller       — {{ .Values.controller.replicas }} replicas
+  Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
 {{- end }}
-  ✅ Controller       — {{ .Values.controller.replicas }} replicas (creates dynamic JMs per grade-priority flow)
-{{- if .Values.notifier.enabled }}
-  ✅ Notifier         — {{ .Values.notifier.replicas }} replicas, port {{ .Values.notifier.service.port }}
-{{- end }}
-  ℹ️  Controller polls PG → creates dedicated JM/TM/Sandbox per flow at runtime.
-{{- end }}
-
 {{- if .Values.a2a.enabled }}
-  ✅ A2A             — {{ .Values.a2a.replicas }} replicas, port {{ .Values.a2a.service.port }} (optional)
+  A2A             — {{ .Values.a2a.replicas }} replicas, :{{ .Values.a2a.service.port }}
 {{- end }}
 {{- if .Values.wallet.enabled }}
-  ✅ Wallet           — {{ .Values.wallet.replicas }} replicas, port {{ .Values.wallet.service.port }} (optional)
+  Wallet           — {{ .Values.wallet.replicas }} replicas, :{{ .Values.wallet.service.port }}
 {{- end }}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Quick checks:
+━━━ Quick Checks ━━━
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   curl http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.restPort }}/_/healthz
 
+{{- if not .Values.postgresql.enabled }}
+━━━ Create External PG Secret ━━━
+  kubectl create secret generic {{ include "flowgent.pgSecretName" . }} \
+    --from-literal=url='postgres://user:pass@host:5432/db?sslmode=disable'
+{{- end }}
+{{- if not .Values.emqx.enabled }}
+━━━ Create External MQTT Secret ━━━
+  kubectl create secret generic {{ include "flowgent.mqttSecretName" . }} \
+    --from-literal=broker='tcp://host:1883'
+{{- end }}
+{{- if not .Values.redis.enabled }}
+━━━ Create External Redis Secret ━━━
+  kubectl create secret generic {{ .Values.redis.externalSecret }} \
+    --from-literal=nodes='redis://host:6379' \
+    --from-literal=password='your-password'
+{{- end }}
 {{- if eq .Values.mode "session" }}
-Scale (session mode — admin-managed):
+━━━ Scale ━━━
   helm upgrade {{ .Release.Name }} . --set taskmanager.replicas=8
-  helm upgrade {{ .Release.Name }} . --set sandbox.replicas=4
-{{- else }}
-Application mode uses auto-scaling. Adjust limits:
-  helm upgrade {{ .Release.Name }} . --set application.taskmanager.slots=8
 {{- end }}

@@ -2,7 +2,6 @@ package testutil
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -113,7 +112,7 @@ func (s *MockStore) GetAgentFlowDefinition(ctx context.Context, id string, v int
 }
 func (s *MockStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error) { return nil, nil }
 func (s *MockStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) { return nil, nil }
-func (s *MockStore) DB() *sql.DB { return nil }
+func (s *MockStore) DB() any { return nil }
 
 // ExecutionPlan
 func (s *MockStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
@@ -158,9 +157,9 @@ func (s *MockStore) ListAgents(ctx context.Context, tenantID string) ([]model.Ag
 func (s *MockStore) DeleteAgent(ctx context.Context, name string) error { return nil }
 func (s *MockStore) DeleteAgentFlowRun(ctx context.Context, id string) error { return nil }
 func (s *MockStore) CancelAgentFlowRun(ctx context.Context, id string) error { return nil }
-func (s *MockStore) SaveNotificationChannel(ctx context.Context, ch *model.NotificationChannel) error { return nil }
-func (s *MockStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotificationChannel, error) { return nil, nil }
-func (s *MockStore) ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotificationChannel, error) { return nil, nil }
+func (s *MockStore) SaveNotificationChannel(ctx context.Context, ch *model.NotifierChannel) error { return nil }
+func (s *MockStore) GetNotificationChannel(ctx context.Context, id string) (*model.NotifierChannel, error) { return nil, nil }
+func (s *MockStore) ListNotificationChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) { return nil, nil }
 func (s *MockStore) DeleteNotificationChannel(ctx context.Context, id string) error { return nil }
 func (s *MockStore) SaveSubscriptionRoute(ctx context.Context, r *model.SubscriptionRoute) error { return nil }
 func (s *MockStore) GetSubscriptionRoutesByAgentFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) { return nil, nil }
@@ -168,7 +167,6 @@ func (s *MockStore) DeleteSubscriptionRoute(ctx context.Context, id string) erro
 func (s *MockStore) DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error { return nil }
 func (s *MockStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) { return 0, nil }
 
-var _ engine.Store = (*MockStore)(nil)
 
 // ─── Test helpers ──────────────────────────────────────
 
@@ -224,3 +222,8 @@ func (q *TestQueue) ConsumeHeartbeat(ctx context.Context, timeout time.Duration)
 func (q *TestQueue) Ack(ctx context.Context, id string) error  { return nil }
 func (q *TestQueue) Nack(ctx context.Context, id string) error { return nil }
 func (q *TestQueue) Close() error                              { return nil }
+
+func (s *MockStore) DeleteNotifierChannel(ctx context.Context, id string) error { return nil }
+func (s *MockStore) GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error) { return nil, nil }
+func (s *MockStore) ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) { return nil, nil }
+func (s *MockStore) SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error { return nil }

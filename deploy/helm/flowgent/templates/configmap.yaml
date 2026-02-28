@@ -44,15 +44,16 @@ data:
         eviction-policy: LRU
     storage:
       type: POSTGRE
+    {{- if .Values.postgresql.enabled }}
       postgres:
-        host: {{ .Values.postgresql.host | quote }}
-        port: {{ .Values.postgresql.port }}
-        database: {{ .Values.postgresql.database }}
-        username: {{ .Values.postgresql.username }}
-        password: {{ .Values.postgresql.password | quote }}
-        min-connections: {{ .Values.postgresql.poolMin }}
-        max-connections: {{ .Values.postgresql.poolMax }}
-        ssl: {{ .Values.postgresql.ssl }}
+        host: "{{ include "flowgent.fullname" . }}-postgresql"
+        port: 5432
+        database: flowgent
+        username: flowgent
+        password: flowgent
+        min-connections: 2
+        max-connections: 20
+    {{- end }}
     llm:
       request-timeout: "120s"
       providers: {}
@@ -73,11 +74,11 @@ data:
     queue:
       type: {{ .Values.queue.type | quote }}
       mqtt:
-        broker: {{ include "flowgent.mqttBroker" . | quote }}
+        broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
         topic_prefix: {{ .Values.queue.topicPrefix | quote }}
     lock:
       provider: postgres
-    notification:
+    notifier:
       enabled: {{ .Values.notifier.enabled }}
       {{- if .Values.notifier.channels }}
       channels:

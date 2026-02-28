@@ -28,12 +28,12 @@ spec:
             - name: FLOWGENT_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "flowgent.fullname" . }}-pg
+                  name: {{ include "flowgent.pgSecretName" . }}
                   key: url
             - name: FLOWGENT_MQTT_BROKER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "flowgent.fullname" . }}-mqtt
+                  name: {{ include "flowgent.mqttSecretName" . }}
                   key: broker
                   optional: true
             - name: FLOWGENT_CONFIG_FILE
