@@ -30,38 +30,9 @@
 
 ---
 
-## 2. All-in-One Mode (SQLite + Memory Queue)
+## 2. Session Mode (PG + MQTT + Redis — Shared Cluster)
 
-Quick validation with minimal dependencies:
-
-```bash
-cd /home/agent/flowgent
-
-# Build
-/usr/local/go/bin/go build -o bin/flowgent ./src/cmd/core/
-
-# Create test config (auto-expands env vars)
-cat > etc/flowgent-e2e.yaml << 'YEOF'
-# ... (copy from etc/flowgent.yaml.fully.sample, set storage.type=SQLITE, cache.provider=Memory)
-YEOF
-
-# Start daemon
-./bin/flowgent daemon start -c etc/flowgent-e2e.yaml &
-
-# Trigger e2e test flow
-curl -X POST http://localhost:9999/api/v1/default/agentflows/trigger \
-  -H 'Content-Type: application/json' \
-  -d '{"agentflow_id":"e2e-test","trigger":{"type":"api","source":"manual"}}'
-
-# Check result
-curl http://localhost:9999/api/v1/default/runs | python3 -m json.tool
-```
-
----
-
-## 3. Production Mode (PG + MQTT + Redis)
-
-Full production simulation on k3s master node:
+Full distributed deployment on k3s:
 
 ```bash
 cd /home/agent/flowgent
@@ -292,12 +263,13 @@ All 6 microservices must be running in K3s with PG/EMQX/Redis backend.
 
 | # | Service | Verify |
 |---|---------|--------|
-| 1 | API Server | `curl http://<apiserver-svc>:9999/_/healthz` → `{"status":"ok"}` |
-| 2 | Controller | `kubectl logs deploy/flowgent-controller` → `Controller starting ... shard=X/N` |
-| 3 | JobManager (session) | `kubectl logs deploy/flowgent-jobmanager` → `JobManager started (scheduler=local)` |
-| 4 | TaskManager | `kubectl logs deploy/flowgent-taskmanager` → `TaskManager ... started` |
-| 5 | Wallet | `curl http://<wallet-svc>:9901/health` → 200 |
-| 6 | Notification | `kubectl logs deploy/flowgent-notification` → `Notification service started` |
+| 1 | API Server (REST) | `curl http://<apiserver-svc>:9999/_/healthz` → `{"status":"ok"}` |
+| 2 | API Server (A2A) | `curl http://<apiserver-svc>:9992/.well-known/agent.json` → agent card JSON |
+| 3 | Controller | `kubectl logs deploy/flowgent-controller` → `Controller starting ... shard=X/N` |
+| 4 | JobManager (session) | `kubectl logs deploy/flowgent-jobmanager` → `JobManager started` |
+| 5 | TaskManager | `kubectl logs deploy/flowgent-taskmanager` → `TaskManager ... started` |
+| 6 | Wallet | `curl http://<wallet-svc>:9901/health` → 200 |
+| 7 | Notification | `kubectl logs deploy/flowgent-notification` → `Notification service started` |
 
 ### 9.2 Flow Execution E2E
 

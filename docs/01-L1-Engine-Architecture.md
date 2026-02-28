@@ -336,14 +336,14 @@ Enables resume-after-failure without re-executing completed nodes.
 
 ## 9. Deployment Topologies
 
-### 9.1 All-in-One (Daemon Mode)
+### 9.1 All-in-One Mode (Local Development)
 
 ```bash
-flowgent daemon start -c etc/flowgent.yaml
+flowgent all-in-one start -c etc/flowgent.yaml
 ```
 
 Single process: API Server + JM + TM (LocalRM, goroutine pool). SQLite + Memory
-cache. For development and small-scale testing.
+cache. For development and small-scale local testing only.
 
 ### 9.2 Distributed K8s (Session Mode)
 
@@ -490,7 +490,7 @@ Histogram boundaries (from sample config):
 
 | File | Role |
 |------|------|
-| `src/cmd/flowgent/main.go` | CLI entry (cobra): daemon, apiserver, wallet, controller, etc. |
+| `src/cmd/flowgent/main.go` | CLI entry (cobra): all-in-one, apiserver, wallet, controller, etc. |
 | `src/cmd/flowgent/launch.go` | Subsystem init + JM/TM/Controller/Notification startup |
 | `src/cmd/flowgent/wallet.go` | Wallet daemon (separate for security isolation) |
 | `src/engine/discovery/` | IDiscoveryClient interface + K8s/static implementations |
