@@ -1,0 +1,46 @@
+🎯 Flowgent is deploying!
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+{{- if .Values.wallet.autoGenerateKey }}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔑 Wallet Root Private Key (auto-generated)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{ .Values.wallet.generatedMasterKey }}
+
+⚠️  SAVE THIS KEY SECURELY. It is NOT stored in plaintext after install.
+   To re-encrypt or rotate: helm upgrade --set wallet.masterKey=<new-key>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- end }}
+
+Services (all default to 2 replicas for HA):
+
+{{- if .Values.apiserver.enabled }}
+  ✅ API Server      — {{ .Values.apiserver.replicas }} replicas, port {{ .Values.apiserver.service.restPort }}
+{{- end }}
+{{- if .Values.controller.enabled }}
+  ✅ Controller       — {{ .Values.controller.replicas }} replicas (sharded by hash(flow_id) % N)
+{{- end }}
+{{- if .Values.jobmanager.enabled }}
+  ✅ JobManager       — {{ .Values.jobmanager.replicas }} replicas {{ if .Values.jobmanager.ha.enabled }}(HA: K8s label-selector leader election){{ end }}
+{{- end }}
+{{- if .Values.taskmanager.enabled }}
+  ✅ TaskManager      — {{ .Values.taskmanager.replicas }} replicas, {{ .Values.taskmanager.slots }} slots each
+{{- end }}
+{{- if .Values.wallet.enabled }}
+  ✅ Wallet           — {{ .Values.wallet.replicas }} replicas, port {{ .Values.wallet.service.port }}
+{{- end }}
+{{- if .Values.notification.enabled }}
+  ✅ Notification     — {{ .Values.notification.replicas }} replicas, port {{ .Values.notification.service.port }}
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Quick checks:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  curl http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.restPort }}/_/healthz
+
+Scale:
+  helm upgrade {{ .Release.Name }} . --set taskmanager.replicas=8
+  helm upgrade {{ .Release.Name }} . --set controller.replicas=4

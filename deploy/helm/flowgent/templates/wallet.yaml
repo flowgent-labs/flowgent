@@ -1,0 +1,68 @@
+{{- if .Values.wallet.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-wallet
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: wallet
+spec:
+  replicas: {{ .Values.wallet.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: wallet
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: wallet
+    spec:
+      containers:
+        - name: wallet
+          image: {{ .Values.wallet.image }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args:
+            - "wallet"
+            - "start"
+            - "--listen"
+            - "0.0.0.0:{{ .Values.wallet.service.port }}"
+            - "--master-key-file"
+            - {{ .Values.wallet.keyFile | quote }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.wallet.service.port }}
+          volumeMounts:
+            - name: master-key
+              mountPath: /var/secrets/flowgent
+              readOnly: true
+            - name: wallet-data
+              mountPath: /tmp/wallet
+          env:
+            - name: HOME
+              value: /tmp/wallet
+          resources:
+            {{- toYaml .Values.wallet.resources | nindent 12 }}
+      volumes:
+        - name: master-key
+          secret:
+            secretName: {{ include "flowgent.fullname" . }}-wallet-key
+        - name: wallet-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flowgent.fullname" . }}-wallet
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: wallet
+spec:
+  selector:
+    {{- include "flowgent.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: wallet
+  ports:
+    - name: api
+      port: {{ .Values.wallet.service.port }}
+{{- end }}

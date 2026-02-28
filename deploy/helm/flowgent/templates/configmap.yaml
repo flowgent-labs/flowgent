@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flowgent.fullname" . }}-config
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+data:
+  flowgent.yaml: |
+    service-name: {{ include "flowgent.name" . }}
+    server:
+      host: "0.0.0.0"
+      port: {{ .Values.apiserver.service.restPort }}
+      shutdown-timeout: "15s"
+    a2a:
+      enabled: true
+      host: "0.0.0.0"
+      port: {{ .Values.apiserver.service.a2aPort }}
+    mgmt:
+      enabled: true
+      host: "0.0.0.0"
+      port: {{ .Values.apiserver.service.mgmtPort }}
+      pprof: { enabled: true, server-bind: "0.0.0.0:6669" }
+      otel: { enabled: false }
+      metrics: { enabled: false }
+    logging:
+      mode: JSON
+      level: DEBUG
+    auth:
+      jwt-validity-ak: {{ .Values.apiserver.config.jwtValidityAk }}
+      jwt-validity-rk: {{ .Values.apiserver.config.jwtValidityRk }}
+      jwt-algorithm: {{ .Values.apiserver.config.jwtAlgorithm }}
+      anonymous-paths:
+        {{- range .Values.apiserver.config.anonymousPaths }}
+        - {{ . | quote }}
+        {{- end }}
+    cache:
+      provider: Memory
+      memory:
+        initial-capacity: 32
+        max-capacity: 65535
+        ttl: 3600000
+        eviction-policy: LRU
+    storage:
+      type: POSTGRE
+      postgres:
+        host: {{ .Values.postgresql.host | quote }}
+        port: {{ .Values.postgresql.port }}
+        database: {{ .Values.postgresql.database }}
+        username: {{ .Values.postgresql.username }}
+        password: {{ .Values.postgresql.password | quote }}
+        min-connections: {{ .Values.postgresql.poolMin }}
+        max-connections: {{ .Values.postgresql.poolMax }}
+        ssl: {{ .Values.postgresql.ssl }}
+    llm:
+      request-timeout: "120s"
+      providers: {}
+    orchestration:
+      max-concurrent-flows: 10
+      flow-execution-timeout: "30m"
+      max-node-retries: 3
+      mcps: []
+      agents:
+        static: { enabled: false }
+        standard: { enabled: true }
+      skills:
+        static: { enabled: false }
+        standard: { enabled: false }
+      agentflows:
+        static: { enabled: false }
+        standard: { enabled: true }
+    notification:
+      enabled: {{ .Values.notification.enabled }}
+      {{- if .Values.notification.channels }}
+      channels:
+        {{- toYaml .Values.notification.channels | nindent 8 }}
+      {{- end }}

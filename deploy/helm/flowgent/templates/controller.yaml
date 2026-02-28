@@ -1,0 +1,89 @@
+{{- if .Values.controller.enabled }}
+{{- if .Values.controller.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.controller.serviceAccount.name }}
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.controller.serviceAccount.name }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.controller.serviceAccount.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.controller.serviceAccount.name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.controller.serviceAccount.name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-controller
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: {{ .Values.controller.serviceAccount.name }}
+      containers:
+        - name: controller
+          image: {{ .Values.controller.image }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["controller", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          env:
+            - name: FLOWGENT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-pg
+                  key: url
+            - name: FLOWGENT_CONTROLLER_LABEL
+              value: "app.kubernetes.io/component=controller"
+            - name: FLOWGENT_JM_IMAGE
+              value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+{{- end }}

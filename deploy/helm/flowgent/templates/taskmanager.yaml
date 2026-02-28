@@ -1,0 +1,54 @@
+{{- if .Values.taskmanager.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-taskmanager
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: taskmanager
+spec:
+  replicas: {{ .Values.taskmanager.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: taskmanager
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: taskmanager
+    spec:
+      containers:
+        - name: taskmanager
+          image: {{ .Values.taskmanager.image }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          env:
+            - name: FLOWGENT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-pg
+                  key: url
+            - name: FLOWGENT_MQTT_BROKER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-mqtt
+                  key: broker
+                  optional: true
+            - name: FLOWGENT_TM_SLOTS
+              value: {{ .Values.taskmanager.slots | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+          resources:
+            {{- toYaml .Values.taskmanager.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+{{- end }}

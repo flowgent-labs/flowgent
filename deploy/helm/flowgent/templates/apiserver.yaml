@@ -1,0 +1,74 @@
+{{- if .Values.apiserver.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-apiserver
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: apiserver
+spec:
+  replicas: {{ .Values.apiserver.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: apiserver
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: apiserver
+    spec:
+      containers:
+        - name: apiserver
+          image: {{ .Values.apiserver.image }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["apiserver", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          ports:
+            - name: rest
+              containerPort: {{ .Values.apiserver.service.restPort }}
+            - name: a2a
+              containerPort: {{ .Values.apiserver.service.a2aPort }}
+            - name: mgmt
+              containerPort: {{ .Values.apiserver.service.mgmtPort }}
+          env:
+            - name: FLOWGENT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-pg
+                  key: url
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+          resources:
+            {{- toYaml .Values.apiserver.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /_/healthz
+              port: mgmt
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flowgent.fullname" . }}-apiserver
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: apiserver
+spec:
+  selector:
+    {{- include "flowgent.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: apiserver
+  ports:
+    - name: rest
+      port: {{ .Values.apiserver.service.restPort }}
+    - name: a2a
+      port: {{ .Values.apiserver.service.a2aPort }}
+    - name: mgmt
+      port: {{ .Values.apiserver.service.mgmtPort }}
+{{- end }}

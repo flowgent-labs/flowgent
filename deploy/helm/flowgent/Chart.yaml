@@ -1,0 +1,14 @@
+apiVersion: v2
+name: flowgent
+description: Flowgent — Distributed AI Agent Orchestration Engine
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - ai
+  - agent
+  - orchestration
+  - workflow
+  - llm
+maintainers:
+  - name: Flowgent Team

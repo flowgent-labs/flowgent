@@ -1,0 +1,60 @@
+{{- if .Values.jobmanager.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-jobmanager
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jobmanager
+spec:
+  replicas: {{ .Values.jobmanager.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: jobmanager
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: jobmanager
+    spec:
+      containers:
+        - name: jobmanager
+          image: {{ .Values.jobmanager.image }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          env:
+            - name: FLOWGENT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-pg
+                  key: url
+            - name: FLOWGENT_MQTT_BROKER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-mqtt
+                  key: broker
+                  optional: true
+            - name: FLOWGENT_JM_HA_ENABLED
+              value: {{ .Values.jobmanager.ha.enabled | quote }}
+            - name: FLOWGENT_JM_HA_LEASE_DURATION
+              value: {{ .Values.jobmanager.ha.leaseDuration | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+          resources:
+            {{- toYaml .Values.jobmanager.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+{{- end }}

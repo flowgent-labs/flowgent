@@ -1,0 +1,72 @@
+{{- if .Values.notification.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-notification
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: notification
+spec:
+  replicas: {{ .Values.notification.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: notification
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: notification
+    spec:
+      containers:
+        - name: notification
+          image: {{ .Values.notification.image }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["notification", "start"]
+          env:
+            - name: FLOWGENT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-pg
+                  key: url
+            - name: FLOWGENT_MQTT_BROKER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.fullname" . }}-mqtt
+                  key: broker
+                  optional: true
+            - name: FLOWGENT_CONFIG_FILE
+              value: /etc/flowgent/flowgent.yaml
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+          ports:
+            - name: ws
+              containerPort: {{ .Values.notification.service.port }}
+          resources:
+            {{- toYaml .Values.notification.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flowgent.fullname" . }}-notification
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: notification
+spec:
+  selector:
+    {{- include "flowgent.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: notification
+  ports:
+    - name: ws
+      port: {{ .Values.notification.service.port }}
+{{- end }}
