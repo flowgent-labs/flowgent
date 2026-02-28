@@ -1,3 +1,7 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: notification.go — Notification channel definitions consumed by Notification service.
+//   NotificationChannel, NotificationEvent, NotificationMessage, SubscriptionRoute.
 package model
 
 import "time"

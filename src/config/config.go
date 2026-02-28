@@ -28,6 +28,9 @@ type ServiceConfig struct {
 	Storage       StorageConfig       `json:"storage" yaml:"storage"`
 	LLM           LLMConfig           `json:"llm" yaml:"llm"`
 	Orchestration OrchestrationConfig      `json:"orchestration" yaml:"orchestration"`
+	Queue         QueueConfig              `json:"queue" yaml:"queue"`
+	Lock          LockConfig               `json:"lock" yaml:"lock"`
+	Sandbox       SandboxConfig            `json:"sandbox" yaml:"sandbox"`
 	Payments      *payments.PaymentsConfig `json:"payments" yaml:"payments"`
 	Notification  NotificationConfig       `json:"notification" yaml:"notification"`
 	Tenant        TenantConfig             `json:"tenant" yaml:"tenant"`
@@ -195,6 +198,41 @@ type OrchestrationConfig struct {
 	MaxNodeRetries       int         `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
+// SandboxConfig configures the sandbox execution environment (global).
+type SandboxConfig struct {
+	Enabled    bool                `json:"enabled" yaml:"enabled"`
+	Image      string              `json:"image" yaml:"image"`
+	RuntimeDir string              `json:"runtime_dir" yaml:"runtime_dir"`
+	Policy     *model.SandboxPolicy `json:"policy" yaml:"policy"`
+}
+
+// QueueConfig configures the message queue for inter-component communication.
+type QueueConfig struct {
+	Type string     `json:"type" yaml:"type"` // memory | mqtt
+	MQTT MQTTConfig `json:"mqtt" yaml:"mqtt"`
+}
+
+// MQTTConfig is the MQTT broker connection settings.
+type MQTTConfig struct {
+	Broker      string `json:"broker" yaml:"broker"`
+	ClientID    string `json:"client_id" yaml:"client_id"`
+	TopicPrefix string `json:"topic_prefix" yaml:"topic_prefix"`
+	Username    string `json:"username" yaml:"username"`
+	Password    string `json:"password" yaml:"password"`
+}
+
+// LockConfig configures the distributed lock provider.
+type LockConfig struct {
+	Provider string      `json:"provider" yaml:"provider"` // memory | postgres | redis
+	Redis    RedisLockConfig `json:"redis" yaml:"redis"`
+}
+
+// RedisLockConfig is the Redis-specific lock settings.
+type RedisLockConfig struct {
+	Nodes    []string `json:"nodes" yaml:"nodes"`
+	Password string   `json:"password" yaml:"password"`
+}
+
 type LLMProviderDef struct {
 	Endpoint    string            `json:"endpoint" yaml:"endpoint"`
 	Credentials map[string]string `json:"credentials" yaml:"credentials"`
@@ -222,7 +260,7 @@ type ModelDef struct {
 
 type ThinkingConfig struct {
 	Type         string `json:"type" yaml:"type"`
-	BudgetTokens int    `json:"budget_tokens" yaml:"budget-tokens"`
+	BudgetTokens int    `json:"budget_tokens" yaml:"budget_tokens"`
 }
 
 type MCPDef struct {

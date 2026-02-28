@@ -1,7 +1,7 @@
 # Flowgent — Implementation Progress
 
 **Date:** 2026-05-23
-**Status:** Architecture docs consolidated. Gaps identified between docs and code.
+**Status:** Sandbox microservice implemented (CLI + worker + executor + policy model). Skill + sandbox wired into TM router. Build clean.
 
 ---
 
@@ -10,19 +10,25 @@
 ### 1.1 Module & Structure
 
 - **Module:** `github.com/flowgent-labs/flowgent` (Go 1.26)
-- **Entry:** `src/cmd/flowgent/main.go` — 10 subcommands via Cobra
+- **Entry:** `src/cmd/flowgent/main.go` — 11 subcommands via Cobra
 - **Config:** `etc/flowgent-dev.yaml` (dev), `etc/flowgent.yaml.fully.sample` (reference)
-- **Deploy:** Helm chart at `deploy/helm/flowgent/` (6 microservices), Docker images at `deploy/docker/`
+- **Deploy:** Helm chart at `deploy/helm/flowgent/` (7 microservices incl. sandbox), Docker images at `deploy/docker/`
 
-### 1.2 CLI Subcommands (10 total)
+### 1.2 CLI Subcommands (11 total)
 
 | Subcommand | Binary | Notes |
 |------------|--------|-------|
-| `all-in-one` | single process | API+JM+TM+Controller, SQLite+memory queue |
+| `all-in-one` | single process | API+JM+TM+Controller+Sandbox, SQLite+memory queue |
 | `apiserver` | standalone | REST (9999) + A2A (9992) + mgmt (9991) |
 | `a2a` | standalone | Google A2A protocol |
 | `wallet` | standalone | x402 key management (9901) |
 | `taskmanager` | standalone | SlotWorker pool, MQTT consumer |
+| `jobmanager` | standalone | Control plane, run poller |
+| `controller` | standalone | Sharded flow driver, K8s-aware |
+| `notification` | standalone | WS push + multi-channel |
+| **`sandbox`** | **standalone** | **Secure script execution (python3/bash/node) with network isolation** |
+| `console` | interactive | REPL for store queries |
+| `version` | info | Print build version |
 | `jobmanager` | standalone | Control plane, run poller |
 | `controller` | standalone | Sharded flow driver, K8s-aware |
 | `notification` | standalone | WS push + multi-channel |
@@ -50,15 +56,15 @@
 | `map` | `map` | `map.go` | yes |
 | `agentflow` | `subflow` | `subflow.go` | yes |
 | `noop` | `noop` | `noop.go` | yes |
-| `sandbox` | `sandbox` | `sandbox.go` | **NO** |
-| `skill` | `skill` | `skill.go` | **NO** |
+| `sandbox` | `sandbox` | `sandbox.go` | yes (2026-05-23) |
+| `skill` | `skill` | `skill.go` | yes (2026-05-23) |
 | — | `join` | `join.go` | yes |
 
-**Gap 1:** `skill` and `sandbox` executors exist on disk but are **not registered** in the TaskManager router (`src/engine/taskmanager/taskmanager.go`). Any DAG node with `type: skill` or `type: sandbox` will fail at runtime.
+**Gap 1 (FIXED):** `skill` and `sandbox` executors now registered in TM router.
 
-**Gap 2:** `docs/01` section 6.1 says "10 Node Types" — missing `skill` and `join` from the table.
+**Gap 2 (FIXED):** `docs/01` section 6.1 updated to "12 Node Types".
 
-**Gap 3:** TaskType is `"subflow"` but NodeType is `"agentflow"` — naming inconsistency between model packages.
+**Gap 3 (OPEN):** TaskType is `"subflow"` but NodeType is `"agentflow"` — naming inconsistency.
 
 ### 2.2 Scheduler / ResourceManager (2 implementations)
 
@@ -84,6 +90,23 @@ Matches docs. Lock has 3 implementations (richer than documented).
 ### 2.4 Payments (`src/payments/`)
 
 x402 economic layer: wallet key management, facilitator client, spending policies, payment approvals, receipts, PWF runtime. Matches `docs/02`.
+
+### 2.5 Sandbox (`src/engine/sandbox/`) — NEW 2026-05-23
+
+| File | Purpose |
+|------|---------|
+| `worker.go` | SandboxWorker — consumes plans from queue, executes in isolated env |
+| `inline.go` | InlineWorker — synchronous execution for all-in-one mode |
+
+**Security model:** 3-level policy override (global → flow → node):
+- Network: `none` (default), `allowlist`, `denylist`
+- Runtime allowlists (python3, bash, node)
+- Banned command patterns (curl, wget, etc.)
+- Resource limits (CPU, memory, timeout)
+
+**Execution modes:**
+- Docker: `docker run --rm --network=none --memory=X --cpus=Y`
+- Inline (all-in-one): subprocess with env isolation
 
 ---
 

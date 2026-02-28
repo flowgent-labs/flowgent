@@ -1,3 +1,6 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: agent.go — Agent persona definition consumed by API Server, Config loader.
 package model
 
 import "time"

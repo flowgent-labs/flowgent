@@ -1,10 +1,14 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: run.go — Runtime execution records consumed by JobManager, API Server, Controller.
+//   AgentFlowRun, TaskRun, RunStatus, TaskStatus, TriggerInfo.
 package model
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
+// ─── AgentFlow run ───────────────────────────────────────────
+
+// RunStatus is the lifecycle state of an agentflow run.
 type RunStatus string
 
 const (
@@ -16,6 +20,7 @@ const (
 	RunCancelled RunStatus = "CANCELLED"
 )
 
+// AgentFlowRun is a single execution of an agentflow.
 type AgentFlowRun struct {
 	ID          string         `json:"id" yaml:"id"`
 	AgentFlowID string         `json:"agentflow_id" yaml:"agentflow_id"`
@@ -31,24 +36,27 @@ type AgentFlowRun struct {
 	FinishedAt  *time.Time     `json:"finished_at" yaml:"finished_at"`
 
 	// SharedMemory is visible to all ExecutionPlans in this run.
-	// Used for cross-node data exchange (e.g., scan results → fix plans).
 	SharedMemory map[string]any `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty"`
 
 	// ExecPlans holds all ExecutionPlans for this run, keyed by plan_id.
 	ExecPlans map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty"`
 
 	// Multi-tenant & scheduling metadata (propagated from AgentFlowSpec at trigger time).
-	TenantID  string `json:"tenant_id,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
+	TenantID  string   `json:"tenant_id,omitempty"`
+	Namespace string   `json:"namespace,omitempty"`
 	Priority  Priority `json:"priority,omitempty"`
 }
 
+// TriggerInfo records how a run was initiated.
 type TriggerInfo struct {
 	Type    string         `json:"type" yaml:"type"`
 	Source  string         `json:"source" yaml:"source"`
 	Payload map[string]any `json:"payload" yaml:"payload"`
 }
 
+// ─── Task run ────────────────────────────────────────────────
+
+// TaskStatus is the lifecycle state of a task run.
 type TaskStatus string
 
 const (
@@ -61,6 +69,7 @@ const (
 	TaskRetrying TaskStatus = "RETRYING"
 )
 
+// TaskRun records the execution of a single node within an agentflow run.
 type TaskRun struct {
 	ID              string         `json:"id" yaml:"id"`
 	AgentFlowRunID  string         `json:"agentflow_run_id" yaml:"agentflow_run_id"`
@@ -78,27 +87,4 @@ type TaskRun struct {
 	UpdatedAt       time.Time      `json:"updated_at" yaml:"updated_at"`
 	StartedAt       *time.Time     `json:"started_at" yaml:"started_at"`
 	FinishedAt      *time.Time     `json:"finished_at" yaml:"finished_at"`
-}
-
-// HumanApprovalStore is the minimal interface for human approval persistence.
-// Both the engine and the payments module consume this interface,
-// ensuring a single approval subsystem.
-type HumanApprovalStore interface {
-	CreateHumanApproval(ctx context.Context, approval *HumanApproval) error
-	GetHumanApproval(ctx context.Context, token string) (*HumanApproval, error)
-	UpdateHumanApproval(ctx context.Context, approval *HumanApproval) error
-}
-
-type HumanApproval struct {
-	TaskRunID      string        `json:"task_run_id" yaml:"task_run_id"`
-	AgentFlowRunID string        `json:"agentflow_run_id" yaml:"agentflow_run_id"`
-	Token          string        `json:"token" yaml:"token"`
-	Status         string        `json:"status" yaml:"status"`
-	Approved       *bool         `json:"approved" yaml:"approved"`
-	Comment        string        `json:"comment" yaml:"comment"`
-	Timeout        time.Duration `json:"timeout" yaml:"timeout"`
-	CreatedAt      time.Time     `json:"created_at" yaml:"created_at"`
-	UpdatedAt      time.Time     `json:"updated_at" yaml:"updated_at"`
-	ExpiresAt      *time.Time    `json:"expires_at" yaml:"expires_at"`
-	ResolvedAt     *time.Time    `json:"resolved_at" yaml:"resolved_at"`
 }

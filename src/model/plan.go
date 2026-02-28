@@ -1,3 +1,7 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: plan.go — ExecutionPlan and related types consumed by TaskManager.
+//   ExecutionPlan, NodeSpec, TaskResult, TaskCheckpoint, TaskType enum.
 package model
 
 import "time"
@@ -71,10 +75,11 @@ type NodeSpec struct {
 	RawInput         map[string]any       `json:"raw_input,omitempty"` // YAML-defined input
 	OutputSchema     map[string]any       `json:"output_schema,omitempty"` // node-level output JSON Schema
 	// Sandbox fields
-	Runtime   string            `json:"runtime,omitempty"`
-	Script    string            `json:"script,omitempty"`
-	Timeout   string            `json:"timeout,omitempty"`
-	Resources *SandboxResources `json:"resources,omitempty"`
+	Runtime       string            `json:"runtime,omitempty"`
+	Script        string            `json:"script,omitempty"`
+	Timeout       string            `json:"timeout,omitempty"`
+	Resources     *SandboxResources `json:"resources,omitempty"`
+	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty"`
 }
 
 // TaskResult holds the outcome of a single task execution.
@@ -124,6 +129,7 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Script:           n.Script,
 		Timeout:          n.Timeout,
 		Resources:        n.Resources,
+		NetworkPolicy:    n.NetworkPolicy,
 		RawInput:         n.Input,
 		OutputSchema:     n.OutputSchema,
 	}

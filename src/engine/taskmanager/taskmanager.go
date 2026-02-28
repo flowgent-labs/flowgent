@@ -47,6 +47,8 @@ func NewTaskManager(cfg *engine.TaskManagerConfig) (*TaskManager, error) {
 	router.Register(&executor.SubflowExecutor{})
 	router.Register(executor.NewHumanExecutor(cfg.Store))
 	router.Register(&executor.NoopExecutor{})
+	router.Register(&executor.SkillExecutor{})
+	router.Register(executor.NewSandboxExecutor(cfg.SandboxQueue, cfg.SandboxPolicy))
 
 	metrics := NewTaskManagerMetrics()
 

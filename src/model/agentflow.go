@@ -1,3 +1,8 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: agentflow.go — Flow spec and scheduling metadata consumed by API Server, Controller.
+//   AgentFlowSpec, TriggerDef, AgentFlowDefinition (YAML), AgentFlowVersion,
+//   ExecutionMode, Priority.
 package model
 
 import (
@@ -6,67 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Node represents a single node in the agentflow DAG.
-type Node struct {
-	ID               string              `json:"id" yaml:"id"`
-	Type             NodeType            `json:"type" yaml:"type"`
-	Agent            string              `json:"agent,omitempty" yaml:"agent,omitempty"`
-	Skill            string              `json:"skill,omitempty" yaml:"skill,omitempty"`
-	Tool             string              `json:"tool,omitempty" yaml:"tool,omitempty"`
-	Source           string              `json:"source,omitempty" yaml:"source,omitempty"`
-	Expression       string              `json:"expression,omitempty" yaml:"expression,omitempty"`
-	Instruction      string              `json:"instruction,omitempty" yaml:"instruction,omitempty"`
-	Strategy         map[string]any      `json:"strategy,omitempty" yaml:"strategy,omitempty"`
-	Input            map[string]any      `json:"input,omitempty" yaml:"input,omitempty"`
-	Retry            *RetryPolicy        `json:"retry,omitempty" yaml:"retry,omitempty"`
-	Node             *Node               `json:"node,omitempty" yaml:"node,omitempty"`
-	Concurrency      int                 `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
-	Approval         *HumanApprovalConfig `json:"approval,omitempty" yaml:"approval,omitempty"`
-	SupervisorConfig *SupervisorConfig   `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
-	AgentFlowID      string              `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
-	OutputSchema     map[string]any      `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // node-level JSON Schema for output validation
-	// Sandbox fields
-	Runtime   string            `json:"runtime,omitempty" yaml:"runtime,omitempty"`     // python3 | bash | node
-	Script    string            `json:"script,omitempty" yaml:"script,omitempty"`       // inline script
-	Timeout   string            `json:"timeout,omitempty" yaml:"timeout,omitempty"`     // e.g. "120s"
-	Resources *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"` // cpu/memory limits
-}
-
-// SandboxResources defines resource limits for a sandbox node.
-type SandboxResources struct {
-	CPU    string `json:"cpu,omitempty" yaml:"cpu,omitempty"`       // e.g. "500m"
-	Memory string `json:"memory,omitempty" yaml:"memory,omitempty"` // e.g. "256Mi"
-}
-
-// RetryPolicy defines the retry behavior for a node.
-type RetryPolicy struct {
-	Max      int           `json:"max" yaml:"max"`
-	Initial  time.Duration `json:"initial" yaml:"initial"`
-	MaxDelay time.Duration `json:"max_delay" yaml:"max_delay"`
-	Factor   float64       `json:"factor" yaml:"factor"`
-}
-
-// HumanApprovalConfig defines the approval gate configuration for human nodes.
-type HumanApprovalConfig struct {
-	Timeout   time.Duration `json:"timeout" yaml:"timeout"`
-	OnApprove string        `json:"on_approve" yaml:"on_approve"`
-	OnReject  string        `json:"on_reject" yaml:"on_reject"`
-}
-
-// SupervisorConfig defines the constraints for supervisor nodes.
-type SupervisorConfig struct {
-	MaxRetries     int      `json:"max_retries" yaml:"max_retries"`
-	MaxNodes       int      `json:"max_nodes" yaml:"max_nodes"`
-	MaxInjections  int      `json:"max_injections" yaml:"max_injections"`
-	AllowedActions []string `json:"allowed_actions" yaml:"allowed_actions"`
-}
-
-// Edge represents a directed edge in the DAG, with an optional condition for branching.
-type Edge struct {
-	From      string `json:"from" yaml:"from"`
-	To        string `json:"to" yaml:"to"`
-	Condition *bool  `json:"condition,omitempty" yaml:"condition,omitempty"`
-}
+// ─── Scheduling metadata ─────────────────────────────────────
 
 // ExecutionMode defines whether a flow runs on a shared cluster or a dedicated one.
 type ExecutionMode string
@@ -89,25 +34,30 @@ const (
 // IsApplication returns true if the priority demands a dedicated cluster.
 func (p Priority) IsApplication() bool { return p == PriorityGrade }
 
+// ─── AgentFlow spec ──────────────────────────────────────────
+
 // AgentFlowSpec contains the full specification of an agentflow (nodes, edges, triggers, etc.).
 type AgentFlowSpec struct {
 	ID           string         `json:"id" yaml:"id"`
-	Kind         string         `json:"kind,omitempty" yaml:"kind,omitempty"`           // "skill" | "" (regular flow)
+	Kind         string         `json:"kind,omitempty" yaml:"kind,omitempty"`               // "skill" | "" (regular flow)
 	Description  string         `json:"description,omitempty" yaml:"description,omitempty"`
-	Summary      string         `json:"summary,omitempty" yaml:"summary,omitempty"`     // one-liner for A2A card
-	InputSchema  map[string]any `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`   // optional JSON Schema
-	OutputSchema map[string]any `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // optional JSON Schema
+	Summary      string         `json:"summary,omitempty" yaml:"summary,omitempty"`         // one-liner for A2A card
+	InputSchema  map[string]any `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
+	OutputSchema map[string]any `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
 	Vars         map[string]any `json:"vars,omitempty" yaml:"vars,omitempty"`
 	Nodes        []Node         `json:"nodes" yaml:"nodes"`
 	Edges        []Edge         `json:"edges" yaml:"edges"`
 	Triggers     []TriggerDef   `json:"triggers,omitempty" yaml:"triggers,omitempty"`
 
+	// Per-flow sandbox policy override (nil fields inherit from global config).
+	SandboxPolicy *SandboxPolicyOverride `json:"sandbox_policy,omitempty" yaml:"sandbox_policy,omitempty"`
+
 	// Multi-tenant & scheduling metadata
-	Priority  Priority       `json:"priority,omitempty" yaml:"priority,omitempty"`   // low|medium|high|grade; grade→application mode
-	TenantID  string         `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"` // owning tenant
-	Namespace string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`  // K8s namespace for application mode
-	Mode      ExecutionMode  `json:"mode,omitempty" yaml:"mode,omitempty"`           // "session" | "application"
-	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`    // extensible key-value tags
+	Priority  Priority         `json:"priority,omitempty" yaml:"priority,omitempty"`
+	TenantID  string           `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"`
+	Namespace string           `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Mode      ExecutionMode    `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 }
 
 // EffectiveMode returns the execution mode, deriving from priority if not explicitly set.
@@ -128,6 +78,8 @@ type TriggerDef struct {
 	Provider string   `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Events   []string `json:"events,omitempty" yaml:"events,omitempty"`
 }
+
+// ─── YAML loading ────────────────────────────────────────────
 
 // AgentFlowDefinition is a top-level wrapper that supports both flat and nested YAML formats.
 type AgentFlowDefinition struct {
@@ -160,6 +112,8 @@ func (d *AgentFlowDefinition) UnmarshalYAML(value *yaml.Node) error {
 	d.AgentFlow = &spec
 	return nil
 }
+
+// ─── Versioning ──────────────────────────────────────────────
 
 // AgentFlowVersion represents a versioned agentflow stored in the database.
 type AgentFlowVersion struct {

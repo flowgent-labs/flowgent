@@ -72,6 +72,8 @@ auth:
     scope: "openid profile email"
   github:
     enabled: true
+    client-id: "<YOUR_GITHUB_CLIENT_ID>"
+    client-secret: "<YOUR_GITHUB_CLIENT_SECRET>"
     auth-url: "https://github.com/login/oauth/authorize"
     token-url: "https://github.com/login/oauth/access_token"
     redirect-url: "http://wl4g.local:10000/serve/auth/callback/github"
@@ -117,22 +119,23 @@ storage:
     use-ssl: false
 
 # ── Queue ────────────────────────────────────────────────────────────────────
-#    Configured via environment: FLOWGENT_MQTT_BROKER=tcp://host:1883
-#    In K8s production mode, the KubernetesResourceManager uses MQTT for JM↔TM dispatch.
-#    In local/all-in-one mode, an in-memory queue is used automatically.
-# queue:
-#   mqtt:
-#     broker: "tcp://127.0.0.1:1883"
-#     client_id: "flowgent-jm"
-#     topic_prefix: "flowgent/exec"
+#    Type: memory (all-in-one/dev) | mqtt (production/distributed)
+queue:
+  type: memory                    # memory | mqtt
+  mqtt:
+    broker: "tcp://127.0.0.1:1883"
+    client_id: "flowgent"
+    topic_prefix: "flowgent/exec"
+    username: ""
+    password: ""
 
 # ── Distributed Lock ─────────────────────────────────────────────────────────
-#    Provider: Postgres advisory lock (default) | Redis lock
-# lock:
-#   provider: postgres             # postgres | redis
-#   redis:
-#     nodes: ["redis://127.0.0.1:6379"]
-#     password: "bitnami"
+#    Provider: memory (all-in-one/dev) | postgres | redis
+lock:
+  provider: memory                # memory | postgres | redis
+  redis:
+    nodes: ["redis://127.0.0.1:6379"]
+    password: "bitnami"
 
 # ── LLM Providers ────────────────────────────────────────────────────────────
 llm:
@@ -297,6 +300,28 @@ orchestration:
     standard:
       enabled: false                # DB-backed agentflows (future Flowgent UI)
 
+# ── Sandbox ───────────────────────────────────────────────────────────────────
+#    Secure script execution worker (python3/bash/node) with network isolation.
+sandbox:
+  enabled: false                   # set true to enable sandbox worker
+  image: "flowgent-sandbox:latest"
+  runtime_dir: "/tmp/flowgent-sandbox"
+  policy:
+    network:
+      mode: none                   # none | allowlist | denylist
+      allowed: []
+      denied: []
+    allowed_runtimes: [python3, bash, node]
+    banned_commands: []            # e.g. ["curl", "wget"]
+    default_timeout: 120s
+    max_timeout: 600s
+    default_resources:
+      cpu: "500m"
+      memory: "256Mi"
+    max_resources:
+      cpu: "2000m"
+      memory: "1Gi"
+
 # ── Notification Service ─────────────────────────────────────────────────────
 notification:
   enabled: false                    # set true to enable
@@ -342,25 +367,28 @@ tenant:
   namespace_prefix: "flowgent-"
 
 # ── Payments (x402) ──────────────────────────────────────────────────────────
-#    Optional economic layer. When disabled, flowgent is a pure orchestration engine.
-# payments:
-#   enabled: false
-#   policies:
-#     max_single_payment_usd: 1
-#     max_daily_budget_usd: 50
-#     allowed_domains: ["*.googleapis.com", "*.openai.com"]
-#     blocked_domains: ["*.unknown.xyz"]
-#     require_human_approval_above_usd: 5
-#     allowed_assets: [USDC]
-#     allowed_chains: [base, solana]
-#   wallet:
-#     endpoint: "http://localhost:9901"
-#     default_wallet: "default"
-#     secret_store:
-#       provider: default                  # default | vault
-#       master_key: ""
-#       master_key_file: /var/secrets/master.key
-#   x402:
-#     default_facilitator: "http://localhost:8085"
-#     timeout: 30s
-#     max_retries: 3
+#    Optional economic layer. Disabled by default — flowgent runs as a pure
+#    orchestration engine without payment features.
+payments:
+  enabled: false
+  policies:
+    max_single_payment_usd: 1
+    max_daily_budget_usd: 50
+    allowed_domains: ["*.googleapis.com", "*.openai.com"]
+    blocked_domains: ["*.unknown.xyz"]
+    require_human_approval_above_usd: 5
+    allowed_assets: [USDC]
+    allowed_chains: [base, solana]
+  wallet:
+    endpoint: "http://localhost:9901"
+    auth_token: ""
+    auth_token_file: ""
+    default_wallet: "default"
+    secret_store:
+      provider: default                  # default | vault
+      master_key: ""
+      master_key_file: /var/secrets/master.key
+  x402:
+    default_facilitator: "http://localhost:8085"
+    timeout: 30s
+    max_retries: 3

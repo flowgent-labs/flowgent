@@ -1,3 +1,7 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: websocket.go — WebSocket push message envelope consumed by API Server.
+//   WSMessage, WSMessageType enum.
 package model
 
 // WSMessageType enumerates the kinds of push messages sent over WebSocket.

@@ -1,3 +1,7 @@
+// Package model defines the shared domain types for the Flowgent engine.
+//
+// File: memory.go — Agent memory and knowledge store types.
+//   Memory, KnowledgeEntry, MemoryType enum.
 package model
 
 import "time"

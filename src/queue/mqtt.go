@@ -21,11 +21,11 @@ type MQTTQueue struct {
 
 // MQTTConfig holds MQTT broker connection parameters.
 type MQTTConfig struct {
-	Broker   string
-	ClientID string
-	Username string
-	Password string
-	Topic    string
+	Broker   string `json:"broker" yaml:"broker"`
+	ClientID string `json:"client_id" yaml:"client_id"`
+	Username string `json:"username" yaml:"username"`
+	Password string `json:"password" yaml:"password"`
+	Topic    string `json:"topic" yaml:"topic"`
 }
 
 // NewMQTTQueue creates an MQTT-backed queue.
