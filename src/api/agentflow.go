@@ -135,6 +135,7 @@ func (h *AgentFlowHandler) DeleteDefinition(w http.ResponseWriter, r *http.Reque
 
 // TriggerWithVars starts a new agentflow run for the given spec.
 func (h *AgentFlowHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, triggerInfo model.TriggerInfo) {
+	os.Stderr.WriteString("HELLO_STDERR\n")
 	tenant := r.PathValue("tenant")
 	spec := h.agentFlows[agentFlowID]
 	if spec == nil {

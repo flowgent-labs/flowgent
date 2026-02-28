@@ -12,19 +12,23 @@ CREATE TABLE IF NOT EXISTS agentflow_definitions (
 );
 
 CREATE TABLE IF NOT EXISTS agentflow_runs (
-    id            VARCHAR(64) PRIMARY KEY,
-    agentflow_id   VARCHAR(255) NOT NULL,
-    version       BIGINT NOT NULL DEFAULT 1,
-    status        VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-    vars          JSONB,
-    output        JSONB,
-    error         TEXT,
-    trigger_type  VARCHAR(32),
-    trigger_source VARCHAR(255),
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    started_at    TIMESTAMPTZ,
-    finished_at   TIMESTAMPTZ
+    id              VARCHAR(64) PRIMARY KEY,
+    agentflow_id    VARCHAR(255) NOT NULL,
+    version         BIGINT NOT NULL DEFAULT 1,
+    status          VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    vars            JSONB,
+    output          JSONB,
+    error           TEXT,
+    trigger_type    VARCHAR(32),
+    trigger_source  VARCHAR(255),
+    trigger_payload JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at      TIMESTAMPTZ,
+    finished_at     TIMESTAMPTZ,
+    tenant_id       VARCHAR(255) DEFAULT 'default',
+    namespace       VARCHAR(255) DEFAULT '',
+    priority        VARCHAR(16) DEFAULT 'medium'
 );
 
 CREATE INDEX IF NOT EXISTS idx_afruns_agentflow ON agentflow_runs(agentflow_id);
