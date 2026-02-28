@@ -1,229 +1,142 @@
 # Flowgent
 
-Building the next generation of predictable, auditable, distributed, constrained enterprise-grade super-agents — with native AI economic layer (x402/MPP).
+**Predictable, auditable, distributed enterprise AI agent orchestration — with native economic layer (x402/MPP).**
 
-> Flowgent is an AI-native universal orchestration engine. It deeply integrates LLM agent intelligence with deterministic DAG execution — preserving the predictability, reliability, and auditability of traditional workflows while empowering distributed enterprise super-agents with bounded, governable autonomy. Native AI-to-AI payment protocol (x402/MPP) support makes inter-agent service calls measurable, settleable, and governable.
+Flowgent is an AI-native universal orchestration engine modeled after Apache Flink's session/application architecture. It deeply integrates LLM agent intelligence with deterministic DAG execution — preserving the predictability, reliability, and auditability of traditional workflows while empowering distributed enterprise super-agents with bounded, governable autonomy.
 
 ---
 
 ## Features
 
-- **DAG Topological Scheduler**
-Predictable execution order with concurrent fan-out via `map` nodes. Process 100+ repos in parallel with bounded goroutine pools.
-
-- **9 Node Types**
-`agent`, `tool`, `map`, `agentflow`, `condition`, `tribunal`, `human`, `supervisor`, `noop`. Compose any orchestration topology.
-
-- **Deterministic + Intelligent**
-`agent` and `supervisor` nodes provide LLM intelligence. All other nodes guarantee deterministic execution. You decide where intelligence lives.
-
-- **Controlled Autonomy**
-Supervisor constrained to 5 actions (`continue`, `redirect`, `retry`, `inject`, `abort`) with configurable quotas. LLM-powered but never unbounded.
-
-- **State-Machine Persistence**
-Every run and task is durable. Pause at any `human` approval gate, resume via API, replay idempotently.
-
-- **A2A Protocol Server**
-External AI systems dynamically call Flowgent via Google A2A protocol. Discover agentflows, trigger runs, query results programmatically.
-
-- **Optional Economic Layer**
-x402 payment protocol client-side support with spending policies, wallet abstraction, and human approval governance. Coinbase facilitator integration.
-
-- **Dual-Mode Deployment**
-**All-in-One:** SQLite + memory queue (single binary, no dependencies). **Distributed:** PostgreSQL + MQTT (EMQX) + Kubernetes.
-
-- **OTEL Tracing Per Node**
-Every node span records input, output, and internal state. Debug any execution path in Jaeger.
-
-- **Cron + Webhook Triggers**
-Schedule-based and event-driven (GitHub/GitLab webhook) per agentflow.
-
-- **Multi-Provider LLM**
-OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking.
-
-- **MCP Ecosystem**
-Default built-in 5 stdio MCP servers: GitHub, SonarQube, Sonatype IQ, Nexus3, Test (Maven/Cucumber).
+- **DAG Topological Scheduler** — predictable execution with concurrent fan-out. 11 node types compose any orchestration topology.
+- **Deterministic + Intelligent** — `agent` and `supervisor` nodes provide LLM intelligence; all others guarantee deterministic execution.
+- **Controlled Autonomy** — supervisor constrained to `continue|retry|inject|abort` with configurable quotas.
+- **State-Machine Persistence** — every run and task is durable. Pause at `human` gates, resume via API, replay idempotently.
+- **Multi-Tenant API** — tenant-scoped REST paths (`/api/v1/{tenant}/...`), JWT/OIDC/GitHub OAuth, A2A protocol server (Google Agent-to-Agent).
+- **Session & Application Mode** — priority `grade` → dedicated K8s cluster per tenant; `low|medium|high` → shared pool.
+- **Dual-Mode Deployment** — All-in-One (SQLite + memory queue) or Production (PostgreSQL + MQTT/EMQX + Redis + K8s).
+- **OTEL Tracing Per Node** — every node span records input, output, and internal state for Jaeger debugging.
+- **Cron + Webhook Triggers** — schedule-based and event-driven (GitHub/GitLab webhook) per agentflow.
+- **Multi-Provider LLM** — OpenAI-compatible adapter with per-provider rate limiting, SOCKS/HTTP proxy, modalities, and extended thinking.
+- **JSON Schema Validation** — agent output validated against `output_schema` with auto-retry on failure.
+- **Notification Service** — Telegram, DingTalk, Slack, Email, Webhook channels; WebSocket SSE push for human approvals.
+- **Optional Economic Layer** — x402 payment protocol with spending policies, wallet abstraction, and Coinbase facilitator integration.
 
 ---
 
-## Quick Install
+## Quick Start
 
-### Prerequisites
-
-- **Go 1.25+**
-- (Optional) PostgreSQL 15+ for distributed mode
-- (Optional) EMQX 5.x for MQTT distributed queue
-
-### Build
+**Prerequisites:** Go 1.26+ · (optional) PostgreSQL 15+, EMQX 5.x, Redis 7.x
 
 ```bash
 git clone git@github.com:flowgent-labs/flowgent.git && cd flowgent
-make build
+make build-flowgent    # core engine
+make example-mcps      # example MCP servers (for e2e testing)
 ```
 
-Produces one unified binary + 5 MCP servers under `bin/`:
-
-```
-bin/
-├── flowgent
-├── mcp-server-github
-├── mcp-server-sonarqube
-├── mcp-server-sonatypeiq
-├── mcp-server-nexus3
-└── mcp-server-test
-```
-
-### Run
+Run with a config file (required):
 
 ```bash
-# All-in-one mode (SQLite — zero external dependencies)
-./bin/flowgent daemon start
+# All-in-one (SQLite + memory queue)
+./bin/flowgent daemon start -c examples/scenario-e2e-allinone.yaml
 
-# Start individual components
-./bin/flowgent apiserver     # REST API only
-./bin/flowgent a2a           # A2A protocol only
-./bin/flowgent wallet        # Wallet key-management daemon
-./bin/flowgent console       # Interactive management console
+# Production (PostgreSQL + MQTT + Redis)
+./bin/flowgent daemon start -c examples/scenario-e2e-production.yaml
 
-# With custom config + debug logging
-./bin/flowgent -v --config /etc/flowgent/production.yaml daemon start
+# Use the fully annotated sample as a starting point
+cp etc/flowgent.yaml.fully.sample my-config.yaml
+./bin/flowgent daemon start -c my-config.yaml
+```
+
+Verify:
+
+```bash
+curl http://localhost:9999/_/healthz             # {"status":"ok"}
+curl http://localhost:9999/_/openapi.yaml        # OpenAPI 3.1 spec
+curl http://localhost:9992/.well-known/agent.json # A2A agent card
 ```
 
 REST API on `:9999` · A2A on `:9992` · Wallet on `:9901` · pprof on `:9991`
-
-### Verify
-
-```bash
-curl http://localhost:9999/_/healthz                    # {"status":"ok"}
-curl http://localhost:9999/_/openapi.yaml               # OpenAPI 3.1 spec
-curl http://localhost:9992/.well-known/agent.json       # A2A agent card
-curl http://localhost:9901/health                       # Wallet health
-```
-
-### Interactive Console
-
-```bash
-./bin/flowgent console
-
-flowgent> list agentflows
-flowgent> list runs
-flowgent> show run <id>
-flowgent> tasks <run-id>
-flowgent> exit
-```
-
-### CLI Help
-
-```bash
-./bin/flowgent --help              # Top-level commands
-./bin/flowgent daemon --help       # Daemon subcommands (start/stop/restart)
-./bin/flowgent wallet --help       # Wallet options (--listen, --master-key, --generate-key)
-```
-
----
-
-## Developer Quickstart
-
-```bash
-make build        # Compile all binaries
-make test         # Run all tests
-make fmt          # Format source
-```
-
-### Run Individual Components
-
-```bash
-# Main server
-go build -o bin/flowgent ./src/cmd/core && ./bin/flowgent daemon start
-
-# Specific components
-./bin/flowgent apiserver
-./bin/flowgent wallet
-
-# A specific MCP server
-go build -o bin/mcp-server-github ./src/cmd/mcp-server-github
-GITHUB_TOKEN=xxx ./bin/mcp-server-github
-```
-
-### Add a Node Type
-
-1. Add constant in `src/model/node.go`
-2. Register in `src/engine/executor.go` → `executeNode` switch
-3. LLM node → provide `soul` + `instruction` in YAML; deterministic → pure Go
-
-### Add an MCP Tool
-
-1. Create `src/cmd/mcp-server-<name>/main.go` (stdio MCP pattern)
-2. Register in `etc/flowgent.yaml` → `orchestration.mcps`
-3. Reference via `type: tool` + `tool: <name>` in any L2 agentflow
-
-### Config Resolution
-
-```
--c/--config flag  >  $FLOWGENT_CONFIG_FILE  >  etc/flowgent.yaml
-```
 
 ---
 
 ## Architecture
 
 ```
-Trigger Layer (schedule / webhook)
-        ↓
-Supervisor (Control Plane — LLM, constrained)
-        ↓
-DAG Executor (topological scheduler + dataflow)
-        ↓
-Nodes (agent / tool / map / agentflow / condition / tribunal / human / supervisor / noop)
+API Server ──→ JobManager ──→ Scheduler ──→ TaskManager(s) ──→ MQTT ──→ Executors
+  (gateway)     (control)      (pluggable)   (elastic pods)    (bus)     (11 types)
 ```
 
-| Plane | Nodes | Behaviour |
-|-------|-------|-----------|
-| **Data Plane** | tool, map, agentflow, condition, tribunal, human, noop | Deterministic |
-| **Control Plane** | agent, supervisor | LLM-powered, constrained |
-
----
-
-## Enterprise Agentflows (L2 Examples)
-
-### Security Autonomy Fixer — 11-phase closed-loop remediation
-
-```
-4 parallel scans → LLM triage → nested map fan-out fix → 3-agent review →
-majority tribunal → supervisor safety gate → human approval (24h timeout) →
-commit & PR → multi-channel notify
-```
-
-→ `etc/sample-security-autonomy-fixer.yaml`
-
-### AutoTest Generation — Confluence-to-Cucumber pipeline
-
-```
-Confluence fetch → requirement extraction → test planning per project type →
-Cucumber .feature + step definitions (Spring Boot / Flask / React) →
-review → tribunal → commit & PR → notify
-```
-
-→ `etc/sample-autotest-generation.yaml`
-
----
-
-## Deployment Modes
-
-| Mode | Storage | Queue | Target |
-|------|---------|-------|--------|
-| **All-in-One** | SQLite | Memory | Local dev, single node |
-| **Distributed** | PostgreSQL | MQTT (EMQX) | Kubernetes cluster |
-
----
-
-## API
-
-| Interface | Port | Spec |
+| Component | Role | Docs |
 |-----------|------|------|
-| REST API | `:9999` | OAS 3.1 (`/_/openapi.yaml`) + Swagger UI |
-| A2A Protocol | `:9992` | Google Agent-to-Agent (`/.well-known/agent.json`) |
-| Management | `:9991` | pprof (`/debug/pprof/`) |
+| API Server | Multi-tenant REST + A2A gateway | [01-DESIGN](docs/01-DESIGN-engine-architecture.md#2-api-server--multi-tenant-gateway--operator) |
+| JobManager | DAG orchestration, mode routing | [01-DESIGN](docs/01-DESIGN-engine-architecture.md#3-jobmanager--control-plane) |
+| ResourceManager | Pluggable dispatch (local/K8s) | [01-DESIGN](docs/01-DESIGN-engine-architecture.md#4-resourcemanager--scheduler--pluggable-dispatch) |
+| TaskManager | Persistent slot workers, heartbeat | [01-DESIGN](docs/01-DESIGN-engine-architecture.md#5-taskmanager--persistent-worker) |
+| MQTT Event Bus | Distributed JM↔TM messaging | [01-DESIGN](docs/01-DESIGN-engine-architecture.md#6-mqtt-event-bus) |
+
+**Node types (11):** `agent` `tool` `map` `join` `agentflow` `condition` `tribunal` `human` `supervisor` `sandbox` `noop`
+
+Full architecture → [docs/01-DESIGN-engine-architecture.md](docs/01-DESIGN-engine-architecture.md)
+
+---
+
+## Examples
+
+Built-in examples are under `examples/` — agents, flows, MCP servers, and scenario configs.
+
+### AgentFlows (L2)
+
+| Flow | Description | File |
+|------|-------------|------|
+| Security Autonomy Fixer v1 | 21-node full pipeline (SonarQube + Sonatype MCPs) | `examples/flows/01-security-autonomy-fix-v1.yaml` |
+| Security Autonomy Fixer v2 | 11-node simplified (agent-only + `.cyberbot` metadata) | `examples/flows/01-security-autonomy-fix-v2.yaml` |
+| AutoTest Generation | Confluence → Cucumber pipeline | `examples/flows/20-autotest-generation-v1.yaml` |
+
+### Scenario Configs
+
+| Config | Storage | Cache | Queue | Use |
+|--------|---------|-------|-------|-----|
+| `examples/scenario-e2e-allinone.yaml` | SQLite | Memory | Memory | Dev / CI |
+| `examples/scenario-e2e-production.yaml` | PostgreSQL | Redis | MQTT | K8s / Prod |
+
+Full e2e guide → [docs/20-TEST-e2e-guide.md](docs/20-TEST-e2e-guide.md)
+
+---
+
+## Developer Quickstart
+
+```bash
+make build-flowgent    # core binary
+make example-mcps      # example MCP servers
+make test              # run all tests
+make fmt               # format source
+```
+
+### Build Individual Components
+
+```bash
+# Core
+go build -o bin/flowgent ./src/cmd/flowgent
+
+# Example MCP servers
+go build -o bin/mcp-server-github ./examples/mcp-github
+go build -o bin/mcp-server-sonarqube ./examples/mcp-sonarqube
+```
+
+### Project Layout
+
+```
+src/cmd/flowgent/   — core CLI (daemon, apiserver, a2a, wallet, console)
+src/api/            — REST API handlers (tenant-scoped CRUD)
+src/engine/         — JM, RM (scheduler), TM, executors (11 node types)
+src/model/          — domain types (AgentFlowSpec, ExecutionPlan, NodeSpec, etc.)
+src/store/          — persistence (SQLite, PostgreSQL)
+src/llm/            — LLM client (OpenAI-compatible) + MCP factory
+src/notification/   — notification service (Telegram, DingTalk, Slack, Email, Webhook)
+examples/           — agents, flows, MCP servers, scenario configs
+docs/               — design docs, e2e guide
+```
 
 ---
 
