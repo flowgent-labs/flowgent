@@ -55,10 +55,12 @@ and auditable autonomous workflows.`,
 // ─── Shared PID file flags (per service) ──────────────────────
 
 var (
-	pidDaemon    string
-	pidAPIServer string
-	pidA2A       string
-	pidWallet    string
+	pidDaemon      string
+	pidAPIServer   string
+	pidA2A         string
+	pidWallet      string
+	pidTaskManager string
+	pidJobManager  string
 )
 
 // ─── daemon ───────────────────────────────────────────────────
@@ -220,6 +222,70 @@ var walletGenKeyCmd = &cobra.Command{
 	},
 }
 
+// ─── taskmanager ──────────────────────────────────────────────
+
+var taskmanagerCmd = &cobra.Command{
+	Use:   "taskmanager",
+	Short: "Manage a TaskManager worker (distributed mode)",
+	Long:  "Start, stop, or restart a persistent TaskManager that consumes ExecutionPlans from MQTT.",
+}
+
+var taskmanagerStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the TaskManager worker",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runTaskManager("start", pidTaskManager)
+	},
+}
+
+var taskmanagerStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a running TaskManager",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runTaskManager("stop", pidTaskManager)
+	},
+}
+
+var taskmanagerRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the TaskManager",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runTaskManager("restart", pidTaskManager)
+	},
+}
+
+// ─── jobmanager ───────────────────────────────────────────────
+
+var jobmanagerCmd = &cobra.Command{
+	Use:   "jobmanager",
+	Short: "Manage a standalone JobManager (distributed control plane)",
+	Long:  "Start, stop, or restart a standalone JobManager for K8s distributed mode.",
+}
+
+var jobmanagerStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the JobManager",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runJobManager("start", pidJobManager)
+	},
+}
+
+var jobmanagerStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop a running JobManager",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runJobManager("stop", pidJobManager)
+	},
+}
+
+var jobmanagerRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the JobManager",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runJobManager("restart", pidJobManager)
+	},
+}
+
 // ─── console ──────────────────────────────────────────────────
 
 var consoleCmd = &cobra.Command{
@@ -288,6 +354,20 @@ func main() {
 	walletStartCmd.Flags().StringVar(&masterKeyFile, "master-key-file", "", "Path to master key file")
 	walletGenKeyCmd.Flags().StringVar(&keyFormat, "format", "text", "Output structure: text|json")
 	walletGenKeyCmd.Flags().StringVar(&keyEncoding, "encoding", "hex", "Key encoding: hex|base64")
+
+	// taskmanager
+	rootCmd.AddCommand(taskmanagerCmd)
+	taskmanagerCmd.AddCommand(taskmanagerStartCmd)
+	taskmanagerCmd.AddCommand(taskmanagerStopCmd)
+	taskmanagerCmd.AddCommand(taskmanagerRestartCmd)
+	taskmanagerCmd.PersistentFlags().StringVar(&pidTaskManager, "pid-file", "/tmp/flowgent-taskmanager.pid", "PID file path")
+
+	// jobmanager
+	rootCmd.AddCommand(jobmanagerCmd)
+	jobmanagerCmd.AddCommand(jobmanagerStartCmd)
+	jobmanagerCmd.AddCommand(jobmanagerStopCmd)
+	jobmanagerCmd.AddCommand(jobmanagerRestartCmd)
+	jobmanagerCmd.PersistentFlags().StringVar(&pidJobManager, "pid-file", "/tmp/flowgent-jobmanager.pid", "PID file path")
 
 	// console
 	rootCmd.AddCommand(consoleCmd)
