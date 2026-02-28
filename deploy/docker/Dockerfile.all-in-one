@@ -51,36 +51,48 @@ COPY --from=builder-mcps /out/nexus3-mcp      /bin/nexus3-mcp
 COPY examples/ /app/examples/
 COPY etc/ /app/etc/
 
-RUN printf '%s\n' \
-  '#!/bin/bash' \
-  'set -euo pipefail' \
-  'case "${1:-}" in' \
-  '  ""|--help|-h|help) cat <<'"'"'HELP'"'"'' \
-  'Flowgent All-in-One — Quick Start' \
-  '' \
-  '  docker run --rm flowgent:all-in-one [MODE]' \
-  '' \
-  '  Modes:' \
-  '    (default)      Show this help' \
-  '    start          Start server (REST :9999, mgmt :9991)' \
-  '    shell          Interactive bash shell' \
-  '    version        Print version' \
-  '' \
-  '  Subcommands: all-in-one | apiserver | a2a | controller' \
-  '               jobmanager | taskmanager | sandbox | notifier | wallet' \
-  '               console | version | --help' \
-  '' \
-  '  Bundled MCPs: /bin/{github,sonarqube,sonatype-iq,nexus3}-mcp' \
-  '  Examples:     /app/examples/{agents,flows,skills}/' \
-  '  Configs:      /app/etc/' \
-  'HELP' \
-  '    ;;' \
-  '  start) exec /app/flowgent all-in-one start -c /app/etc/flowgent-dev.yaml ;;' \
-  '  shell|bash|sh) exec /bin/bash ;;' \
-  '  version|-v|--version) exec /app/flowgent version ;;' \
-  '  *) exec /app/flowgent "$@" ;;' \
-  'esac' \
-  > /entrypoint.sh && chmod +x /entrypoint.sh
+COPY <<'EOF' /entrypoint.sh
+#!/bin/bash
+set -euo pipefail
+
+case "${1:-}" in
+  ""|--help|-h|help)
+    cat <<'HELP'
+Flowgent All-in-One — Quick Start
+
+  docker run --rm flowgent:all-in-one [MODE]
+
+  Modes:
+    (default)      Show this help
+    start          Start server (REST :9999, mgmt :9991)
+    shell          Drop into bash shell
+    version        Print version info
+
+  Subcommands (via /app/flowgent):
+    all-in-one start | apiserver start | a2a start
+    controller start | jobmanager start | taskmanager start
+    sandbox start | notifier start | wallet start
+    console | version | --help
+
+  Bundled MCPs:  /bin/{github,sonarqube,sonatype-iq,nexus3}-mcp
+  Examples:      /app/examples/{agents,flows,skills}/
+  Configs:       /app/etc/
+HELP
+    ;;
+  start)
+    exec /app/flowgent all-in-one start -c /app/etc/flowgent-dev.yaml
+    ;;
+  shell|bash|sh)
+    exec /bin/bash
+    ;;
+  version|-v|--version)
+    exec /app/flowgent version
+    ;;
+  *)
+    exec /app/flowgent "$@"
+    ;;
+esac
+EOF
 
 WORKDIR /app
 ENTRYPOINT ["/entrypoint.sh"]
