@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/flowgent-labs/flowgent/src/common/tracing"
 	"github.com/flowgent-labs/flowgent/src/model"
 )
+
+var pgTracer = tracing.Tracer("flowgent/postgres")
 
 type PostgresStore struct {
 	dsn    string
@@ -48,7 +52,6 @@ func (s *PostgresStore) Init(ctx context.Context) error {
 		}
 	}
 	s.pool = pool
-	log.Printf("pgxpool connected to %s", s.dsn)
 	return nil
 }
 
@@ -199,18 +202,25 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, name string) error {
 // ─── AgentFlow runs ────────────────────────────────────────
 
 func (s *PostgresStore) CreateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
+	ctx, span := pgTracer.Start(ctx, "CreateAgentFlowRun",
+		trace.WithAttributes(
+			attribute.String("agentflow_id", run.AgentFlowID),
+			attribute.String("run_id", run.ID),
+		))
+	defer span.End()
+
 	run.ID = newUUID()
 	run.CreatedAt = time.Now()
 	run.UpdatedAt = run.CreatedAt
 	tp, _ := json.Marshal(run.Trigger.Payload)
-	if err := s.pool.Ping(ctx); err != nil {
-		log.Printf("PGX pool ping FAIL: %v", err)
-	}
-	r, err := s.pool.Exec(ctx,
+	_, err := s.pool.Exec(ctx,
 		`INSERT INTO agentflow_runs (id,agentflow_id,version,status,vars,trigger_type,trigger_source,trigger_payload,created_at,updated_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		run.ID, run.AgentFlowID, run.Version, "PGX_MARKER", toJSON(run.Vars), "PGX_MARKER", run.Trigger.Source, tp, run.CreatedAt, run.UpdatedAt)
-	log.Printf("PGX CreateAgentFlowRun: id=%s rows=%d err=%v pool=%v", run.ID, r.RowsAffected(), err, s.pool != nil)
+		run.ID, run.AgentFlowID, run.Version, run.Status, toJSON(run.Vars), run.Trigger.Type, run.Trigger.Source, tp, run.CreatedAt, run.UpdatedAt)
+	if err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("error", err.Error()))
+	}
 	return err
 }
 

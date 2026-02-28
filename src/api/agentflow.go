@@ -2,16 +2,18 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/store"
+	"github.com/flowgent-labs/flowgent/src/common/tracing"
 	"github.com/flowgent-labs/flowgent/src/common/utils"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var apiTracer = tracing.Tracer("flowgent/api")
 
 // AgentFlowHandler manages agentflow HTTP endpoints.
 type AgentFlowHandler struct {
@@ -135,7 +137,10 @@ func (h *AgentFlowHandler) DeleteDefinition(w http.ResponseWriter, r *http.Reque
 
 // TriggerWithVars starts a new agentflow run for the given spec.
 func (h *AgentFlowHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, triggerInfo model.TriggerInfo) {
-	os.Stderr.WriteString("HELLO_STDERR\n")
+	ctx, span := apiTracer.Start(r.Context(), "TriggerWithVars",
+		trace.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
+	defer span.End()
+
 	tenant := r.PathValue("tenant")
 	spec := h.agentFlows[agentFlowID]
 	if spec == nil {
@@ -160,8 +165,8 @@ func (h *AgentFlowHandler) TriggerWithVars(w http.ResponseWriter, r *http.Reques
 		Priority:    spec.Priority,
 		Namespace:   spec.Namespace,
 	}
-	slog.Info("TRIGGER_CREATE_RUN", "agentflow", agentFlowID, "store_type", fmt.Sprintf("%T", h.store))
-	if err := h.store.CreateAgentFlowRun(r.Context(), run); err != nil {
+	if err := h.store.CreateAgentFlowRun(ctx, run); err != nil {
+		span.RecordError(err)
 		h.logger.Error("create agentflow run", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -189,7 +194,6 @@ func (h *AgentFlowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	if req.Trigger.Type == "" {
 		req.Trigger = model.TriggerInfo{Type: "api", Source: "rest"}
 	}
-	fmt.Fprintf(os.Stderr, "TRIGGER_CALLED agentflow=%s store=%T\n", req.AgentFlowID, h.store)
 	h.TriggerWithVars(w, r, req.AgentFlowID, req.Vars, req.Trigger)
 }
 

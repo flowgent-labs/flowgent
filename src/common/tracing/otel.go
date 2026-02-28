@@ -2,12 +2,14 @@ package tracing
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/src/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -21,8 +23,21 @@ type Provider struct {
 }
 
 // NewProvider initializes OTEL tracing and metrics from config.
-// Actual OTLP export is configured via OTEL_EXPORTER_OTLP_ENDPOINT env var.
+// OTLP endpoint defaults to OTEL_EXPORTER_OTLP_ENDPOINT env var, falling back to localhost:4317.
 func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *config.OTELConfig, metricsCfg *config.MetricsConfig) (*Provider, error) {
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" && otelCfg != nil && otelCfg.Endpoint != "" {
+		endpoint = otelCfg.Endpoint
+	}
+	if endpoint == "" {
+		endpoint = "localhost:4317"
+	}
+
+	exp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+
 	var attrs []attribute.KeyValue
 	attrs = append(attrs,
 		attribute.String("service.name", svcName),
@@ -47,6 +62,7 @@ func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *confi
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(sampleRate)),
+		sdktrace.WithBatcher(exp),
 	)
 
 	meterProvider := sdkmetric.NewMeterProvider(
@@ -74,8 +90,7 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 
 // ─── Component helpers ──────────────────────────────────────────
 
-// Meter returns a named meter for a component. All components must use this
-// instead of calling otel.Meter directly, so OTEL imports stay centralized.
+// Meter returns a named meter for a component.
 func Meter(name string) metric.Meter { return otel.Meter(name) }
 
 // Tracer returns a named tracer for a component.
