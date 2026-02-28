@@ -1,7 +1,7 @@
 # Flowgent E2E Test Guide — Full Production Mode
 
-**Date:** 2026-05-21
-**Status:** Design verified — all 6 microservices defined, Controller+JM unification done
+**Date:** 2026-05-22
+**Status:** Helm chart + IDiscoveryClient + Notification queue consumer + Distributed test specs
 
 ---
 
@@ -405,3 +405,148 @@ In `launch.go → startServer()`:
 - Agents: `SaveAgent()`, `GetAgent()`, `ListAgents()`, `DeleteAgent()`
 
 Full CRUD is implemented in both `PostgresStore` and `SQLiteStore` (`src/store/store_agents.go`).
+
+---
+
+## 11. Distributed Mode Testing Requirements (Next Iteration)
+
+Tests that verify distributed behavior across multiple pods with real
+infrastructure (PG, EMQX, Redis, K3s).
+
+### 11.1 Test Matrix
+
+| # | Test | Components | Replicas | Verifies |
+|---|------|-----------|----------|----------|
+| T1 | JM HA Leader Election | JM × 2 | 2 | K8s discovery, leader election, standby takeover |
+| T2 | Controller Hash-Mod Sharding | Controller × 3 | 3 | hash(flow_id) % N distribution, no overlap, no gaps |
+| T3 | TM Distributed Plan Execution | TM × 4 | 4 | MQTT dispatch, slot allocation, lease claiming |
+| T4 | Notification Queue Load-Balancing | Notification × 2 | 2 | MQTT shared subscription, dedup, channel delivery |
+| T5 | Full End-to-End (All Services) | All 6 | 2 each | Complete flow: UI→API→PG→Controller→JM→TM→Notification |
+| T6 | Scale-Up/Down Rebalance | Controller × 3→2 | 3→2 | Shard redistribution on pod removal |
+
+### 11.2 T1: JM HA Leader Election
+
+**Setup:**
+```bash
+helm install flowgent ./deploy/helm/flowgent --set jobmanager.replicas=2 --set jobmanager.ha.enabled=true
+```
+
+**Test steps:**
+1. Verify both JM pods Running: `kubectl get pods -l app.kubernetes.io/component=jobmanager`
+2. Verify only ONE JM is leader: check logs for `leader elected: true`
+3. Kill leader pod: `kubectl delete pod <leader-jm>`
+4. Verify standby takes over within `leaseDuration` (30s by default)
+5. Verify no runs are lost during failover (check `agentflow_runs` table)
+
+**Expected:**
+- Only one JM runs runPoller at any time
+- Leader election uses `IDiscoveryClient.IsLeader()` → lexicographic name ordering
+- Standby JM polls `agentflow_runs` but skips if not leader
+- Failover time < leaseDuration + 2×pollInterval
+
+### 11.3 T2: Controller Hash-Mod Sharding
+
+**Setup:**
+```bash
+# Insert test flows with known IDs into PG
+for i in $(seq 1 20); do
+  psql -c "INSERT INTO agentflow_definitions (agentflow_id, version, definition)
+    VALUES ('test-flow-$i', 1, '{\"id\":\"test-flow-$i\",\"nodes\":[...]}'::jsonb)"
+done
+
+helm install flowgent ./deploy/helm/flowgent --set controller.replicas=3
+```
+
+**Test steps:**
+1. Wait for all 3 controller pods to discover each other
+2. Check each pod's log for `shard=X/3` message
+3. Verify each pod only dispatches flows in its shard:
+   - Pod 0: `hash(flow_id) % 3 == 0`
+   - Pod 1: `hash(flow_id) % 3 == 1`
+   - Pod 2: `hash(flow_id) % 3 == 2`
+4. Verify NO flow is dispatched by two pods (no overlap)
+5. Verify ALL 20 flows are dispatched (no gaps)
+
+**Expected:**
+- Flows partitioned uniformly (±1) across controller pods
+- No duplicate dispatches (each flow handled by exactly one pod)
+- Discovery rebalances on scale events (within pollInterval)
+
+### 11.4 T3: TM Distributed Plan Execution
+
+**Setup:**
+```bash
+helm install flowgent ./deploy/helm/flowgent --set taskmanager.replicas=4 --set taskmanager.slots=4
+```
+
+**Test steps:**
+1. Submit a flow with 16 map items (parallel tasks)
+2. Verify all 4 TMs receive execution plans via MQTT
+3. Check each TM's slot utilization: `kubectl logs <tm-pod> | grep "slot"`
+4. Verify execution plans are evenly distributed
+5. Kill one TM pod mid-execution
+6. Verify remaining TMs pick up orphaned plans (lease expiry)
+
+**Expected:**
+- 4 TMs × 4 slots = 16 concurrent executions
+- MQTT topics per TM: `flowgent/exec/tm/{tmID}`
+- Lease-based plan claiming (PG `claim_lease`)
+- Orphaned plans automatically re-claimed after lease timeout
+
+### 11.5 T4: Notification Queue Load-Balancing
+
+**Setup:**
+```bash
+helm install flowgent ./deploy/helm/flowgent --set notification.replicas=2
+```
+
+**Test steps:**
+1. Publish 10 notification messages to `/flowgent/notify/queue/default/test-flow`
+2. Verify each notification pod receives ~5 messages (load-balanced)
+3. Check external channel delivery logs
+4. Verify no duplicate deliveries
+
+**Expected:**
+- MQTT shared subscription distributes messages across pods
+- Each message processed exactly once
+- Channel delivery logged per message
+
+### 11.6 T5: Full End-to-End
+
+**Setup:**
+```bash
+helm install flowgent ./deploy/helm/flowgent \
+  --set apiserver.replicas=2 \
+  --set controller.replicas=2 \
+  --set jobmanager.replicas=2 \
+  --set taskmanager.replicas=2 \
+  --set wallet.replicas=2 \
+  --set notification.replicas=2
+```
+
+**Test steps:**
+1. Build and import image to K3s
+2. Deploy all 6 services via Helm (12 pods total)
+3. Verify all pods Running: `kubectl get pods | grep flowgent | wc -l` == 12
+4. Insert test flow via API: `curl -X POST http://<apiserver>/api/v1/default/agentflows/definitions ...`
+5. Controller picks up flow → creates pending run
+6. JM runPoller picks up run → dispatches to TM
+7. TM executes plans → run COMPLETED
+8. Notification service detects completion → posts to configured channels
+
+**Expected:**
+- All 6 services discover peers via IDiscoveryClient (K8s label selector)
+- Wallet auto-generates key, printed in Helm NOTES.txt
+- Flow completes end-to-end within timeout
+- PG has `agentflow_runs` record with status=COMPLETED
+- Notification queue messages consumed and dispatched
+
+### 11.7 Infrastructure Requirements
+
+| Service | Version | Access |
+|---------|---------|--------|
+| PostgreSQL | 16+ | `172.29.235.101:5432`, test/test, db=flowgent |
+| EMQX MQTT | 5.5+ | `172.29.235.101:1883` (mqtt), `:18083` (dashboard) |
+| Redis Cluster | 7.0+ | `127.0.0.1:6379-6381`, password=bitnami |
+| K3s | 1.35+ | `kubectl` access to cluster |
+| Go | 1.26+ | `CGO_ENABLED=0 go build` (static binary) |

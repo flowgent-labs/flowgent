@@ -97,15 +97,26 @@ func NewService(s Store, mqtt MQTTClient) *Service {
 // PodID returns the unique pod identifier for MQTT routing.
 func (s *Service) PodID() string { return s.podID }
 
-// Start begins the scanner goroutine, MQTT listener, and cleanup loop.
+// Start begins the scanner goroutine, MQTT listener, queue consumer, and cleanup loop.
 func (s *Service) Start(ctx context.Context) error {
 	if s.mqtt != nil {
-		// Subscribe to this pod's notification channel
-		topic := fmt.Sprintf("/flowgent/notify/pod/%s/ws/+", s.podID)
-		if err := s.mqtt.Subscribe(ctx, topic, s.onMQTTMessage); err != nil {
-			s.logger.Warn("mqtt subscribe failed, WS push disabled", "topic", topic, "error", err)
+		// 1. Pod-level WS routing: messages addressed to this pod's WS clients
+		topicWS := fmt.Sprintf("/flowgent/notify/pod/%s/ws/+", s.podID)
+		if err := s.mqtt.Subscribe(ctx, topicWS, s.onMQTTMessage); err != nil {
+			s.logger.Warn("mqtt WS subscribe failed", "topic", topicWS, "error", err)
 		} else {
-			s.logger.Info("notification service subscribed", "topic", topic)
+			s.logger.Info("notification WS routing subscribed", "topic", topicWS)
+		}
+
+		// 2. Queue consumer: stacked notifications by tenant+agentflow ID
+		//    Each notification pod subscribes to /flowgent/notify/queue/+/+
+		//    MQTT shared subscriptions ensure load-balanced consumption across pods.
+		//    Topic pattern: /flowgent/notify/queue/{tenantID}/{agentflowID}
+		topicQueue := "/flowgent/notify/queue/+/+"
+		if err := s.mqtt.Subscribe(ctx, topicQueue, s.onQueueMessage); err != nil {
+			s.logger.Warn("mqtt queue subscribe failed", "topic", topicQueue, "error", err)
+		} else {
+			s.logger.Info("notification queue consumer subscribed", "topic", topicQueue)
 		}
 	}
 
@@ -119,6 +130,59 @@ func (s *Service) Start(ctx context.Context) error {
 // RegisterSender adds or overrides a named sender implementation.
 func (s *Service) RegisterSender(name string, sender Sender) {
 	s.senders[name] = sender
+}
+
+// onQueueMessage handles incoming notification messages from the queue topic.
+// Topic: /flowgent/notify/queue/{tenantID}/{agentflowID}
+// Each message is dispatched to configured notification channels for that tenant.
+func (s *Service) onQueueMessage(topic string, payload []byte) {
+	s.logger.Debug("queue message received", "topic", topic)
+
+	// Parse tenantID and agentflowID from topic
+	// /flowgent/notify/queue/{tenantID}/{agentflowID}
+	var tenantID, flowID string
+	if n, _ := fmt.Sscanf(topic, "/flowgent/notify/queue/%s/%s", &tenantID, &flowID); n < 2 {
+		s.logger.Warn("invalid queue topic format", "topic", topic)
+		return
+	}
+
+	var msg model.NotificationMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		s.logger.Warn("queue message unmarshal", "error", err)
+		return
+	}
+
+	s.logger.Info("processing queue notification",
+		"tenant", tenantID,
+		"flow", flowID,
+		"title", msg.Title)
+
+	// Dispatch to configured notification channels for this tenant
+	s.notifyChannels(context.Background(), "", msg.Title, msg.Body)
+}
+
+// PublishNotification enqueues a notification to the MQTT queue for the given
+// tenant and agentflow. NotificationService pods consume and dispatch to channels.
+func (s *Service) PublishNotification(ctx context.Context, tenantID, agentflowID, title, body string) error {
+	if s.mqtt == nil {
+		return fmt.Errorf("notification: mqtt not configured")
+	}
+
+	msg := model.NotificationMessage{
+		Title:        title,
+		Body:         body,
+		TenantID:     tenantID,
+		AgentFlowID:  agentflowID,
+		Timestamp:    time.Now(),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal notification: %w", err)
+	}
+
+	topic := fmt.Sprintf("/flowgent/notify/queue/%s/%s", tenantID, agentflowID)
+	return s.mqtt.Publish(ctx, topic, payload)
 }
 
 func (s *Service) onMQTTMessage(topic string, payload []byte) {

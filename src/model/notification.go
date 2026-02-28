@@ -33,6 +33,17 @@ type NotificationEvent struct {
 	Body      string `json:"body"`
 }
 
+// NotificationMessage is a queued notification to be consumed and dispatched.
+// Published to MQTT topic /flowgent/notify/queue/{tenantID}/{agentflowID}
+// where notification pods consume via shared subscription and post to channels.
+type NotificationMessage struct {
+	Title       string    `json:"title"`
+	Body        string    `json:"body"`
+	TenantID    string    `json:"tenant_id"`
+	AgentFlowID string    `json:"agentflow_id"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
 // SubscriptionRoute maps a WebSocket connection to an agentflow for
 // clustered push delivery across multiple notification pod instances.
 //

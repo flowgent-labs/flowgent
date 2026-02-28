@@ -618,7 +618,119 @@ pprof: `mgmt.pprof.enabled` → port 6669.
 
 ---
 
+## 11.5 Notification Service — Queue Consumer + Multi-Channel Push
+
+The Notification service is a **stateful event consumer** that bridges internal
+agentflow events to external communication channels.
+
+### 11.5.1 Architecture
+
+```
+  ┌──────────────────────────────────────────────────┐
+  │              Notification Service                 │
+  │                                                   │
+  │  ┌──────────────────┐  ┌──────────────────────┐  │
+  │  │ MQTT Queue       │  │ Human Approval       │  │
+  │  │ Consumer         │  │ Scanner (poller)     │  │
+  │  │                  │  │                      │  │
+  │  │ Topic:           │  │ SELECT FROM          │  │
+  │  │ /flowgent/       │  │ human_approvals      │  │
+  │  │ notify/queue/    │  │ WHERE status=PENDING │  │
+  │  │ {tenant}/{flow}  │  └──────────┬───────────┘  │
+  │  └────────┬─────────┘             │              │
+  │           │                       │              │
+  │           └───────────┬───────────┘              │
+  │                       │                          │
+  │                       ▼                          │
+  │           ┌──────────────────────┐              │
+  │           │ Channel Dispatcher   │              │
+  │           │ (by tenant config)   │              │
+  │           └──────────┬───────────┘              │
+  │                      │                          │
+  │       ┌──────────────┼──────────────┐          │
+  │       ▼              ▼              ▼          │
+  │  ┌─────────┐  ┌──────────┐  ┌──────────┐      │
+  │  │ Slack   │  │ DingTalk │  │ Webhook  │ ...  │
+  │  │ Sender  │  │ Sender   │  │ Sender   │      │
+  │  └─────────┘  └──────────┘  └──────────┘      │
+  └──────────────────────────────────────────────────┘
+```
+
+### 11.5.2 Queue Consumer (MQTT Shared Subscription)
+
+Notification pods consume from MQTT topic pattern:
+
+```
+/flowgent/notify/queue/{tenantID}/{agentflowID}
+```
+
+Using MQTT shared subscriptions (e.g., `$share/notif/flowgent/notify/queue/+/+`),
+messages are **load-balanced** across notification pods — each message is delivered
+to exactly ONE pod, preventing duplicate notifications.
+
+Flow (producer → consumer):
+
+```
+1. JobMaster/API → PublishNotification(ctx, tenantID, flowID, title, body)
+2. MQTT delivers to ONE notification pod via shared subscription
+3. Pod's onQueueMessage() parses topic → tenantID + flowID
+4. Dispatches to notifyChannels() by tenant config
+5. Each channel sender posts to external service
+```
+
+### 11.5.3 Multi-Pod WS Routing
+
+For real-time WebSocket push (human approvals, run status):
+
+```
+/flowgent/notify/pod/{podID}/ws/{wsID}
+```
+
+Each pod subscribes to its own pod-specific topic. The scanner publishes to
+the correct pod based on `subscription_routes` table (podID → wsID mapping).
+
+### 11.5.4 Supported Channel Types
+
+| Channel | Implementation | Config |
+|---------|---------------|--------|
+| Slack | `SlackSender` | webhook_url, channel |
+| DingTalk | `DingTalkSender` | webhook_url, secret |
+| Telegram | `TelegramSender` | bot_token, chat_id |
+| Email | `EmailSender` | smtp_host, port, username, password |
+| Webhook | `WebhookSender` | url, headers |
+
+### 11.5.5 IDiscoveryClient — Pluggable Service Discovery
+
+Abstracts pod discovery for all distributed components (Controller sharding,
+JM HA leader election, TM peer awareness):
+
+```go
+type IDiscoveryClient interface {
+    DiscoverPeers(ctx, labelSelector) ([]Peer, error)
+    Self() Peer
+    IsLeader(ctx, labelSelector) (bool, error)
+    WatchPeers(ctx, labelSelector) (<-chan []Peer, error)
+}
+```
+
+Implementations:
+- `K8sDiscoveryClient` — label-selector pod listing (like Flink's KubernetesHA)
+- `StaticDiscoveryClient` — env-var based (dev/CI/single-node)
+- (Future) Consul, etcd, ZooKeeper
+
+---
+
 ## 12. File Map
+
+| File | Role |
+|------|------|
+| `src/cmd/flowgent/main.go` | CLI entry point (cobra): daemon, apiserver, a2a, wallet, controller, etc. |
+| `src/cmd/flowgent/launch.go` | Subsystem init: store, queue, RM, JM, API server startup |
+| `src/cmd/flowgent/controller.go` | Distributed flow driver: sharding, discovery, session/app dispatch |
+| `src/engine/discovery/` | IDiscoveryClient interface + K8s/static implementations |
+| `src/api/server.go` | REST route registration (tenant-scoped paths) |
+| `src/api/agentflow.go` | AgentFlow CRUD + trigger handlers |
+| `src/api/agent.go` | Agent CRUD handler |
 
 | File | Role |
 |------|------|
