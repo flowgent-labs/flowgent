@@ -42,7 +42,7 @@ redis:
 apiserver:
   enabled: true
   replicas: 2
-  image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+  image: ""
   service:
     restPort: 9999
     a2aPort: 9992
@@ -66,7 +66,7 @@ apiserver:
 controller:
   enabled: true
   replicas: 2
-  image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+  image: ""
   pollInterval: "10s"
   serviceAccount:
     create: true
@@ -83,7 +83,7 @@ controller:
 jobmanager:
   enabled: true
   replicas: 2
-  image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+  image: ""
   # HA mode: when replicas > 1, JM pods use IDiscoveryClient (K8s label selector)
   # to elect one active JM. Standby JMs poll and take over if leader fails.
   ha:
@@ -101,7 +101,7 @@ jobmanager:
 taskmanager:
   enabled: true
   replicas: 2
-  image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+  image: ""
   slots: 4
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
@@ -113,7 +113,7 @@ taskmanager:
 wallet:
   enabled: true
   replicas: 2
-  image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+  image: ""
   service:
     port: 9901
   # Auto-generate root Ed25519 private key if not provided
@@ -133,7 +133,7 @@ wallet:
 notification:
   enabled: true
   replicas: 2
-  image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+  image: ""
   service:
     port: 9993
   channels: []
