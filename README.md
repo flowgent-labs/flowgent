@@ -96,7 +96,9 @@ Built-in examples are under `examples/` — agents, flows, MCP servers, and skil
 |-------|-------------|------|
 | nexus3-maven-versions-retrieve-with-iq-firewall | Nexus3 dependency firewall check via copilot scripts (replaces sonatype-nexus3 MCP) | `examples/skills/nexus3-maven-versions-retrieve-with-iq-firewall.yaml` |
 
-Full e2e guide → [docs/20-L2-E2E-Guide.md](docs/20-L2-E2E-Guide.md)
+E2E guides:
+- [V1 Baseline — Real webhook → SonarQube](docs/10-L2-E2E-security-fixer-v1.md)
+- [V2 Current — Webhook simulated, white-box](docs/10-L2-E2E-security-fixer-v2.md)
 
 ---
 

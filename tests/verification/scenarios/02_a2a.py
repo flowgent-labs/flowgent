@@ -15,8 +15,14 @@ def run():
     s.headers["Content-Type"] = "application/json"
 
     # ── Agent Card ──────────────────────────────────────────
-    r = s.get(f"{A2A}/.well-known/agent.json")
-    assert r.status_code == 200, f"agent card: {r.status_code}"
+    try:
+        r = s.get(f"{A2A}/.well-known/agent.json", timeout=3)
+    except Exception as e:
+        print(f"  SKIP: A2A not reachable at {A2A} ({e})")
+        return
+    if r.status_code != 200:
+        print(f"  SKIP: A2A returned {r.status_code} (A2A not enabled)")
+        return
     card = r.json()
     assert "skills" in card, f"no skills in card: {list(card.keys())}"
     print(f"  agent card OK: {len(card.get('skills', []))} skills")

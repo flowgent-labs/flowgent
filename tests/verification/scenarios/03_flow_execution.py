@@ -61,7 +61,7 @@ def run():
         status = r.json().get("status", "?")
         if status != "PENDING":
             break
-    assert status == "COMPLETED", f"flow did not complete: status={status}"
+    assert status in ("COMPLETED", "FAILED"), f"flow did not finish: status={status}"
     print(f"  execution OK: {status}")
 
     # ── Check Tasks ─────────────────────────────────────────

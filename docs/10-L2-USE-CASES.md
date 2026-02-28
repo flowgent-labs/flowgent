@@ -24,6 +24,10 @@ commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 | [`examples/flows/01-security-autonomy-fix-v2.yaml`](../examples/flows/01-security-autonomy-fix-v2.yaml) | **V2** — Identical to V1 except GitHub PR webhook trigger commented out (pending webhook→SonarQube integration). Deploy this version. |
 | [`examples/flows/01-sub-fix.yaml`](../examples/flows/01-sub-fix.yaml) | Sub-flow: analyze → patch → validate for individual issue |
 
+> **E2E testing:**
+> - [10-L2-E2E-security-fixer-v1.md](10-L2-E2E-security-fixer-v1.md) — V1 target: real GitHub webhook → SonarQube → fix → re-scan
+> - [10-L2-E2E-security-fixer-v2.md](10-L2-E2E-security-fixer-v2.md) — V2 current: webhook simulated, white-box PG/EMQX/Jaeger verification
+
 > **Note:** V3 (iterative re-scan loop) was merged into V1. V1 is now the single source of truth. Once webhook→SonarQube integration is complete, V2 can be removed and V1 deployed directly.
 
 ### Agent Definitions
