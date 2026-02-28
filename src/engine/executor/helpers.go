@@ -12,3 +12,8 @@ func formatPlanInput(plan *model.ExecutionPlan) string {
 	return string(b)
 }
 
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen { return s }
+	return s[:maxLen] + "..."
+}
+

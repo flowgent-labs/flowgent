@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/src/common/utils"
 	"github.com/flowgent-labs/flowgent/src/config"
@@ -13,10 +14,17 @@ import (
 
 // ─── Agent Executor ────────────────────────────────────
 
+// MemoryStore is the subset of store.MemoryStore needed by executors.
+type MemoryStore = interface {
+	SaveMemory(ctx context.Context, m *model.Memory) error
+	SearchMemory(ctx context.Context, agentID, nodeID string, embedding []float32, topK int) ([]model.Memory, error)
+}
+
 type AgentExecutor struct {
-	llmClient  engine.LLMClient
-	agents     map[string]*config.AgentDef
-	maxRetries int
+	llmClient   engine.LLMClient
+	agents      map[string]*config.AgentDef
+	memStore    MemoryStore // optional: enables memory persistence + recall
+	maxRetries  int
 }
 
 func NewAgentExecutor(llm engine.LLMClient, agents []*config.AgentDef) *AgentExecutor {
@@ -26,6 +34,9 @@ func NewAgentExecutor(llm engine.LLMClient, agents []*config.AgentDef) *AgentExe
 	}
 	return &AgentExecutor{llmClient: llm, agents: m, maxRetries: 3}
 }
+
+// SetMemoryStore enables episodic memory persistence/recall for this executor.
+func (e *AgentExecutor) SetMemoryStore(s MemoryStore) { e.memStore = s }
 
 func (e *AgentExecutor) TaskType() model.TaskType { return model.TaskAgent }
 
@@ -40,6 +51,17 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 	if instruction == "" {
 		instruction = agent.Instruction
 	}
+
+	// Enrich prompt with relevant past memories (RAG-style recall)
+	if e.memStore != nil {
+		if similar, _ := e.memStore.SearchMemory(ctx, agent.Name, plan.NodeID, nil, 3); len(similar) > 0 {
+			userPrompt += "\n\n[Relevant past execution memories for context:]\n"
+			for _, m := range similar {
+				userPrompt += fmt.Sprintf("- Run %s, attempt %d (%s): %s\n", m.AgentFlowRunID, m.RetryCount, m.Status, truncate(m.Content, 300))
+			}
+		}
+	}
+
 	if instruction != "" {
 		userPrompt = instruction + "\n\n" + userPrompt
 	}
@@ -60,6 +82,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		resp, err := e.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, temperature)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call failed: %w", err)
+			e.saveMemory(ctx, agent.Name, plan, userPrompt, "", attempt, "failed", lastErr.Error())
 			continue
 		}
 
@@ -67,6 +90,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		var out map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
 			lastErr = fmt.Errorf("agent output JSON: %w (len=%d raw: %s)", err, len(resp), resp[:min(len(resp), 500)])
+			e.saveMemory(ctx, agent.Name, plan, userPrompt, resp, attempt, "failed", lastErr.Error())
 			if attempt < e.maxRetries {
 				userPrompt = fmt.Sprintf("%s\n\nYour previous output was not valid JSON. Output ONLY a valid JSON object, no other text. Error: %v", userPrompt, err)
 			}
@@ -77,6 +101,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		if outputSchema != nil {
 			if err := utils.ValidateJSONSchema(outputSchema, out); err != nil {
 				lastErr = fmt.Errorf("schema validation failed: %w", err)
+				e.saveMemory(ctx, agent.Name, plan, userPrompt, resp, attempt, "failed", lastErr.Error())
 				if attempt < e.maxRetries {
 					userPrompt = fmt.Sprintf("%s\n\nYour output did not match the required schema. Fix it. Schema: %v\nError: %v", userPrompt, outputSchema, err)
 				}
@@ -84,8 +109,31 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 			}
 		}
 
+		e.saveMemory(ctx, agent.Name, plan, userPrompt, resp, attempt, "success", "")
 		return &model.TaskResult{Output: out}, nil
 	}
 
 	return nil, lastErr
+}
+
+// saveMemory persists an episodic memory after each attempt (success or failure).
+func (e *AgentExecutor) saveMemory(ctx context.Context, agentID string, plan *model.ExecutionPlan, prompt, response string, attempt int, status, errMsg string) {
+	if e.memStore == nil {
+		return
+	}
+	content := fmt.Sprintf("Prompt: %s\nResponse: %s", truncate(prompt, 1000), truncate(response, 1000))
+	if errMsg != "" {
+		content += fmt.Sprintf("\nError: %s", errMsg)
+	}
+	mem := &model.Memory{
+		AgentID:        agentID,
+		AgentFlowRunID: plan.AgentFlowRunID,
+		NodeID:         plan.NodeID,
+		Type:           model.MemoryEpisodic,
+		Content:        content,
+		RetryCount:     attempt,
+		Status:         status,
+		CreatedAt:      time.Now(),
+	}
+	_ = e.memStore.SaveMemory(ctx, mem)
 }

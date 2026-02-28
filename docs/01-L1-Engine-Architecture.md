@@ -456,7 +456,86 @@ KubernetesHA), `StaticDiscoveryClient` (env-var based, for dev/CI).
 
 ---
 
-## 12. Metrics & Observability
+## 12. Agent Memory & Knowledge Store
+
+Flowgent agents accumulate **episodic memory** (per-execution) and **knowledge**
+(cross-run patterns). Memory enriches LLM prompts with relevant past context (RAG-style
+recall) and provides audit trails for retries and supervisor decisions.
+
+### 12.1 Memory Types
+
+| Type | Scope | Retention | Example |
+|------|-------|-----------|---------|
+| **Episodic** | Per-node execution attempt | TTL (default 24h) or LRU cap | "Agent X output invalid JSON on retry 2" |
+| **Procedural** | Agent-specific instructions | Long-lived, updated by supervisor | "For Java repos, prefer java.security APIs" |
+| **Semantic** | Cross-flow knowledge | Quality-based eviction | "CVE-2024 pattern: sanitize input before logging" |
+
+### 12.2 Storage Structure (PG)
+
+```sql
+agent_memories (
+    id              UUID PRIMARY KEY,
+    agent_id        VARCHAR(255) NOT NULL,
+    agentflow_run_id VARCHAR(64) NOT NULL,
+    node_id         VARCHAR(255) NOT NULL,
+    type            VARCHAR(32) DEFAULT 'episodic',
+    content         TEXT NOT NULL,          -- prompt + response summary
+    embedding       JSONB,                 -- vector for similarity search
+    retry_count     INT DEFAULT 0,
+    status          VARCHAR(32),           -- success | failed | retrying
+    metadata        JSONB,                 -- token_usage, model, latency_ms, ...
+    ttl             TIMESTAMPTZ,           -- auto-expiry
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_memories_agent_node ON agent_memories(agent_id, node_id);
+CREATE INDEX idx_memories_ttl ON agent_memories(ttl) WHERE ttl IS NOT NULL;
+
+knowledge_entries (
+    id        UUID PRIMARY KEY,
+    category  VARCHAR(255),
+    title     VARCHAR(500),
+    content   TEXT NOT NULL,
+    embedding JSONB,
+    source    VARCHAR(255),               -- which flow/node produced this
+    tags      TEXT[],
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 12.3 Memory Lifecycle
+
+```
+Node Execution:
+  1. BEFORE LLM call:
+     SearchMemory(agent_id, node_id, embedding, topK=3)
+     → enrich userPrompt with relevant past executions
+  2. AFTER each attempt (success or failure):
+     SaveMemory({ agent_id, node_id, content, retry_count, status, ttl })
+  3. Periodic eviction:
+     EvictExpiredMemories() — DELETE WHERE ttl < NOW()
+     LRU eviction — DELETE oldest N when count exceeds per-agent cap
+```
+
+### 12.4 Integration
+
+The `AgentExecutor` and `SupervisorExecutor` accept an optional `MemoryStore` interface.
+When present, memory is persisted after each attempt and searched before LLM calls.
+The TM passes the store's memory implementation through from `TaskManagerConfig`.
+
+```go
+type MemoryStore interface {
+    SaveMemory(ctx, mem) error
+    SearchMemory(ctx, agentID, nodeID, embedding, topK) ([]Memory, error)
+    ListMemories(ctx, agentID, type, limit) ([]Memory, error)
+    EvictExpiredMemories(ctx) (int64, error)
+    SaveKnowledge(ctx, k) error
+    SearchKnowledge(ctx, embedding, category, topK) ([]KnowledgeEntry, error)
+}
+```
+
+---
+
+## 14. Metrics & Observability
 
 OpenTelemetry integration with configurable exporters:
 
@@ -473,7 +552,7 @@ Histogram boundaries (from sample config):
 
 ---
 
-## 13. Key Design Constraints
+## 15. Key Design Constraints
 
 | Constraint | Rationale |
 |-----------|-----------|
@@ -486,7 +565,7 @@ Histogram boundaries (from sample config):
 
 ---
 
-## 14. File Map
+## 16. File Map
 
 | File | Role |
 |------|------|
