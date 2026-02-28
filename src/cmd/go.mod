@@ -1,0 +1,31 @@
+module github.com/flowgent-labs/flowgent/cmd
+
+go 1.26.0
+
+require (
+	github.com/flowgent-labs/flowgent/api v0.0.0
+	github.com/flowgent-labs/flowgent/cache v0.0.0
+	github.com/flowgent-labs/flowgent/common v0.0.0
+	github.com/flowgent-labs/flowgent/config v0.0.0
+	github.com/flowgent-labs/flowgent/core v0.0.0
+	github.com/flowgent-labs/flowgent/messaging v0.0.0
+	github.com/flowgent-labs/flowgent/model v0.0.0
+	github.com/flowgent-labs/flowgent/notifier v0.0.0
+	github.com/flowgent-labs/flowgent/store v0.0.0
+	github.com/flowgent-labs/flowgent/wallet v0.0.0
+	github.com/a2aproject/a2a-go v0.3.15
+	github.com/spf13/cobra v1.10.1
+)
+
+replace (
+	github.com/flowgent-labs/flowgent/api => ../api
+	github.com/flowgent-labs/flowgent/cache => ../cache
+	github.com/flowgent-labs/flowgent/common => ../common
+	github.com/flowgent-labs/flowgent/config => ../config
+	github.com/flowgent-labs/flowgent/core => ../core
+	github.com/flowgent-labs/flowgent/messaging => ../messaging
+	github.com/flowgent-labs/flowgent/model => ../model
+	github.com/flowgent-labs/flowgent/notifier => ../notifier
+	github.com/flowgent-labs/flowgent/store => ../store
+	github.com/flowgent-labs/flowgent/wallet => ../wallet
+)

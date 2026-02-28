@@ -1,45 +1,64 @@
-.PHONY: build build-flowgent examples example-mcps example-flows clean test fmt
+.PHONY: build build-flowgent build-sandbox examples example-mcps clean test fmt
 
-# ── Default: build flowgent only ─────────────────────────
-build: build-flowgent
+# ── Default ────────────────────────────────────────────────
+build: build-flowgent build-sandbox
 
-# ── Flowgent core binary (daemon, apiserver, a2a, wallet, etc.) ─
+# ── Binaries ───────────────────────────────────────────────
 build-flowgent:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent \
+	CGO_ENABLED=0 go build -C src/cmd -o ../../bin/flowgent \
 		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./src/cmd/flowgent
+		./src/flowgent
 
-# ── Example MCP servers (for e2e testing only) ────────────
-example-mcps: example-mcp-github example-mcp-sonarqube example-mcp-sonatypeiq example-mcp-nexus3 example-mcp-test
+build-sandbox:
+	CGO_ENABLED=0 go build -C src/sandbox -o ../../bin/flowgent-sandbox \
+		./src/sandbox
+
+# ── Example MCPs ───────────────────────────────────────────
+example-mcps: example-mcp-github example-mcp-sonarqube example-mcp-sonatypeiq example-mcp-nexus3
 
 example-mcp-github:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-github ./examples/mcp-github
+	cd examples/mcp-github && CGO_ENABLED=0 go build -o ../../bin/github-mcp .
 
 example-mcp-sonarqube:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonarqube ./examples/mcp-sonarqube
+	cd examples/mcp-sonarqube && CGO_ENABLED=0 go build -o ../../bin/sonarqube-mcp .
 
 example-mcp-sonatypeiq:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonatypeiq ./examples/mcp-sonatypeiq
+	cd examples/mcp-sonatypeiq && CGO_ENABLED=0 go build -o ../../bin/sonatype-iq-mcp .
 
 example-mcp-nexus3:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-nexus3 ./examples/mcp-nexus3
+	cd examples/mcp-nexus3 && CGO_ENABLED=0 go build -o ../../bin/sonatype-nexus3-mcp .
 
-example-mcp-test:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-test ./examples/mcp-test
-
-# ── All examples ──────────────────────────────────────────
 examples: example-mcps
 
-# ── Utilities ─────────────────────────────────────────────
+# ── Utilities ──────────────────────────────────────────────
 clean:
 	rm -rf bin/
 
+# Dependencies: common → model → {messaging,cache} → {config,wallet,notifier,sandbox} → core → cmd
 test:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go test -count=1 -timeout 120s ./src/... ./tests/...
+	cd src/common && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/model && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/messaging && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/cache && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/config && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/wallet && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/notifier && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/sandbox && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/core && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
+	cd src/cmd && CGO_ENABLED=0 go test -count=1 -timeout 120s ./...
 
 fmt:
-	go fmt ./src/... ./tests/... ./examples/...
+	cd src/common && go fmt ./...
+	cd src/model && go fmt ./...
+	cd src/messaging && go fmt ./...
+	cd src/cache && go fmt ./...
+	cd src/config && go fmt ./...
+	cd src/wallet && go fmt ./...
+	cd src/notifier && go fmt ./...
+	cd src/sandbox && go fmt ./...
+	cd src/core && go fmt ./...
+	cd src/cmd && go fmt ./...
 
-# ── Docker ────────────────────────────────────────────────
+# ── Docker ─────────────────────────────────────────────────
 docker-build:
 	docker build -t flowgent/flowgent:latest .
