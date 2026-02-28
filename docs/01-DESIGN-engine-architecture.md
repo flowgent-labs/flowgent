@@ -1,7 +1,7 @@
 # Flowgent Distributed Engine Architecture
 
-**Date:** 2026-05-17
-**Status:** Implemented, tests passing
+**Date:** 2026-05-20
+**Status:** Implemented — 24 executor tests, all unit tests passing
 
 ---
 
@@ -85,19 +85,32 @@ The API Server is a **separate, always-on component** distinct from JobManager. 
 
 ### 2.2 REST API (Port 9999)
 
+All CRUD paths are tenant-scoped with `{tenant}` in the URL path.
+Webhook and human-approval paths are global (token-based).
+
 | Route | Method | Description |
 |-------|--------|-------------|
 | `/_/healthz` | GET | Health check |
 | `/_/openapi.yaml` | GET | OpenAPI 3.1 spec |
 | `/_/swagger-ui` | GET | Swagger UI |
-| `/api/v1/agentflows` | GET | List agentflow definitions (tenant-scoped) |
-| `/api/v1/agentflows/trigger` | POST | Start an agentflow run |
-| `/api/v1/runs` | GET | List runs (tenant-scoped) |
-| `/api/v1/runs/{id}` | GET | Get run detail |
-| `/api/v1/runs/{run_id}/tasks` | GET | List task runs for a run |
-| `/api/v1/webhooks/{provider}` | POST | Webhook trigger (GitHub/GitLab) |
-| `/api/v1/human/{token}/approve` | POST | Human approval |
-| `/api/v1/human/{token}/reject` | POST | Human rejection |
+| `/_/webhooks/{provider}` | POST | Webhook trigger (non-tenant path) |
+| `/api/v1/{tenant}/agents` | GET/POST | List / Create agent definitions |
+| `/api/v1/{tenant}/agents/{name}` | GET/PUT/DELETE | Get / Update / Delete agent |
+| `/api/v1/{tenant}/agentflows` | GET/POST | List / Create agentflow definitions |
+| `/api/v1/{tenant}/agentflows/{id}` | GET/PUT/DELETE | Get / Update / Delete agentflow |
+| `/api/v1/{tenant}/agentflows/trigger` | POST | Trigger a run by `agentflow_id` in body |
+| `/api/v1/{tenant}/agentflows/{id}/trigger` | POST | Trigger a run by path ID |
+| `/api/v1/{tenant}/runs` | GET | List runs (tenant-scoped) |
+| `/api/v1/{tenant}/runs/{id}` | GET/DELETE | Get / Delete run |
+| `/api/v1/{tenant}/runs/{id}/cancel` | POST | Cancel a running run |
+| `/api/v1/{tenant}/runs/{id}/tasks` | GET | List tasks for a run |
+| `/api/v1/{tenant}/runs/{id}/tasks/{task_id}` | GET | Get specific task detail |
+| `/api/v1/{tenant}/notifications/channels` | GET/POST | List / Create notification channels |
+| `/api/v1/{tenant}/notifications/channels/{id}` | GET/PUT/DELETE | Manage notification channel |
+| `/api/v1/{tenant}/notifications/test` | POST | Test a notification channel |
+| `/api/v1/{tenant}/ws/human-approvals` | GET | WebSocket SSE stream |
+| `/api/v1/human/{token}/approve` | POST | Human approval (global) |
+| `/api/v1/human/{token}/reject` | POST | Human rejection (global) |
 
 ### 2.3 A2A Protocol (Port 9992)
 
@@ -121,16 +134,18 @@ Google Agent-to-Agent protocol for inter-agent interoperability:
 ### 2.5 Submit Path (API Server → JobManager)
 
 ```
-POST /api/v1/agentflows/trigger
+POST /api/v1/{tenant}/agentflows/trigger
   → auth middleware validates tenant
   → resolve AgentFlowSpec (cache or store)
-  → create AgentFlowRun (status=PENDING) in tenant's store
+  → create AgentFlowRun (status=PENDING) with tenant/priority/namespace metadata
   → publish to MQTT /flowgent/{tenant}/trigger/{runId}
   → return 202 Accepted + runId
 
 JobManager (tenant-scoped) consumes trigger topic:
   → dequeue trigger message
   → jm.Submit(run, spec)
+  → spec.Priority >= grade → application mode (dedicated K8s namespace)
+  → spec.Priority < grade  → session mode (shared pool)
   → execute DAG
 ```
 
@@ -144,33 +159,29 @@ primary path is event-driven via MQTT.
 Per-tenant singleton. Builds the DAG execution graph and drives the topological execution loop.
 Analogous to Flink's Dispatcher + JobMaster.
 
-### 3.1 DAG State
+### 3.1 DAG State (JobMaster)
 
 ```go
-type JobManager struct {
-    nodes    []string             // topological order
-    edges    [][2]string          // from→to pairs
-    deps     map[string][]string  // upstream dependencies
-    children map[string][]string  // downstream successors
+type JobMaster struct {
+    store     engine.Store
+    rm        scheduler.ResourceManager
+    logger    *utils.Logger
+    tracer    trace.Tracer
 
-    completed map[string]bool
-    skipped   map[string]bool
-    failed    map[string]bool
-    pending   map[string]bool
-    injected  map[string][]string
+    nodes          []string
+    edges          [][2]string
+    edgeConditions map[string]*bool
+    deps           map[string][]string  // upstream dependencies
+    children       map[string][]string  // downstream successors
+    completed      map[string]bool
+    skipped        map[string]bool
+    failed         map[string]bool
+    pending        map[string]bool
+    conditions     map[string]bool
+    nodeErrors     map[string]string    // error messages per failed node
 
-    conditions     map[string]bool      // condition node results
-    edgeConditions map[string]*bool     // "from→to" → condition value
-
-    store       Store
-    scheduler   ResourceManager
-    logger      *slog.Logger
-
-    timeout        time.Duration
-    injectionLimit int
-    maxNodes       int
-
-    nodeOutputs map[string]map[string]any  // nodeID → output key-values
+    planMap     map[string]*model.ExecutionPlan
+    nodeOutputs map[string]map[string]any
 }
 ```
 
@@ -415,20 +426,21 @@ API Server (shared) ── provisions & routes to both
 ```
 1. TRIGGER (REST / A2A / Webhook / Cron)
    → API Server authenticates tenant
-   → Creates AgentFlowRun (PENDING) in store
-   → Publishes trigger to MQTT
+   → Creates AgentFlowRun (PENDING) with tenant/priority/namespace metadata
+   → Publishes trigger to MQTT or poller picks it up
 
 2. DISPATCH
    → JobManager dequeues trigger
-   → jm.Submit(run, spec)
+   → checks spec.EffectiveMode() — PriorityGrade → application mode
+   → jm.Submit(run, spec) spawns JobMaster
    → Builds DAG graph
    → run.Status = RUNNING
 
-3. TOPOLOGICAL LOOP
+3. TOPOLOGICAL LOOP (JobMaster.Execute)
    ┌─────────────────────────────────────────┐
    │  ready := jm.Ready()                     │
    │  for each nodeID in ready:              │
-   │    create ExecutionPlan(node, input)    │
+   │    plan.Input = merge(yamlInput, resolvedDeps) │
    │    rm.Schedule(plan)                    │
    │      ├── Local: tm.ExecutePlan() inline │
    │      └── K8s: publish to MQTT exec/*    │
@@ -442,7 +454,7 @@ API Server (shared) ── provisions & routes to both
 
 4. COMPLETION
    → IsComplete() → run.Status = COMPLETED
-   → HasFailed()  → run.Status = FAILED
+   → HasFailed()  → run.Status = FAILED, run.Error = collectFirstError()
    → Persist final state to store
 ```
 
@@ -494,28 +506,42 @@ pprof: `mgmt.pprof.enabled` → port 6669.
 
 | File | Role |
 |------|------|
-| `src/api/server.go` | REST + A2A route registration |
-| `src/api/handler.go` | AgentFlow, Health, Human handlers |
-| `src/api/trigger.go` | Webhook dispatch (GitHub/GitLab) |
-| `src/api/auth.go` | JWT/OIDC/GitHub OAuth middleware |
-| `src/engine/jobmanager/jobmanager.go` | Control-plane JM (DAG + dispatch) |
+| `src/cmd/flowgent/main.go` | CLI entry point (cobra): daemon, apiserver, a2a, wallet, etc. |
+| `src/cmd/flowgent/launch.go` | Subsystem init: store, queue, RM, JM, API server startup |
+| `src/api/server.go` | REST route registration (tenant-scoped paths) |
+| `src/api/agentflow.go` | AgentFlow CRUD + trigger handlers |
+| `src/api/agent.go` | Agent CRUD handler |
+| `src/api/run.go` | Run query + lifecycle handler |
+| `src/api/notification.go` | Notification channel CRUD handler |
+| `src/api/websocket.go` | WS Bridge (SSE push via notification service) |
+| `src/api/middleware.go` | JWT/OIDC/GitHub OAuth middleware |
+| `src/engine/jobmanager/jobmanager.go` | Control-plane JM (mode routing, job submission) |
 | `src/engine/jobmanager/jobmaster.go` | Per-run DAG orchestrator |
-| `src/engine/scheduler/resourcemanager.go` | ResourceManager interface + factory |
+| `src/engine/scheduler/resourcemanager.go` | ResourceManager interface + factory + validation |
 | `src/engine/scheduler/local.go` | Goroutine pool (all-in-one) |
 | `src/engine/scheduler/kubernetes.go` | K8s Deployment scale + MQTT dispatch |
 | `src/engine/taskmanager/taskmanager.go` | Persistent TM with slot workers + heartbeat |
-| `src/engine/executor/*.go` | 10 TaskExecutor implementations |
-| `src/model/execution_plan.go` | ExecutionPlan, NodeSpec, TaskCheckpoint, TaskLease |
-| `src/model/run.go` | AgentFlowRun, TaskRun, HumanApproval |
-| `src/model/agentflow.go` | AgentFlowSpec, Node, Edge, TriggerDef |
-| `src/queue/mqtt.go` | MQTT queue implementation (EMQX) |
+| `src/engine/executor/*.go` | 10 TaskExecutor implementations + router |
+| `src/model/agentflow.go` | AgentFlowSpec, Node, Edge, TriggerDef, Priority, ExecutionMode |
+| `src/model/execution_plan.go` | ExecutionPlan, NodeSpec (with RawInput + OutputSchema), TaskResult |
+| `src/model/run.go` | AgentFlowRun, TaskRun, HumanApproval (+ tenant/priority fields) |
+| `src/model/agent.go` | AgentDef (DB-backed agent definition) |
+| `src/model/notification.go` | NotificationChannel, SubscriptionRoute |
+| `src/model/websocket.go` | WSMessage types |
+| `src/queue/mqtt.go` | MQTT queue (EMQX) |
 | `src/queue/memory.go` | In-memory queue (dev/all-in-one) |
-| `src/store/postgres.go` | Postgres store (distributed) |
-| `src/store/sqlite.go` | SQLite store (all-in-one) |
-| `src/engine/checkpoint/checkpoint.go` | Checkpoint save/load |
+| `src/store/store.go` | Unified Store interface |
+| `src/store/postgres.go` | Postgres implementation |
+| `src/store/sqlite.go` | SQLite implementation |
+| `src/store/store_agents.go` | Agent + agentflow dynamic CRUD methods |
+| `src/store/store_notifications.go` | Notification + subscription route methods |
+| `src/llm/llm.go` | OpenAI-compatible LLM client (temperature, topk, modalities, thinking) |
+| `src/llm/mcp.go` | MCP client factory (env override, initialize, call tool) |
+| `src/notification/` | Notification service (telegram, dingtalk, slack, email, webhook) |
+| `src/common/utils/schema.go` | JSON Schema validator |
 | `src/common/tracing/provider.go` | OTEL init |
-| `src/cmd/core/launch.go` | Main entry: module init → start components |
-| `src/cmd/core/main.go` | CLI (cobra): daemon, apiserver, jobmanager, taskmanager |
+| `examples/mcp-*/` | Example MCP servers (e2e testing only) |
+| `examples/agents/`, `examples/flows/` | Example agent + flow YAML definitions |
 
 ---
 
