@@ -5,7 +5,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/src/common/utils"
 	"github.com/flowgent-labs/flowgent/src/engine"
-	"github.com/flowgent-labs/flowgent/src/engine/testutil"
+	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 
 func TestNewTaskManager_Defaults(t *testing.T) {

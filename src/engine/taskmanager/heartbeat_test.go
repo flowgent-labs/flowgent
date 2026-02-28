@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/engine/testutil"
+	"github.com/flowgent-labs/flowgent/tests/testutil"
 	"github.com/flowgent-labs/flowgent/src/queue"
 )
 

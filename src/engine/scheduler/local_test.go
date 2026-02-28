@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/src/engine"
-	"github.com/flowgent-labs/flowgent/src/engine/testutil"
+	"github.com/flowgent-labs/flowgent/tests/testutil"
 	"github.com/flowgent-labs/flowgent/src/model"
 )
 

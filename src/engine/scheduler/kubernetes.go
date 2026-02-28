@@ -293,3 +293,32 @@ func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
 func fmtTopic(flowID, runID, planID string) string {
 	return fmt.Sprintf("/flowgent/%s/exec/%s/%s", flowID[:min(12, len(flowID))], runID, planID)
 }
+
+// ─── Exported helpers for integration tests ──────────────
+
+// InitForTest sets minimal fields for integration testing without
+// requiring full config + K8s connection setup.
+func (s *KubernetesResourceManager) InitForTest(kubeClient kubernetes.Interface, namespace, deployName string) {
+	s.kubeClient = kubeClient
+	s.namespace = namespace
+	s.deployName = deployName
+	s.slotsPerTM = 4
+	s.minTMs = 1
+	s.maxTMs = 3
+	s.currentTMs = 1
+	s.idleTimeout = 5 * time.Minute
+	s.planTimeout = 5 * time.Minute
+}
+
+func (s *KubernetesResourceManager) SetCtx(ctx context.Context, cancel context.CancelFunc) {
+	s.ctx = ctx
+	s.cancel = cancel
+}
+
+func (s *KubernetesResourceManager) EnsureDeployment(ctx context.Context) error {
+	return s.ensureDeployment(ctx)
+}
+
+func (s *KubernetesResourceManager) ScaleDeployment(ctx context.Context, replicas int32) error {
+	return s.scaleDeployment(ctx, replicas)
+}
