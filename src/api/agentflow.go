@@ -137,16 +137,16 @@ func (h *AgentFlowHandler) DeleteDefinition(w http.ResponseWriter, r *http.Reque
 
 // TriggerWithVars starts a new agentflow run for the given spec.
 func (h *AgentFlowHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, triggerInfo model.TriggerInfo) {
-	ctx, span := apiTracer.Start(r.Context(), "TriggerWithVars",
+	ctx := r.Context()
+	ctx, span := apiTracer.Start(ctx, "TriggerWithVars",
 		trace.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
 	defer span.End()
 
 	tenant := r.PathValue("tenant")
 	spec := h.agentFlows[agentFlowID]
 	if spec == nil {
-		// Fallback: look up from store (PG/SQLite) for flows created via API
 		if h.store != nil {
-			if dbSpec, err := h.store.GetAgentFlowSpec(r.Context(), agentFlowID); err == nil && dbSpec != nil {
+			if dbSpec, err := h.store.GetAgentFlowSpec(ctx, agentFlowID); err == nil && dbSpec != nil {
 				spec = dbSpec
 			}
 		}

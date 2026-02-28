@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS agentflow_definitions (
     definition   JSONB NOT NULL,
     created_by   VARCHAR(255),
     comment      TEXT,
+    priority     VARCHAR(16) DEFAULT 'medium',
+    tenant_id    VARCHAR(255) DEFAULT 'default',
+    namespace    VARCHAR(255) DEFAULT '',
+    mode         VARCHAR(32) DEFAULT 'session',
+    labels       JSONB DEFAULT '{}',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (agentflow_id, version)
 );

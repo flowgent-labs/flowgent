@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -39,17 +40,21 @@ func (s *PostgresStore) Init(ctx context.Context) error {
 	}
 	cfg.MaxConns = 20
 	cfg.MinConns = 2
+	// Ensure every connection sets the search path.
+	schema := s.schema
+	if schema == "" {
+		schema = "public"
+	}
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, fmt.Sprintf("SET search_path TO %s", schema))
+		return err
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping postgres: %w", err)
-	}
-	if s.schema != "" {
-		if _, err := pool.Exec(ctx, fmt.Sprintf("SET search_path TO %s", s.schema)); err != nil {
-			return fmt.Errorf("set schema: %w", err)
-		}
 	}
 	s.pool = pool
 	return nil
