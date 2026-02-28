@@ -50,6 +50,10 @@ type Queue interface {
 	// Nack negatively acknowledges a message (return to queue for retry).
 	Nack(ctx context.Context, msgID string) error
 
+	// Topic returns the base topic prefix for plan publication.
+	// Publishers use Topic()+"/plans", consumers use $share/{group}/Topic()+"/plans".
+	Topic() string
+
 	// Close shuts down the queue.
 	Close() error
 }

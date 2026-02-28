@@ -552,17 +552,54 @@ and re-dispatches orphaned plans.
 
 ## 7. MQTT Event Bus
 
-JM ↔ TM communication via MQTT pub/sub. Topic structure:
+All inter-component communication flows through MQTT topics under a unified
+namespace. The hierarchy isolates tenants and supports both session and
+application deployment modes.
+
+### 7.1 Topic Hierarchy
 
 ```
-flowgent/exec/{runID}/{planID}           — Execution plan dispatch
-flowgent/notify/pod/{podID}/ws/+         — WebSocket routing
-flowgent/notify/queue/{tenant}/{flow}    — Notifier queue
+/flowgent/v1/{tenant}/{flowId}/
+├── tasks/
+│   ├── plans                           # K8sRM → TM slots
+│   │                                   # $share/tm-pool/.../tasks/plans (load-balanced)
+│   └── results/{runId}/{nodeId}        # TM → JM (execution result callback)
+│
+├── sandbox/
+│   ├── triggers/{runId}/{nodeId}       # SandboxExecutor → SandboxRunner
+│   │                                   # $share/sandbox-pool/.../sandbox/triggers
+│   └── results/{runId}/{nodeId}        # SandboxRunner → SandboxExecutor
+│
+└── notify/{runId}/{nodeId}             # Notification events
+
+/flowgent/v1/
+└── heartbeat/{tmId}                    # TM → JM (infrastructure, not per-tenant)
 ```
 
-### 7.1 Queue Configuration
+**Publisher → Consumer mapping:**
 
-Configured in `flowgent.yaml` (Helm renders via `values.yaml`):
+| Publisher | Topic | Consumer | Mechanism |
+|-----------|-------|----------|-----------|
+| K8sRM.Schedule | `tasks/plans` | SlotWorker.Loop | `$share/tm-pool` competing consumers |
+| SlotWorker (result) | `tasks/results/{runId}/{nodeId}` | JobMaster | Point-to-point via {runId}/{nodeId} |
+| SandboxExecutor | `sandbox/triggers/{runId}/{nodeId}` | SandboxRunner | `$share/sandbox-pool` competing consumers |
+| SandboxRunner | `sandbox/results/{runId}/{nodeId}` | SandboxExecutor | Point-to-point via {runId}/{nodeId} |
+| Notifier.Publish | `notify/{runId}/{nodeId}` | Notifier consumer | Shared subscription per tenant |
+| TM heartbeat | `heartbeat/{tmId}` | HeartbeatMonitor | Wildcard `heartbeat/+` for all TMs |
+
+### 7.2 Session vs Application Mode
+
+Heartbeat tmID uses a naming convention to distinguish modes at the topic level:
+
+| Mode | tmID Pattern | Example |
+|------|-------------|---------|
+| session | `session-tm-{hostname}-{hash}` | `session-tm-k8sm1-a1b2c3d4` |
+| application | `app-{tenant}-{flowId}-tm-{hostname}-{hash}` | `app-default-security-fixer-tm-k8sm1-e5f6g7h8` |
+
+The JM monitors `heartbeat/+` and can distinguish session vs application TMs
+by the tmID prefix — no need for separate topic branches.
+
+### 7.3 Queue Configuration
 
 ```yaml
 # flowgent.yaml
@@ -570,29 +607,19 @@ queue:
   type: mqtt
   mqtt:
     broker: "tcp://<host>:1883"
-    topic_prefix: "flowgent/exec"
+    topic_prefix: "flowgent/v1/{tenant}/{flowId}"
 ```
 
-```yaml
-# Helm values.yaml
-queue:
-  type: mqtt
-  topicPrefix: "flowgent/exec"
-```
+### 7.4 Fail-Fast in Distributed Mode
 
-### 7.2 Fail-Fast in Distributed Mode
-
-Components that depend on the queue (jobmanager, taskmanager, sandbox) call
-`newQueueFromConfig()` at startup. In distributed mode (`deployment.mode: session`
-or `application`), MQTT is mandatory:
+In distributed mode (`deployment.mode: session` or `application`), MQTT is mandatory:
 
 1. Config file `queue.mqtt.broker` → try MQTT → failure = fatal
 2. `FLOWGENT_MQTT_BROKER` env var → try MQTT → failure = fatal
 3. Neither configured → fatal: `"MQTT broker not configured"`
 
 In local dev / all-in-one mode, the queue silently falls back to in-memory
-(`MemoryQueue`, buffer=1000) with a warning log. This ensures Helm deployments
-never silently degrade to single-process mode.
+(`MemoryQueue`, buffer=1000) with a warning log.
 
 ---
 

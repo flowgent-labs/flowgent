@@ -111,6 +111,9 @@ func (q *MemoryQueue) ConsumeHeartbeat(ctx context.Context, timeout time.Duratio
 	return nil, nil
 }
 
+// Topic returns the default topic prefix.
+func (q *MemoryQueue) Topic() string { return "flowgent/exec" }
+
 func (q *MemoryQueue) Close() error {
 	close(q.ch)
 	return nil

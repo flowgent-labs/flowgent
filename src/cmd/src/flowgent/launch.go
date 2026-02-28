@@ -791,7 +791,17 @@ func startTaskManager() error {
 	logMode, logLevel := svcCfg.Logging.Mode, svcCfg.Logging.Level
 	logger := utils.NewLogger(logMode, logLevel)
 
-	tmID := envOr("FLOWGENT_TM_ID", "tm-"+hostname())
+	// Build tmID with mode prefix for heartbeat topic differentiation.
+	// session: "session-tm-{hostname}-{hash}"  application: "app-{tenant}-{flowId}-tm-{hostname}-{hash}"
+	mode := "session"
+	if svcCfg != nil && svcCfg.Deployment.Mode != "" {
+		mode = svcCfg.Deployment.Mode
+	}
+	defaultTMID := mode + "-tm-" + hostname()
+	if flowID := envOr("FLOWGENT_AGENTFLOW_ID", ""); flowID != "" && mode == "application" {
+		defaultTMID = mode + "-" + svcCfg.Tenant.DefaultTenant + "-" + flowID + "-tm-" + hostname()
+	}
+	tmID := envOr("FLOWGENT_TM_ID", defaultTMID)
 	slotCount := envIntOr("FLOWGENT_TM_SLOTS", 4)
 
 	q := newQueueFromConfig(svcCfg, tmID)
@@ -822,9 +832,23 @@ func startTaskManager() error {
 		}
 	}
 
+	// ── MCP Clients ────────────────────────────────────
+	mcpFactory := llm.NewFactory()
+	for _, mcpDef := range svcCfg.Orchestration.MCPs {
+		if mcpDef.Enabled {
+			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
+		}
+	}
+	mcpMap := make(map[string]engine.MCPClient)
+	for _, mcpDef := range svcCfg.Orchestration.MCPs {
+		if mcpDef.Enabled {
+			mcpMap[mcpDef.Name] = &mcpAdapter{factory: mcpFactory, name: mcpDef.Name}
+		}
+	}
+
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Queue: q, Store: dbStore,
-		Agents: agentPtrs, Logger: logger,
+		Agents: agentPtrs, MCPClients: mcpMap, Logger: logger,
 		SandboxQueue: q,
 
 		SandboxPolicy: svcCfg.Sandbox.Policy,

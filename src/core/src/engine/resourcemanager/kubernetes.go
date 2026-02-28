@@ -147,7 +147,9 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.Ex
 	ctx, cancel := context.WithTimeout(ctx, s.planTimeout)
 	defer cancel()
 
-	topic := fmtTopic(plan.AgentFlowRunID, plan.AgentFlowRunID, plan.PlanID)
+	// Publish to tasks/plans under the tenant/flow namespace.
+	// TM slots compete via $share/tm-pool/{topic_prefix}/tasks/plans
+	topic := s.q.Topic() + "/tasks/plans"
 	payload, _ := json.Marshal(plan)
 	if err := s.q.Push(ctx, &queue.Message{
 		ID: plan.PlanID, Topic: topic, TaskRunID: plan.AgentFlowRunID, NodeID: plan.NodeID, Payload: payload,

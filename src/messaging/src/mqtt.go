@@ -96,7 +96,12 @@ func (q *MQTTQueue) Push(ctx context.Context, msg *Message) error {
 	if err != nil {
 		return err
 	}
-	token := q.client.Publish(q.topic, 1, false, data)
+	// Use msg.Topic if set (allows per-message topic routing), fallback to base topic.
+	topic := msg.Topic
+	if topic == "" {
+		topic = q.topic
+	}
+	token := q.client.Publish(topic, 1, false, data)
 	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
 		return token.Error()
 	}
@@ -122,9 +127,13 @@ func (q *MQTTQueue) Pop(ctx context.Context, timeout time.Duration) (*Message, e
 // its own topic subscription and all members of the group receive every message
 // (fan-out, not competing consumer).
 func (q *MQTTQueue) Dequeue(ctx context.Context, consumerGroup string) (*Message, error) {
+	// All TMs subscribe to the same fan-out topic. Leasing ensures only one TM
+	// processes each plan (first to acquire lease wins, others skip).
+	// Publisher (K8sRM) → {q.topic}/tasks/plans
+	// Consumer (TM slots) → {q.topic}/tasks/plans (all receive, lease-based dedup)
 	topic := q.topic
 	if consumerGroup != "" {
-		topic = fmt.Sprintf("%s/%s", q.topic, consumerGroup)
+		topic = q.topic + "/tasks/plans"
 	}
 
 	ch := make(chan *Message, 10)
@@ -189,6 +198,9 @@ func (q *MQTTQueue) Ack(ctx context.Context, msgID string) error {
 func (q *MQTTQueue) Nack(ctx context.Context, msgID string) error {
 	return nil // republish handled by caller
 }
+
+// Topic returns the base topic prefix for plan execution.
+func (q *MQTTQueue) Topic() string { return q.topic }
 
 func (q *MQTTQueue) Close() error {
 	q.client.Disconnect(250)

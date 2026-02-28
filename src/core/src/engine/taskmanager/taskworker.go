@@ -52,7 +52,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 		}
 
 		dequeueStart := time.Now()
-		msg, err := sw.q.Dequeue(ctx, sw.tmID)
+		msg, err := sw.q.Dequeue(ctx, "tm-pool")
 		if err != nil {
 			slog.Debug("slot worker dequeue error", "slot_id", sw.id, "error", err)
 			time.Sleep(time.Second)

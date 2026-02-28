@@ -14,7 +14,7 @@
 #
 # Design decisions documented here:
 #   docs/01-L1-Engine-Architecture.md §13 (Skills = Sub-AgentFlow)
-#   docs/10-L2-E2E-security-fixer-v2.md §5 (White-Box Verification)
+#   docs/11-L2-E2E-security-fixer-v2.md §5 (White-Box Verification)
 #
 # Key design note — Skill vs MCP Tool for dependency checking:
 #   The "fetch-safe-deps" node uses `type: skill` instead of `type: tool`
