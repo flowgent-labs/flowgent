@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/shopspring/decimal"
 
@@ -14,7 +14,7 @@ import (
 )
 
 func TestStore_SaveAndGet(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestStore_SaveAndGet(t *testing.T) {
 }
 
 func TestStore_GetMissing(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestStore_GetMissing(t *testing.T) {
 }
 
 func TestStore_ListByDate(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestStore_ListByDate(t *testing.T) {
 }
 
 func TestStore_ListByDate_Empty(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

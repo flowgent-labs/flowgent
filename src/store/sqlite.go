@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/flowgent-labs/flowgent/src/model"
 )
@@ -33,7 +33,7 @@ func (s *SQLiteStore) Init(ctx context.Context) error {
 		return fmt.Errorf("create sqlite dir: %w", err)
 	}
 	dbPath := filepath.Join(s.dir, "flowgent.db")
-	db, err := sql.Open("sqlite3", dbPath+"?_journal=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_busy_timeout=5000")
 	if err != nil {
 		return fmt.Errorf("open sqlite: %w", err)
 	}

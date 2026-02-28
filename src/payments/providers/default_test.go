@@ -6,11 +6,11 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func TestDefaultSecretStore_EncryptDecrypt(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestDefaultSecretStore_EncryptDecrypt(t *testing.T) {
 }
 
 func TestDefaultSecretStore_NotFound(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestDefaultSecretStore_NotFound(t *testing.T) {
 }
 
 func TestDefaultSecretStore_Delete(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestDefaultSecretStore_Delete(t *testing.T) {
 }
 
 func TestDefaultSecretStore_List(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

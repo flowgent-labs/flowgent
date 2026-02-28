@@ -14,7 +14,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/flowgent-labs/flowgent/src/payments"
 	"github.com/flowgent-labs/flowgent/src/payments/providers"
@@ -31,7 +31,7 @@ func TestE2E_WalletKeyGenStoreSignVerify(t *testing.T) {
 	}
 
 	// 2. Encrypt and store the private key in the secret store
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
