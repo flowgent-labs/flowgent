@@ -4,9 +4,10 @@ import (
 	"context"
 	"time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
+	"github.com/flowgent-labs/flowgent/src/common/tracing"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/attribute"
+	
 )
 
 // MetricsQueue wraps a Queue with metric instrumentation.
@@ -21,7 +22,7 @@ type MetricsQueue struct {
 }
 
 func NewMetricsQueue(inner Queue) *MetricsQueue {
-	meter := otel.Meter("flowgent/queue")
+	meter := tracing.Meter("flowgent/queue")
 	mq := &MetricsQueue{inner: inner}
 
 	mq.Depth, _ = meter.Int64UpDownCounter("flowgent.queue.depth",

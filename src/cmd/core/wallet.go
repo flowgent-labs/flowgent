@@ -25,16 +25,14 @@ import (
 )
 
 // runWallet handles wallet start/stop/restart.
-func runWallet(action, pidFile string) error {
+func runWallet(action string) error {
 	switch action {
 	case "start":
-		return startWallet(pidFile)
+		return startWallet()
 	case "stop":
-		return stopByPID(pidFile)
+		return fmt.Errorf("stop: send SIGTERM")
 	case "restart":
-		_ = stopByPID(pidFile)
-		time.Sleep(500 * time.Millisecond)
-		return startWallet(pidFile)
+		return fmt.Errorf("restart: not supported")
 	default:
 		return fmt.Errorf("unknown wallet action: %s", action)
 	}
@@ -77,11 +75,7 @@ func encodeKey(key []byte, enc string) string {
 }
 
 // startWallet starts the wallet key-management daemon.
-func startWallet(pidFile string) error {
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
-		return fmt.Errorf("write PID file %s: %w", pidFile, err)
-	}
-	defer os.Remove(pidFile)
+func startWallet() error {
 
 	dbPath := walletDB
 	if dbPath == "" {

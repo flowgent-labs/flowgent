@@ -10,12 +10,14 @@ const (
 	TaskAgent      TaskType = "agent"
 	TaskCondition  TaskType = "condition"
 	TaskTool       TaskType = "tool"
+	TaskSkill      TaskType = "skill"
 	TaskSupervisor TaskType = "supervisor"
 	TaskSubflow    TaskType = "subflow"
 	TaskTribunal   TaskType = "tribunal"
 	TaskMap        TaskType = "map"
 	TaskJoin       TaskType = "join"
 	TaskHuman      TaskType = "human"
+	TaskSandbox    TaskType = "sandbox"
 	TaskNoop       TaskType = "noop"
 )
 
@@ -54,6 +56,7 @@ type NodeSpec struct {
 	ID               string               `json:"id"`
 	Type             NodeType             `json:"type"`
 	Agent            string               `json:"agent,omitempty"`
+	Skill            string               `json:"skill,omitempty"`
 	AgentFlowID      string               `json:"agentflow,omitempty"`
 	Tool             string               `json:"tool,omitempty"`
 	Source           string               `json:"source,omitempty"`
@@ -65,6 +68,11 @@ type NodeSpec struct {
 	Approval         *HumanApprovalConfig `json:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig    `json:"supervisor_config,omitempty"`
 	ChildNode        *NodeSpec            `json:"child_node,omitempty"`
+	// Sandbox fields
+	Runtime   string            `json:"runtime,omitempty"`
+	Script    string            `json:"script,omitempty"`
+	Timeout   string            `json:"timeout,omitempty"`
+	Resources *SandboxResources `json:"resources,omitempty"`
 }
 
 // TaskResult holds the outcome of a single task execution.
@@ -99,6 +107,7 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		ID:               n.ID,
 		Type:             n.Type,
 		Agent:            n.Agent,
+		Skill:            n.Skill,
 		AgentFlowID:      n.AgentFlowID,
 		Tool:             n.Tool,
 		Source:           n.Source,
@@ -109,6 +118,10 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Retry:            n.Retry,
 		Approval:         n.Approval,
 		SupervisorConfig: n.SupervisorConfig,
+		Runtime:          n.Runtime,
+		Script:           n.Script,
+		Timeout:          n.Timeout,
+		Resources:        n.Resources,
 	}
 	if n.Node != nil {
 		spec.ChildNode = NodeSpecFromNode(n.Node)

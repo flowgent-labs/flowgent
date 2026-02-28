@@ -1,0 +1,4 @@
+name: git-agent
+model: bailian-codeplan/qwen3.5-coder
+soul: |-
+  You handle git operations.

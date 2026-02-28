@@ -10,11 +10,14 @@ func TestAppConfig_Helpers(t *testing.T) {
 	cfg := &AppConfig{
 		Service: ServiceConfig{
 			Orchestration: OrchestrationConfig{
-				Agents: []AgentDef{{Name: "a1", Model: "m1"}},
-				MCPs:   []MCPDef{{Name: "mcp1", Enabled: true}},
+				Agents: ResourceCfg{
+					Static: StaticResourceCfg{Enabled: true, LoadDir: "agents/", Refresh: "30s"},
+				},
+				MCPs: []MCPDef{{Name: "mcp1", Enabled: true}},
 			},
 		},
-		Flows: []model.AgentFlowSpec{{ID: "f1"}},
+		Agents: []AgentDef{{Name: "a1", Model: "m1"}},
+		Flows:  []model.AgentFlowSpec{{ID: "f1"}},
 	}
 
 	if cfg.GetAgent("a1") == nil {

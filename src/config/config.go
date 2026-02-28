@@ -184,12 +184,13 @@ type LLMConfig struct {
 }
 
 type OrchestrationConfig struct {
-	MCPs                 []MCPDef     `json:"mcps" yaml:"mcps"`
-	Agents               []AgentDef   `json:"agents" yaml:"agents"`
-	AgentFlows           AgentFlowCfg `json:"agentflows" yaml:"agentflows"`
-	MaxConcurrentFlows   int          `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
-	FlowExecutionTimeout string       `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
-	MaxNodeRetries       int          `json:"max-node-retries" yaml:"max-node-retries"`
+	MCPs                 []MCPDef    `json:"mcps" yaml:"mcps"`
+	Agents               ResourceCfg `json:"agents" yaml:"agents"`
+	Skills               ResourceCfg `json:"skills,omitempty" yaml:"skills,omitempty"`
+	AgentFlows           ResourceCfg `json:"agentflows" yaml:"agentflows"`
+	MaxConcurrentFlows   int         `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
+	FlowExecutionTimeout string      `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
+	MaxNodeRetries       int         `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
 type LLMProviderDef struct {
@@ -232,24 +233,30 @@ type MCPDef struct {
 }
 
 type AgentDef struct {
-	Name        string `json:"name" yaml:"name"`
-	Model       string `json:"model" yaml:"model"`
-	Soul        string `json:"soul" yaml:"soul"`
-	Instruction string `json:"instruction" yaml:"instruction"`
+	Name         string         `json:"name" yaml:"name"`
+	Model        string         `json:"model" yaml:"model"`
+	Soul         string         `json:"soul" yaml:"soul"`
+	Instruction  string         `json:"instruction" yaml:"instruction"`
+	OutputSchema map[string]any `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // optional JSON Schema
+	Temperature  *float64       `json:"temperature,omitempty" yaml:"temperature,omitempty"`     // override model default
+	MaxTokens    int            `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`       // output length control
 }
 
-type AgentFlowCfg struct {
-	Static   StaticAgentFlowCfg   `json:"static" yaml:"static"`
-	Standard StandardAgentFlowCfg `json:"standard" yaml:"standard"`
+// ResourceCfg is dual-source config for a resource type (agents, skills, flows).
+type ResourceCfg struct {
+	Static   StaticResourceCfg `json:"static" yaml:"static"`
+	Standard StandardAgentCfg  `json:"standard" yaml:"standard"`
 }
 
-type StaticAgentFlowCfg struct {
-	Enabled bool     `json:"enabled" yaml:"enabled"`
-	Refresh string   `json:"refresh" yaml:"refresh"`
-	Paths   []string `json:"paths" yaml:"paths"`
+// StaticResourceCfg is shared config for directory-based static resource loading.
+type StaticResourceCfg struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	LoadDir string `json:"load-dir" yaml:"load-dir"`
+	Refresh string `json:"refresh" yaml:"refresh"` // e.g. "30s", "1m"
 }
 
-type StandardAgentFlowCfg struct {
+// StandardAgentCfg enables DB-backed resource definitions (future Flowgent UI).
+type StandardAgentCfg struct {
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
@@ -258,15 +265,16 @@ type StandardAgentFlowCfg struct {
 // AppConfig is the aggregate application configuration combining service config
 // with loaded agentflow definitions.
 type AppConfig struct {
-	Service  ServiceConfig            `json:"service" yaml:"service"`
-	Flows    []model.AgentFlowSpec    `json:"flows" yaml:"flows"`
+	Service  ServiceConfig                 `json:"service" yaml:"service"`
+	Agents   []AgentDef                    `json:"agents,omitempty" yaml:"agents,omitempty"`
+	Flows    []model.AgentFlowSpec         `json:"flows" yaml:"flows"`
 	SubFlows map[string]model.AgentFlowSpec `json:"sub_flows,omitempty" yaml:"sub_flows,omitempty"`
 }
 
 // GetAgent returns the agent definition by name, or nil if not found.
 func (c *AppConfig) GetAgent(name string) *AgentDef {
-	for i := range c.Service.Orchestration.Agents {
-		a := &c.Service.Orchestration.Agents[i]
+	for i := range c.Agents {
+		a := &c.Agents[i]
 		if a.Name == name {
 			return a
 		}
@@ -338,28 +346,71 @@ func Load(path string) (*ServiceConfig, error) {
 	return &cfg, nil
 }
 
-// LoadAgentFlows discovers and loads all L2 agentflow YAML files.
+// loadResourceDir loads all .yaml files from a directory into a slice of T.
+func loadResourceDir[T any](dir string) ([]T, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	var result []T
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var item T
+		if err := yaml.Unmarshal(data, &item); err != nil {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+// LoadAgents loads agent definitions from the static directory.
+func LoadAgents(cfg *ServiceConfig, cfgPath string) ([]AgentDef, error) {
+	var agents []AgentDef
+	if cfg.Orchestration.Agents.Static.Enabled {
+		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.Agents.Static.LoadDir)
+		return loadResourceDir[AgentDef](dir)
+	}
+	return agents, nil
+}
+
+// LoadAgentFlows discovers and loads all L2 agentflow YAML files from the static directory.
 func LoadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
-	cfgDir := filepath.Dir(cfgPath)
 	var flows []model.AgentFlowSpec
 	subFlows := make(map[string]model.AgentFlowSpec)
 
 	if cfg.Orchestration.AgentFlows.Static.Enabled {
-		for _, p := range cfg.Orchestration.AgentFlows.Static.Paths {
-			fullPath := filepath.Join(cfgDir, p)
-			info, err := os.Stat(fullPath)
-			if err != nil {
+		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.AgentFlows.Static.LoadDir)
+		all, err := loadResourceDir[model.AgentFlowSpec](dir)
+		if err != nil {
+			return flows, subFlows, nil
+		}
+		for _, spec := range all {
+			if spec.ID == "" {
 				continue
 			}
-			if info.IsDir() {
-				entries, _ := os.ReadDir(fullPath)
-				for _, e := range entries {
-					if !e.IsDir() && filepath.Ext(e.Name()) == ".yaml" {
-						loadAgentFlowFile(filepath.Join(fullPath, e.Name()), &flows, subFlows)
-					}
+			flows = append(flows, spec)
+		}
+	}
+
+	// Also load skills if configured
+	if cfg.Orchestration.Skills.Static.Enabled {
+		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.Skills.Static.LoadDir)
+		all, err := loadResourceDir[model.AgentFlowSpec](dir)
+		if err == nil {
+			for _, spec := range all {
+				if spec.ID == "" {
+					continue
 				}
-			} else {
-				loadAgentFlowFile(fullPath, &flows, subFlows)
+				if spec.Kind == "skill" {
+					flows = append(flows, spec)
+				}
 			}
 		}
 	}
@@ -367,34 +418,16 @@ func LoadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, 
 	return flows, subFlows, nil
 }
 
-func loadAgentFlowFile(path string, flows *[]model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var spec model.AgentFlowSpec
-	if err := yaml.Unmarshal(data, &spec); err != nil {
-		return
-	}
-	if spec.ID == "" {
-		return
-	}
-	if filepath.Base(filepath.Dir(path)) == "sub" {
-		subFlows[spec.ID] = spec
-	} else {
-		*flows = append(*flows, spec)
-	}
-}
-
 // ReloadAgentFlows re-reads agentflow YAML files (for hot reload).
 func ReloadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
 	return LoadAgentFlows(cfg, cfgPath)
 }
 
-// BuildAppConfig combines service config with loaded flows.
-func BuildAppConfig(cfg *ServiceConfig, flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *AppConfig {
+// BuildAppConfig combines service config with loaded agents and flows.
+func BuildAppConfig(cfg *ServiceConfig, agents []AgentDef, flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *AppConfig {
 	return &AppConfig{
 		Service:  *cfg,
+		Agents:   agents,
 		Flows:    flows,
 		SubFlows: subFlows,
 	}

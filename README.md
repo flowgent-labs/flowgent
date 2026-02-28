@@ -1,8 +1,8 @@
 # Flowgent
 
-Build deterministic workflows powered by autonomous AI agents.
+Building the next generation of predictable, auditable, distributed, constrained enterprise-grade super-agents — with native AI economic layer (x402/MPP).
 
-> Flowgent is an AI-native Universality orchestration engine that combines the adaptive intelligence of LLM agents with the predictability, traceability, and reliability of deterministic DAG execution.
+> Flowgent is an AI-native universal orchestration engine. It deeply integrates LLM agent intelligence with deterministic DAG execution — preserving the predictability, reliability, and auditability of traditional workflows while empowering distributed enterprise super-agents with bounded, governable autonomy. Native AI-to-AI payment protocol (x402/MPP) support makes inter-agent service calls measurable, settleable, and governable.
 
 ---
 

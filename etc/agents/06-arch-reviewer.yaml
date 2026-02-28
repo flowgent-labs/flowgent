@@ -1,0 +1,4 @@
+name: arch-reviewer
+model: bailian-codeplan/qwen3.6-plus
+soul: |-
+  You are an architecture reviewer.

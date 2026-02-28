@@ -18,17 +18,20 @@ import (
 	"github.com/flowgent-labs/flowgent/src/api"
 	"github.com/flowgent-labs/flowgent/src/config"
 	"github.com/flowgent-labs/flowgent/src/engine"
+	"github.com/flowgent-labs/flowgent/src/engine/jobmanager"
+	"github.com/flowgent-labs/flowgent/src/engine/scheduler"
+	"github.com/flowgent-labs/flowgent/src/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/src/llm"
-	"github.com/flowgent-labs/flowgent/src/mcp"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
 	"github.com/flowgent-labs/flowgent/src/common/tracing"
 	"github.com/flowgent-labs/flowgent/src/store"
-	"github.com/flowgent-labs/flowgent/src/util"
+	"github.com/flowgent-labs/flowgent/src/common/utils"
 )
 
 // stopByPID reads a PID file and sends SIGTERM to the process.
 func stopByPID(pidFile string) error {
+	if pidFile == "" { return nil }
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return fmt.Errorf("read PID file %s: %w (is the service running?)", pidFile, err)
@@ -53,10 +56,12 @@ func stopByPID(pidFile string) error {
 func daemonProcess(action, pidFile string) error {
 	switch action {
 	case "start":
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file %s: %w", pidFile, err)
+		if pidFile != "" {
+			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+				return fmt.Errorf("write PID file %s: %w", pidFile, err)
+			}
+			defer os.Remove(pidFile)
 		}
-		defer os.Remove(pidFile)
 		log.Printf("Flowgent daemon starting (pid=%d, pidfile=%s)", os.Getpid(), pidFile)
 		startServer("all")
 		return nil
@@ -65,10 +70,12 @@ func daemonProcess(action, pidFile string) error {
 	case "restart":
 		_ = stopByPID(pidFile) // best-effort stop
 		time.Sleep(500 * time.Millisecond)
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file %s: %w", pidFile, err)
+		if pidFile != "" {
+			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+				return fmt.Errorf("write PID file %s: %w", pidFile, err)
+			}
+			defer os.Remove(pidFile)
 		}
-		defer os.Remove(pidFile)
 		log.Printf("Flowgent daemon restarting (pid=%d, pidfile=%s)", os.Getpid(), pidFile)
 		startServer("all")
 		return nil
@@ -81,10 +88,12 @@ func daemonProcess(action, pidFile string) error {
 func serverProcess(name, action, pidFile, mode string) error {
 	switch action {
 	case "start":
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file %s: %w", pidFile, err)
+		if pidFile != "" {
+			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+				return fmt.Errorf("write PID file %s: %w", pidFile, err)
+			}
+			defer os.Remove(pidFile)
 		}
-		defer os.Remove(pidFile)
 		log.Printf("Flowgent %s starting (pid=%d, pidfile=%s)", name, os.Getpid(), pidFile)
 		startServer(mode)
 		return nil
@@ -93,10 +102,12 @@ func serverProcess(name, action, pidFile, mode string) error {
 	case "restart":
 		_ = stopByPID(pidFile)
 		time.Sleep(500 * time.Millisecond)
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-			return fmt.Errorf("write PID file %s: %w", pidFile, err)
+		if pidFile != "" {
+			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+				return fmt.Errorf("write PID file %s: %w", pidFile, err)
+			}
+			defer os.Remove(pidFile)
 		}
-		defer os.Remove(pidFile)
 		log.Printf("Flowgent %s restarting (pid=%d, pidfile=%s)", name, os.Getpid(), pidFile)
 		startServer(mode)
 		return nil
@@ -191,7 +202,7 @@ func startServer(mode string) {
 		logConfig(serviceCfg)
 	}
 
-	logger := util.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
+	logger := utils.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
 
 	agentFlows, subAgentFlows, err := config.LoadAgentFlows(serviceCfg, cfgPath)
 	if err != nil {
@@ -245,7 +256,7 @@ func startServer(mode string) {
 	}
 
 	// ── MCP Clients ────────────────────────────────────
-	mcpFactory := mcp.NewFactory()
+	mcpFactory := llm.NewFactory()
 	for _, mcpDef := range serviceCfg.Orchestration.MCPs {
 		if mcpDef.Enabled {
 			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
@@ -262,16 +273,15 @@ func startServer(mode string) {
 	llmClient := llm.New(&serviceCfg.LLM)
 
 	// ── Scheduler (owns TaskManager internally) ─────────
-	agents := make([]*config.AgentDef, len(serviceCfg.Orchestration.Agents))
-	for i := range serviceCfg.Orchestration.Agents {
-		agents[i] = &serviceCfg.Orchestration.Agents[i]
-	}
-	q := queue.NewMemoryQueue(1000)
-	scheduler, err := engine.NewScheduler(&engine.SchedulerConfig{
-		Type: engine.SchedulerTypeLocal, PoolSize: serviceCfg.Orchestration.MaxConcurrentFlows,
-		Store: storeImpl, Agents: agents, MCPClients: mcpMap, LLMClient: llmClient, Logger: logger,
+		loadedAgents, err := config.LoadAgents(serviceCfg, cfgPath)
+		if err != nil { log.Fatalf("Failed to load agents: %v", err) }
+		agentPtrs := make([]*config.AgentDef, len(loadedAgents))
+		for i := range loadedAgents { agentPtrs[i] = &loadedAgents[i] }
+	rm, err := scheduler.NewResourceManager(&scheduler.ResourceManagerConfig{
+		Provider: engine.ProviderLocal, PoolSize: serviceCfg.Orchestration.MaxConcurrentFlows,
+		Store: storeImpl, Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llmClient, Logger: logger,
 	})
-	if err != nil { log.Fatalf("Failed to create scheduler: %v", err) }
+	if err != nil { log.Fatalf("Failed to create resource manager: %v", err) }
 
 	// ── API Handlers ───────────────────────────────────
 	healthHandler := &api.HealthHandler{}
@@ -298,16 +308,11 @@ func startServer(mode string) {
 	defer cronSched.Stop()
 
 	// ── JobManager + Poller ────────────────────────────
-	flowTimeout, _ := time.ParseDuration(serviceCfg.Orchestration.FlowExecutionTimeout)
-	if flowTimeout == 0 { flowTimeout = 30 * time.Minute }
-	maxRetries := serviceCfg.Orchestration.MaxNodeRetries
-
-	jm := engine.NewJobManager(storeImpl, q, scheduler, logger)
-	jm.SetTimeout(flowTimeout)
-	if maxRetries > 0 { jm.SetNodeLimit(maxRetries) }
+	jm, err := jobmanager.NewJobManager(storeImpl, rm, logger, serviceCfg)
+	if err != nil { log.Fatalf("Failed to create job manager: %v", err) }
 
 	go startRunPoller(context.Background(), storeImpl, jm,
-		agentFlowHandler.AgentFlows(), flowTimeout, maxRetries)
+		agentFlowHandler.AgentFlows())
 
 
 	// ── Hot reload ─────────────────────────────────────
@@ -566,7 +571,7 @@ func logConfig(cfg *config.ServiceConfig) {
 // ── Supporting types & functions ──────────────────────────────
 
 type mcpAdapter struct {
-	factory *mcp.Factory
+	factory *llm.Factory
 	name    string
 }
 
@@ -577,8 +582,8 @@ func (a *mcpAdapter) CallTool(ctx context.Context, toolName string, args map[str
 // startRunPoller polls for pending AgentFlowRuns and dispatches them
 // via the shared JobManager. Each run is dispatched in a goroutine;
 // the JM's scheduler handles concurrency internally.
-func startRunPoller(ctx context.Context, s engine.Store, jm *engine.JobManager,
-	flows map[string]*model.AgentFlowSpec, flowTimeout time.Duration, maxRetries int) {
+func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManager,
+	flows map[string]*model.AgentFlowSpec) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -592,7 +597,7 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *engine.JobManager,
 				spec := flows[run.AgentFlowID]
 				if spec == nil { continue }
 				go func(r model.AgentFlowRun, sp *model.AgentFlowSpec) {
-					_ = jm.StartJob(ctx, &r, sp)
+					_ = jm.Submit(ctx, &r, sp)
 				}(run, spec)
 			}
 		}
@@ -646,23 +651,23 @@ func startTaskManager() error {
 	}
 	defer q.Close()
 
-	logger := util.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
+	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
 	storeImpl := store.NewSQLiteStore(svcCfg.Storage.SQLite.Dir)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 
-	agents := make([]*config.AgentDef, len(svcCfg.Orchestration.Agents))
-	for i := range svcCfg.Orchestration.Agents {
-		agents[i] = &svcCfg.Orchestration.Agents[i]
-	}
+	loadedAgents, err := config.LoadAgents(svcCfg, cfgPath)
+	if err != nil { return fmt.Errorf("load agents: %w", err) }
+	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
+	for i := range loadedAgents { agentPtrs[i] = &loadedAgents[i] }
 
-	tm, err := engine.NewTaskManager(&engine.TaskManagerConfig{
+	tm, err := taskmanager.NewTaskManager(&engine.TaskManagerConfig{
 		ID:        tmID,
 		SlotCount: 4,
 		Queue:     q,
 		Store:     storeImpl,
-		Agents:    agents,
+		Agents:    agentPtrs,
 		Logger:    logger,
 	})
 	if err != nil {
@@ -704,14 +709,14 @@ func startJobManager() error {
 	}
 	defer q.Close()
 
-	logger := util.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
+	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
 	storeImpl := store.NewPostgresStore(os.Getenv("FLOWGENT_DATABASE_URL"))
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 
-	scheduler, err := engine.NewScheduler(&engine.SchedulerConfig{
-		Type:              engine.SchedulerTypeKubernetes,
+	rm, err := scheduler.NewResourceManager(&scheduler.ResourceManagerConfig{
+		Provider:              engine.ProviderKubernetes,
 		SlotsPerTM:        4,
 		MinTMs:            2,
 		MaxTMs:            10,
@@ -719,18 +724,18 @@ func startJobManager() error {
 		K8sDeploymentName: "flowgent-taskmanager",
 	})
 	if err != nil {
-		return fmt.Errorf("create scheduler: %w", err)
+		return fmt.Errorf("create resource manager: %w", err)
 	}
 
-	jm := engine.NewJobManager(storeImpl, q, scheduler, logger)
-	jm.SetTimeout(30 * time.Minute)
+	jm, err := jobmanager.NewJobManager(storeImpl, rm, logger, svcCfg)
+	if err != nil { return fmt.Errorf("create job manager: %w", err) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go startRunPoller(ctx, storeImpl, jm, mapFromStore(storeImpl), 30*time.Minute, 3)
+	go startRunPoller(ctx, storeImpl, jm, mapFromStore(storeImpl))
 
-	log.Printf("JobManager started (scheduler=%s)", scheduler.Type())
+	log.Printf("JobManager started (rm=%s)", rm.Provider())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)

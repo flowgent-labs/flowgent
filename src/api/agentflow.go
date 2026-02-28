@@ -6,18 +6,18 @@ import (
 
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/store"
-	"github.com/flowgent-labs/flowgent/src/util"
+	"github.com/flowgent-labs/flowgent/src/common/utils"
 )
 
 // AgentFlowHandler manages agentflow HTTP endpoints.
 type AgentFlowHandler struct {
 	store      store.Store
-	logger     *util.Logger
+	logger     *utils.Logger
 	agentFlows map[string]*model.AgentFlowSpec
 }
 
 // NewAgentFlowHandler creates an agentflow HTTP handler.
-func NewAgentFlowHandler(s store.Store, logger *util.Logger, agentFlows []model.AgentFlowSpec, subAgentFlows map[string]model.AgentFlowSpec) *AgentFlowHandler {
+func NewAgentFlowHandler(s store.Store, logger *utils.Logger, agentFlows []model.AgentFlowSpec, subAgentFlows map[string]model.AgentFlowSpec) *AgentFlowHandler {
 	afMap := make(map[string]*model.AgentFlowSpec)
 	for i := range agentFlows {
 		afMap[agentFlows[i].ID] = &agentFlows[i]

@@ -181,7 +181,7 @@ var walletStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet("start", pidWallet)
+		return runWallet("start")
 	},
 }
 
@@ -189,7 +189,7 @@ var walletStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop a running wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet("stop", pidWallet)
+		return runWallet("stop")
 	},
 }
 
@@ -197,7 +197,7 @@ var walletRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Stop then start the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet("restart", pidWallet)
+		return runWallet("restart")
 	},
 }
 
@@ -325,21 +325,18 @@ func main() {
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonRestartCmd)
-	daemonCmd.PersistentFlags().StringVar(&pidDaemon, "pid-file", "/tmp/flowgent.pid", "PID file path")
 
 	// apiserver
 	rootCmd.AddCommand(apiserverCmd)
 	apiserverCmd.AddCommand(apiserverStartCmd)
 	apiserverCmd.AddCommand(apiserverStopCmd)
 	apiserverCmd.AddCommand(apiserverRestartCmd)
-	apiserverCmd.PersistentFlags().StringVar(&pidAPIServer, "pid-file", "/tmp/flowgent-apiserver.pid", "PID file path")
 
 	// a2a
 	rootCmd.AddCommand(a2aCmd)
 	a2aCmd.AddCommand(a2aStartCmd)
 	a2aCmd.AddCommand(a2aStopCmd)
 	a2aCmd.AddCommand(a2aRestartCmd)
-	a2aCmd.PersistentFlags().StringVar(&pidA2A, "pid-file", "/tmp/flowgent-a2a.pid", "PID file path")
 
 	// wallet
 	rootCmd.AddCommand(walletCmd)
@@ -347,7 +344,6 @@ func main() {
 	walletCmd.AddCommand(walletStopCmd)
 	walletCmd.AddCommand(walletRestartCmd)
 	walletCmd.AddCommand(walletGenKeyCmd)
-	walletCmd.PersistentFlags().StringVar(&pidWallet, "pid-file", "/tmp/flowgent-wallet.pid", "PID file path")
 	walletStartCmd.Flags().StringVar(&walletListen, "listen", "127.0.0.1:9901", "Listen address")
 	walletStartCmd.Flags().StringVar(&walletDB, "db", "", "SQLite database path (default: $HOME/.flowgent/wallet.db)")
 	walletStartCmd.Flags().StringVar(&masterKey, "master-key", "", "Master encryption key")
@@ -360,14 +356,12 @@ func main() {
 	taskmanagerCmd.AddCommand(taskmanagerStartCmd)
 	taskmanagerCmd.AddCommand(taskmanagerStopCmd)
 	taskmanagerCmd.AddCommand(taskmanagerRestartCmd)
-	taskmanagerCmd.PersistentFlags().StringVar(&pidTaskManager, "pid-file", "/tmp/flowgent-taskmanager.pid", "PID file path")
 
 	// jobmanager
 	rootCmd.AddCommand(jobmanagerCmd)
 	jobmanagerCmd.AddCommand(jobmanagerStartCmd)
 	jobmanagerCmd.AddCommand(jobmanagerStopCmd)
 	jobmanagerCmd.AddCommand(jobmanagerRestartCmd)
-	jobmanagerCmd.PersistentFlags().StringVar(&pidJobManager, "pid-file", "/tmp/flowgent-jobmanager.pid", "PID file path")
 
 	// console
 	rootCmd.AddCommand(consoleCmd)

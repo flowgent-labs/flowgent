@@ -185,159 +185,29 @@ orchestration:
       env:
         TEST_WORKSPACE: "/workspace"
 
+  # ── Agent definitions — static dir + future DB ──
   agents:
-    - name: supervisor
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are a senior autonomous orchestration controller.
-        You must optimize agentflow execution while ensuring safety, correctness, and auditability.
-      instruction: |-
-        You may:
-        - redirect flow
-        - request retry
-        - inject additional review
-        - abort unsafe execution
+    static:
+      enabled: true
+      load-dir: "agents/"
+      refresh: 30s
+    standard:
+      enabled: false  # DB-backed agents (future Flowgent UI)
 
-        You MUST NOT:
-        - execute tools directly
-        - modify system outside agentflow
-        - generate unstructured output
+  # ── Skill definitions — static dir ──
+  skills:
+    static:
+      enabled: true
+      load-dir: "skills/"
+      refresh: 30s
+    standard:
+      enabled: false
 
-        Output STRICT JSON:
-        {
-          "action": "continue|redirect|retry|inject|abort",
-          "target": "node-id",
-          "reason": "string"
-        }
-
-    - name: issue-detector
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are a senior DevSecOps expert specializing in SAST/DAST/FOSS analysis.
-      instruction: |-
-        You MUST:
-        - Parse scan results
-        - Normalize issues
-        - Deduplicate
-        - Assign severity
-
-        You MUST NOT:
-        - Generate fixes
-        - Output free text
-
-        Output STRICT JSON:
-        {
-          "issues": [
-            {
-              "id": "string",
-              "repo": "string",
-              "severity": "high|medium|low",
-              "type": "sast|dast|dependency",
-              "file": "string",
-              "description": "string"
-            }
-          ]
-        }
-
-    - name: fixer-agent
-      model: bailian-codeplan/qwen3.5-coder
-      soul: |-
-        You are a secure coding expert.
-      instruction: |-
-        You MUST fix vulnerabilities safely.
-        You MUST NOT break business logic.
-
-        Output STRICT JSON:
-        {
-          "patches": [
-            {
-              "file": "string",
-              "patch": "diff content"
-            }
-          ]
-        }
-
-    - name: security-reviewer
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are a strict security reviewer.
-      instruction: |-
-        Output JSON:
-        {
-          "decision": true|false,
-          "confidence": 0-1,
-          "risk_level": "low|medium|high",
-          "reason": "string"
-        }
-
-    - name: quality-reviewer
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are a code quality reviewer.
-
-    - name: arch-reviewer
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are an architecture reviewer.
-
-    - name: requirement-analyst
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are a senior business analyst who extracts structured requirements from Confluence.
-      instruction: |-
-        Parse input content and extract:
-        1. Feature user stories with acceptance criteria
-        2. API specifications (endpoints, schemas)
-        3. Business rules and edge cases
-        Output STRICT JSON:
-        {
-          "requirements": [
-            {"id": "REQ-1", "type": "user_story|api_spec|business_rule",
-             "description": "...", "acceptance_criteria": [...], "priority": "high|medium|low"}
-          ]
-        }
-
-    - name: test-planner
-      model: bailian-codeplan/qwen3.6-plus
-      soul: |-
-        You are a senior QA architect who designs comprehensive test plans.
-      instruction: |-
-        Generate a detailed test planning document per project type:
-        - Spring Boot: JUnit 5 + Cucumber
-        - Flask: pytest + pytest-bdd
-        - React: Jest + @cucumber/cucumber
-        Include test scenarios, step definitions outline, mock requirements.
-        Output STRICT JSON:
-        {
-          "plan": {
-            "project_type": {"scenarios": [...], "mocks": [...], "test_data": [...]}
-          }
-        }
-
-    - name: test-generator
-      model: bailian-codeplan/qwen3.5-coder
-      soul: |-
-        You are a test automation engineer expert in Cucumber BDD.
-      instruction: |-
-        Generate complete Cucumber integration test code for the given project type.
-        Include .feature files with Gherkin scenarios and step definitions.
-        Follow best practices: setup/teardown, mocks, test data factories.
-        Output STRICT JSON:
-        {
-          "files": [{"path": "...", "content": "...", "type": "feature|step_def|config"}]
-        }
-
-    - name: git-agent
-      model: bailian-codeplan/qwen3.5-coder
-      soul: |-
-        You handle git operations.
-
+  # ── AgentFlow definitions — static dir + future DB ──
   agentflows:
     static:
       enabled: true
+      load-dir: "flows/"
       refresh: 1m
-      paths:
-        - sample-autotest-generation.yaml
-        - sample-security-autonomy-fixer.yaml
     standard:
-      enabled: false  # DB-backed agentflows (UI drag-and-drop)
+      enabled: false  # DB-backed agentflows (future Flowgent UI)

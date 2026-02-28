@@ -11,6 +11,7 @@ type Node struct {
 	ID               string              `json:"id" yaml:"id"`
 	Type             NodeType            `json:"type" yaml:"type"`
 	Agent            string              `json:"agent,omitempty" yaml:"agent,omitempty"`
+	Skill            string              `json:"skill,omitempty" yaml:"skill,omitempty"`
 	Tool             string              `json:"tool,omitempty" yaml:"tool,omitempty"`
 	Source           string              `json:"source,omitempty" yaml:"source,omitempty"`
 	Expression       string              `json:"expression,omitempty" yaml:"expression,omitempty"`
@@ -23,6 +24,17 @@ type Node struct {
 	Approval         *HumanApprovalConfig `json:"approval,omitempty" yaml:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig   `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
 	AgentFlowID      string              `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
+	// Sandbox fields
+	Runtime   string            `json:"runtime,omitempty" yaml:"runtime,omitempty"`     // python3 | bash | node
+	Script    string            `json:"script,omitempty" yaml:"script,omitempty"`       // inline script
+	Timeout   string            `json:"timeout,omitempty" yaml:"timeout,omitempty"`     // e.g. "120s"
+	Resources *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"` // cpu/memory limits
+}
+
+// SandboxResources defines resource limits for a sandbox node.
+type SandboxResources struct {
+	CPU    string `json:"cpu,omitempty" yaml:"cpu,omitempty"`       // e.g. "500m"
+	Memory string `json:"memory,omitempty" yaml:"memory,omitempty"` // e.g. "256Mi"
 }
 
 // RetryPolicy defines the retry behavior for a node.
@@ -57,12 +69,16 @@ type Edge struct {
 
 // AgentFlowSpec contains the full specification of an agentflow (nodes, edges, triggers, etc.).
 type AgentFlowSpec struct {
-	ID          string         `json:"id" yaml:"id"`
-	Description string         `json:"description,omitempty" yaml:"description,omitempty"`
-	Vars        map[string]any `json:"vars,omitempty" yaml:"vars,omitempty"`
-	Nodes       []Node         `json:"nodes" yaml:"nodes"`
-	Edges       []Edge         `json:"edges" yaml:"edges"`
-	Triggers    []TriggerDef   `json:"triggers,omitempty" yaml:"triggers,omitempty"`
+	ID           string         `json:"id" yaml:"id"`
+	Kind         string         `json:"kind,omitempty" yaml:"kind,omitempty"` // "skill" | "" (regular flow)
+	Description  string         `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary      string         `json:"summary,omitempty" yaml:"summary,omitempty"`       // one-liner for A2A card
+	InputSchema  map[string]any `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`   // optional JSON Schema
+	OutputSchema map[string]any `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // optional JSON Schema
+	Vars         map[string]any `json:"vars,omitempty" yaml:"vars,omitempty"`
+	Nodes        []Node         `json:"nodes" yaml:"nodes"`
+	Edges        []Edge         `json:"edges" yaml:"edges"`
+	Triggers     []TriggerDef   `json:"triggers,omitempty" yaml:"triggers,omitempty"`
 }
 
 // TriggerDef defines a trigger for an agentflow (schedule or webhook).
