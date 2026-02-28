@@ -13,7 +13,7 @@ import (
 	"github.com/flowgent-labs/flowgent/src/engine"
 	"github.com/flowgent-labs/flowgent/src/model"
 	"github.com/flowgent-labs/flowgent/src/queue"
-	"github.com/flowgent-labs/flowgent/src/util"
+	"github.com/flowgent-labs/flowgent/src/common/utils"
 )
 
 // ─── Mock LLM ────────────────────────────────────────
@@ -67,7 +67,7 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 	store := engine.NewMockStore()
 	tm := engine.NewTestTaskManager(store, mcpMap, agents, llm)
 	scheduler := engine.NewLocalScheduler(tm, 10)
-	jm := engine.NewJobManager(store, scheduler, util.NewLogger("JSON", "DEBUG"))
+	jm := engine.NewJobManager(store, scheduler, utils.NewLogger("JSON", "DEBUG"))
 	jm.SetTaskManager(tm)
 	jm.SetTimeout(60 * time.Second)
 

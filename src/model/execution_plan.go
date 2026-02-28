@@ -69,6 +69,7 @@ type NodeSpec struct {
 	SupervisorConfig *SupervisorConfig    `json:"supervisor_config,omitempty"`
 	ChildNode        *NodeSpec            `json:"child_node,omitempty"`
 	RawInput         map[string]any       `json:"raw_input,omitempty"` // YAML-defined input
+	OutputSchema     map[string]any       `json:"output_schema,omitempty"` // node-level output JSON Schema
 	// Sandbox fields
 	Runtime   string            `json:"runtime,omitempty"`
 	Script    string            `json:"script,omitempty"`
@@ -124,6 +125,7 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Timeout:          n.Timeout,
 		Resources:        n.Resources,
 		RawInput:         n.Input,
+		OutputSchema:     n.OutputSchema,
 	}
 	if n.Node != nil {
 		spec.ChildNode = NodeSpecFromNode(n.Node)

@@ -189,7 +189,7 @@ orchestration:
   agents:
     static:
       enabled: true
-      load-dir: "agents/"
+      load-dir: "../examples/agents/"
       refresh: 30s
     standard:
       enabled: false  # DB-backed agents (future Flowgent UI)
@@ -207,7 +207,7 @@ orchestration:
   agentflows:
     static:
       enabled: true
-      load-dir: "flows/"
+      load-dir: "../examples/flows/"
       refresh: 1m
     standard:
       enabled: false  # DB-backed agentflows (future Flowgent UI)

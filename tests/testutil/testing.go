@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -78,7 +79,10 @@ func (s *MockStore) GetTaskRunsByAgentFlowRun(ctx context.Context, rid string) (
 
 // Human approval
 func (s *MockStore) CreateHumanApproval(ctx context.Context, a *model.HumanApproval) error {
-	s.Mu.Lock(); defer s.Mu.Unlock(); s.Humans[a.TaskRunID] = a; return nil
+	s.Mu.Lock(); defer s.Mu.Unlock()
+	a.Token = fmt.Sprintf("mock-token-%d", len(s.Humans)+1)
+	s.Humans[a.TaskRunID] = a
+	return nil
 }
 func (s *MockStore) GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
 	s.Mu.Lock(); defer s.Mu.Unlock()

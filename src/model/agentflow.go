@@ -24,6 +24,7 @@ type Node struct {
 	Approval         *HumanApprovalConfig `json:"approval,omitempty" yaml:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig   `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
 	AgentFlowID      string              `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
+	OutputSchema     map[string]any      `json:"output_schema,omitempty" yaml:"output_schema,omitempty"` // node-level JSON Schema for output validation
 	// Sandbox fields
 	Runtime   string            `json:"runtime,omitempty" yaml:"runtime,omitempty"`     // python3 | bash | node
 	Script    string            `json:"script,omitempty" yaml:"script,omitempty"`       // inline script

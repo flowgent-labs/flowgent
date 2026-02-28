@@ -1,33 +1,36 @@
-.PHONY: build build-flowgent build-mcps build-all clean test fmt
+.PHONY: build build-flowgent examples example-mcps example-flows clean test fmt
 
-# ── Default: build everything ──────────────────────────────
-build: build-flowgent build-mcps
+# ── Default: build flowgent only ─────────────────────────
+build: build-flowgent
 
 # ── Flowgent core binary (daemon, apiserver, a2a, wallet, etc.) ─
 build-flowgent:
 	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/flowgent \
 		-ldflags "-X main.Version=dev -X main.GitCommit=$(shell git rev-parse HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		./cmd/flowgent
+		./src/cmd/flowgent
 
-# ── All MCP servers ────────────────────────────────────────
-build-mcps: build-mcp-github build-mcp-sonarqube build-mcp-sonatypeiq build-mcp-nexus3 build-mcp-test
+# ── Example MCP servers (for e2e testing only) ────────────
+example-mcps: example-mcp-github example-mcp-sonarqube example-mcp-sonatypeiq example-mcp-nexus3 example-mcp-test
 
-build-mcp-github:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-github ./cmd/mcp-github
+example-mcp-github:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-github ./examples/mcp-github
 
-build-mcp-sonarqube:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonarqube ./cmd/mcp-sonarqube
+example-mcp-sonarqube:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonarqube ./examples/mcp-sonarqube
 
-build-mcp-sonatypeiq:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonatypeiq ./cmd/mcp-sonatypeiq
+example-mcp-sonatypeiq:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-sonatypeiq ./examples/mcp-sonatypeiq
 
-build-mcp-nexus3:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-nexus3 ./cmd/mcp-nexus3
+example-mcp-nexus3:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-nexus3 ./examples/mcp-nexus3
 
-build-mcp-test:
-	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-test ./cmd/mcp-test
+example-mcp-test:
+	GONOSUMCHECK='*' GOFLAGS=-mod=mod go build -o bin/mcp-server-test ./examples/mcp-test
 
-# ── Utilities ──────────────────────────────────────────────
+# ── All examples ──────────────────────────────────────────
+examples: example-mcps
+
+# ── Utilities ─────────────────────────────────────────────
 clean:
 	rm -rf bin/
 
@@ -35,8 +38,8 @@ test:
 	GONOSUMCHECK='*' GOFLAGS=-mod=mod go test -count=1 -timeout 120s ./src/... ./tests/...
 
 fmt:
-	go fmt ./src/... ./tests/... ./cmd/...
+	go fmt ./src/... ./tests/... ./examples/...
 
-# ── Docker ─────────────────────────────────────────────────
+# ── Docker ────────────────────────────────────────────────
 docker-build:
 	docker build -t flowgent/flowgent:latest .
