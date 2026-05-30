@@ -16,6 +16,10 @@
   - Forbidden: `cd examples/mcp-* && go build ...` (MCPs are built in Docker too)
   - Only exception: `go test` and `go fmt` may run on the host for development.
 - Binaries under `bin/` are git-ignored. Do NOT commit them.
+- **Git commit messages must be concise.** Keep subject under 72 chars.
+  - Do NOT include Co-authored-by trailers (no `Co-Authored-By: Claude Opus ...`).
+  - Do NOT include `via .HAPI` or similar tool attribution in messages.
+  - Author identity is always `Flowgent Jaw <developers@flowgent-labs.com>`.
 - **If a Docker image cannot be pulled** (e.g. Docker Hub blocked in CN), use the mirror
   script to pull it through the jump host and push to Aliyun CR:
   ```bash
