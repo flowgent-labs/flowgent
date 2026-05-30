@@ -227,20 +227,6 @@ orchestration:
         HTTP_PROXY: ""
         HTTPS_PROXY: ""
 
-    - name: sonatype-iq
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/sonatype-iq-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: sonatype-nexus3
-      enabled: true
-      type: local
       command: ["sh", "-c", "/bin/sonatype-nexus3-mcp"]
       args: ["--transport", "stdio", "-v", "10"]
       env:

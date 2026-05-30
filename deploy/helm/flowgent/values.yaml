@@ -140,10 +140,20 @@ taskmanager:
 # Sandbox — [session] Secure Script Execution Worker
 # ═══════════════════════════════════════════════════════════════
 sandbox:
+  enabled: true
   replicas: 2
   image: ""
   slots: 4
-  workspace: "/var/flowgent/workspace"
+  workspace: "/var/flowgent/workspace"     # PVC mount path — shared across all sandbox pods
+  workspaceSize: "10Gi"                    # PVC size
+  # Credentials injected as env vars into sandbox pods for script access
+  credentials:
+    nexus3:
+      url: "http://nexus3:8081"
+      secret: "nexus3-creds"               # K8s secret with keys: username, password
+    sonatypeiq:
+      url: "http://sonatypeiq:8070"
+      secret: "iq-creds"                   # K8s secret with keys: username, password (optional)
   policy:
     network:
       mode: "none"

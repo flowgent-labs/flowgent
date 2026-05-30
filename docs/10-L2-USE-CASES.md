@@ -11,8 +11,6 @@ Each use case links to its corresponding AgentFlow and Agent definition YAML fil
 
 Enterprise security vulnerability remediation with multi-agent team orchestration.
 
-**Flow**: CI trigger → scan repos (SonarQube SAST, Sonatype IQ FOSS, skill-based
-Nexus3 dependency firewall check) → detect issues → generate fixes → multi-agent
 review (security/quality/architecture) → vote → supervisor check → human approval →
 commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 
@@ -50,9 +48,6 @@ commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 Supervisor (per-repo)
   ├── Discovery Phase
   │     ├── SonarQube MCP (SAST — get_issues)
-  │     ├── Sonatype IQ MCP (FOSS dependency vulns)
-  │     └── Skill: nexus3-maven-versions-retrieve-with-iq-firewall (replaces Nexus3 MCP)
-  │           Uses copilot scripts (gh + nexus3 web API + gcloud)
   │           to fetch top-3 non-quarantined Maven dep versions.
   │           See §13.4 in architecture doc for design rationale.
   ├── Analyze → Fix → Review Board (3-round voting)
@@ -71,18 +66,14 @@ Supervisor (per-repo)
 **Key features**: 12 DAG node types, iterative re-scan verification loop,
 parallel review fan-out, deterministic majority vote, supervisor-controlled
 autonomy (redirect/retry/inject/abort with quotas), human-in-the-loop approval
-gate, skill-based dependency checking (no Nexus3 license required),
 multi-channel notifier.
 
 ### MCP Tools & Skills Used
 
 | Server/Skill | Tools | Source |
 |--------------|-------|--------|
-| GitHub | `get_latest_commit`, `create_branch`, `commit_and_push`, `create_pull_request` | `examples/mcp-github/` |
-| SonarQube | `scan/get_issues`, `scan/trigger_analysis`, `scan/get_status` | `examples/mcp-sonarqube/` |
-| Sonatype IQ | `get_jobs_by_commit`, `get_foss_solution` | `examples/mcp-sonatypeiq/` |
-| **Skill**: `nexus3-maven-versions-retrieve-with-iq-firewall` | Nexus3 dependency firewall check via copilot scripts | Replaces `sonatype-nexus3` MCP (see §13.4) |
-| Sonatype Nexus3 | `get_foss_solution` | `examples/mcp-nexus3/` |
+| GitHub | `get_latest_commit`, `create_branch`, `commit_and_push`, `create_pull_request` | `examples/mcps/github/` |
+| SonarQube | `scan/get_issues`, `scan/trigger_analysis`, `scan/get_status` | `examples/mcps/sonarqube/` |
 
 ---
 
@@ -112,9 +103,9 @@ type (Spring Boot / Flask / React) → commit.
 
 | MCP Server | Tools | Source |
 |------------|-------|--------|
-| Confluence | `analyze_requirements`, `plan_tests`, `generate_cucumber` | `examples/mcp-confluence/` (external) |
+| Confluence | `analyze_requirements`, `plan_tests`, `generate_cucumber` | `examples/mcps/confluence/` (external) |
 
-> Note: The `examples/mcp-test/` directory was removed. AutoTest generation uses the
+> Note: The `examples/mcps/test/` directory was removed. AutoTest generation uses the
 > Confluence MCP for requirement fetching. Test planning and Cucumber generation are
 > handled by the `test-planner` and `test-generator` agents directly.
 
@@ -136,7 +127,7 @@ type (Spring Boot / Flask / React) → commit.
 2. Create Agent YAMLs in `examples/agents/` if introducing new agent roles
 3. Add a section in this catalog describing the use case, its architecture, and the
    linked config files
-4. For new MCP integrations, add the MCP server source under `examples/mcp-*/`
+4. For new MCP integrations, add the MCP server source under `examples/mcps/*/`
 
 Keep use case configs self-contained — all agents and flows referenced by a use case
 should exist under `examples/`.

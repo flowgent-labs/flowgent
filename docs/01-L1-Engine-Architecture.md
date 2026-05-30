@@ -151,7 +151,7 @@ mode: session         # "session" or "application"
 | controller | — | **Helm** | Only in application mode — polls PG, creates dynamic JMs |
 | jobmanager | **Helm** | **Controller (dynamic)** | Session: shared pool. App: `buildJMDeployment()` per-flow |
 | taskmanager | **Helm** | **JM auto-scale** | Session: admin-managed replicas. App: JM's K8s RM scales |
-| sandbox | **Helm** | **JM auto-scale** | Session: shared hostPath workspace. App: per-flow PVC |
+| sandbox | **Helm** | **JM auto-scale** | Session: shared PVC workspace, tenant+flow subdirectory isolation |
 | notifier | Helm | Helm | Both modes. Session: shared workspace vol. App: dedicated vol. |
 | a2a | optional | optional | `--set a2a.enabled=true` |
 | wallet | optional | optional | `--set wallet.enabled=true` |
@@ -175,7 +175,7 @@ Controller polls PG → creates dedicated jobmanager/taskmanager/sandbox per gra
 | **JM lifecycle** | Persistent, shared across tenants | Per-flow, destroyed on completion |
 | **TM scale** | **Manual** (admin-managed replicas) | **Auto** (JM's K8s RM scales TMs) |
 | **Slot exhaustion** | Run stays PENDING, admin adds TMs | JM auto-scales TM replicas |
-| **Workspace** | Shared hostPath volume | Per-flow PVC (dynamic) |
+| **Workspace** | Shared PVC (ReadWriteMany) | Per-flow subdirectory (same PVC) |
 | **Resource isolation** | Logical (tenant_id + rate limit) | Physical (dedicated K8s namespace) |
 | **Flink analogy** | Session Cluster | Application Cluster |
 
@@ -661,7 +661,7 @@ Enables resume-after-failure without re-executing completed nodes.
 flowgent all-in-one start -c etc/flowgent.yaml
 ```
 
-Single process: API Server + JM + TM (LocalRM, goroutine pool). SQLite + Memory
+Single process: API Server + JM + TM (StandaloneRM, goroutine pool). SQLite + Memory
 cache. For development and small-scale standalone testing only.
 
 ### 9.2 Distributed K8s (Session Mode)
@@ -740,7 +740,7 @@ There are two paths to trigger a run:
 
 5. RM DISPATCH
    → Evaluates pending plans vs free slots
-   → LocalRM: goroutine pool, returns INSUFFICIENT_RESOURCES if full
+   → StandaloneRM: goroutine pool, returns INSUFFICIENT_RESOURCES if full
    → K8sRM: publishes plan to MQTT topic, TM pods consume;
      auto-scales TM replicas based on queue depth (application mode)
 
@@ -1112,7 +1112,6 @@ However, Nexus3 open-source and personal deployments **lack the SonatypeIQ licen
 so:
 - The Nexus3 UI shows no firewall status column
 - The Nexus3 REST API swagger does not return `firewall.status` in component listings
-- The MCP tool approach (`type: tool, tool: sonatype-nexus3`) simply cannot work
 
 **Solution:** Replace the Nexus3 MCP tool with a **skill** — a sub-AgentFlow that wraps
 existing copilot scripts. These scripts directly call:
@@ -1132,8 +1131,7 @@ environment (dev/staging/production) without rebuilding any binaries.
 ```yaml
 # In the flow YAML — skill replaces MCP tool
 - id: fetch-safe-deps
-  type: skill                                  # was: type: tool, tool: sonatype-nexus3
-  skill: nexus3-maven-versions-retrieve-with-iq-firewall
+  skill: nexus3-retrieval
   input:
     repo: "${vars.repo}"
     maven_coordinates: "${scan-sonatypeiq.maven_coords}"
@@ -1183,7 +1181,7 @@ messages from the queue and reading/writing files through a shared workspace vol
 
 | Type | Storage | Survives | Example |
 |------|---------|----------|---------|
-| **Work data** (files) | Workspace volume (hostPath/PVC) | Pod restart, cluster reboot | Code patches, scripts, build artifacts |
+| **Work data** (files) | Workspace volume (PVC) | Pod restart, cluster reboot | Code patches, scripts, build artifacts |
 | **Shared memory** (knowledge) | Storage (SQLite / PostgreSQL) | Everything | Agent conversation history, run progress |
 
 ### 15.2 Workspace Path Convention
@@ -1341,7 +1339,66 @@ Sandbox Worker (per-execution lifecycle):
   → Push result to queue
 ```
 
-### 15.6 CLI
+
+### 15.6 Workspace — Unified PVC Design
+
+Both session and application modes use a **ReadWriteMany PVC** for the sandbox
+workspace, provisioned once and shared across all sandbox pods.
+
+```
+/var/flowgent/workspace/
+├── {tenant}/
+│   └── {definition_id}/
+│       ├── skills/                     ← skill scripts (read-only reference)
+│       └── runs/{run_id}/plans/{plan_id}/{span_id}/
+│           ├── script.sh               ← written by SandboxExecutor
+│           ├── result.json             ← written by SandboxRunner
+│           └── status
+```
+
+| Mode | Workspace Path | Provisioning |
+|------|---------------|-------------|
+| Session | `/var/flowgent/workspace/{tenant}/{definition_id}/` | PVC (Helm pre-creates) |
+| Application | `/var/flowgent/workspace/{tenant}/{definition_id}/` | PVC (same path convention) |
+| All-in-one | `os.TempDir()` | Process-local |
+
+Both modes use the same path convention — different tenants and flows are
+isolated by subdirectory, not by separate volumes.
+
+### 15.7 Credential Injection
+
+External service credentials are injected into sandbox pods via K8s secrets,
+then inherited by child processes during script execution:
+
+```yaml
+# deploy/helm/flowgent/values.yaml
+sandbox:
+  credentials:
+    nexus3:     { url: "http://nexus3:8081", secret: "nexus3-creds" }
+    sonatypeiq: { url: "http://sonatypeiq:8070", secret: "iq-creds" }
+```
+
+```bash
+# Create secrets once per cluster
+kubectl create secret generic nexus3-creds \
+  --from-literal=username=admin --from-literal=password=admin
+kubectl create secret generic iq-creds \
+  --from-literal=username=iq-user --from-literal=password=iq-pass
+```
+
+The sandbox runner passes all env vars to child processes:
+```go
+cmd.Env = append(os.Environ(), "HOME=/tmp", "SANDBOX_MODE=1")
+```
+
+Scripts read credentials directly from env:
+```bash
+curl -u "${NEXUS3_USER}:${NEXUS3_PASSWORD}" "$NEXUS3_URL/..."
+```
+
+Secrets never appear in flow YAML or workspace files.
+
+### 15.8 CLI
 
 ```bash
 ./bin/flowgent sandbox start

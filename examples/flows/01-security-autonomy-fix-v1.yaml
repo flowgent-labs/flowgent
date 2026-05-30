@@ -45,7 +45,9 @@ description: |
   6. SUPERVISOR — Safety gate with bounded retries, injection limits, abort.
   7. CONDITIONAL — Based on vote: proceed to human approval or loop back to fix.
   8. HUMAN APPROVAL — Async approval gate (24h timeout) before code push.
-  9. COMMIT & PR — Create branch, push patches, open pull request.
+  8. HUMAN APPROVAL
+  9. PRE-CHECK via sonar-scanner (quality gate before commit)
+  10. COMMIT & PR — Create branch, push patches, open pull request.
   10. RE-SCAN — Trigger SonarQube re-analysis, poll for completion, compare
       pre/post results. If unresolved issues remain → loop back to fix
       (max 3 iterations).
@@ -123,7 +125,7 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
   - id: fetch-safe-deps
     type: skill
-    skill: nexus3-maven-versions-retrieve-with-iq-firewall
+    skill: nexus3-retrieval
     input:
       repo: "${vars.repo}"
       maven_coordinates: "${scan-sonatypeiq.maven_coords}"
@@ -246,7 +248,41 @@ nodes:
       on_reject: "to: generate-fixes"
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 9: COMMIT & PR — Push patches to repository
+  # PHASE 9: PRE-CHECK — SonarQube scanner pre-upload + quality gate
+  #
+  # Before committing, run sonar-scanner to pre-upload results. Only
+  # proceed to commit if the quality gate passes. Otherwise loop back
+  # to get latest issues and re-iterate (max 3 iterations).
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: precheck-scanner
+    type: tool
+    tool: sonarqube
+    input:
+      action: "scan/trigger_analysis"
+      project_key: "${vars.repo}"
+
+  - id: precheck-wait
+    type: sandbox
+    runtime: bash
+    timeout: 120s
+    script: |
+      mode: allowlist
+      allowed: ["localhost:9000", "sonarqube:9000"]
+
+  - id: precheck-gate
+    type: tool
+    tool: sonarqube
+    input:
+      action: "scan/get_status"
+      project_key: "${vars.repo}"
+
+  - id: gate-passed
+    type: condition
+    expression: "${precheck-gate.status == success}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 10: COMMIT & PR — Push patches to repository
   # ═══════════════════════════════════════════════════════════════
 
   - id: create-branch
@@ -300,7 +336,7 @@ nodes:
         Tribunal majority decision: **${tribunal.decision}**
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 10: RE-SCAN — SonarQube iterative fix verification
+  # PHASE 11: RE-SCAN — SonarQube iterative fix verification
   #
   # After committing fixes, trigger SonarQube re-analysis and check
   # whether target issues are resolved. If not, loop back to
@@ -319,27 +355,22 @@ nodes:
     type: sandbox
     runtime: bash
     timeout: 120s
+    retry:
+      max: 12           # platform retries every 10s (12 × 10s = 120s)
+      initial: 10s
+      max_delay: 10s
+      factor: 1.0
     script: |
       #!/bin/bash
-      # Poll SonarQube CE task until analysis completes
+      # Single check — platform handles retry/timeout via retry.max
       SQ_URL="${SONARQUBE_URL:-http://localhost:9000}"
       SQ_TOKEN="${SONARQUBE_TOKEN}"
       PROJECT_KEY="${vars.repo}"
-      MAX_WAIT=120
-      INTERVAL=10
-      ELAPSED=0
-      while [ $ELAPSED -lt $MAX_WAIT ]; do
-        STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
-          "$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1" \
-          | python3 -c "import sys,json; tasks=json.load(sys.stdin).get('tasks',[]); print(tasks[0]['status'] if tasks else 'PENDING')" 2>/dev/null || echo "PENDING")
-        if [ "$STATUS" = "SUCCESS" ]; then
-          echo '{"status":"completed","elapsed":'$ELAPSED'}'
-          exit 0
-        fi
-        sleep $INTERVAL
-        ELAPSED=$((ELAPSED + INTERVAL))
-      done
-      echo '{"status":"timeout","elapsed":'$ELAPSED'}'
+      STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
+        "$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1" \
+        2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('tasks',[{}])[0].get('status','PENDING'))" 2>/dev/null || echo "PENDING")
+      if [ "$STATUS" = "SUCCESS" ]; then echo '{"status":"completed"}'; exit 0; fi
+      echo '{"status":"pending"}'; exit 1
     network_policy:
       mode: allowlist
       allowed:
@@ -375,7 +406,7 @@ nodes:
     expression: "${compare-results.resolution == complete || compare-results.resolution == max_iterations_reached}"
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 11: REPORT — Final summary
+  # PHASE 12: REPORT — Final summary
   # ═══════════════════════════════════════════════════════════════
 
   - id: summary-report
@@ -399,7 +430,7 @@ nodes:
       Output STRICT JSON: {"report":"markdown summary...","status":"completed|partial|failed","issues_found":N,"issues_fixed":N}
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 12: NOTIFY — Multi-channel parallel notification
+  # PHASE 13: NOTIFY — Multi-channel parallel notification
   # ═══════════════════════════════════════════════════════════════
 
   - id: notify-pr
@@ -458,8 +489,13 @@ edges:
 
   # If approved → Human → Commit → Re-scan → Loop/Report
   - { from: is-approved, to: human-approval, condition: true }
-  - { from: human-approval, to: create-branch }
+  - { from: human-approval, to: precheck-scanner }
+  - { from: precheck-scanner, to: precheck-wait }
+  - { from: precheck-wait, to: precheck-gate }
+  - { from: precheck-gate, to: gate-passed }
+  - { from: gate-passed, to: create-branch, condition: true }
   - { from: create-branch, to: commit-fixes }
+  - { from: gate-passed, to: generate-fixes, condition: false }
   - { from: commit-fixes, to: create-pr }
   - { from: create-pr, to: trigger-rescan }
   - { from: trigger-rescan, to: wait-rescan }

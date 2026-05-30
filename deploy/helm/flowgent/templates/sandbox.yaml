@@ -1,4 +1,17 @@
-{{- if eq .Values.global.mode "session" }}
+{{- if .Values.sandbox.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "flowgent.fullname" . }}-sandbox-workspace
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: {{ .Values.sandbox.workspaceSize | default "10Gi" }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,6 +55,35 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # ── Credential injection for sandbox scripts ──
+            - name: NEXUS3_URL
+              value: {{ .Values.sandbox.credentials.nexus3.url | default "http://nexus3:8081" | quote }}
+            - name: NEXUS3_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
+                  key: username
+                  optional: true
+            - name: NEXUS3_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
+                  key: password
+                  optional: true
+            - name: SONATYPEIQ_URL
+              value: {{ .Values.sandbox.credentials.sonatypeiq.url | default "http://sonatypeiq:8070" | quote }}
+            - name: SONATYPEIQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
+                  key: username
+                  optional: true
+            - name: SONATYPEIQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
+                  key: password
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
@@ -54,7 +96,6 @@ spec:
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
         - name: sandbox-workspace
-          hostPath:
-            path: {{ .Values.sandbox.workspace }}
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: {{ include "flowgent.fullname" . }}-sandbox-workspace
 {{- end }}
