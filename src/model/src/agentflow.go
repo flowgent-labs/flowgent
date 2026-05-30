@@ -59,6 +59,10 @@ type AgentFlowSpec struct {
 	Namespace string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Mode      ExecutionMode     `json:"mode,omitempty" yaml:"mode,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+
+	// Credentials are flow-level env vars injected into sandbox/MCP/notifier pods.
+	// Highest priority — overrides tenant-level credential files.
+	Credentials map[string]string `json:"credentials,omitempty" yaml:"credentials,omitempty"`
 }
 
 // EffectiveMode returns the execution mode, deriving from priority if not explicitly set.

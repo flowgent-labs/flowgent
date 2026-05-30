@@ -31,8 +31,9 @@ type ServiceConfig struct {
 	Lock          LockConfig               `json:"lock" yaml:"lock"`
 	Sandbox       SandboxConfig            `json:"sandbox" yaml:"sandbox"`
 	Payments      *PaymentsConfig `json:"payments" yaml:"payments"`
-	Notifier      NotifierConfig           `json:"notifier" yaml:"notifier"`
-	Tenant        TenantConfig             `json:"tenant" yaml:"tenant"`
+	Notifier        NotifierConfig         `json:"notifier" yaml:"notifier"`
+	CredentialPaths CredentialPathsConfig  `json:"credential-paths" yaml:"credential-paths"`
+	Tenant          TenantConfig           `json:"tenant" yaml:"tenant"`
 }
 
 // DeploymentConfig sets the execution mode: session or application.
@@ -282,13 +283,13 @@ type AgentDef = model.AgentDef
 
 // ─── Notifier ─────────────────────────────────────────────────
 
-// NotifierConfig configures the notification service and its channels.
+// NotifierConfig configures the notifier service and its channels.
 type NotifierConfig struct {
 	Enabled  bool                    `json:"enabled" yaml:"enabled"`
 	Channels []NotifierChannelConfig `json:"channels" yaml:"channels"`
 }
 
-// NotifierChannelConfig defines a single notification channel.
+// NotifierChannelConfig defines a single notifier channel.
 type NotifierChannelConfig struct {
 	Name    string         `json:"name" yaml:"name"`
 	Type    string         `json:"type" yaml:"type"` // telegram, dingtalk, slack, email, webhook
@@ -302,6 +303,17 @@ type NotifierChannelConfig struct {
 type TenantConfig struct {
 	DefaultTenant   string `json:"default_tenant" yaml:"default_tenant"`
 	NamespacePrefix string `json:"namespace_prefix" yaml:"namespace_prefix"`
+}
+
+// CredentialPathsConfig defines where credentials files are mounted in pods.
+// Two-level hierarchy, flow overrides tenant:
+//
+//	/var/secret/flowgent/{tenant}/credentials          (tenant-level)
+//	/var/secret/flowgent/{tenant}/{flow}/credentials    (flow-level)
+//
+// Only taskmanager, sandbox, and notifier load these at startup.
+type CredentialPathsConfig struct {
+	BasePath string `json:"base-path" yaml:"base-path"` // default: /var/secret/flowgent
 }
 
 // ─── AgentCfg / SkillCfg / AgentFlowCfg ────────────────────────

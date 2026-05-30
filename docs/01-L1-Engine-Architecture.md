@@ -797,7 +797,7 @@ Bridges internal agentflow events to external communication channels.
 ### 11.2 Queue Consumer
 
 MQTT shared subscription per tenant+flow: `/flowgent/notify/queue/{tenant}/{flow}`.
-Messages load-balanced across notification pods. Each message dispatched to
+Messages load-balanced across notifier pods. Each message dispatched to
 configured channels for that tenant.
 
 ### 11.3 IDiscoveryClient — Pluggable Service Discovery
@@ -1003,7 +1003,7 @@ model (→ common)
 
 | Path | Role |
 |------|------|
-| `notifier.go` | Notification service + MQTT subscriber + WS hub + channel senders |
+| `notifier.go` | Notifier service + MQTT subscriber + WS hub + channel senders |
 
 ### sandbox (`src/sandbox/src/`) — Module 8 (ex-`sandbox-exec`)
 

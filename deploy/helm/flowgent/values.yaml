@@ -20,6 +20,11 @@ global:
     tag: latest
     pullPolicy: IfNotPresent
 
+  # Credential file paths mounted in pods (K8s Secrets).
+  # Hierarchy: flow-level overrides tenant-level.
+  credentialPaths:
+    basePath: "/var/secret/flowgent"
+
 # ═══════════════════════════════════════════════════════════════
 # Middleware — enabled=true deploys as part of this chart.
 # enabled=false uses existing external middleware via K8s Secret.
@@ -192,7 +197,7 @@ wallet:
     limits:   { cpu: "200m", memory: "256Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# Notifier — [always] WS Push + Multi-Channel Notification
+# Notifier — [always] WS Push + Multi-Channel Notifier
 # ═══════════════════════════════════════════════════════════════
 notifier:
   enabled: true

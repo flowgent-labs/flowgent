@@ -2,19 +2,13 @@
 
 ## Requirements
 
-- **All builds MUST use `make` from the repository root.** Output goes to `bin/`.
-  No host Go or MCP toolchain required — Docker pulls the Go builder image automatically.
-  - `make build` — flowgent binary via Docker multi-stage (output: `bin/flowgent`)
-  - `make build-all` — flowgent + 4 MCP binaries via Docker (output: `bin/`)
-  - `make docker-build` — production Docker image (`flowgent:latest`)
-  - `make docker-all-in-one` — all-in-one Docker image (`flowgent:all-in-one`)
-  - `make test` — run all tests (requires host Go)
-  - `make fmt` — format all modules (requires host Go)
-  - `make clean` — remove `bin/`
-- **NEVER run `go build` directly on the host** for producing binaries.
-  - Forbidden: `cd src/cmd && go build ...`, `go build -o bin/flowgent ./...`
-  - Forbidden: `cd examples/mcp-* && go build ...` (MCPs are built in Docker too)
-  - Only exception: `go test` and `go fmt` may run on the host for development.
+- **All builds MUST use `make` from the repository root.** `make help` shows all targets.
+  Output goes to `bin/`.
+  - Docker (no host Go): `make build` / `make build-all` / `make build-image` / `make build-image-all`
+  - Host dev (requires Go): `make build-host` / `make build-host-all`
+  - Utilities: `make test` / `make fmt` / `make clean` / `make help`
+- **NEVER run `go build` directly** outside of `make build-host` / `make build-host-all`.
+  - Forbidden: `cd src/cmd && go build ...`, `cd examples/mcp-* && go build ...`.
 - Binaries under `bin/` are git-ignored. Do NOT commit them.
 - **Git commit messages must be concise.** Keep subject under 72 chars.
   - Do NOT include Co-authored-by trailers (no `Co-Authored-By: Claude Opus ...`).

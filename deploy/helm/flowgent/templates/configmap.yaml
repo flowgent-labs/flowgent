@@ -88,3 +88,5 @@ data:
       channels:
         {{- toYaml .Values.notifier.channels | nindent 8 }}
       {{- end }}
+    credential-paths:
+      base-path: {{ .Values.global.credentialPaths.basePath | default "/var/secret/flowgent" | quote }}

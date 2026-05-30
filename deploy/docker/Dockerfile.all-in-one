@@ -20,17 +20,11 @@ FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder-mcps
 ENV GOPROXY=https://goproxy.cn,direct
 
 RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=bind,source=examples/mcp-github,target=/build \
+    --mount=type=bind,source=examples/mcps/github,target=/build \
     cd /build && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/github-mcp .
 RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=bind,source=examples/mcp-sonarqube,target=/build \
+    --mount=type=bind,source=examples/mcps/sonarqube,target=/build \
     cd /build && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sonarqube-mcp .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=bind,source=examples/mcp-sonatypeiq,target=/build \
-    cd /build && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sonatype-iq-mcp .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=bind,source=examples/mcp-nexus3,target=/build \
-    cd /build && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/nexus3-mcp .
 
 # ─── Stage 3: Export (used by `make build-all`) ──────────────
 FROM scratch AS export
@@ -44,10 +38,8 @@ RUN apk add --no-cache ca-certificates tzdata curl jq bash
 ENV TZ=Asia/Shanghai
 
 COPY --from=builder-flowgent /out/flowgent /app/flowgent
-COPY --from=builder-mcps /out/github-mcp      /bin/github-mcp
-COPY --from=builder-mcps /out/sonarqube-mcp   /bin/sonarqube-mcp
-COPY --from=builder-mcps /out/sonatype-iq-mcp /bin/sonatype-iq-mcp
-COPY --from=builder-mcps /out/nexus3-mcp      /bin/nexus3-mcp
+COPY --from=builder-mcps /out/github-mcp    /bin/github-mcp
+COPY --from=builder-mcps /out/sonarqube-mcp /bin/sonarqube-mcp
 COPY examples/ /app/examples/
 COPY etc/ /app/etc/
 
@@ -74,7 +66,7 @@ Flowgent All-in-One — Quick Start
     sandbox start | notifier start | wallet start
     console | version | --help
 
-  Bundled MCPs:  /bin/{github,sonarqube,sonatype-iq,nexus3}-mcp
+  Bundled MCPs:  /bin/{github,sonarqube}-mcp
   Examples:      /app/examples/{agents,flows,skills}/
   Configs:       /app/etc/
 HELP
