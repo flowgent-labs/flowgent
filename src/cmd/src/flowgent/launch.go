@@ -323,7 +323,7 @@ func startServer(mode string) {
 		agentPtrs[i] = &loadedAgents[i]
 	}
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider: engine.ProviderLocal, PoolSize: serviceCfg.Orchestration.MaxConcurrentFlows,
+		Provider: engine.ProviderStandalone, PoolSize: serviceCfg.Orchestration.MaxConcurrentFlows,
 		Store: storeImpl, Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llmClient, Logger: logger,
 	})
 	if err != nil {
@@ -910,15 +910,17 @@ func startJobManager() error {
 	}
 	appMode := mode == "application"
 
-	// Application mode only: K8sRM for elastic TM scaling via MQTT.
-	// Session mode: LocalRM for in-process execution.
-	if appMode && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+	// Session + Application: K8sRM with MQTT dispatch to TM pods.
+	// Session: AutoScale=false (fixed 2 TM replicas, admin-managed).
+	// Application: AutoScale=true (elastic scaling by queue depth).
+	// All-in-one (no K8s): StandaloneRM for in-process execution.
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
 			K8sNamespace:      envOr("KUBERNETES_NAMESPACE", "default"),
 			K8sDeploymentName: envOr("FLOWGENT_TM_DEPLOY", "flowgent-taskmanager"),
 			Store:             storeImpl, Logger: logger, Queue: q,
-			AutoScale: true,
+			AutoScale: appMode,
 		})
 	}
 	if rm == nil {
@@ -935,7 +937,7 @@ func startJobManager() error {
 			if mcpDef.Enabled { mcpMap[mcpDef.Name] = &mcpAdapter{factory: mcpFactory, name: mcpDef.Name} }
 		}
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-			Provider: engine.ProviderLocal, PoolSize: 10, Store: storeImpl,
+			Provider: engine.ProviderStandalone, PoolSize: 10, Store: storeImpl,
 			Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llm.New(&svcCfg.LLM),
 			Logger: logger, Queue: q,
 		})
@@ -1528,7 +1530,7 @@ func startController() error {
 	}
 
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:   engine.ProviderLocal,
+		Provider:   engine.ProviderStandalone,
 		PoolSize:   svcCfg.Orchestration.MaxConcurrentFlows,
 		Store:      storeImpl,
 		Agents:     agentPtrs,

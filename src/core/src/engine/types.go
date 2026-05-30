@@ -10,7 +10,7 @@ import (
 type Provider string
 
 const (
-	ProviderLocal      Provider = "local"
+	ProviderStandalone   Provider = "standalone"
 	ProviderKubernetes Provider = "kubernetes"
 )
 

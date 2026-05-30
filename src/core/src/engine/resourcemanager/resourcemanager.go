@@ -21,7 +21,7 @@ import (
 // strategy, and deployment to a physical TM slot. Analogous to Flink's SchedulerNG.
 //
 // Implementations:
-//   - LocalResourceManager  (in-process goroutine pool)
+//   - StandaloneResourceManager  (in-process goroutine pool)
 //   - KubernetesResourceManager (K8s Deployment + MQTT dispatch)
 type ResourceManager interface {
 	Provider() engine.Provider
@@ -59,29 +59,29 @@ type ResourceManagerConfig struct {
 
 // NewResourceManager creates the configured resource manager implementation.
 // If the requested provider fails to initialize (e.g., K8s unreachable), falls
-// back to LocalResourceManager so the caller always gets a valid RM.
+// back to StandaloneResourceManager so the caller always gets a valid RM.
 func NewResourceManager(cfg *ResourceManagerConfig) (ResourceManager, error) {
 	switch cfg.Provider {
 	case engine.ProviderKubernetes:
 		rm, err := NewKubernetesResourceManager(cfg)
 		if err != nil {
 			slog.Warn("kubernetes rm init failed, falling back to local", "err", err)
-			return NewLocalResourceManager(cfg)
+			return NewStandaloneResourceManager(cfg)
 		}
 		if cfg.Queue != nil {
 			rm.SetQueue(cfg.Queue)
 		}
 		return rm, nil
-	case engine.ProviderLocal:
-		return NewLocalResourceManager(cfg)
+	case engine.ProviderStandalone:
+		return NewStandaloneResourceManager(cfg)
 	default:
-		return NewLocalResourceManager(cfg)
+		return NewStandaloneResourceManager(cfg)
 	}
 }
 
 // ─── Compile-time checks ──────────────────────────────────────
 
-var _ ResourceManager = (*LocalResourceManager)(nil)
+var _ ResourceManager = (*StandaloneResourceManager)(nil)
 var _ ResourceManager = (*KubernetesResourceManager)(nil)
 
 // ─── Validation ───────────────────────────────────────────────
@@ -109,7 +109,7 @@ func WarnCompatibility(rm ResourceManager, store store.Store) {
 		return
 	}
 	switch rm.Provider() {
-	case engine.ProviderLocal:
+	case engine.ProviderStandalone:
 		if store.DB() != nil {
 			slog.Warn("local rm with postgres — consider SQLite for all-in-one mode")
 		}

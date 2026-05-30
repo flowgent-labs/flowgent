@@ -10,15 +10,15 @@ import (
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
-// LocalResourceManager executes plans in-process via a goroutine pool.
+// StandaloneResourceManager executes plans in-process via a goroutine pool.
 // Implements ResourceManager with a single Schedule() entry point.
-type LocalResourceManager struct {
+type StandaloneResourceManager struct {
 	tm       *taskmanager.TaskManager
 	poolSize int
 	sem      chan struct{}
 }
 
-func NewLocalResourceManager(cfg *ResourceManagerConfig) (*LocalResourceManager, error) {
+func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResourceManager, error) {
 	poolSize := cfg.PoolSize
 	if poolSize <= 0 {
 		poolSize = 10
@@ -32,14 +32,14 @@ func NewLocalResourceManager(cfg *ResourceManagerConfig) (*LocalResourceManager,
 	if err != nil {
 		return nil, err
 	}
-	return &LocalResourceManager{
+	return &StandaloneResourceManager{
 		tm: tm, poolSize: poolSize, sem: make(chan struct{}, poolSize),
 	}, nil
 }
 
-func (s *LocalResourceManager) Provider() engine.Provider { return engine.ProviderLocal }
+func (s *StandaloneResourceManager) Provider() engine.Provider { return engine.ProviderStandalone }
 
-func (s *LocalResourceManager) Validate(ctx context.Context) error {
+func (s *StandaloneResourceManager) Validate(ctx context.Context) error {
 	if s.tm == nil {
 		return fmt.Errorf("local rm: taskmanager is nil")
 	}
@@ -48,7 +48,7 @@ func (s *LocalResourceManager) Validate(ctx context.Context) error {
 
 // Schedule acquires a slot (non-blocking), executes the plan via the local TM.
 // Returns INSUFFICIENT_RESOURCES if all slots are occupied (session mode capacity).
-func (s *LocalResourceManager) Schedule(ctx context.Context, plan *model.ExecutionPlan) (*model.TaskResult, error) {
+func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *model.ExecutionPlan) (*model.TaskResult, error) {
 	select {
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()
@@ -68,7 +68,7 @@ func (s *LocalResourceManager) Schedule(ctx context.Context, plan *model.Executi
 	return &model.TaskResult{Output: task.Output}, nil
 }
 
-func (s *LocalResourceManager) Shutdown(ctx context.Context) error { return nil }
+func (s *StandaloneResourceManager) Shutdown(ctx context.Context) error { return nil }
 
 // AvailableSlots returns idle slot count (internal use).
-func (s *LocalResourceManager) AvailableSlots() int { return s.poolSize - len(s.sem) }
+func (s *StandaloneResourceManager) AvailableSlots() int { return s.poolSize - len(s.sem) }

@@ -89,8 +89,8 @@ PHASE 3 — Execution (Async)   │
                │                                             │
                │  Evaluate pending plans vs free slots:      │
                │                                             │
-               │  LocalRM (all-in-one):                      │
-               │    In-process goroutine pool                │
+               │  StandaloneRM (all-in-one):                      │
+               │    Standalone in-process execution (all-in-one only)                │
                │    INSUFFICIENT_RESOURCES if all slots busy │
                │                                             │
                │  K8sRM (production):                        │
@@ -280,7 +280,7 @@ flowgent.io/mode:         "session" | "application"
 | Decision | Rationale |
 |----------|-----------|
 | **Controller uses PG shard-scan, not K8s CRD watch** | Flow catalog lives in PG (transactional, no CRD complexity); hash-mod sharding (Apache ShardingSphere pattern) scales horizontally without leader election |
-| **Session TM admin-managed, Application TM auto-scale** | Economic boundary: shared = fixed capacity (admin controls cost), dedicated = elastic (VIP isolation) |
+| **Session = K8sRM (AutoScale=false), Application = K8sRM (AutoScale=true), All-in-one = StandaloneRM** | Flink-aligned naming. Session: pre-deployed fixed TM replicas, JM dispatches via MQTT. Application: per-flow K8s namespace, JM auto-scales TMs by queue depth. StandaloneRM only for single-binary all-in-one mode (no K8s). |
 | **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
 | **UI → PG → Controller (three-phase async)** | Decouples authoring from execution; Controller is the only component that writes runs; JM is the only component that executes them |
 | **JM unification: same binary, same poller, same DAG for both modes** | Session: `jobmanager start` loads all flows, scans all runs. Application: `jobmanager start --flow-id <id>` loads single flow, scans only that flow. `deployment.mode` controls AutoScale; `FLOWGENT_NAMESPACE` is a namespace filter safety net |
@@ -397,7 +397,7 @@ Execute(run, spec):
   for each ready node (all dependencies satisfied):
     plan := resolveInputs(node, previousOutputs)
     store.SaveExecutionPlan(ctx, plan)    // persist to PG BEFORE dispatch
-    result := rm.Schedule(ctx, plan)      // dispatch to TM (MQTT or local)
+    result := rm.Schedule(ctx, plan)      // dispatch to TM (MQTT or standalone)
     store.SaveTaskResult(ctx, result)     // persist result to PG
     Done(nodeID)
     if condition → SetConditionResult → Skip(false-branch)
@@ -490,7 +490,7 @@ type ResourceManager interface {
 }
 ```
 
-### 5.1 LocalResourceManager (all-in-one mode)
+### 5.1 StandaloneResourceManager (all-in-one mode)
 
 Bounded in-process goroutine pool using a channel semaphore (`make(chan struct{},
 poolSize)`). `Schedule()` acquires a slot via non-blocking select — if all slots are
@@ -618,7 +618,7 @@ In distributed mode (`deployment.mode: session` or `application`), MQTT is manda
 2. `FLOWGENT_MQTT_BROKER` env var → try MQTT → failure = fatal
 3. Neither configured → fatal: `"MQTT broker not configured"`
 
-In local dev / all-in-one mode, the queue silently falls back to in-memory
+In standalone dev / all-in-one mode, the queue silently falls back to in-memory
 (`MemoryQueue`, buffer=1000) with a warning log.
 
 ---
@@ -662,7 +662,7 @@ flowgent all-in-one start -c etc/flowgent.yaml
 ```
 
 Single process: API Server + JM + TM (LocalRM, goroutine pool). SQLite + Memory
-cache. For development and small-scale local testing only.
+cache. For development and small-scale standalone testing only.
 
 ### 9.2 Distributed K8s (Session Mode)
 
@@ -733,7 +733,7 @@ There are two paths to trigger a run:
    ready := jm.Ready()
    for each ready node:
      plan := buildPlan(node, inputs, resolved vars)
-     result := rm.Schedule(plan)  → MQTT (K8s) or local slot (all-in-one)
+     result := rm.Schedule(plan)  → MQTT (K8s) or standalone slot (all-in-one)
      Done(node) / Fail(node)
      condition → SetConditionResult → Skip(false-branch)
      supervisor → validate action → Inject/Retry/Abort

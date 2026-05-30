@@ -9,15 +9,15 @@ import (
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 
-func TestNewLocalResourceManager_Defaults(t *testing.T) {
-	rm, err := NewLocalResourceManager(&ResourceManagerConfig{
+func TestNewStandaloneResourceManager_Defaults(t *testing.T) {
+	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 0, // should default to 10
 		Store:    testutil.NewMockStore(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rm.Provider() != engine.ProviderLocal {
+	if rm.Provider() != engine.ProviderStandalone {
 		t.Error("expected local provider type")
 	}
 	if rm.poolSize != 10 {
@@ -26,8 +26,8 @@ func TestNewLocalResourceManager_Defaults(t *testing.T) {
 	_ = rm.Shutdown(context.Background())
 }
 
-func TestNewLocalResourceManager_CustomPoolSize(t *testing.T) {
-	rm, err := NewLocalResourceManager(&ResourceManagerConfig{
+func TestNewStandaloneResourceManager_CustomPoolSize(t *testing.T) {
+	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 5,
 		Store:    testutil.NewMockStore(),
 	})
@@ -39,9 +39,9 @@ func TestNewLocalResourceManager_CustomPoolSize(t *testing.T) {
 	}
 }
 
-func TestLocalResourceManager_Schedule_Noop(t *testing.T) {
+func TestStandaloneResourceManager_Schedule_Noop(t *testing.T) {
 	mockStore := testutil.NewMockStore()
-	rm, err := NewLocalResourceManager(&ResourceManagerConfig{
+	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 2, Store: mockStore,
 	})
 	if err != nil {
@@ -62,9 +62,9 @@ func TestLocalResourceManager_Schedule_Noop(t *testing.T) {
 	}
 }
 
-func TestLocalResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
+func TestStandaloneResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
 	mockStore := testutil.NewMockStore()
-	rm, err := NewLocalResourceManager(&ResourceManagerConfig{
+	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 2, Store: mockStore,
 	})
 	if err != nil {
@@ -93,8 +93,8 @@ func TestLocalResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
 	}
 }
 
-func TestLocalResourceManager_Validate(t *testing.T) {
-	rm, _ := NewLocalResourceManager(&ResourceManagerConfig{
+func TestStandaloneResourceManager_Validate(t *testing.T) {
+	rm, _ := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 1, Store: testutil.NewMockStore(),
 	})
 	if err := rm.Validate(context.Background()); err != nil {
@@ -102,9 +102,9 @@ func TestLocalResourceManager_Validate(t *testing.T) {
 	}
 }
 
-func TestLocalResourceManager_AvailableSlots(t *testing.T) {
+func TestStandaloneResourceManager_AvailableSlots(t *testing.T) {
 	mockStore := testutil.NewMockStore()
-	rm, _ := NewLocalResourceManager(&ResourceManagerConfig{
+	rm, _ := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 3, Store: mockStore,
 	})
 	if n := rm.AvailableSlots(); n != 3 {
