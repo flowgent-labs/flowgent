@@ -297,8 +297,8 @@ sandbox:
       cpu: "2000m"
       memory: "1Gi"
 
-# ── Notification Service ─────────────────────────────────────────────────────
-notification:
+# ── Notifier Service ─────────────────────────────────────────────────────
+notifier:
   enabled: false                    # set true to enable
   channels:
     - name: telegram-ops

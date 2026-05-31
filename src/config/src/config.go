@@ -9,31 +9,31 @@ import (
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	model "github.com/flowgent-labs/flowgent/model/src"
 )
 
 // ─── Top-level config ────────────────────────────────────────
 
 // ServiceConfig is the top-level runtime configuration for the flowgent engine.
 type ServiceConfig struct {
-	ServiceName   string                   `json:"service-name" yaml:"service-name"`
-	Deployment    DeploymentConfig         `json:"deployment" yaml:"deployment"`
-	Server        ServerConfig             `json:"server" yaml:"server"`
-	A2A           A2AConfig                `json:"a2a" yaml:"a2a"`
-	Mgmt          MgmtConfig               `json:"mgmt" yaml:"mgmt"`
-	Logging       LoggingConfig            `json:"logging" yaml:"logging"`
-	Auth          AuthConfig               `json:"auth" yaml:"auth"`
-	Cache         CacheConfig              `json:"cache" yaml:"cache"`
-	Storage       StorageConfig            `json:"storage" yaml:"storage"`
-	LLM           LLMConfig                `json:"llm" yaml:"llm"`
-	Orchestration OrchestrationConfig      `json:"orchestration" yaml:"orchestration"`
-	Queue         QueueConfig              `json:"queue" yaml:"queue"`
-	Lock          LockConfig               `json:"lock" yaml:"lock"`
-	Sandbox       SandboxConfig            `json:"sandbox" yaml:"sandbox"`
-	Payments      *PaymentsConfig `json:"payments" yaml:"payments"`
-	Notifier        NotifierConfig         `json:"notifier" yaml:"notifier"`
-	CredentialPaths CredentialPathsConfig  `json:"credential-paths" yaml:"credential-paths"`
-	Tenant          TenantConfig           `json:"tenant" yaml:"tenant"`
+	ServiceName     string                `json:"service-name" yaml:"service-name"`
+	Deployment      DeploymentConfig      `json:"deployment" yaml:"deployment"`
+	Server          ServerConfig          `json:"server" yaml:"server"`
+	A2A             A2AConfig             `json:"a2a" yaml:"a2a"`
+	Mgmt            MgmtConfig            `json:"mgmt" yaml:"mgmt"`
+	Logging         LoggingConfig         `json:"logging" yaml:"logging"`
+	Auth            AuthConfig            `json:"auth" yaml:"auth"`
+	Cache           CacheConfig           `json:"cache" yaml:"cache"`
+	Storage         StorageConfig         `json:"storage" yaml:"storage"`
+	LLM             LLMConfig             `json:"llm" yaml:"llm"`
+	Orchestration   OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
+	Queue           QueueConfig           `json:"queue" yaml:"queue"`
+	Lock            LockConfig            `json:"lock" yaml:"lock"`
+	Sandbox         SandboxConfig         `json:"sandbox" yaml:"sandbox"`
+	Payments        *PaymentsConfig       `json:"payments" yaml:"payments"`
+	Notifier        NotifierConfig        `json:"notifier" yaml:"notifier"`
+	CredentialPaths CredentialPathsConfig `json:"credential-paths" yaml:"credential-paths"`
+	Tenant          TenantConfig          `json:"tenant" yaml:"tenant"`
 }
 
 // DeploymentConfig sets the execution mode: session or application.
@@ -83,11 +83,11 @@ type OTELConfig struct {
 }
 
 type MetricsConfig struct {
-	Enabled             bool               `json:"enabled" yaml:"enabled"`
-	Prometheus          bool               `json:"prometheus" yaml:"prometheus"`
-	ExportInterval      time.Duration      `json:"export_interval" yaml:"export_interval"`
-	HistogramBoundaries MetricsBoundaries  `json:"histogram_boundaries" yaml:"histogram_boundaries"`
-	Labels              map[string]string  `json:"labels" yaml:"labels"`
+	Enabled             bool              `json:"enabled" yaml:"enabled"`
+	Prometheus          bool              `json:"prometheus" yaml:"prometheus"`
+	ExportInterval      time.Duration     `json:"export_interval" yaml:"export_interval"`
+	HistogramBoundaries MetricsBoundaries `json:"histogram_boundaries" yaml:"histogram_boundaries"`
+	Labels              map[string]string `json:"labels" yaml:"labels"`
 }
 
 type MetricsBoundaries struct {
@@ -548,18 +548,18 @@ type PoliciesConfig struct {
 }
 
 type WalletCfg struct {
-	Endpoint      string            `json:"endpoint" yaml:"endpoint"`
-	AuthToken     string            `json:"auth_token" yaml:"auth_token"`
-	AuthTokenFile string            `json:"auth_token_file" yaml:"auth_token_file"`
-	DefaultWallet string            `json:"default_wallet" yaml:"default_wallet"`
-	SecretStore   SecretStoreCfg    `json:"secret_store" yaml:"secret_store"`
+	Endpoint      string         `json:"endpoint" yaml:"endpoint"`
+	AuthToken     string         `json:"auth_token" yaml:"auth_token"`
+	AuthTokenFile string         `json:"auth_token_file" yaml:"auth_token_file"`
+	DefaultWallet string         `json:"default_wallet" yaml:"default_wallet"`
+	SecretStore   SecretStoreCfg `json:"secret_store" yaml:"secret_store"`
 }
 
 type SecretStoreCfg struct {
-	Provider      string     `json:"provider" yaml:"provider"`
-	MasterKey     string     `json:"master_key" yaml:"master_key"`
-	MasterKeyFile string     `json:"master_key_file" yaml:"master_key_file"`
-	Vault         VaultCfg   `json:"vault" yaml:"vault"`
+	Provider      string   `json:"provider" yaml:"provider"`
+	MasterKey     string   `json:"master_key" yaml:"master_key"`
+	MasterKeyFile string   `json:"master_key_file" yaml:"master_key_file"`
+	Vault         VaultCfg `json:"vault" yaml:"vault"`
 }
 
 type VaultCfg struct {

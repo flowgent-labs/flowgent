@@ -2,8 +2,8 @@
 
 **Date:** 2026-05-30
 **Scope:** K8s ResourceManager + PG + EMQX on K3s — session mode, REST API triggered
-**Parent:** [10-L2-USE-CASES.md](10-L2-USE-CASES.md)
-**AgentFlow:** [`examples/flows/01-security-autonomy-fix-v1.yaml`](../examples/flows/01-security-autonomy-fix-v1.yaml)
+**Parent:** [10-L2-USE-CASES.md](../../../docs/10-L2-USE-CASES.md)
+**AgentFlow:** [`security-autonomy-fixer-v1.yaml`](../flows/security-autonomy-fixer-v1.yaml)
 
 > V1 is the **baseline working version** — deployed on K3s in session mode, triggered
 > via REST API. Covers the full 12-phase pipeline: discovery → analyze → fix → review
@@ -11,13 +11,13 @@
 > GitHub webhook trigger is available but commented out in the flow definition.
 >
 > For the real GitHub webhook → SonarQube integration target, see
-> [11-L2-E2E-security-fixer-v2.md](11-L2-E2E-security-fixer-v2.md).
+> [E2E-security-fixer-v2.md](../docs/E2E-security-fixer-v2.md).
 
 ---
 
 ## 1. Architecture
 
-```
+```graph
 ┌──────────────────────────────────────────────────────────────────┐
 │                        K3s Cluster                               │
 │                                                                   │
@@ -50,6 +50,7 @@
 ```
 
 **Key characteristics:**
+
 - 5 components (session mode): apiserver + jobmanager + taskmanager + sandbox + notifier
 - MQTT-based task dispatch: `flowgent/exec/{runID}/{planID}`
 - Kubernetes ResourceManager: auto-scales TM replicas by queue depth
@@ -80,7 +81,8 @@
 
 ### 2.3 Registered Agents & MCPs
 
-All agents loaded from `examples/agents/`:
+All agents loaded from `examples/security-autonomy-fixer/agents/`:
+
 - `supervisor`, `issue-detector`, `fixer-agent`
 - `security-reviewer`, `quality-reviewer`, `arch-reviewer`
 - `git-agent`
@@ -181,7 +183,7 @@ kubectl port-forward svc/flowgent-jaeger 16686:16686
 
 ### 4.1 Pipeline Overview
 
-```
+```graph
 GitHub PR opened/updated on rengine
   │
   ▼
@@ -543,7 +545,7 @@ gh pr list --repo wl4g/rengine --head security-bot/fix-*
 |---------|-------|-----|
 | Pods stuck in `ContainerCreating` | Image not imported to K3s | `sudo k3s ctr images import` |
 | JM logs: `FATAL: MQTT broker not configured` | EMQX broker empty | `--set emqx.broker=tcp://<host>:1883` |
-| Tasks all FAILED: `agent not found` | Agent defs not registered | Load from `examples/agents/` into PG |
+| Tasks all FAILED: `agent not found` | Agent defs not registered | Load from `examples/security-autonomy-fixer/agents/` into PG |
 | Tasks all FAILED: `MCP client not found` | MCP binary missing or config wrong | Check `mcps:` section in flowgent.yaml |
 | `task_runs` table empty | `SaveExecutionPlan` not called | PG reachable? Check JM logs |
 | SonarQube 401 | Wrong token | Verify `SONARQUBE_TOKEN` env var |

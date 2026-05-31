@@ -1,4 +1,4 @@
-# Flowgent Distributed Engine Architecture
+# Flowgent Distributed Orchestration Engine Architecture
 
 **Date:** 2026-05-27
 **Status:** Implemented — Go multi-module (core + sandbox-exec), seccomp-bpf sandbox isolation, three-phase architecture (Design→Schedule→Execute), E2E verified on k3s
@@ -14,114 +14,111 @@ runs, launches JM pods for Application mode), and **Execution** (async — JM pa
 the flow JSON into a DAG, creates one ExecutionPlan per node in PG, and dispatches
 to TM pods via the ResourceManager).
 
-```
+```graph
 ═══════════════════════════════════════════════════════════════════════════
 PHASE 1 — Flow Design & Trigger (Sync)
 ═══════════════════════════════════════════════════════════════════════════
 
   AI App Developers                    External Systems
-  (Flowgent UI, design flows)          (REST API / A2A / Webhook)
+  (Flowgent UI, flows design editor)          (REST API / A2A / Webhook)
        │                                        │
        └────────────────┬───────────────────────┘
                         │ Flow/Agent CRUD + Trigger
                         ▼
-               ┌──────────────────┐
-               │   API Server     │  Multi-Tenant Gateway
-               │  Auth · Rate     │  Trigger → INSERT PENDING run
-               │  Limit · Tenant  │
-               └────────┬─────────┘
-                        │ INSERT / UPDATE
-                        ▼
-               ┌──────────────────────────────────────────┐
-               │     Store (PostgreSQL / SQLite)      │
-               │                                      │
-               │  agentflow_definition (flow spec)    │
-               │    └── agentflow_run (1:N)           │
-               │          └── execution_plan (1:N)    │
-               │                one plan per DAG node │
-               └──────────┬───────────┬───────────────┘
+            ┌──────────────────┐
+            │   API Server     │  Multi-Tenant Gateway
+            │  Auth · Rate     │  Trigger → INSERT PENDING run
+            │  Limit · Tenant  │
+            └────────┬─────────┘
+                     │ UPSERT
+                     ▼
+            ┌──────────────────────────────────────┐
+            │     Store (PostgreSQL / SQLite)      │
+            │                                      │
+            │  agentflow_definition (flow spec)    │
+            │    └── agentflow_run (1:N)           │
+            │          └── execution_plan (1:N)    │
+            │                one plan per DAG node │
+            └─────────────┬───────────┬────────────┘
                           │           │
-═════════════════════════════         │
-PHASE 2 — Scheduling (Async)         │
-═════════════════════════════         │
+══════════════════════════════════════╪═════════════════════════════════════
+PHASE 2 — Scheduling (Async)          │
+══════════════════════════════════════╪═════════════════════════════════════
                           │           │
       poll agentflow_definitions      │
       (every 10s, hash-mod shard)     │
                           │           │
                           ▼           │
-               ┌──────────────────────────────┐
-               │  Controller (N sharded pods) │
-               │  hash(flow_id) % N → owner   │
-               │                              │
-               │  Session mode:               │
-               │    INSERT agentflow_runs     │
-               │    (PENDING, namespace="")   │
-               │                              │
-               │  Application mode:           │
-               │    Create K8s JM Deployment  │
-               │    + INSERT agentflow_runs   │
-               │    (PENDING, namespace={ns}) │
-               └──────────────┬───────────────┘
+            ┌─────────────────────────────────────────────────────────┐
+            │  Controller (N sharded pods)                            │
+            │  hash(flow_id) % N → owner                              │
+            │                                                         │
+            │  Session mode:                                          │
+            │    UPSERT agentflow_runs (PENDING, namespace="default") │
+            │                                                         │
+            │  Application mode:                                      │
+            │    UPSERT agentflow_runs (PENDING, namespace={ns})      │
+            │    + Create K8s JM Deployment                           │
+            └──────────────┬──────────────────────────────────────────┘
                               │
                               │ INSERT agentflow_runs (PENDING)
                               │
-══════════════════════════════╪══════════════════════════════════
+══════════════════════════════╪═════════════════════════════════════════════
 PHASE 3 — Execution (Async)   │
-══════════════════════════════╪══════════════════════════════════
+══════════════════════════════╪═════════════════════════════════════════════
                               │
                               │  poll agentflow_runs (every 2s)
                               │  namespace-filtered
                               ▼
-               ┌─────────────────────────────────────────────┐
-               │         JobManager Pod(s)                   │
-               │                                             │
-               │  1. Parse AgentFlowSpec JSON                │
-               │     → Build DAG from Nodes + Edges          │
-               │  2. Create one ExecutionPlan per node       │
-               │     → Save each ExecutionPlan to PG         │
-               │  3. For each ready node (topo order):       │
-               │     rm.Schedule(plan)                       │
-               └──────────────────┬──────────────────────────┘
+            ┌─────────────────────────────────────────────────────────┐
+            │         JobManager Pod(s)                               │
+            │                                                         │
+            │  1. Parse AgentFlowSpec JSON                            │
+            │     → Build DAG from Nodes + Edges                      │
+            │  2. Create one ExecutionPlan per node                   │
+            │     → Save each ExecutionPlan to PG                     │
+            │  3. For each ready node (topo order):                   │
+            │     rm.Schedule(plan)                                   │
+            └─────────────────────┬───────────────────────────────────┘
                                   │ Schedule(plan)
                                   ▼
-               ┌─────────────────────────────────────────────┐
-               │          ResourceManager                    │
-               │                                             │
-               │  Evaluate pending plans vs free slots:      │
-               │                                             │
-               │  StandaloneRM (all-in-one):                      │
-               │    Standalone in-process execution (all-in-one only)                │
-               │    INSUFFICIENT_RESOURCES if all slots busy │
-               │                                             │
-               │  K8sRM (production):                        │
-               │    MQTT dispatch + manage TM Deployment     │
-               │    Auto-scale TM replicas by queue depth    │
-               │    (ensure enough pods for pending plans)   │
-               └──────────────────┬──────────────────────────┘
+            ┌─────────────────────────────────────────────────────────┐
+            │          ResourceManager                                │
+            │                                                         │
+            │  Evaluate pending plans vs free slots:                  │
+            │                                                         │
+            │  StandaloneRM (all-in-one):                             │
+            │    Standalone in-process execution (all-in-one only)    │
+            │    INSUFFICIENT_RESOURCES if all slots busy             │
+            │                                                         │
+            │  K8sRM (production):                                    │
+            │    MQTT dispatch + manage TM Deployment                 │
+            │    Auto-scale TM replicas by queue depth                │
+            │    (ensure enough pods for pending plans)               │
+            └─────────────────────┬───────────────────────────────────┘
                                   │ dispatch ExecutionPlan
                                   ▼
-               ┌─────────────────────────────────────────────┐
-               │        TaskManager Pods (K8s Deployment)    │
-               │                                             │
-               │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-               │  │ TM Pod 1 │  │ TM Pod 2 │  │ TM Pod N │  │
-               │  │ Slot 1   │  │ Slot 1   │  │ Slot 1   │  │
-               │  │ Slot 2   │  │ Slot 2   │  │ Slot 2   │  │
-               │  │ Slot 3   │  │ Slot 3   │  │ Slot 3   │  │
-               │  │ Slot 4   │  │ Slot 4   │  │ Slot 4   │  │
-               │  └──────────┘  └──────────┘  └──────────┘  │
-               │                                             │
-               │  1 Slot = 1 ExecutionPlan = 1 DAG Node     │
-               │  1 ExecutionPlan ∈ 1 AgentFlowRun          │
-               │  1 AgentFlowRun ∈ 1 AgentFlowDefinition    │
-               │                                             │
-               │  ExecutorRouter:                            │
-               │  agent | tool | supervisor | human          │
-               │  tribunal | condition | map | join         │
-               │  sandbox | skill | agentflow | noop  | ...│
-               │                                             │
-               │  Result → MQTT/Channel → back to JM         │
-               └─────────────────────────────────────────────┘
+            ┌─────────────────────────────────────────────────────────┐
+            │        TaskManager Pods (K8s Deployment)                │
+            │                                                         │
+            │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
+            │  │ TM Pod 1 │  │ TM Pod 2 │  │ TM Pod N │               │
+            │  │ Slot 1   │  │ Slot 1   │  │ Slot 1   │               │
+            │  │ Slot 2   │  │ Slot 2   │  │ Slot 2   │               │
+            │  │ Slot 3   │  │ Slot 3   │  │ Slot 3   │               │
+            │  └──────────┘  └──────────┘  └──────────┘               │
+            │                                                         │
+            │  1 Slot = 1 ExecutionPlan = 1 DAG Node                  │
+            │  1 ExecutionPlan ∈ 1 AgentFlowRun                       │
+            │  1 AgentFlowRun ∈ 1 AgentFlowDefinition                 │
+            │                                                         │
+            │  ExecutorRouter:                                        │
+            │  agent | tool | supervisor | human                      │
+            │  tribunal | condition | map | join                      │
+            │  sandbox | skill | agentflow | noop  | ...              │
+            │                                                         │
+            │  Result → MQTT/Channel → back to JM                     │
+            └─────────────────────────────────────────────────────────┘
 ```
 
 ### 1.1 Session vs Application — Helm Deployment Matrix
@@ -157,15 +154,19 @@ mode: session         # "session" or "application"
 | wallet | optional | optional | `--set wallet.enabled=true` |
 
 **Session mode — Helm pre-deploys 5 components:**
-```
+
+```graph
 apiserver + jobmanager + taskmanager + sandbox + notifier
 ```
+
 API Server handles triggers directly → creates PENDING runs → JM poller executes.
 
 **Application mode — Helm pre-deploys 3 components:**
-```
+
+```graph
 apiserver + controller + notifier
 ```
+
 Controller polls PG → creates dedicated jobmanager/taskmanager/sandbox per grade-priority flow.
 
 | | Session | Application |
@@ -1345,7 +1346,7 @@ Sandbox Worker (per-execution lifecycle):
 Both session and application modes use a **ReadWriteMany PVC** for the sandbox
 workspace, provisioned once and shared across all sandbox pods.
 
-```
+```tree
 /var/flowgent/workspace/
 ├── {tenant}/
 │   └── {definition_id}/
@@ -1386,12 +1387,14 @@ kubectl create secret generic iq-creds \
   --from-literal=username=iq-user --from-literal=password=iq-pass
 ```
 
-The sandbox runner passes all env vars to child processes:
+- The sandbox runner passes all env vars to child processes:
+
 ```go
 cmd.Env = append(os.Environ(), "HOME=/tmp", "SANDBOX_MODE=1")
 ```
 
-Scripts read credentials directly from env:
+- Scripts read credentials directly from env:
+
 ```bash
 curl -u "${NEXUS3_USER}:${NEXUS3_PASSWORD}" "$NEXUS3_URL/..."
 ```
@@ -1426,17 +1429,20 @@ orchestration:
 
 ### 16.2 Directory Layout
 
-```
+- Default Static Manifest defintions
+
+```tree
 etc/
 ├── flowgent.yaml
-├── agents/              # 01-supervisor.yaml, 02-issue-detector.yaml, ...
-├── skills/              # 01-dependency-scan.yaml, ...
-└── flows/               # 01-security-autonomy-fixer.yaml, ...
+└── {UseCase}/
+    ├── agents/              # 01-supervisor.yaml, 02-issue-detector.yaml, ...
+    ├── flows/               # 01-security-autonomy-fixer.yaml, ...
+    └── skills/              # 01-dependency-scan.yaml, ...
 ```
 
 `01-` prefix is a convention for human readability and deterministic load order. The loader sorts files alphabetically.
 
-### 16.3 Generic Loader
+### 16.3 Static Manifest Loader
 
 ```go
 func loadResourceDir[T any](dir string) ([]T, error) {

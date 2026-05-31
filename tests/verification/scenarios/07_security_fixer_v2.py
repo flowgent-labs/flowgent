@@ -18,7 +18,7 @@ API = config.K3S_APISERVER_URL
 TENANT = config.K3S_TENANT
 FLOW_ID = "security-autonomy-fixer-v2"
 
-# ── V2 flow definition (from examples/flows/01-security-autonomy-fix-v2.yaml) ──
+# ── V2 flow definition (from examples/security-autonomy-fixer/flows/security-autonomy-fixer-v2.yaml) ──
 V2_FLOW = {
     "id": FLOW_ID,
     "priority": "high",

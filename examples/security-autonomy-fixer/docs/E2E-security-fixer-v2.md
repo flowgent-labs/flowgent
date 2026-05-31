@@ -2,15 +2,15 @@
 
 **Date:** 2026-05-30
 **Scope:** K8s ResourceManager + PG + EMQX on K3s — GitHub webhook triggered, real SonarQube fix
-**Parent:** [10-L2-USE-CASES.md](10-L2-USE-CASES.md)
-**AgentFlow:** [`examples/flows/01-security-autonomy-fix-v2.yaml`](../examples/flows/01-security-autonomy-fix-v2.yaml)
+**Parent:** [10-L2-USE-CASES.md](../../../docs/10-L2-USE-CASES.md)
+**AgentFlow:** [`security-autonomy-fixer-v2.yaml`](../flows/security-autonomy-fixer-v2.yaml)
 
 > V2 is the **target baseline** — identical pipeline to V1 but with GitHub webhook
 > trigger enabled (not commented out). Requires real SonarQube instance, GitHub PAT
 > with repo + PR scope, and all MCP binaries registered.
 >
 > For the baseline API-triggered distributed test, see
-> [11-L2-E2E-security-fixer-v1.md](11-L2-E2E-security-fixer-v1.md).
+> [11-L2-E2E-security-fixer-v1.md](../docs/E2E-security-fixer-v1.md).
 
 ---
 
@@ -82,7 +82,7 @@ orchestration:
 
 ## 3. Pipeline (14 Phases)
 
-```
+```graph
 GitHub PR opened/updated on wl4g/rengine
   │
   ▼

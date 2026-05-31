@@ -1,12 +1,22 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Security Autonomy Fixer V1 — Baseline (Complete Production Pipeline)
+# Security Autonomy Fixer V2 — V1 Baseline with GitHub Webhook Commented Out
 #
-# This is the canonical, complete security remediation flow. It represents the
-# target end-to-end pipeline for enterprise use.
+# This file is IDENTICAL to V1 (01-security-autonomy-fix-v1.yaml) except the
+# GitHub PR webhook trigger is commented out (pending webhook→SonarQube
+# integration deployment).
+#
+# V2 adds a SonarQube pre-check gate before commit (vs V1 which commits first):
+#   DISCOVERY → ANALYZE → FIX → REVIEW → VOTE → SUPERVISOR → CONDITION →
+#   HUMAN APPROVAL → PRE-CHECK (scanner + quality gate) →
+#     pass → COMMIT & PR → RE-SCAN → REPORT → NOTIFY
+#     fail → loop back to FIX (max 3 iterations)
+#
+# Once webhook→SonarQube integration is complete, this file can be removed —
+# V1 becomes the single source of truth. Until then, V2 is what you deploy.
 #
 # Design decisions documented here:
 #   docs/01-L1-Engine-Architecture.md §13 (Skills = Sub-AgentFlow)
-#   docs/11-L2-E2E-security-fixer-v1.md §5 (White-Box Verification)
+#   docs/11-L2-E2E-security-fixer-v2.md §5 (White-Box Verification)
 #
 # Key design note — Skill vs MCP Tool for dependency checking:
 #   The "fetch-safe-deps" node uses `type: skill` instead of `type: tool`
@@ -28,7 +38,7 @@
 #   out (pending webhook→SonarQube integration). All core fix phases remain.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-id: security-autonomy-fixer
+id: security-autonomy-fixer-v2
 priority: high
 tenant_id: default
 description: |
@@ -45,9 +55,7 @@ description: |
   6. SUPERVISOR — Safety gate with bounded retries, injection limits, abort.
   7. CONDITIONAL — Based on vote: proceed to human approval or loop back to fix.
   8. HUMAN APPROVAL — Async approval gate (24h timeout) before code push.
-  8. HUMAN APPROVAL
-  9. PRE-CHECK via sonar-scanner (quality gate before commit)
-  10. COMMIT & PR — Create branch, push patches, open pull request.
+  9. COMMIT & PR — Create branch, push patches, open pull request.
   10. RE-SCAN — Trigger SonarQube re-analysis, poll for completion, compare
       pre/post results. If unresolved issues remain → loop back to fix
       (max 3 iterations).
@@ -57,11 +65,11 @@ description: |
 triggers:
   - type: schedule
     cron: 0 */6 * * *
-  # GitHub PR webhook — primary CI trigger. Requires webhook→SonarQube
-  # integration to be deployed. See docs/11-L2-E2E-security-fixer-v1.md for setup.
-  - type: webhook
-    provider: github
-    events: [push, pull_request]
+  # GitHub PR webhook trigger — commented out until webhook→SonarQube
+  # integration is complete. Uncomment when the webhook receiver is deployed:
+  # - type: webhook
+  #   provider: github
+  #   events: [push, pull_request]
   - type: webhook
     provider: gitlab
     events: [push, merge_request]
@@ -250,14 +258,15 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
   # PHASE 9: PRE-CHECK — SonarQube scanner pre-upload + quality gate
   #
-  # Before committing, run sonar-scanner to pre-upload results. Only
-  # proceed to commit if the quality gate passes. Otherwise loop back
-  # to get latest issues and re-iterate (max 3 iterations).
+  # Before committing, run sonar-scanner to pre-upload results and check
+  # if the quality gate passes. This avoids wasting CI time on commits
+  # that would fail. If the gate fails, loop back to get latest issues
+  # and re-iterate fixes until the gate passes or max_iterations is hit.
   # ═══════════════════════════════════════════════════════════════
 
   - id: precheck-scanner
     type: tool
-    tool: sonarqube
+    tool: github
     input:
       action: "scan/trigger_analysis"
       project_key: "${vars.repo}"
@@ -266,7 +275,22 @@ nodes:
     type: sandbox
     runtime: bash
     timeout: 120s
+    retry:
+      max: 12
+      initial: 10s
+      max_delay: 10s
+      factor: 1.0
     script: |
+      #!/bin/bash
+      SQ_URL="${SONARQUBE_URL:-http://localhost:9000}"
+      SQ_TOKEN="${SONARQUBE_TOKEN}"
+      PROJECT_KEY="${vars.repo}"
+      STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
+        "$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1" \
+        2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('tasks',[{}])[0].get('status','PENDING'))" 2>/dev/null || echo "PENDING")
+      if [ "$STATUS" = "SUCCESS" ]; then echo '{"status":"completed"}'; exit 0; fi
+      echo '{"status":"pending"}'; exit 1
+    network_policy:
       mode: allowlist
       allowed: ["localhost:9000", "sonarqube:9000"]
 
@@ -356,13 +380,12 @@ nodes:
     runtime: bash
     timeout: 120s
     retry:
-      max: 12           # platform retries every 10s (12 × 10s = 120s)
+      max: 12
       initial: 10s
       max_delay: 10s
       factor: 1.0
     script: |
       #!/bin/bash
-      # Single check — platform handles retry/timeout via retry.max
       SQ_URL="${SONARQUBE_URL:-http://localhost:9000}"
       SQ_TOKEN="${SONARQUBE_TOKEN}"
       PROJECT_KEY="${vars.repo}"
@@ -430,7 +453,7 @@ nodes:
       Output STRICT JSON: {"report":"markdown summary...","status":"completed|partial|failed","issues_found":N,"issues_fixed":N}
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 13: NOTIFY — Multi-channel parallel notification
+  # PHASE 12: NOTIFY — Multi-channel parallel notification
   # ═══════════════════════════════════════════════════════════════
 
   - id: notify-pr
@@ -487,16 +510,18 @@ edges:
   - { from: tribunal, to: supervisor-check }
   - { from: supervisor-check, to: is-approved }
 
-  # If approved → Human → Commit → Re-scan → Loop/Report
+  # If approved → Human → Pre-check → Gate decision
   - { from: is-approved, to: human-approval, condition: true }
   - { from: human-approval, to: precheck-scanner }
   - { from: precheck-scanner, to: precheck-wait }
   - { from: precheck-wait, to: precheck-gate }
   - { from: precheck-gate, to: gate-passed }
+  # Gate passed → Commit → PR → Re-scan → Report
   - { from: gate-passed, to: create-branch, condition: true }
   - { from: create-branch, to: commit-fixes }
-  - { from: gate-passed, to: generate-fixes, condition: false }
   - { from: commit-fixes, to: create-pr }
+  # Gate failed → Loop back to Fix
+  - { from: gate-passed, to: generate-fixes, condition: false }
   - { from: create-pr, to: trigger-rescan }
   - { from: trigger-rescan, to: wait-rescan }
   - { from: wait-rescan, to: check-resolved }

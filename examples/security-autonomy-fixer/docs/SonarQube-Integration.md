@@ -20,7 +20,7 @@ This starts:
 
 The `sonarqube-init` service waits for SonarQube to be healthy, then calls:
 
-```
+```http
 POST /api/users/change_password?login=admin&password=Abcd1234@sonar&previousPassword=admin
 ```
 
@@ -187,6 +187,7 @@ When `gh` CLI returns `HTTP 401` even though the token is valid, the root cause
 is usually that `~/.bashrc` is **not sourced in non-interactive shells**.
 
 Most `.bashrc` files have a guard at the top:
+
 ```bash
 [ -z "$PS1" ] && return   # exit if not interactive
 ```
@@ -209,7 +210,7 @@ gh secret set FOO --body bar -R owner/repo
 
 ## 7. Unified Setup Script
 
-Save as `setup_sonarqube_ci.sh` and run with `bash -i setup_sonarqube_ci.sh`.
+Save as `/tmp/sonarqube-integration-setup.sh` and run with `bash -i /tmp/sonarqube-integration-setup.sh`.
 
 The script is **idempotent** — secrets are updated, webhooks are created only
 if a matching URL doesn't already exist.
@@ -217,10 +218,10 @@ if a matching URL doesn't already exist.
 ```bash
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# setup_sonarqube_ci.sh — Configure GitHub repo for SonarQube CI
+# /tmp/sonarqube-integration-setup.sh — Configure GitHub repo for SonarQube CI
 #
 # Usage:
-#   bash -i setup_sonarqube_ci.sh <owner/repo>
+#   bash -i /tmp/sonarqube-integration-setup.sh <owner/repo>
 #
 # Prerequisites:
 #   - GH_TOKEN set in ~/.bashrc or ~/.wl4gshrc.sec (needs repo admin + workflow scopes)
