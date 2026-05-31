@@ -743,11 +743,13 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 					// Fallback: load from store for flows created via API
 					if dbSpec, err := s.GetAgentFlowSpec(ctx, run.AgentFlowID); err == nil && dbSpec != nil {
 						spec = dbSpec
+						log.Printf("[poller] loaded flow spec from DB: %s (nodes=%d)", run.AgentFlowID, len(spec.Nodes))
 					}
 				}
 				if spec == nil {
 					continue
 				}
+				log.Printf("[poller] dispatch run=%s flow=%s priority=%s", run.ID[:8], run.AgentFlowID, run.Priority)
 				go func(r model.AgentFlowRun, sp *model.AgentFlowSpec) {
 					_ = jm.Submit(ctx, &r, sp)
 				}(run, spec)
@@ -991,6 +993,7 @@ func startJobManager() error {
 		}
 	}
 
+	log.Printf("[jm] loaded %d flows (agentFlowID=%s, appMode=%v)", len(flows), agentFlowID, appMode)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go startRunPoller(ctx, storeImpl, jm, flows, jmNamespace, agentFlowID)

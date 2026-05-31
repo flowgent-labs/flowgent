@@ -30,7 +30,7 @@ mgmt:
     server-bind: "0.0.0.0:6669"
   otel:
     enabled: true
-    endpoint: "http://localhost:4317"
+    endpoint: "localhost:4317"
     protocol: grpc                # http/protobuf | http/json | grpc
     timeout: 10000
     sample_rate: 1.0
@@ -206,7 +206,7 @@ orchestration:
     - name: github
       enabled: true
       type: local
-      command: ["sh", "-c", "/bin/github-mcp"]
+      command: ["sh", "-c", "/usr/local/bin/github-mcp"]
       args: ["--transport", "stdio", "-v", "10"]
       env:
         MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
@@ -217,7 +217,7 @@ orchestration:
     - name: sonarqube
       enabled: true
       type: local
-      command: ["sh", "-c", "/bin/sonarqube-mcp"]
+      command: ["sh", "-c", "/usr/local/bin/sonarqube-mcp"]
       args: ["--transport", "stdio", "-v", "10"]
       env:
         SONARQUBE_URL: "http://localhost:9000"
@@ -227,13 +227,13 @@ orchestration:
         HTTP_PROXY: ""
         HTTPS_PROXY: ""
 
-      command: ["sh", "-c", "/bin/sonatype-nexus3-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
+    - name: nexus3
+      enabled: false
+      type: local
+      command: ["/bin/nexus3-mcp"]
+      args: ["--transport", "stdio"]
       env:
         MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
 
     - name: confluence
       enabled: true
@@ -252,7 +252,7 @@ orchestration:
   agents:
     static:
       enabled: true
-      load-dir: "../examples/agents/"
+      load-dir: "../examples/security-autonomy-fixer/agents/"
       refresh: 30s                  # hot-reload interval
     standard:
       enabled: false                # DB-backed agents (future Flowgent UI)
@@ -261,7 +261,7 @@ orchestration:
   skills:
     static:
       enabled: true
-      load-dir: "../examples/skills/"
+      load-dir: "../examples/security-autonomy-fixer/skills/"
       refresh: 30s
     standard:
       enabled: false
@@ -270,7 +270,7 @@ orchestration:
   agentflows:
     static:
       enabled: true
-      load-dir: "../examples/flows/"
+      load-dir: "../examples/security-autonomy-fixer/flows/"
       refresh: 1m
     standard:
       enabled: false                # DB-backed agentflows (future Flowgent UI)
