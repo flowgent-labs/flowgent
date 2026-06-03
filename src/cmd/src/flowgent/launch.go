@@ -1628,7 +1628,6 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Me
 			ClientID: clientID,
 			Username: qc.MQTT.Username,
 			Password: qc.MQTT.Password,
-			Topic:    qc.MQTT.TopicPrefix,
 		}
 		mq, err := messaging.NewMQTTMessager(mqc)
 		if err == nil {
@@ -1640,7 +1639,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Me
 		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory queue", err)
 	}
 	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
-		mq, err := messaging.NewMQTTMessager(&messaging.MQTTConfig{Broker: broker, ClientID: clientID, Topic: "flowgent/exec"})
+		mq, err := messaging.NewMQTTMessager(&messaging.MQTTConfig{Broker: broker, ClientID: clientID})
 		if err == nil {
 			return mq
 		}

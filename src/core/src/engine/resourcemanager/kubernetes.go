@@ -39,7 +39,7 @@ type KubernetesResourceManager struct {
 	currentTMs  int32
 	idleTimeout time.Duration
 	planTimeout time.Duration
-	autoScale   bool // true=application mode (JM auto-scale), false=session (admin-managed)
+	autoScale   bool
 
 	mu           sync.Mutex
 	pendingPlans int64
@@ -72,7 +72,6 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		cfg.K8sDeploymentName = "flowgent-taskmanager"
 	}
 
-	// Build K8s REST config: explicit kubeconfig → in-cluster → ~/.kube/config
 	restCfg, err := buildRESTConfig(cfg.K8sKubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes rm: build REST config: %w", err)
@@ -99,12 +98,10 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		cancel:      cancel,
 	}
 
-	// Initialize: ensure the Deployment exists with at least minTMs replicas
 	if err := rm.ensureDeployment(ctx); err != nil {
 		slog.Warn("kubernetes rm: deployment check failed (will retry in loop)", "err", err)
 	}
 
-	// Start with minTMs replicas
 	slog.Info("kubernetes rm: scaling deployment to min replicas",
 		"deployment", rm.deployName, "namespace", rm.namespace, "replicas", rm.minTMs)
 	if err := rm.scaleDeployment(ctx, int32(rm.minTMs)); err != nil {
@@ -123,7 +120,6 @@ func (s *KubernetesResourceManager) Validate(ctx context.Context) error {
 	if s.namespace == "" {
 		return fmt.Errorf("kubernetes rm: K8s namespace is required")
 	}
-	// Queue is validated lazily in Schedule() — it can be set after construction
 	return nil
 }
 
@@ -147,16 +143,18 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.Ex
 	ctx, cancel := context.WithTimeout(ctx, s.planTimeout)
 	defer cancel()
 
-	// Publish to tasks/plans under the tenant/flow namespace.
-	// TM slots compete via $share/tm-pool/{topic_prefix}/tasks/plans
-	topic := s.q.Topic() + "/tasks/plans"
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Push(ctx, &messaging.Message{
-		ID: plan.PlanID, Topic: topic, TaskRunID: plan.AgentFlowRunID, NodeID: plan.NodeID, Payload: payload,
+	if err := s.q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+		ID: plan.PlanID,
+		Headers: map[string]string{
+			"task_run_id": plan.AgentFlowRunID,
+			"node_id":     plan.NodeID,
+		},
+		Payload: payload,
 	}); err != nil {
 		return nil, fmt.Errorf("kubernetes rm publish: %w", err)
 	}
-	return &model.TaskResult{Output: map[string]any{"dispatched": true, "topic": topic}}, nil
+	return &model.TaskResult{Output: map[string]any{"dispatched": true}}, nil
 }
 
 // ─── Scaling ────────────────────────────────────────────
@@ -184,7 +182,7 @@ func (s *KubernetesResourceManager) scalingLoop(ctx context.Context) {
 
 func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 	if !s.autoScale {
-		return // session mode: admin manages TM capacity manually
+		return
 	}
 	pending := atomic.LoadInt64(&s.pendingPlans)
 	currentTMs := int(atomic.LoadInt32(&s.currentTMs))
@@ -194,7 +192,6 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 	idleDuration := time.Since(s.lastActivity)
 	s.mu.Unlock()
 
-	// Scale up
 	if pending > int64(currentSlots) {
 		neededTMs := int((pending + int64(s.slotsPerTM) - 1) / int64(s.slotsPerTM))
 		if neededTMs > s.maxTMs {
@@ -212,7 +209,6 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 		return
 	}
 
-	// Scale down
 	if idleDuration > s.idleTimeout && currentTMs > s.minTMs {
 		targetTMs := currentTMs - 1
 		if targetTMs < s.minTMs {
@@ -228,7 +224,6 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 	}
 }
 
-// scaleDeployment calls the K8s API to set the Deployment replica count.
 func (s *KubernetesResourceManager) scaleDeployment(ctx context.Context, replicas int32) error {
 	scale := &autoscalingv1.Scale{
 		ObjectMeta: metav1.ObjectMeta{
@@ -247,18 +242,16 @@ func (s *KubernetesResourceManager) scaleDeployment(ctx context.Context, replica
 	return nil
 }
 
-// ensureDeployment checks the TM Deployment exists; creates a minimal one if not.
 func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error {
 	_, err := s.kubeClient.AppsV1().Deployments(s.namespace).
 		Get(ctx, s.deployName, metav1.GetOptions{})
 	if err == nil {
-		return nil // exists
+		return nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
 
-	// Deployment does not exist — create a default one.
 	replicas := int32(s.minTMs)
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: s.deployName, Namespace: s.namespace,
@@ -321,10 +314,6 @@ func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func fmtTopic(flowID, runID, planID string) string {
-	return fmt.Sprintf("/flowgent/%s/exec/%s/%s", flowID[:min(12, len(flowID))], runID, planID)
-}
-
 func getEnvOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -334,8 +323,6 @@ func getEnvOrDefault(key, def string) string {
 
 // ─── Exported helpers for integration tests ──────────────
 
-// InitForTest sets minimal fields for integration testing without
-// requiring full config + K8s connection setup.
 func (s *KubernetesResourceManager) InitForTest(kubeClient kubernetes.Interface, namespace, deployName string) {
 	s.kubeClient = kubeClient
 	s.namespace = namespace

@@ -40,9 +40,7 @@ build-host:
 	cd src/cmd && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent ./src/flowgent
 
 build-host-all: build-host
-	@mkdir -p $(BIN_DIR)
-	cd examples/mcps/github    && GOWORK=off CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o ../../../$(BIN_DIR)/github-mcp .
-	cd examples/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o ../../../$(BIN_DIR)/sonarqube-mcp .
+	@echo "build-host-all: done (MCP examples removed — see git history)"
 
 clean:
 	rm -rf $(BIN_DIR)/

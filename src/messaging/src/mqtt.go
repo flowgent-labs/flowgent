@@ -11,12 +11,9 @@ import (
 )
 
 type MQTTMessager struct {
-	mu       sync.Mutex
-	client   mqtt.Client
-	topic    string
-	ch       chan *Message
-	messages map[string]chan *Message
-	subs     map[string]struct{}
+	mu     sync.Mutex
+	client mqtt.Client
+	subs   map[string]struct{}
 }
 
 type MQTTConfig struct {
@@ -24,13 +21,9 @@ type MQTTConfig struct {
 	ClientID string
 	Username string
 	Password string
-	Topic    string
 }
 
 func NewMQTTMessager(cfg *MQTTConfig) (*MQTTMessager, error) {
-	if cfg.Topic == "" {
-		cfg.Topic = "flowgent/tasks"
-	}
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
 		SetClientID(cfg.ClientID).
@@ -50,40 +43,11 @@ func NewMQTTMessager(cfg *MQTTConfig) (*MQTTMessager, error) {
 	if token := client.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
 		return nil, fmt.Errorf("mqtt connect: %w", token.Error())
 	}
-	q := &MQTTMessager{
-		client:   client,
-		topic:    cfg.Topic,
-		ch:       make(chan *Message, 100),
-		messages: make(map[string]chan *Message),
-		subs:     make(map[string]struct{}),
-	}
-	// Subscribe to base topic for Pop()
-	if token := client.Subscribe(cfg.Topic, 1, q.onMessage); token.WaitTimeout(5*time.Second) && token.Error() != nil {
-		return nil, fmt.Errorf("mqtt subscribe: %w", token.Error())
-	}
-	return q, nil
+	return &MQTTMessager{client: client, subs: make(map[string]struct{})}, nil
 }
 
-func (q *MQTTMessager) onMessage(_ mqtt.Client, msg mqtt.Message) {
-	var m Message
-	if err := json.Unmarshal(msg.Payload(), &m); err != nil {
-		return
-	}
-	q.mu.Lock()
-	for _, ch := range q.messages {
-		select { case ch <- &m: default: }
-	}
-	q.mu.Unlock()
-	select { case q.ch <- &m: default: }
-}
-
-// Push publishes to msg.Topic if set, otherwise base topic.
-func (q *MQTTMessager) Push(ctx context.Context, msg *Message) error {
+func (q *MQTTMessager) Publish(ctx context.Context, topic string, msg *Message) error {
 	data, _ := json.Marshal(msg)
-	topic := msg.Topic
-	if topic == "" {
-		topic = q.topic
-	}
 	token := q.client.Publish(topic, 1, false, data)
 	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
 		return token.Error()
@@ -91,79 +55,29 @@ func (q *MQTTMessager) Push(ctx context.Context, msg *Message) error {
 	return nil
 }
 
-func (q *MQTTMessager) Pop(ctx context.Context, timeout time.Duration) (*Message, error) {
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	ctx2, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	select {
-	case msg := <-q.ch:
-		return msg, nil
-	case <-ctx2.Done():
-		return nil, nil
-	}
-}
-
-// Dequeue subscribes to {topic}/tasks/plans — same topic K8sRM publishes to.
-func (q *MQTTMessager) Dequeue(ctx context.Context, consumerGroup string) (*Message, error) {
-	topic := q.topic + "/tasks/plans"
+func (q *MQTTMessager) Subscribe(ctx context.Context, topic string, handler SubHandler) error {
 	q.mu.Lock()
-	if _, ok := q.subs[topic]; !ok {
-		q.subs[topic] = struct{}{}
+	if _, ok := q.subs[topic]; ok {
 		q.mu.Unlock()
-		if token := q.client.Subscribe(topic, 1, func(c mqtt.Client, m mqtt.Message) {
-			var msg Message
-			if json.Unmarshal(m.Payload(), &msg) == nil {
-				q.mu.Lock()
-				for _, ch := range q.messages {
-					select { case ch <- &msg: default: }
-				}
-				q.mu.Unlock()
-				select { case q.ch <- &msg: default: }
-			}
-		}); token.WaitTimeout(5*time.Second) && token.Error() != nil {
-			return nil, fmt.Errorf("mqtt subscribe %s: %w", topic, token.Error())
-		}
-	} else {
-		q.mu.Unlock()
+		return nil
 	}
-	ch := make(chan *Message, 10)
-	cid := fmt.Sprintf("%s-%d", consumerGroup, time.Now().UnixNano())
-	q.mu.Lock()
-	q.messages[cid] = ch
+	q.subs[topic] = struct{}{}
 	q.mu.Unlock()
-	defer func() {
-		q.mu.Lock()
-		delete(q.messages, cid)
-		q.mu.Unlock()
-	}()
-	select {
-	case msg := <-ch:
-		return msg, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	token := q.client.Subscribe(topic, 1, func(c mqtt.Client, m mqtt.Message) {
+		var msg Message
+		if json.Unmarshal(m.Payload(), &msg) == nil {
+			handler(topic, msg.Payload)
+		}
+	})
+	if !token.WaitTimeout(5 * time.Second) {
+		return nil
 	}
-}
-
-func (q *MQTTMessager) PublishHeartbeat(ctx context.Context, hb *Heartbeat) error {
-	data, _ := json.Marshal(hb)
-	token := q.client.Publish("/flowgent/v1/heartbeat/"+hb.TMID, 0, false, data)
-	if token.WaitTimeout(3*time.Second) && token.Error() != nil {
-		return token.Error()
+	if token.Error() != nil {
+		return fmt.Errorf("mqtt subscribe %s: %w", topic, token.Error())
 	}
 	return nil
-}
-
-func (q *MQTTMessager) ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*Heartbeat, error) {
-	return nil, nil
 }
 
 func (q *MQTTMessager) Ack(ctx context.Context, msgID string) error   { return nil }
-func (q *MQTTMessager) Nack(ctx context.Context, msgID string) error { return nil }
-func (q *MQTTMessager) Topic() string { return q.topic }
-
-func (q *MQTTMessager) Close() error {
-	q.client.Disconnect(250)
-	return nil
-}
+func (q *MQTTMessager) Nack(ctx context.Context, msgID string) error  { return nil }
+func (q *MQTTMessager) Close() error { q.client.Disconnect(250); return nil }

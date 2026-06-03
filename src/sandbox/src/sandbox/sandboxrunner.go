@@ -1,9 +1,8 @@
 // Package sandbox implements the secure script execution worker.
 //
-// The SandboxRunner consumes lightweight trigger messages from a queue,
-// reads scripts from a workspace volume (mounted alongside TaskManager pods),
-// executes them in isolated environments, writes results back, and publishes
-// completion via the queue.
+// The SandboxRunner consumes trigger messages via Subscribe, reads scripts from
+// a workspace volume (mounted alongside TaskManager pods), executes them in
+// isolated environments, writes results back, and publishes completion via Publish.
 //
 // Workspace path convention:
 //
@@ -20,6 +19,7 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,8 +31,6 @@ import (
 
 // ─── Trigger message ─────────────────────────────────────────
 
-// sandboxTrigger is the lightweight message received via queue.
-// Contains only path references + metadata — no script content.
 type sandboxTrigger struct {
 	PlanID        string                  `json:"plan_id"`
 	ScriptPath    string                  `json:"script_path"`
@@ -83,42 +81,32 @@ func NewSandboxRunner(id string, q messaging.Messager, image, workspace string, 
 
 func (w *SandboxRunner) GetID() string { return w.ID }
 
-// Start begins the consume-execute loop.
+// Start subscribes to sandbox triggers and blocks until ctx is done.
 func (w *SandboxRunner) Start(ctx context.Context) error {
-	topic := "flowgent/sandbox/exec"
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-w.stopCh:
-			return nil
-		default:
-		}
-
-		msg, err := w.queue.Dequeue(ctx, topic)
-		if err != nil || msg == nil {
-			continue
-		}
-
+	w.queue.Subscribe(ctx, messaging.TopicSandboxTrig, func(topic string, payload []byte) {
 		var trigger sandboxTrigger
-		if err := json.Unmarshal(msg.Payload, &trigger); err != nil {
-			w.publishError(msg.ID, "invalid trigger: "+err.Error())
-			_ = w.queue.Ack(context.Background(), msg.ID)
-			continue
+		if err := json.Unmarshal(payload, &trigger); err != nil {
+			slog.Error("invalid sandbox trigger", "error", err)
+			return
 		}
 
 		script, err := w.readScriptFromVolume(&trigger)
 		if err != nil {
-			w.publishError(msg.ID, "read script: "+err.Error())
-			_ = w.queue.Ack(context.Background(), msg.ID)
-			continue
+			w.publishError(trigger.PlanID, "read script: "+err.Error())
+			return
 		}
 
 		os.WriteFile(filepath.Join(trigger.ScriptPath, "status"), []byte("RUNNING"), 0644)
 
 		result := w.execute(ctx, &trigger, script)
-		w.publishResult(msg.ID, &trigger, result)
-		_ = w.queue.Ack(context.Background(), msg.ID)
+		w.publishResult(trigger.PlanID, &trigger, result)
+	})
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.stopCh:
+		return nil
 	}
 }
 
@@ -164,9 +152,8 @@ func (w *SandboxRunner) checkBanned(script string) string {
 
 func (w *SandboxRunner) publishResult(msgID string, trigger *sandboxTrigger, result *model.TaskResult) {
 	payload, _ := json.Marshal(result)
-	_ = w.queue.Push(context.Background(), &messaging.Message{
+	_ = w.queue.Publish(context.Background(), messaging.TopicSandboxRes+"/"+trigger.PlanID, &messaging.Message{
 		ID:      msgID,
-		Topic:   "flowgent/sandbox/result/" + trigger.PlanID,
 		Payload: payload,
 	})
 }
@@ -213,7 +200,6 @@ func newSpanID() string {
 	return hexEncodeToString(b)
 }
 
-// Avoid crypto/rand import in sandbox package — use a simple time-based ID for worker-side.
 func randRead(b []byte) (int, error) {
 	t := time.Now().UnixNano()
 	for i := range b {

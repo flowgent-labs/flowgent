@@ -11,7 +11,7 @@ import (
 	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 )
 
-func TestSlotWorker_DequeueAndExecute(t *testing.T) {
+func TestSlotWorker_Execute(t *testing.T) {
 	q := messaging.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	router.Register(&executor.NoopExecutor{})
@@ -27,23 +27,19 @@ func TestSlotWorker_DequeueAndExecute(t *testing.T) {
 		NodeSpec: &model.NodeSpec{Type: model.NoopNode},
 	}
 	payload, _ := json.Marshal(plan)
-	msg := &messaging.Message{
-		ID:        "msg-1",
-		Topic:     "flowgent/exec",
-		Payload:   payload,
-		TaskRunID: "run-1",
-		NodeID:    "node-1",
-	}
-	q.Push(context.Background(), msg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	go func() {
-		worker.Loop(ctx)
-	}()
+	go worker.Loop(ctx)
+	time.Sleep(50 * time.Millisecond) // let subscription register
 
-	time.Sleep(500 * time.Millisecond)
+	q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+		ID:      "msg-1",
+		Payload: payload,
+	})
+
+	time.Sleep(300 * time.Millisecond)
 }
 
 func TestSlotWorker_InvalidPayload(t *testing.T) {
@@ -51,28 +47,23 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 	router := executor.NewTaskExecutorRouter()
 	worker := NewSlotWorker("slot-2", "tm-test", q, router, nil, nil)
 
-	msg := &messaging.Message{
-		ID:      "msg-bad",
-		Topic:   "flowgent/exec",
-		Payload: []byte("not-valid-json"),
-		NodeID:  "node-1",
-	}
-	q.Push(context.Background(), msg)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	go func() {
-		worker.Loop(ctx)
-	}()
+	go worker.Loop(ctx)
+	time.Sleep(50 * time.Millisecond)
 
-	time.Sleep(500 * time.Millisecond)
+	q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+		ID:      "msg-bad",
+		Payload: []byte("not-valid-json"),
+	})
+
+	time.Sleep(300 * time.Millisecond)
 }
 
 func TestSlotWorker_ExecuteError(t *testing.T) {
 	q := messaging.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
-	// Register a failing executor
 	router.Register(&failingExecutor{})
 
 	worker := NewSlotWorker("slot-3", "tm-test", q, router, nil, nil)
@@ -85,21 +76,21 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 		NodeSpec: &model.NodeSpec{Type: model.NodeType("failing")},
 	}
 	payload, _ := json.Marshal(plan)
-	q.Push(context.Background(), &messaging.Message{
-		ID: "msg-fail", Topic: "flowgent/exec", Payload: payload,
-		TaskRunID: "run-1", NodeID: "node-fail",
-	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	go func() {
-		worker.Loop(ctx)
-	}()
-	time.Sleep(500 * time.Millisecond)
+	go worker.Loop(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+		ID:      "msg-fail",
+		Payload: payload,
+	})
+
+	time.Sleep(300 * time.Millisecond)
 }
 
-// failingExecutor always returns an error.
 type failingExecutor struct{}
 
 func (e *failingExecutor) TaskType() model.TaskType { return "failing" }

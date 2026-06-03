@@ -14,77 +14,20 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=.,target=/build \
     cd /build/src/cmd && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowgent ./src/flowgent/
 
-# ─── Stage 2: Build MCP binaries ─────────────────────────────
-FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder-mcps
-
-ENV GOPROXY=https://goproxy.cn,direct
-
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=bind,source=examples/mcps/github,target=/build \
-    cd /build && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/github-mcp .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=bind,source=examples/mcps/sonarqube,target=/build \
-    cd /build && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sonarqube-mcp .
-
-# ─── Stage 3: Export (used by `make build-all`) ──────────────
+# ─── Stage 2: Export (used by `make build-all`) ──────────────
 FROM scratch AS export
 COPY --from=builder-flowgent /out/flowgent /flowgent
-COPY --from=builder-mcps /out/ /
 
-# ─── Stage 4: Runtime ────────────────────────────────────────
+# ─── Stage 3: Runtime ────────────────────────────────────────
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata curl jq bash
 ENV TZ=Asia/Shanghai
 
 COPY --from=builder-flowgent /out/flowgent /app/flowgent
-COPY --from=builder-mcps /out/github-mcp    /bin/github-mcp
-COPY --from=builder-mcps /out/sonarqube-mcp /bin/sonarqube-mcp
 COPY examples/ /app/examples/
 COPY etc/ /app/etc/
-
-COPY <<'EOF' /entrypoint.sh
-#!/bin/bash
-set -euo pipefail
-
-case "${1:-}" in
-  ""|--help|-h|help)
-    cat <<'HELP'
-Flowgent All-in-One — Quick Start
-
-  docker run --rm flowgent:all-in-one [MODE]
-
-  Modes:
-    (default)      Show this help
-    start          Start server (REST :9999, mgmt :9991)
-    shell          Drop into bash shell
-    version        Print version info
-
-  Subcommands (via /app/flowgent):
-    all-in-one start | apiserver start | a2a start
-    controller start | jobmanager start | taskmanager start
-    sandbox start | notifier start | wallet start
-    console | version | --help
-
-  Bundled MCPs:  /bin/{github,sonarqube}-mcp
-  Examples:      /app/examples/{agents,flows,skills}/
-  Configs:       /app/etc/
-HELP
-    ;;
-  start)
-    exec /app/flowgent all-in-one start -c /app/etc/flowgent-dev.yaml
-    ;;
-  shell|bash|sh)
-    exec /bin/bash
-    ;;
-  version|-v|--version)
-    exec /app/flowgent version
-    ;;
-  *)
-    exec /app/flowgent "$@"
-    ;;
-esac
-EOF
+COPY deploy/docker/entrypoint.sh /entrypoint.sh
 
 WORKDIR /app
 ENTRYPOINT ["/entrypoint.sh"]

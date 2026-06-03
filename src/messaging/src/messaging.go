@@ -21,19 +21,14 @@ const (
 )
 
 
-// Message represents a queue message for distributed execution.
+// Message is a message with routing metadata.
 type Message struct {
-	ID        string            `json:"id"`
-	Topic     string            `json:"topic"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	TaskRunID string            `json:"task_run_id"`
-	NodeID    string            `json:"node_id"`
-	Payload   []byte            `json:"payload,omitempty"`
-	Attempts  int               `json:"attempts"`
-	Status    string            `json:"status"`
+	ID      string            `json:"id"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Payload []byte            `json:"payload,omitempty"`
 }
 
-// Heartbeat is a TM liveness signal published periodically.
+// Heartbeat is a TM liveness signal.
 type Heartbeat struct {
 	TMID      string    `json:"tm_id"`
 	Timestamp time.Time `json:"timestamp"`
@@ -41,35 +36,23 @@ type Heartbeat struct {
 	Capacity  int       `json:"capacity"`
 }
 
-// Messager is the message queue interface for distributed task processing.
+// SubHandler receives messages from a subscribed topic.
+type SubHandler func(topic string, payload []byte)
+
+// Messager is the unified message queue interface.
 type Messager interface {
-	// Push enqueues a message for processing.
-	Push(ctx context.Context, msg *Message) error
+	// Publish sends msg to the given topic.
+	Publish(ctx context.Context, topic string, msg *Message) error
 
-	// Pop polls for a message with a timeout. Returns nil if no message available.
-	Pop(ctx context.Context, timeout time.Duration) (*Message, error)
+	// Subscribe registers handler for the given topic. Non-blocking.
+	Subscribe(ctx context.Context, topic string, handler SubHandler) error
 
-	// Dequeue blocks until a message is available, implementing consumer-group
-	// semantics. In local mode this reads from a channel; in MQTT mode this
-	// subscribes to a topic and blocks for the next publication.
-	Dequeue(ctx context.Context, consumerGroup string) (*Message, error)
-
-	// PublishHeartbeat sends a TM heartbeat to the heartbeat topic.
-	PublishHeartbeat(ctx context.Context, hb *Heartbeat) error
-
-	// ConsumeHeartbeat blocks for the next heartbeat from any TM.
-	ConsumeHeartbeat(ctx context.Context, timeout time.Duration) (*Heartbeat, error)
-
-	// Ack acknowledges successful processing of a message.
+	// Ack confirms successful processing.
 	Ack(ctx context.Context, msgID string) error
 
-	// Nack negatively acknowledges a message (return to queue for retry).
+	// Nack returns msg to queue for retry.
 	Nack(ctx context.Context, msgID string) error
 
-	// Topic returns the base topic prefix for plan publication.
-	// Publishers use Topic()+"/plans", consumers use $share/{group}/Topic()+"/plans".
-	Topic() string
-
-	// Close shuts down the queue.
+	// Close shuts down the messager.
 	Close() error
 }

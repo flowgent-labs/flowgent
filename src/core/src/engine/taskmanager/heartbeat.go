@@ -2,6 +2,8 @@ package taskmanager
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,10 +15,8 @@ const (
 	defaultLeaseTimeout      = 15 * time.Second
 )
 
-// ─── TM-side heartbeat (published by TaskManager.Start) ──
+// ─── TM-side heartbeat ─────────────────────────────────
 
-// startHeartbeat begins a goroutine that periodically publishes heartbeat
-// messages to the queue. Called by TaskManager.Start.
 func startHeartbeat(tmID string, q messaging.Messager, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
@@ -25,8 +25,11 @@ func startHeartbeat(tmID string, q messaging.Messager, interval time.Duration) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			_ = q.PublishHeartbeat(context.Background(), &messaging.Heartbeat{
-				TMID: tmID, Timestamp: time.Now(),
+			hb := &messaging.Heartbeat{TMID: tmID, Timestamp: time.Now()}
+			data, _ := json.Marshal(hb)
+			_ = q.Publish(context.Background(), messaging.TopicHeartbeat, &messaging.Message{
+				ID:      fmt.Sprintf("hb-%s-%d", tmID, time.Now().UnixNano()),
+				Payload: data,
 			})
 		}
 	}()
@@ -34,7 +37,6 @@ func startHeartbeat(tmID string, q messaging.Messager, interval time.Duration) {
 
 // ─── JM-side heartbeat monitor ──────────────────────────
 
-// TMState tracks the health of a single TaskManager.
 type TMState struct {
 	TMID     string
 	LastBeat time.Time
@@ -44,7 +46,7 @@ type TMState struct {
 }
 
 // HeartbeatMonitor consumes heartbeats from the queue and detects
-// failed TMs by lease expiration. Used by the JM for failover.
+// failed TMs by lease expiration.
 type HeartbeatMonitor struct {
 	q            messaging.Messager
 	activeTMs    map[string]*TMState
@@ -76,37 +78,26 @@ func (hm *HeartbeatMonitor) ActiveTMs() []TMState {
 }
 
 func (hm *HeartbeatMonitor) Start(ctx context.Context) {
+	hm.q.Subscribe(ctx, messaging.TopicHeartbeat, func(topic string, payload []byte) {
+		var hb messaging.Heartbeat
+		if err := json.Unmarshal(payload, &hb); err != nil {
+			return
+		}
+		hm.recordBeat(&hb)
+	})
+
 	go func() {
 		ticker := time.NewTicker(hm.leaseTimeout / 2)
 		defer ticker.Stop()
-		hbCh := make(chan *messaging.Heartbeat, 32)
-		go hm.subscribe(ctx, hbCh)
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case hb := <-hbCh:
-				hm.recordBeat(hb)
 			case <-ticker.C:
 				hm.detectExpired()
 			}
 		}
 	}()
-}
-
-func (hm *HeartbeatMonitor) subscribe(ctx context.Context, ch chan<- *messaging.Heartbeat) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		hb, err := hm.q.ConsumeHeartbeat(ctx, 5*time.Second)
-		if err != nil || hb == nil {
-			continue
-		}
-		ch <- hb
-	}
 }
 
 func (hm *HeartbeatMonitor) recordBeat(hb *messaging.Heartbeat) {

@@ -15,18 +15,15 @@ import (
 	"github.com/flowgent-labs/flowgent/messaging/src"
 )
 
-// SandboxExecutor dispatches scripts to sandbox workers via a single workspace
-// volume + lightweight queue trigger. The workspace is a persistent volume
-// mounted to both TM and Sandbox pods, organized as:
+// SandboxExecutor dispatches scripts to sandbox workers via a shared workspace
+// volume + queue trigger. The workspace is a persistent volume mounted to both
+// TM and Sandbox, organized as:
 //
 //	{workspace}/{tenant}/{agentflow_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
 //	  ├── script.{py,sh,js}
 //	  ├── result.json
 //	  ├── status
 //	  └── original/   (pre-modification snapshot for undo)
-//
-// span_id is a 16-char hex identifier (OTEL-compatible) that replaces retry_count
-// as the execution-attempt discriminator.
 type SandboxExecutor struct {
 	queue     messaging.Messager
 	policy    *model.SandboxPolicy
@@ -52,7 +49,6 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		return nil, fmt.Errorf("sandbox write script: %w", err)
 	}
 
-	// Snapshot workspace files before modification (undo support).
 	if plan.NodeSpec.Workspace != "" {
 		if err := e.snapshotOriginals(plan); err != nil {
 			return nil, fmt.Errorf("sandbox snapshot: %w", err)
@@ -66,7 +62,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		Timeout:       plan.NodeSpec.Timeout,
 		Resources:     plan.NodeSpec.Resources,
 		NetworkPolicy: plan.NodeSpec.NetworkPolicy,
-		Workspace:     plan.NodeSpec.Workspace, // optional data dir
+		Workspace:     plan.NodeSpec.Workspace,
 		SpanID:        spanID,
 	}
 	payload, err := json.Marshal(trigger)
@@ -74,42 +70,42 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		return nil, fmt.Errorf("sandbox marshal trigger: %w", err)
 	}
 
-	if err := e.queue.Push(ctx, &messaging.Message{
-		ID: plan.PlanID, Topic: "flowgent/sandbox/exec", Payload: payload,
+	resultCh := make(chan *model.TaskResult, 1)
+	resultTopic := messaging.TopicSandboxRes + "/" + plan.PlanID
+
+	if err := e.queue.Subscribe(ctx, resultTopic, func(topic string, payload []byte) {
+		var result model.TaskResult
+		if err := json.Unmarshal(payload, &result); err != nil {
+			return
+		}
+		select {
+		case resultCh <- &result:
+		default:
+		}
 	}); err != nil {
-		return nil, fmt.Errorf("sandbox push: %w", err)
+		return nil, fmt.Errorf("sandbox subscribe: %w", err)
 	}
 
-	resultTopic := "flowgent/sandbox/result/" + plan.PlanID
+	if err := e.queue.Publish(ctx, messaging.TopicSandboxTrig, &messaging.Message{
+		ID: plan.PlanID, Payload: payload,
+	}); err != nil {
+		return nil, fmt.Errorf("sandbox publish: %w", err)
+	}
+
 	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	for {
-		select {
-		case <-waitCtx.Done():
-			if result, err := e.readResultFile(scriptPath); err == nil {
-				return result, nil
-			}
-			return &model.TaskResult{Error: "sandbox execution timeout"}, nil
-		default:
+	select {
+	case <-waitCtx.Done():
+		if result, err := e.readResultFile(scriptPath); err == nil {
+			return result, nil
 		}
-		resultMsg, err := e.queue.Pop(waitCtx, 2*time.Second)
-		if err != nil || resultMsg == nil {
-			continue
-		}
-		if resultMsg.Topic != resultTopic {
-			continue
-		}
-		var result model.TaskResult
-		if err := json.Unmarshal(resultMsg.Payload, &result); err != nil {
-			continue
-		}
-		_ = e.queue.Ack(waitCtx, resultMsg.ID)
-		return &result, nil
+		return &model.TaskResult{Error: "sandbox execution timeout"}, nil
+	case result := <-resultCh:
+		return result, nil
 	}
 }
 
-// buildPath: {workspace}/{tenant}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
 func (e *SandboxExecutor) buildPath(plan *model.ExecutionPlan, spanID string) string {
 	return filepath.Join(
 		e.workspace,
