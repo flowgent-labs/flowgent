@@ -1616,7 +1616,7 @@ func newJobManagerConfig(cfg *config.ServiceConfig) *jobmanager.JobManagerConfig
 	}
 }
 
-func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Queue {
+func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Messager {
 	// Determine if this is a distributed deployment (Helm — session or application mode).
 	// In distributed mode, MQTT is mandatory; failing to connect is a fatal error.
 	distributed := cfg != nil && (cfg.Deployment.Mode == "session" || cfg.Deployment.Mode == "application")
@@ -1630,7 +1630,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Qu
 			Password: qc.MQTT.Password,
 			Topic:    qc.MQTT.TopicPrefix,
 		}
-		mq, err := messaging.NewMQTTQueue(mqc)
+		mq, err := messaging.NewMQTTMessager(mqc)
 		if err == nil {
 			return mq
 		}
@@ -1640,7 +1640,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Qu
 		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory queue", err)
 	}
 	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
-		mq, err := messaging.NewMQTTQueue(&messaging.MQTTConfig{Broker: broker, ClientID: clientID, Topic: "flowgent/exec"})
+		mq, err := messaging.NewMQTTMessager(&messaging.MQTTConfig{Broker: broker, ClientID: clientID, Topic: "flowgent/exec"})
 		if err == nil {
 			return mq
 		}
@@ -1653,7 +1653,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Qu
 		log.Fatalf("FATAL: MQTT broker not configured. In %s mode, set queue.mqtt.broker in flowgent.yaml or FLOWGENT_MQTT_BROKER env var.", cfg.Deployment.Mode)
 	}
 	log.Printf("WARNING: Using in-memory queue (local dev mode — not suitable for distributed deployment)")
-	return messaging.NewMemoryQueue(1000)
+	return messaging.NewLocalMessager(1000)
 }
 
 func startNotifierService() error {

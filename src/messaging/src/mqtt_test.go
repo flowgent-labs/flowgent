@@ -7,7 +7,7 @@ import (
 )
 
 func TestMQTTQueue_Construction(t *testing.T) {
-	q, err := NewMQTTQueue(&MQTTConfig{
+	q, err := NewMQTTMessager(&MQTTConfig{
 		Broker:   "tcp://127.0.0.1:1883",
 		ClientID: "ut-test-mqtt",
 		Topic:    "flowgent/ut",
@@ -24,7 +24,7 @@ func TestMQTTQueue_Construction(t *testing.T) {
 }
 
 func TestMQTTQueue_PushPop(t *testing.T) {
-	q, err := NewMQTTQueue(&MQTTConfig{
+	q, err := NewMQTTMessager(&MQTTConfig{
 		Broker:   "tcp://127.0.0.1:1883",
 		ClientID: "ut-pushpop",
 		Topic:    "flowgent/ut-pushpop",
@@ -54,7 +54,7 @@ func TestMQTTQueue_PushPop(t *testing.T) {
 }
 
 func TestMQTTQueue_Dequeue(t *testing.T) {
-	q, err := NewMQTTQueue(&MQTTConfig{
+	q, err := NewMQTTMessager(&MQTTConfig{
 		Broker:   "tcp://127.0.0.1:1883",
 		ClientID: "ut-dequeue",
 		Topic:    "flowgent/ut-dequeue",
@@ -83,7 +83,7 @@ func TestMQTTQueue_Dequeue(t *testing.T) {
 }
 
 func TestMQTTQueue_DefaultTopic(t *testing.T) {
-	q, err := NewMQTTQueue(&MQTTConfig{
+	q, err := NewMQTTMessager(&MQTTConfig{
 		Broker:   "tcp://127.0.0.1:1883",
 		ClientID: "ut-defaults",
 	})

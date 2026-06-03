@@ -22,13 +22,13 @@ import (
 type SlotWorker struct {
 	id      string
 	tmID    string
-	q       messaging.Queue
+	q       messaging.Messager
 	router  *executor.TaskExecutorRouter
 	store   store.Store
 	metrics *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q messaging.Queue, router *executor.TaskExecutorRouter, store store.Store, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID string, q messaging.Messager, router *executor.TaskExecutorRouter, store store.Store, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:      id,
 		tmID:    tmID,

@@ -9,9 +9,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// MetricsQueue wraps a Queue with metric instrumentation.
+// MetricsQueue wraps a Messager with metric instrumentation.
 type MetricsQueue struct {
-	inner          Queue
+	inner          Messager
 	Depth          metric.Int64UpDownCounter
 	PushTotal      metric.Int64Counter
 	DequeueTotal   metric.Int64Counter
@@ -20,7 +20,7 @@ type MetricsQueue struct {
 	DequeueLatency metric.Float64Histogram
 }
 
-func NewMetricsQueue(inner Queue) *MetricsQueue {
+func NewMetricsQueue(inner Messager) *MetricsQueue {
 	meter := tracing.Meter("flowgent/queue")
 	mq := &MetricsQueue{inner: inner}
 

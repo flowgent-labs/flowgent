@@ -49,7 +49,7 @@ type sandboxTrigger struct {
 // SandboxRunner consumes and executes sandbox triggers.
 type SandboxRunner struct {
 	ID        string
-	queue     messaging.Queue
+	queue     messaging.Messager
 	policy    *model.SandboxPolicy
 	image     string
 	workspace string
@@ -58,7 +58,7 @@ type SandboxRunner struct {
 }
 
 // NewSandboxRunner creates a sandbox worker.
-func NewSandboxRunner(id string, q messaging.Queue, image, workspace string, policy *model.SandboxPolicy) *SandboxRunner {
+func NewSandboxRunner(id string, q messaging.Messager, image, workspace string, policy *model.SandboxPolicy) *SandboxRunner {
 	if policy == nil {
 		policy = &model.SandboxPolicy{
 			Network:          model.NetworkPolicy{Mode: "none"},

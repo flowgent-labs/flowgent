@@ -29,7 +29,7 @@ import (
 // scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
 // is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
 type KubernetesResourceManager struct {
-	q           messaging.Queue
+	q           messaging.Messager
 	namespace   string
 	deployName  string
 	kubeClient  kubernetes.Interface
@@ -114,7 +114,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	return rm, nil
 }
 
-func (s *KubernetesResourceManager) SetQueue(q messaging.Queue) { s.q = q }
+func (s *KubernetesResourceManager) SetQueue(q messaging.Messager) { s.q = q }
 func (s *KubernetesResourceManager) Provider() engine.Provider {
 	return engine.ProviderKubernetes
 }

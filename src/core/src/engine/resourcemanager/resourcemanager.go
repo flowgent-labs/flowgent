@@ -40,7 +40,7 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue      messaging.Queue
+	Queue      messaging.Messager
 	Store      store.Store
 	Agents     []*config.AgentDef
 	MCPClients map[string]engine.MCPClient

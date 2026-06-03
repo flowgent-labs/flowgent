@@ -7,7 +7,7 @@ import (
 )
 
 func TestMemoryQueue_PushPop(t *testing.T) {
-	q := NewMemoryQueue(10)
+	q := NewLocalMessager(10)
 	defer q.Close()
 	ctx := context.Background()
 
@@ -26,7 +26,7 @@ func TestMemoryQueue_PushPop(t *testing.T) {
 }
 
 func TestMemoryQueue_Dequeue(t *testing.T) {
-	q := NewMemoryQueue(10)
+	q := NewLocalMessager(10)
 	defer q.Close()
 
 	go func() {
@@ -47,7 +47,7 @@ func TestMemoryQueue_Dequeue(t *testing.T) {
 }
 
 func TestMemoryQueue_DequeueTimeout(t *testing.T) {
-	q := NewMemoryQueue(10)
+	q := NewLocalMessager(10)
 	defer q.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -60,7 +60,7 @@ func TestMemoryQueue_DequeueTimeout(t *testing.T) {
 }
 
 func TestMemoryQueue_Ack(t *testing.T) {
-	q := NewMemoryQueue(10)
+	q := NewLocalMessager(10)
 	defer q.Close()
 	ctx := context.Background()
 
@@ -75,7 +75,7 @@ func TestMemoryQueue_Ack(t *testing.T) {
 }
 
 func TestMemoryQueue_Nack(t *testing.T) {
-	q := NewMemoryQueue(10)
+	q := NewLocalMessager(10)
 	defer q.Close()
 	ctx := context.Background()
 
@@ -96,7 +96,7 @@ func TestMemoryQueue_Nack(t *testing.T) {
 }
 
 func TestMemoryQueue_ConsumerGroupFanout(t *testing.T) {
-	q := NewMemoryQueue(10)
+	q := NewLocalMessager(10)
 	defer q.Close()
 	ctx := context.Background()
 

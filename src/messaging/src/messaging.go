@@ -8,17 +8,18 @@ import (
 // ─── Topic Constants ───────────────────────────────────────────
 const (
 	TopicPrefix       = "flowgent/v1"
-	TopicExec         = TopicPrefix + "/exec"            // JM → TM dispatch
-	TopicExecResult   = TopicPrefix + "/exec/result"     // TM → JM result
-	TopicSandboxTrig  = TopicPrefix + "/sandbox/trigger" // TM → sandbox
-	TopicSandboxRes   = TopicPrefix + "/sandbox/result"  // sandbox → TM
-	TopicHeartbeat    = TopicPrefix + "/heartbeat"       // TM → JM liveness
-	TopicCtrlJMCreate = TopicPrefix + "/ctrl/jm/create"  // Controller → JM
-	TopicNotifyEvent  = TopicPrefix + "/notify/event"    // → notifier
-	TopicNotifyResult = TopicPrefix + "/notify/result"   // notifier → TM
-	TopicNotifyPodWS  = TopicPrefix + "/notify/pod"      // WS routing
-	TopicNotifyQueue  = TopicPrefix + "/notify/queue"    // queue consumer
+	TopicExec         = TopicPrefix + "/exec"
+	TopicExecResult   = TopicPrefix + "/exec/result"
+	TopicSandboxTrig  = TopicPrefix + "/sandbox/trigger"
+	TopicSandboxRes   = TopicPrefix + "/sandbox/result"
+	TopicHeartbeat    = TopicPrefix + "/heartbeat"
+	TopicCtrlJMCreate = TopicPrefix + "/ctrl/jm/create"
+	TopicNotifyEvent  = TopicPrefix + "/notify/event"
+	TopicNotifyResult = TopicPrefix + "/notify/result"
+	TopicNotifyPodWS  = TopicPrefix + "/notify/pod"
+	TopicNotifyQueue  = TopicPrefix + "/notify/queue"
 )
+
 
 // Message represents a queue message for distributed execution.
 type Message struct {
@@ -40,8 +41,8 @@ type Heartbeat struct {
 	Capacity  int       `json:"capacity"`
 }
 
-// Queue is the message queue interface for distributed task processing.
-type Queue interface {
+// Messager is the message queue interface for distributed task processing.
+type Messager interface {
 	// Push enqueues a message for processing.
 	Push(ctx context.Context, msg *Message) error
 

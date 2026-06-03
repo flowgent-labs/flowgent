@@ -17,7 +17,7 @@ const (
 
 // startHeartbeat begins a goroutine that periodically publishes heartbeat
 // messages to the queue. Called by TaskManager.Start.
-func startHeartbeat(tmID string, q messaging.Queue, interval time.Duration) {
+func startHeartbeat(tmID string, q messaging.Messager, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
 	}
@@ -46,13 +46,13 @@ type TMState struct {
 // HeartbeatMonitor consumes heartbeats from the queue and detects
 // failed TMs by lease expiration. Used by the JM for failover.
 type HeartbeatMonitor struct {
-	q            messaging.Queue
+	q            messaging.Messager
 	activeTMs    map[string]*TMState
 	mu           sync.Mutex
 	leaseTimeout time.Duration
 }
 
-func NewHeartbeatMonitor(q messaging.Queue, leaseTimeout time.Duration) *HeartbeatMonitor {
+func NewHeartbeatMonitor(q messaging.Messager, leaseTimeout time.Duration) *HeartbeatMonitor {
 	if leaseTimeout <= 0 {
 		leaseTimeout = defaultLeaseTimeout
 	}

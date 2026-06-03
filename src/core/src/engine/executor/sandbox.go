@@ -28,12 +28,12 @@ import (
 // span_id is a 16-char hex identifier (OTEL-compatible) that replaces retry_count
 // as the execution-attempt discriminator.
 type SandboxExecutor struct {
-	queue     messaging.Queue
+	queue     messaging.Messager
 	policy    *model.SandboxPolicy
 	workspace string
 }
 
-func NewSandboxExecutor(q messaging.Queue, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
+func NewSandboxExecutor(q messaging.Messager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
 	return &SandboxExecutor{queue: q, policy: policy, workspace: workspace}
 }
 
