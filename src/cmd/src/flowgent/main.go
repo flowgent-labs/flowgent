@@ -61,6 +61,7 @@ var (
 	pidJobManager  string
 	jmFlowID       string
 	pidTaskManager string
+	pidSandbox     string
 	pidNotifier    string
 	pidWallet      string
 )
@@ -278,10 +279,42 @@ var taskmanagerRestartCmd = &cobra.Command{
 	},
 }
 
-// Sandbox commands are provided by the flowgent-sandbox binary
-// (src/sandbox-exec/). See src/sandbox-exec/src/cmd/sandbox/.
+// ═══════════════════════════════════════════════════════════════
+// 7. sandbox — secure script execution worker
+// ═══════════════════════════════════════════════════════════════
+
+var sandboxCmd = &cobra.Command{
+	Use:   "sandbox",
+	Short: "Sandbox worker (secure script execution)",
+	Long:  "Start, stop, or restart the sandbox worker with seccomp-bpf isolation.",
+}
+
+var sandboxStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the sandbox worker",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSandbox("start", pidSandbox)
+	},
+}
+
+var sandboxStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop the sandbox worker",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSandbox("stop", pidSandbox)
+	},
+}
+
+var sandboxRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Restart the sandbox worker",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSandbox("restart", pidSandbox)
+	},
+}
 
 // ═══════════════════════════════════════════════════════════════
+
 // 8. notifier — multi-channel push (WebSocket + Slack/Telegram/...)
 // ═══════════════════════════════════════════════════════════════
 
@@ -454,6 +487,13 @@ func main() {
 	taskmanagerCmd.AddCommand(taskmanagerStartCmd)
 	taskmanagerCmd.AddCommand(taskmanagerStopCmd)
 	taskmanagerCmd.AddCommand(taskmanagerRestartCmd)
+
+	// 7. sandbox
+	rootCmd.AddCommand(sandboxCmd)
+	sandboxCmd.AddCommand(sandboxStartCmd)
+	sandboxCmd.AddCommand(sandboxStopCmd)
+	sandboxCmd.AddCommand(sandboxRestartCmd)
+
 
 	// 8. notifier
 	rootCmd.AddCommand(notifierCmd)

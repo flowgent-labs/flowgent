@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"log"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -35,6 +36,7 @@ func (s *PostgresStore) SetSchema(schema string) { s.schema = schema }
 
 func (s *PostgresStore) Init(ctx context.Context) error {
 	cfg, err := pgxpool.ParseConfig(s.dsn)
+	log.Printf("[pg] Init: connecting to %s", s.dsn)
 	if err != nil {
 		return fmt.Errorf("parse pg config: %w", err)
 	}
@@ -89,34 +91,67 @@ func (s *PostgresStore) SaveAgentFlowDefinition(ctx context.Context, def *model.
 
 func (s *PostgresStore) GetLatestAgentFlowDefinition(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT agentflow_id, version, definition, created_by, comment, created_at
-		 FROM agentflow_definitions WHERE agentflow_id=$1 ORDER BY version DESC LIMIT 1`, agentFlowID)
+		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
+		 FROM public.agentflow_definitions WHERE agentflow_id=$1 ORDER BY version DESC LIMIT 1`, agentFlowID)
 	return scanAgentFlowVersion(row)
 }
 
 func (s *PostgresStore) GetAgentFlowDefinition(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT agentflow_id, version, definition, created_by, comment, created_at
-		 FROM agentflow_definitions WHERE agentflow_id=$1 AND version=$2`, agentFlowID, version)
+		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
+		 FROM public.agentflow_definitions WHERE agentflow_id=$1 AND version=$2`, agentFlowID, version)
 	return scanAgentFlowVersion(row)
 }
 
 func (s *PostgresStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT agentflow_id, version, definition, created_by, comment, created_at
-		 FROM agentflow_definitions ORDER BY created_at DESC`)
+		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
+		 FROM public.agentflow_definitions ORDER BY created_at DESC`)
+	log.Printf("[pg] ListAgentFlowDefinitions ERROR: %v", err)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	log.Printf("[pg] ListAgentFlowDefinitions: starting query")
 	var defs []model.AgentFlowVersion
 	for rows.Next() {
 		d, err := scanAgentFlowVersionRow(rows)
 		if err != nil {
+			log.Printf("[pg] scanAgentFlowVersionRow error: %v", err)
 			continue
 		}
 		defs = append(defs, *d)
 	}
+	// Verify: log which PG server we are connected to
+	var pgHost string
+	if err := s.pool.QueryRow(ctx, "SELECT 1 AS connectivity_test").Scan(&pgHost); err == nil {
+		log.Printf("[pg] PG connectivity: OK (SELECT 1 = %s)", pgHost)
+	}
+	if err := s.pool.QueryRow(ctx, "SELECT 1").Scan(&pgHost); err != nil {
+		log.Printf("[pg] WARN: SELECT 1 failed: %v", err)
+	} else {
+		log.Printf("[pg] PG pool working, SELECT 1 = %s", pgHost)
+	}
+	// Debug: what tables can we see?
+	rows2, _ := s.pool.Query(ctx, "SELECT schemaname, tablename FROM pg_tables WHERE tablename LIKE '%agentflow%'")
+	if rows2 != nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var sn, tn string
+			if err := rows2.Scan(&sn, &tn); err == nil {
+				log.Printf("[pg] visible table: %s.%s", sn, tn)
+			}
+		}
+	}
+	var dbName string
+	if err := s.pool.QueryRow(ctx, "SELECT current_database()").Scan(&dbName); err == nil {
+		log.Printf("[pg] current database: %s", dbName)
+	}
+	var searchPath string
+	if err := s.pool.QueryRow(ctx, "SHOW search_path").Scan(&searchPath); err == nil {
+		log.Printf("[pg] search_path: %s", searchPath)
+	}
+	log.Printf("[pg] ListAgentFlowDefinitions: returning %d rows", len(defs))
 	return defs, nil
 }
 
@@ -238,7 +273,7 @@ func (s *PostgresStore) UpdateAgentFlowRun(ctx context.Context, run *model.Agent
 }
 
 func (s *PostgresStore) GetAgentFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
-	row := s.pool.QueryRow(ctx, `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at FROM agentflow_runs WHERE id=$1`, id)
+	row := s.pool.QueryRow(ctx, `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,tenant_id,namespace,priority,started_at,finished_at FROM agentflow_runs WHERE id=$1`, id)
 	return scanAgentFlowRun(row)
 }
 
@@ -260,7 +295,7 @@ func (s *PostgresStore) ListAgentFlowRuns(ctx context.Context, agentFlowID strin
 	return collectRunRows(rows)
 }
 
-const runSelectSQL = `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at FROM agentflow_runs`
+const runSelectSQL = `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,tenant_id,namespace,priority,started_at,finished_at FROM agentflow_runs`
 
 func (s *PostgresStore) ListActiveRuns(ctx context.Context) ([]model.AgentFlowRun, error) {
 	rows, err := s.pool.Query(ctx, runSelectSQL+" WHERE status IN ('RUNNING','PAUSED') ORDER BY created_at DESC")
@@ -347,7 +382,7 @@ func (s *PostgresStore) CreateHumanApproval(ctx context.Context, approval *model
 }
 
 func (s *PostgresStore) GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
-	row := s.pool.QueryRow(ctx, `SELECT task_run_id,token,status,approved,comment,timeout_seconds,created_at,updated_at,expires_at,resolved_at FROM human_approvals WHERE token=$1`, token)
+	row := s.pool.QueryRow(ctx, `SELECT task_run_id,token,status,(approved_at IS NOT NULL) as approved,comment,EXTRACT(EPOCH FROM GREATEST(timeout_at - NOW(), '0s'::interval))::int as timeout_seconds,created_at,updated_at,timeout_at as expires_at,approved_at as resolved_at FROM human_approvals WHERE token=$1`, token)
 	return scanHumanApproval(row)
 }
 
@@ -357,13 +392,13 @@ func (s *PostgresStore) UpdateHumanApproval(ctx context.Context, approval *model
 	if approval.Approved != nil {
 		approval.ResolvedAt = &now
 	}
-	_, err := s.pool.Exec(ctx, `UPDATE human_approvals SET status=$1,approved=$2,comment=$3,updated_at=$4,resolved_at=$5 WHERE token=$6`,
-		approval.Status, approval.Approved, approval.Comment, approval.UpdatedAt, approval.ResolvedAt, approval.Token)
+	_, err := s.pool.Exec(ctx, `UPDATE human_approvals SET status=$1,approved_at=CASE WHEN $2::boolean THEN NOW() ELSE approved_at END,rejected_at=CASE WHEN $2::boolean IS NOT NULL AND NOT $2::boolean THEN NOW() ELSE rejected_at END,comment=$3,updated_at=$4 WHERE token=$5`,
+		approval.Status, approval.Approved, approval.Comment, approval.UpdatedAt, approval.Token)
 	return err
 }
 
 func (s *PostgresStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
-	rows, err := s.pool.Query(ctx, `SELECT task_run_id,token,status,approved,comment,timeout_seconds,created_at,updated_at,expires_at,resolved_at FROM human_approvals WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > NOW())`)
+	rows, err := s.pool.Query(ctx, `SELECT task_run_id,token,status,(approved_at IS NOT NULL) as approved,comment,EXTRACT(EPOCH FROM GREATEST(timeout_at - NOW(), '0s'::interval))::int as timeout_seconds,created_at,updated_at,timeout_at as expires_at,approved_at as resolved_at FROM human_approvals WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > NOW())`)
 	if err != nil {
 		return nil, err
 	}
@@ -508,6 +543,7 @@ func collectRunRows(rows pgxRows) ([]model.AgentFlowRun, error) {
 	for rows.Next() {
 		r, err := scanAgentFlowRunRow(rows)
 		if err != nil {
+					log.Printf("[pg] scanAgentFlowRun error: %v", err)
 			continue
 		}
 		runs = append(runs, *r)

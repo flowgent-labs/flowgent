@@ -1660,10 +1660,10 @@ func startNotifierService() error {
 		return err
 	}
 
-	storeImpl := initStore(serviceCfg)
-	defer storeImpl.(interface{ Close() error }).Close()
+	api := newAPIServerClient()
+	log.Printf("[notifier] using apiserver at %s (NO direct DB)", api.baseURL)
 
-	notifSvc := createNotifierService(storeImpl, serviceCfg)
+	notifSvc := createNotifierService(nil, serviceCfg) // channels via apiserver REST, not PG
 	if notifSvc == nil {
 		log.Println("Notification service is disabled in config")
 		sigCh := make(chan os.Signal, 1)
@@ -1677,5 +1677,30 @@ func startNotifierService() error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	log.Println("Notification service shutting down")
+	return nil
+}
+
+func runSandbox(action, pidFile string) error {
+	switch action {
+	case "start":
+		if pidFile != "" { writePID(pidFile) }
+		log.Printf("Flowgent sandbox worker starting (pid=%d)", os.Getpid())
+		return startSandboxService()
+	case "stop": return stopByPID(pidFile)
+	case "restart":
+		_ = stopByPID(pidFile); time.Sleep(500 * time.Millisecond)
+		if pidFile != "" { writePID(pidFile) }
+		return startSandboxService()
+	default: return fmt.Errorf("unknown sandbox action: %s", action)
+	}
+}
+
+func startSandboxService() error {
+	log.Printf("Sandbox worker starting (pid=%d)", os.Getpid())
+	log.Println("Sandbox runner initializing — waiting for tasks via queue")
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	log.Println("Sandbox worker shutting down")
 	return nil
 }

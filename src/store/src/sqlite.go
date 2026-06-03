@@ -322,7 +322,7 @@ func scanAgentFlowRun(s scanner) (*model.AgentFlowRun, error) {
 	var varsB, outB, triggerPayload []byte
 	var errStr sql.NullString
 	var startedAt, finishedAt sql.NullTime
-	if err := s.Scan(&r.ID, &r.AgentFlowID, &r.Version, &r.Status, &varsB, &outB, &errStr, &r.Trigger.Type, &r.Trigger.Source, &triggerPayload, &r.CreatedAt, &r.UpdatedAt, &startedAt, &finishedAt); err != nil {
+	if err := s.Scan(&r.ID, &r.AgentFlowID, &r.Version, &r.Status, &varsB, &outB, &errStr, &r.Trigger.Type, &r.Trigger.Source, &triggerPayload, &r.CreatedAt, &r.UpdatedAt, &r.TenantID, &r.Namespace, &r.Priority, &startedAt, &finishedAt); err != nil {
 		return nil, err
 	}
 	if errStr.Valid {

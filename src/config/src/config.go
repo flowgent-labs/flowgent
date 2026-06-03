@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
+	"reflect"
 	"path/filepath"
 	"time"
 
@@ -416,6 +418,8 @@ func Load(path string) (*ServiceConfig, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	// Expand ${ENV_VAR} placeholders in string values (Spring Boot style)
+	expandEnvVars(reflect.ValueOf(&cfg).Elem())
 	return &cfg, nil
 }
 
@@ -575,4 +579,49 @@ type X402Cfg struct {
 	DefaultFacilitator string `json:"default_facilitator" yaml:"default_facilitator"`
 	Timeout            string `json:"timeout" yaml:"timeout"`
 	MaxRetries         int    `json:"max_retries" yaml:"max_retries"`
+}
+
+// expandEnvVars recursively walks a struct and replaces ${VAR} placeholders
+// in string values with the corresponding environment variable value.
+func expandEnvVars(v reflect.Value) {
+	if v.Kind() == reflect.Ptr { v = v.Elem() }
+	switch v.Kind() {
+	case reflect.String:
+		s := v.String()
+		if len(s) > 3 && s[0] == '$' && s[1] == '{' {
+			end := strings.IndexByte(s, '}')
+			if end > 2 {
+				envKey := s[2:end]
+				if envVal := os.Getenv(envKey); envVal != "" {
+					v.SetString(envVal)
+				}
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ { expandEnvVars(v.Field(i)) }
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			val := v.MapIndex(key)
+			if val.Kind() == reflect.Interface { val = val.Elem() }
+			if val.Kind() == reflect.String {
+				newVal := expandString(val.String())
+				v.SetMapIndex(key, reflect.ValueOf(newVal))
+			}
+		}
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ { expandEnvVars(v.Index(i)) }
+	}
+}
+
+func expandString(s string) string {
+	if len(s) > 3 && s[0] == '$' && s[1] == '{' {
+		end := strings.IndexByte(s, '}')
+		if end > 2 {
+			envKey := s[2:end]
+			if envVal := os.Getenv(envKey); envVal != "" {
+				return envVal
+			}
+		}
+	}
+	return s
 }

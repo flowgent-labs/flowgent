@@ -148,8 +148,8 @@ llm:
     bailian:
       endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       credentials:
-        api-key: "<YOUR_BAILIAN_API_KEY>"
-        #api-key-file: /path/to/.credentials
+        apikey: "${BAILIAN_APIKEY}"
+        #apikey-file: /path/to/.credentials
       #proxy: "socks5h://127.0.0.1:1080"   # optional SOCKS5/HTTP proxy for external API
       models:
         - name: qwen-plus
@@ -175,7 +175,7 @@ llm:
     deepseek:
       endpoint: https://api.deepseek.com/v1/chat/completions
       credentials:
-        api-key: "<YOUR_DEEPSEEK_API_KEY>"
+        apikey: "${DEEPSEEK_APIKEY}"
       #proxy: "socks5h://127.0.0.1:1080"
       models:
         - name: deepseek-chat
@@ -185,7 +185,7 @@ llm:
 #    anthropic:
 #      endpoint: https://api.anthropic.com/v1/messages
 #      credentials:
-#        api-key: "<YOUR_ANTHROPIC_API_KEY>"
+#        apikey: "<YOUR_ANTHROPIC_API_KEY>"
 #      models:
 #        - name: claude-sonnet-4-6
 #          temperature: 0.3

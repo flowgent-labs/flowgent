@@ -11,6 +11,7 @@ require (
 	github.com/flowgent-labs/flowgent/messaging v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/flowgent-labs/flowgent/notifier v0.0.0
+	github.com/flowgent-labs/flowgent/sandbox v0.0.0
 	github.com/flowgent-labs/flowgent/store v0.0.0
 	github.com/flowgent-labs/flowgent/wallet v0.0.0
 	github.com/a2aproject/a2a-go v0.3.15
@@ -26,6 +27,7 @@ replace (
 	github.com/flowgent-labs/flowgent/messaging => ../messaging
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
+	github.com/flowgent-labs/flowgent/sandbox => ../sandbox
 	github.com/flowgent-labs/flowgent/store => ../store
 	github.com/flowgent-labs/flowgent/wallet => ../wallet
 )

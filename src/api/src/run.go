@@ -23,6 +23,7 @@ type RunStore interface {
 	CancelAgentFlowRun(ctx context.Context, id string) error
 	GetTaskRunsByAgentFlowRun(ctx context.Context, agentFlowRunID string) ([]model.TaskRun, error)
 	GetTaskRun(ctx context.Context, id string) (*model.TaskRun, error)
+	UpdateTaskRun(ctx context.Context, task *model.TaskRun) error
 }
 
 // NewRunHandler creates a run management handler.
@@ -99,4 +100,22 @@ func (h *RunHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(task)
+}
+
+// UpdateTask handles PUT /runs/{id}/tasks/{task_id} — state write from TM/sandbox/notifier.
+// Accepts partial JSON: {"status": "SUCCESS", "output": {...}, "error": "..."}
+func (h *RunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+	var task model.TaskRun
+	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	task.ID = taskID
+	if err := h.store.UpdateTaskRun(r.Context(), &task); err != nil {
+		h.logger.Error("update task", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

@@ -427,7 +427,7 @@ func ModelRetry(r *model.RetryPolicy) RetryPolicy {
 	if r == nil {
 		return RetryPolicy{Max: 3, Initial: time.Second, MaxDelay: 30 * time.Second, Factor: 2.0}
 	}
-	rp := RetryPolicy{Max: r.Max, Initial: r.Initial, MaxDelay: r.MaxDelay, Factor: r.Factor}
+	rp := RetryPolicy{Max: r.Max, Initial: r.Initial.ToDuration(), MaxDelay: r.MaxDelay.ToDuration(), Factor: r.Factor}
 	if rp.Max <= 0 {
 		rp.Max = 3
 	}

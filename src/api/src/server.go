@@ -30,6 +30,7 @@ func RegisterRESTRoutes(
 
 	// ── AgentFlows (tenant-scoped) ─────────────────────────
 	mux.HandleFunc("GET /api/v1/{tenant}/agentflows", agentFlows.ListDefinitions)
+	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/watch", agentFlows.Watch)
 	mux.HandleFunc("POST /api/v1/{tenant}/agentflows", agentFlows.CreateDefinition)
 	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/{id}", agentFlows.GetDefinition)
 	mux.HandleFunc("PUT /api/v1/{tenant}/agentflows/{id}", agentFlows.UpdateDefinition)
@@ -44,6 +45,7 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{tenant}/runs/{id}/cancel", runs.Cancel)
 	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks", runs.ListTasks)
 	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks/{task_id}", runs.GetTask)
+	mux.HandleFunc("PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}", runs.UpdateTask)
 
 	// ── Human Approvals (global — token is unique) ────────
 	mux.HandleFunc("POST /api/v1/human/{token}/approve", human.Approve)

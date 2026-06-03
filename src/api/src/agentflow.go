@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/src/tracing"
@@ -16,10 +19,15 @@ import (
 var apiTracer = tracing.Tracer("flowgent/api")
 
 // AgentFlowHandler manages agentflow HTTP endpoints.
+// agentFlows is an in-memory cache of flow definitions, invalidated on CRUD.
+// watchVersion increments on every create/update/delete, used for long-poll watch.
 type AgentFlowHandler struct {
-	store      store.Store
-	logger     *utils.Logger
-	agentFlows map[string]*model.AgentFlowSpec
+	store        store.Store
+	logger       *utils.Logger
+	agentFlows   map[string]*model.AgentFlowSpec
+	mu           sync.RWMutex
+	watchVersion int64
+	watchChs     []chan struct{}
 }
 
 // NewAgentFlowHandler creates an agentflow HTTP handler.
@@ -32,7 +40,69 @@ func NewAgentFlowHandler(s store.Store, logger *utils.Logger, agentFlows []model
 		sw := subAgentFlows[k]
 		afMap[k] = &sw
 	}
-	return &AgentFlowHandler{store: s, logger: logger, agentFlows: afMap}
+	return &AgentFlowHandler{store: s, logger: logger, agentFlows: afMap, watchVersion: 1}
+}
+
+// notifyWatchers wakes up all long-poll watchers.
+func (h *AgentFlowHandler) notifyWatchers() {
+	h.mu.Lock()
+	h.watchVersion++
+	chs := h.watchChs
+	h.watchChs = nil
+	h.mu.Unlock()
+	for _, ch := range chs {
+		close(ch)
+	}
+}
+
+// Watch handles GET /agentflows?watch=true&since=N — long-poll for flow changes.
+// Blocks up to 30s, returns immediately if version > since.
+func (h *AgentFlowHandler) Watch(w http.ResponseWriter, r *http.Request) {
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	timeout := 30 * time.Second
+
+	h.mu.RLock()
+	currentVer := h.watchVersion
+	h.mu.RUnlock()
+
+	if currentVer > since {
+		h.ListDefinitions(w, r)
+		return
+	}
+
+	ch := make(chan struct{})
+	h.mu.Lock()
+	h.watchChs = append(h.watchChs, ch)
+	h.mu.Unlock()
+
+	select {
+	case <-ch:
+		h.ListDefinitions(w, r)
+	case <-time.After(timeout):
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"flows": []model.AgentFlowSpec{}, "version": currentVer})
+	case <-r.Context().Done():
+	}
+}
+
+// AgentFlows returns a copy of the in-memory flow cache.
+func (h *AgentFlowHandler) AgentFlows() map[string]*model.AgentFlowSpec {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	c := make(map[string]*model.AgentFlowSpec, len(h.agentFlows))
+	for k, v := range h.agentFlows { c[k] = v }
+	return c
+}
+
+// Reload replaces the in-memory flow cache (called on hot-reload).
+func (h *AgentFlowHandler) Reload(flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) {
+	h.mu.Lock()
+	h.agentFlows = make(map[string]*model.AgentFlowSpec)
+	for i := range flows { h.agentFlows[flows[i].ID] = &flows[i] }
+	for k, v := range subFlows { h.agentFlows[k] = &v }
+	h.mu.Unlock()
+	h.notifyWatchers()
+	log.Printf("[api] flow cache reloaded: %d flows", len(h.agentFlows))
 }
 
 // ─── Definition CRUD ───────────────────────────────────────
@@ -80,6 +150,7 @@ func (h *AgentFlowHandler) CreateDefinition(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(spec)
+	h.notifyWatchers()
 }
 
 // GetDefinition returns a single agentflow spec by ID.
@@ -119,6 +190,7 @@ func (h *AgentFlowHandler) UpdateDefinition(w http.ResponseWriter, r *http.Reque
 	h.agentFlows[id] = &spec
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(spec)
+	h.notifyWatchers()
 }
 
 // DeleteDefinition removes an agentflow specification.
@@ -131,6 +203,7 @@ func (h *AgentFlowHandler) DeleteDefinition(w http.ResponseWriter, r *http.Reque
 	}
 	delete(h.agentFlows, id)
 	w.WriteHeader(http.StatusNoContent)
+	h.notifyWatchers()
 }
 
 // ─── Trigger ───────────────────────────────────────────────
@@ -252,22 +325,4 @@ func (h *AgentFlowHandler) GetTaskRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)
-}
-
-// AgentFlows returns the currently loaded agentflow specs.
-func (h *AgentFlowHandler) AgentFlows() map[string]*model.AgentFlowSpec {
-	return h.agentFlows
-}
-
-// Reload updates the internal agentflow map from new specs.
-func (h *AgentFlowHandler) Reload(agentFlows []model.AgentFlowSpec, subAgentFlows map[string]model.AgentFlowSpec) {
-	afMap := make(map[string]*model.AgentFlowSpec)
-	for i := range agentFlows {
-		afMap[agentFlows[i].ID] = &agentFlows[i]
-	}
-	for k := range subAgentFlows {
-		sw := subAgentFlows[k]
-		afMap[k] = &sw
-	}
-	h.agentFlows = afMap
 }

@@ -22,8 +22,8 @@ func (e *HumanExecutor) TaskType() model.TaskType { return model.TaskHuman }
 
 func (e *HumanExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
 	timeout := 24 * time.Hour
-	if plan.NodeSpec.Approval != nil && plan.NodeSpec.Approval.Timeout > 0 {
-		timeout = plan.NodeSpec.Approval.Timeout
+	if plan.NodeSpec.Approval != nil && plan.NodeSpec.Approval.Timeout.IsPositive() {
+		timeout = plan.NodeSpec.Approval.Timeout.ToDuration()
 	}
 
 	approval := &model.HumanApproval{

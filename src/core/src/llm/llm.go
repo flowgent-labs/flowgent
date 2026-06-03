@@ -56,7 +56,7 @@ func New(cfg *config.LLMConfig) *Adapter {
 			Timeout:   a.timeout,
 		}
 		apiKey := ""
-		if v, ok := p.Credentials["api-key"]; ok {
+		if v, ok := p.Credentials["apikey"]; ok {
 			apiKey = v
 		}
 		rpm := 60
