@@ -8,11 +8,11 @@ import (
 
 	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 )
 
 func TestSlotWorker_DequeueAndExecute(t *testing.T) {
-	q := queue.NewMemoryQueue(10)
+	q := messaging.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	router.Register(&executor.NoopExecutor{})
 
@@ -27,7 +27,7 @@ func TestSlotWorker_DequeueAndExecute(t *testing.T) {
 		NodeSpec: &model.NodeSpec{Type: model.NoopNode},
 	}
 	payload, _ := json.Marshal(plan)
-	msg := &queue.Message{
+	msg := &messaging.Message{
 		ID:        "msg-1",
 		Topic:     "flowgent/exec",
 		Payload:   payload,
@@ -47,11 +47,11 @@ func TestSlotWorker_DequeueAndExecute(t *testing.T) {
 }
 
 func TestSlotWorker_InvalidPayload(t *testing.T) {
-	q := queue.NewMemoryQueue(10)
+	q := messaging.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	worker := NewSlotWorker("slot-2", "tm-test", q, router, nil, nil)
 
-	msg := &queue.Message{
+	msg := &messaging.Message{
 		ID:      "msg-bad",
 		Topic:   "flowgent/exec",
 		Payload: []byte("not-valid-json"),
@@ -70,7 +70,7 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 }
 
 func TestSlotWorker_ExecuteError(t *testing.T) {
-	q := queue.NewMemoryQueue(10)
+	q := messaging.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	// Register a failing executor
 	router.Register(&failingExecutor{})
@@ -85,7 +85,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 		NodeSpec: &model.NodeSpec{Type: model.NodeType("failing")},
 	}
 	payload, _ := json.Marshal(plan)
-	q.Push(context.Background(), &queue.Message{
+	q.Push(context.Background(), &messaging.Message{
 		ID: "msg-fail", Topic: "flowgent/exec", Payload: payload,
 		TaskRunID: "run-1", NodeID: "node-fail",
 	})

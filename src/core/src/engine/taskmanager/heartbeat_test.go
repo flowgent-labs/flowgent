@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 
@@ -12,8 +12,8 @@ func TestHeartbeatMonitor_RecordAndExpire(t *testing.T) {
 	q := testutil.NewTestQueue()
 	hm := NewHeartbeatMonitor(q, 100*time.Millisecond)
 
-	hm.recordBeat(&queue.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
-	hm.recordBeat(&queue.Heartbeat{TMID: "tm-2", Timestamp: time.Now()})
+	hm.recordBeat(&messaging.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
+	hm.recordBeat(&messaging.Heartbeat{TMID: "tm-2", Timestamp: time.Now()})
 
 	active := hm.ActiveTMs()
 	if len(active) != 2 {
@@ -39,11 +39,11 @@ func TestHeartbeatMonitor_KeepAlive(t *testing.T) {
 	q := testutil.NewTestQueue()
 	hm := NewHeartbeatMonitor(q, 100*time.Millisecond)
 
-	hm.recordBeat(&queue.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
+	hm.recordBeat(&messaging.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
 
 	// Refresh before expiry
 	time.Sleep(50 * time.Millisecond)
-	hm.recordBeat(&queue.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
+	hm.recordBeat(&messaging.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
 
 	// Check — should still be alive
 	hm.detectExpired()

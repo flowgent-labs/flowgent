@@ -10,7 +10,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/src"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 )
 
@@ -40,7 +40,7 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue      queue.Queue
+	Queue      messaging.Queue
 	Store      store.Store
 	Agents     []*config.AgentDef
 	MCPClients map[string]engine.MCPClient

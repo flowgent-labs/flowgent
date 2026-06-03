@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 
 // startHeartbeat begins a goroutine that periodically publishes heartbeat
 // messages to the queue. Called by TaskManager.Start.
-func startHeartbeat(tmID string, q queue.Queue, interval time.Duration) {
+func startHeartbeat(tmID string, q messaging.Queue, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
 	}
@@ -25,7 +25,7 @@ func startHeartbeat(tmID string, q queue.Queue, interval time.Duration) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			_ = q.PublishHeartbeat(context.Background(), &queue.Heartbeat{
+			_ = q.PublishHeartbeat(context.Background(), &messaging.Heartbeat{
 				TMID: tmID, Timestamp: time.Now(),
 			})
 		}
@@ -46,13 +46,13 @@ type TMState struct {
 // HeartbeatMonitor consumes heartbeats from the queue and detects
 // failed TMs by lease expiration. Used by the JM for failover.
 type HeartbeatMonitor struct {
-	q            queue.Queue
+	q            messaging.Queue
 	activeTMs    map[string]*TMState
 	mu           sync.Mutex
 	leaseTimeout time.Duration
 }
 
-func NewHeartbeatMonitor(q queue.Queue, leaseTimeout time.Duration) *HeartbeatMonitor {
+func NewHeartbeatMonitor(q messaging.Queue, leaseTimeout time.Duration) *HeartbeatMonitor {
 	if leaseTimeout <= 0 {
 		leaseTimeout = defaultLeaseTimeout
 	}
@@ -79,7 +79,7 @@ func (hm *HeartbeatMonitor) Start(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(hm.leaseTimeout / 2)
 		defer ticker.Stop()
-		hbCh := make(chan *queue.Heartbeat, 32)
+		hbCh := make(chan *messaging.Heartbeat, 32)
 		go hm.subscribe(ctx, hbCh)
 		for {
 			select {
@@ -94,7 +94,7 @@ func (hm *HeartbeatMonitor) Start(ctx context.Context) {
 	}()
 }
 
-func (hm *HeartbeatMonitor) subscribe(ctx context.Context, ch chan<- *queue.Heartbeat) {
+func (hm *HeartbeatMonitor) subscribe(ctx context.Context, ch chan<- *messaging.Heartbeat) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -109,7 +109,7 @@ func (hm *HeartbeatMonitor) subscribe(ctx context.Context, ch chan<- *queue.Hear
 	}
 }
 
-func (hm *HeartbeatMonitor) recordBeat(hb *queue.Heartbeat) {
+func (hm *HeartbeatMonitor) recordBeat(hb *messaging.Heartbeat) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	s, ok := hm.activeTMs[hb.TMID]

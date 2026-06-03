@@ -1,4 +1,4 @@
-package queue
+package messaging
 
 import (
 	"context"

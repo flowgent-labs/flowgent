@@ -22,13 +22,13 @@ import (
 type SlotWorker struct {
 	id      string
 	tmID    string
-	q       queue.Queue
+	q       messaging.Queue
 	router  *executor.TaskExecutorRouter
 	store   store.Store
 	metrics *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q queue.Queue, router *executor.TaskExecutorRouter, store store.Store, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID string, q messaging.Queue, router *executor.TaskExecutorRouter, store store.Store, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:      id,
 		tmID:    tmID,
@@ -126,7 +126,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *model.ExecutionP
 	}
 
 	b, _ := json.Marshal(status)
-	_ = sw.q.Push(ctx, &queue.Message{
+	_ = sw.q.Push(ctx, &messaging.Message{
 		ID:        fmt.Sprintf("status-%s-%s", plan.AgentFlowRunID, plan.NodeID),
 		TaskRunID: plan.AgentFlowRunID,
 		NodeID:    plan.NodeID,

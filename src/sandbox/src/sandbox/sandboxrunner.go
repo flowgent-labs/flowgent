@@ -49,7 +49,7 @@ type sandboxTrigger struct {
 // SandboxRunner consumes and executes sandbox triggers.
 type SandboxRunner struct {
 	ID        string
-	queue     queue.Queue
+	queue     messaging.Queue
 	policy    *model.SandboxPolicy
 	image     string
 	workspace string
@@ -58,7 +58,7 @@ type SandboxRunner struct {
 }
 
 // NewSandboxRunner creates a sandbox worker.
-func NewSandboxRunner(id string, q queue.Queue, image, workspace string, policy *model.SandboxPolicy) *SandboxRunner {
+func NewSandboxRunner(id string, q messaging.Queue, image, workspace string, policy *model.SandboxPolicy) *SandboxRunner {
 	if policy == nil {
 		policy = &model.SandboxPolicy{
 			Network:          model.NetworkPolicy{Mode: "none"},
@@ -164,7 +164,7 @@ func (w *SandboxRunner) checkBanned(script string) string {
 
 func (w *SandboxRunner) publishResult(msgID string, trigger *sandboxTrigger, result *model.TaskResult) {
 	payload, _ := json.Marshal(result)
-	_ = w.queue.Push(context.Background(), &queue.Message{
+	_ = w.queue.Push(context.Background(), &messaging.Message{
 		ID:      msgID,
 		Topic:   "flowgent/sandbox/result/" + trigger.PlanID,
 		Payload: payload,

@@ -13,7 +13,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -29,7 +29,7 @@ import (
 // scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
 // is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
 type KubernetesResourceManager struct {
-	q           queue.Queue
+	q           messaging.Queue
 	namespace   string
 	deployName  string
 	kubeClient  kubernetes.Interface
@@ -114,7 +114,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	return rm, nil
 }
 
-func (s *KubernetesResourceManager) SetQueue(q queue.Queue) { s.q = q }
+func (s *KubernetesResourceManager) SetQueue(q messaging.Queue) { s.q = q }
 func (s *KubernetesResourceManager) Provider() engine.Provider {
 	return engine.ProviderKubernetes
 }
@@ -151,7 +151,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.Ex
 	// TM slots compete via $share/tm-pool/{topic_prefix}/tasks/plans
 	topic := s.q.Topic() + "/tasks/plans"
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Push(ctx, &queue.Message{
+	if err := s.q.Push(ctx, &messaging.Message{
 		ID: plan.PlanID, Topic: topic, TaskRunID: plan.AgentFlowRunID, NodeID: plan.NodeID, Payload: payload,
 	}); err != nil {
 		return nil, fmt.Errorf("kubernetes rm publish: %w", err)

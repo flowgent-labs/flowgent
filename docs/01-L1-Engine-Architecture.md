@@ -119,7 +119,7 @@ mode: session         # "session" or "application"
 | controller | — | **Helm** | Only in application mode — polls PG, creates dynamic JMs |
 | jobmanager | **Helm** | **Controller (dynamic)** | Session: shared pool. App: `buildJMDeployment()` per-flow |
 | taskmanager | **Helm** | **JM auto-scale** | Session: admin-managed replicas. App: JM's K8s RM scales |
-| sandbox | **In-TM (inline)** | **In-TM (inline)** | NOT a separate pod. TM slots call sandbox(seccomp) wrapper directly for skill script execution. |
+| sandbox | **In-TM (inline)** | **In-TM (inline)** | NOT a separate pod. TM slots fork+exec sandbox(seccomp) wrapper inline per skill node. seccomp-bpf filter installed/destroyed per execution at syscall level. Equivalent to Flink's operator-chain concept — no extra pod scheduling. |
 | notifier | Helm | Helm | Both modes. Session: shared workspace vol. App: dedicated vol. |
 | a2a | optional | optional | `--set a2a.enabled=true` |
 | wallet | optional | optional | `--set wallet.enabled=true` |
@@ -139,7 +139,7 @@ API Server handles triggers directly → creates PENDING runs → JM poller exec
 apiserver + controller + notifier
 ```
 
-Controller polls PG → creates dedicated jobmanager/taskmanager/sandbox per grade-priority flow.
+Controller watches apiserver → creates dedicated jobmanager for grade-priority flows. TM pods auto-scale via K8sRM. Sandbox runs inline in TM slots (no separate pods).
 
 | | Session | Application |
 |---|---|---|
@@ -259,6 +259,7 @@ flowgent.io/mode:         "session" | "application"
 | **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
 | **JM unification: same binary, same DAG engine for both modes** | Session: `jobmanager start` → apiserver GET runs. Application: `jobmanager start --flow-id <id>` → apiserver GET runs for that flow. |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
+| **Sandbox inline in TM, not a separate pod (Flink-aligned)** | Flink's boundary stops at TM pod — operators execute in-process, not in separate pods. Making sandbox a separate pod would require TM to embed a "sandbox-RM" (analogous to JM's K8sRM) just to manage sandbox pods — an unnecessary layer. Scripts are agent-generated at runtime (unpredictable count/lifetime), making pod pre-allocation impossible. Inline fork+exec via seccomp-bpf wrapper delivers ms-level startup vs seconds for pod creation. 95% of use cases are covered by inline isolation; a future "hard isolation" mode (firecracker/gVisor microVM) can be added as an escape hatch for untrusted third-party code. |
 | **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-flow per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See §15 for full design. |
 
 ---

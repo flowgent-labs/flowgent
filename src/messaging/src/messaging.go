@@ -1,8 +1,23 @@
-package queue
+package messaging
 
 import (
 	"context"
 	"time"
+)
+
+// ─── Topic Constants ───────────────────────────────────────────
+const (
+	TopicPrefix       = "flowgent/v1"
+	TopicExec         = TopicPrefix + "/exec"            // JM → TM dispatch
+	TopicExecResult   = TopicPrefix + "/exec/result"     // TM → JM result
+	TopicSandboxTrig  = TopicPrefix + "/sandbox/trigger" // TM → sandbox
+	TopicSandboxRes   = TopicPrefix + "/sandbox/result"  // sandbox → TM
+	TopicHeartbeat    = TopicPrefix + "/heartbeat"       // TM → JM liveness
+	TopicCtrlJMCreate = TopicPrefix + "/ctrl/jm/create"  // Controller → JM
+	TopicNotifyEvent  = TopicPrefix + "/notify/event"    // → notifier
+	TopicNotifyResult = TopicPrefix + "/notify/result"   // notifier → TM
+	TopicNotifyPodWS  = TopicPrefix + "/notify/pod"      // WS routing
+	TopicNotifyQueue  = TopicPrefix + "/notify/queue"    // queue consumer
 )
 
 // Message represents a queue message for distributed execution.

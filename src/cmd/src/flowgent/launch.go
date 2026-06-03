@@ -20,7 +20,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flowgent-labs/flowgent/api/src"
+	handler "github.com/flowgent-labs/flowgent/api/src/handler"
 	"github.com/flowgent-labs/flowgent/common/src/tracing"
+	"github.com/flowgent-labs/flowgent/core/src/client"
 	"github.com/flowgent-labs/flowgent/common/src/utils"
 	"github.com/flowgent-labs/flowgent/config/src"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
@@ -32,7 +34,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/src/llm"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/notifier/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	messaging "github.com/flowgent-labs/flowgent/messaging/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -331,13 +333,13 @@ func startServer(mode string) {
 	}
 
 	// ── API Handlers ───────────────────────────────────
-	healthHandler := &api.HealthHandler{}
-	agentFlowHandler := api.NewAgentFlowHandler(storeImpl, logger, agentFlows, subAgentFlows)
-	agentHandler := api.NewAgentHandler(storeImpl, logger)
-	humanHandler := api.NewHumanHandler(storeImpl, logger)
-	triggerDispatcher := api.NewTriggerDispatcher(storeImpl, agentFlows)
-	runHandler := api.NewRunHandler(storeImpl, logger)
-	notifHandler := api.NewNotificationHandler(storeImpl, logger)
+	healthHandler := &handler.HealthHandler{}
+	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows)
+	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
+	humanHandler := handler.NewHumanHandler(storeImpl, logger)
+	triggerDispatcher := agentFlowHandler
+	runHandler := handler.NewFlowRunHandler(storeImpl, logger)
+	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
 
 	// ── Cron ───────────────────────────────────────────
 	cronSched := trigger.NewScheduleTrigger()
@@ -375,7 +377,7 @@ func startServer(mode string) {
 				for range t.C {
 					nf, nsf, _ := config.ReloadAgentFlows(serviceCfg, cfgPath)
 					agentFlowHandler.Reload(nf, nsf)
-					triggerDispatcher.Reload(nf)
+					triggerDispatcher.Reload(nf, nsf)
 				}
 			}()
 		}
@@ -399,13 +401,13 @@ func startServer(mode string) {
 	}
 
 	// ── WebSocket Bridge ─────────────────────────────────
-	var wsBridge *api.WSBridge
+	var wsBridge *handler.NotifierWSBridge
 	if notifSvc != nil {
-		wsBridge = api.NewWSBridge(&notifToWSAdapter{svc: notifSvc}, logger)
+		wsBridge = handler.NewNotifierWSBridge(&notifToWSAdapter{svc: notifSvc}, )
 	}
 
 	// ── REST API Server ────────────────────────────────
-	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler, runHandler, humanHandler, triggerDispatcher, notifHandler, wsBridge)
+	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler, runHandler, humanHandler, notifHandler, wsBridge)
 	var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
 		restHandler = authMiddleware(serviceCfg.Auth, restMux)
@@ -1041,7 +1043,7 @@ type notifToWSAdapter struct {
 	svc *notifier.Service
 }
 
-func (a *notifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (api.WSConnection, error) {
+func (a *notifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (handler.WSConn, error) {
 	conn, err := a.svc.RegisterWS(ctx, agentFlowID)
 	if err != nil {
 		return nil, err
@@ -1614,21 +1616,21 @@ func newJobManagerConfig(cfg *config.ServiceConfig) *jobmanager.JobManagerConfig
 	}
 }
 
-func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) queue.Queue {
+func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Queue {
 	// Determine if this is a distributed deployment (Helm — session or application mode).
 	// In distributed mode, MQTT is mandatory; failing to connect is a fatal error.
 	distributed := cfg != nil && (cfg.Deployment.Mode == "session" || cfg.Deployment.Mode == "application")
 
 	qc := cfg.Queue
 	if qc.Type == "mqtt" && qc.MQTT.Broker != "" {
-		mqc := &queue.MQTTConfig{
+		mqc := &messaging.MQTTConfig{
 			Broker:   qc.MQTT.Broker,
 			ClientID: clientID,
 			Username: qc.MQTT.Username,
 			Password: qc.MQTT.Password,
 			Topic:    qc.MQTT.TopicPrefix,
 		}
-		mq, err := queue.NewMQTTQueue(mqc)
+		mq, err := messaging.NewMQTTQueue(mqc)
 		if err == nil {
 			return mq
 		}
@@ -1638,7 +1640,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) queue.Queue 
 		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory queue", err)
 	}
 	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
-		mq, err := queue.NewMQTTQueue(&queue.MQTTConfig{Broker: broker, ClientID: clientID, Topic: "flowgent/exec"})
+		mq, err := messaging.NewMQTTQueue(&messaging.MQTTConfig{Broker: broker, ClientID: clientID, Topic: "flowgent/exec"})
 		if err == nil {
 			return mq
 		}
@@ -1651,7 +1653,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) queue.Queue 
 		log.Fatalf("FATAL: MQTT broker not configured. In %s mode, set queue.mqtt.broker in flowgent.yaml or FLOWGENT_MQTT_BROKER env var.", cfg.Deployment.Mode)
 	}
 	log.Printf("WARNING: Using in-memory queue (local dev mode — not suitable for distributed deployment)")
-	return queue.NewMemoryQueue(1000)
+	return messaging.NewMemoryQueue(1000)
 }
 
 func startNotifierService() error {
@@ -1660,8 +1662,8 @@ func startNotifierService() error {
 		return err
 	}
 
-	api := newAPIServerClient()
-	log.Printf("[notifier] using apiserver at %s (NO direct DB)", api.baseURL)
+	api := client.NewFlowgentClient()
+	log.Printf("[notifier] using apiserver at %s (NO direct DB)", api.BaseURL)
 
 	notifSvc := createNotifierService(nil, serviceCfg) // channels via apiserver REST, not PG
 	if notifSvc == nil {

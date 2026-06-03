@@ -1,18 +1,21 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/flowgent-labs/flowgent/api/src/handler"
+)
 
 // RegisterRESTRoutes returns a ServeMux with all REST API routes.
 // Tenant-scoped paths use {tenant} for multi-tenant isolation.
 func RegisterRESTRoutes(
-	health *HealthHandler,
-	agentFlows *AgentFlowHandler,
-	agents *AgentHandler,
-	runs *RunHandler,
-	human *HumanHandler,
-	triggers *TriggerDispatcher,
-	notif *NotificationHandler,
-	ws *WSBridge,
+	health *handler.HealthHandler,
+	flowDef *handler.FlowDefHandler,
+	agentDef *handler.AgentDefHandler,
+	flowRun *handler.FlowRunHandler,
+	human *handler.HumanHandler,
+	notif *handler.NotifierHandler,
+	ws *handler.NotifierWSBridge,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -22,38 +25,38 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /_/swagger-ui", SwaggerUIHandler)
 
 	// ── Agents (tenant-scoped) ─────────────────────────────
-	mux.HandleFunc("GET /api/v1/{tenant}/agents", agents.List)
-	mux.HandleFunc("POST /api/v1/{tenant}/agents", agents.Create)
-	mux.HandleFunc("GET /api/v1/{tenant}/agents/{name}", agents.Get)
-	mux.HandleFunc("PUT /api/v1/{tenant}/agents/{name}", agents.Update)
-	mux.HandleFunc("DELETE /api/v1/{tenant}/agents/{name}", agents.Delete)
+	mux.HandleFunc("GET /api/v1/{tenant}/agents", agentDef.List)
+	mux.HandleFunc("POST /api/v1/{tenant}/agents", agentDef.Create)
+	mux.HandleFunc("GET /api/v1/{tenant}/agents/{name}", agentDef.Get)
+	mux.HandleFunc("PUT /api/v1/{tenant}/agents/{name}", agentDef.Update)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/agents/{name}", agentDef.Delete)
 
 	// ── AgentFlows (tenant-scoped) ─────────────────────────
-	mux.HandleFunc("GET /api/v1/{tenant}/agentflows", agentFlows.ListDefinitions)
-	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/watch", agentFlows.Watch)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows", agentFlows.CreateDefinition)
-	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/{id}", agentFlows.GetDefinition)
-	mux.HandleFunc("PUT /api/v1/{tenant}/agentflows/{id}", agentFlows.UpdateDefinition)
-	mux.HandleFunc("DELETE /api/v1/{tenant}/agentflows/{id}", agentFlows.DeleteDefinition)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/trigger", agentFlows.Trigger)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/{id}/trigger", agentFlows.TriggerByID)
+	mux.HandleFunc("GET /api/v1/{tenant}/agentflows", flowDef.List)
+	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/watch", flowDef.Watch)
+	mux.HandleFunc("POST /api/v1/{tenant}/agentflows", flowDef.Create)
+	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/{id}", flowDef.Get)
+	mux.HandleFunc("PUT /api/v1/{tenant}/agentflows/{id}", flowDef.Update)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/agentflows/{id}", flowDef.Delete)
+	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/trigger", flowDef.Trigger)
+	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/{id}/trigger", flowDef.TriggerByID)
 
 	// ── Runs (tenant-scoped) ───────────────────────────────
-	mux.HandleFunc("GET /api/v1/{tenant}/runs", runs.List)
-	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}", runs.Get)
-	mux.HandleFunc("DELETE /api/v1/{tenant}/runs/{id}", runs.Delete)
-	mux.HandleFunc("POST /api/v1/{tenant}/runs/{id}/cancel", runs.Cancel)
-	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks", runs.ListTasks)
-	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks/{task_id}", runs.GetTask)
-	mux.HandleFunc("PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}", runs.UpdateTask)
+	mux.HandleFunc("GET /api/v1/{tenant}/runs", flowRun.List)
+	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}", flowRun.Get)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/runs/{id}", flowRun.Delete)
+	mux.HandleFunc("POST /api/v1/{tenant}/runs/{id}/cancel", flowRun.Cancel)
+	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks", flowRun.ListTasks)
+	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks/{task_id}", flowRun.GetTask)
+	mux.HandleFunc("PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}", flowRun.UpdateTask)
 
 	// ── Human Approvals (global — token is unique) ────────
 	mux.HandleFunc("POST /api/v1/human/{token}/approve", human.Approve)
 	mux.HandleFunc("POST /api/v1/human/{token}/reject", human.Reject)
 
 	// ── Webhooks (global — external services, non-tenant prefix) ──
-	mux.HandleFunc("POST /_/webhooks/{provider}", triggers.Webhook)
-	mux.HandleFunc("POST /_/webhooks/github", triggers.Webhook)
+	mux.HandleFunc("POST /_/webhooks/{provider}", flowDef.Trigger)
+	mux.HandleFunc("POST /_/webhooks/github", flowDef.Trigger)
 
 	// ── Notification Channels (tenant-scoped) ──────────────
 	mux.HandleFunc("GET /api/v1/{tenant}/notifications/channels", notif.ListChannels)

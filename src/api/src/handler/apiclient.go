@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"bytes"
@@ -18,21 +18,21 @@ import (
 // Used by non-DB components (controller, JM, TM, sandbox, notifier)
 // instead of direct PG connections.
 type apiserverClient struct {
-	baseURL string
+	BaseURL string
 }
 
-func newAPIServerClient() *apiserverClient {
+func NewAPIServerClient() *apiserverClient {
 	baseURL := os.Getenv("FLOWGENT_APISERVER_URL")
 	if baseURL == "" {
 		baseURL = "http://flowgent-apiserver:9999"
 	}
 	log.Printf("[api-client] using apiserver at %s", baseURL)
-	return &apiserverClient{baseURL: baseURL}
+	return &apiserverClient{BaseURL: baseURL}
 }
 
 // listFlows calls GET /api/v1/{tenant}/agentflows
 func (c *apiserverClient) listFlows(ctx context.Context, tenant string) ([]model.AgentFlowVersion, error) {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows", c.baseURL, tenant)
+	url := fmt.Sprintf("%s/api/v1/%s/agentflows", c.BaseURL, tenant)
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -53,7 +53,7 @@ func (c *apiserverClient) listFlows(ctx context.Context, tenant string) ([]model
 
 // watchFlows calls GET /api/v1/{tenant}/agentflows/watch?since=N (long-poll)
 func (c *apiserverClient) watchFlows(ctx context.Context, tenant string, since int64) ([]model.AgentFlowVersion, int64, error) {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows/watch?since=%d", c.baseURL, tenant, since)
+	url := fmt.Sprintf("%s/api/v1/%s/agentflows/watch?since=%d", c.BaseURL, tenant, since)
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -81,7 +81,7 @@ func (c *apiserverClient) watchFlows(ctx context.Context, tenant string, since i
 
 // createRun calls POST /api/v1/{tenant}/agentflows/trigger
 func (c *apiserverClient) createRun(ctx context.Context, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) error {
-	url := fmt.Sprintf("%s/api/v1/default/agentflows/trigger", c.baseURL)
+	url := fmt.Sprintf("%s/api/v1/default/agentflows/trigger", c.BaseURL)
 	payload := map[string]interface{}{
 		"agentflow_id": agentFlowID,
 		"vars":         vars,
@@ -105,7 +105,7 @@ func (c *apiserverClient) createRun(ctx context.Context, agentFlowID string, var
 
 // getFlowSpec calls GET /api/v1/{tenant}/agentflows/{id}
 func (c *apiserverClient) getFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
-	url := fmt.Sprintf("%s/api/v1/default/agentflows/%s", c.baseURL, agentFlowID)
+	url := fmt.Sprintf("%s/api/v1/default/agentflows/%s", c.BaseURL, agentFlowID)
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -127,7 +127,7 @@ func (c *apiserverClient) getFlowSpec(ctx context.Context, agentFlowID string) (
 
 // getRun calls GET /api/v1/{tenant}/runs/{id}
 func (c *apiserverClient) getRun(ctx context.Context, runID string) (*model.AgentFlowRun, error) {
-	url := fmt.Sprintf("%s/api/v1/default/runs/%s", c.baseURL, runID)
+	url := fmt.Sprintf("%s/api/v1/default/runs/%s", c.BaseURL, runID)
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil { return nil, fmt.Errorf("apiserver getRun: %w", err) }
@@ -141,7 +141,7 @@ func (c *apiserverClient) getRun(ctx context.Context, runID string) (*model.Agen
 
 // updateTask calls PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}
 func (c *apiserverClient) updateTask(ctx context.Context, taskID string, status string, output map[string]any, errStr string) error {
-	url := fmt.Sprintf("%s/api/v1/default/runs/_/tasks/%s", c.baseURL, taskID)
+	url := fmt.Sprintf("%s/api/v1/default/runs/_/tasks/%s", c.BaseURL, taskID)
 	payload := map[string]interface{}{
 		"id":     taskID,
 		"status": status,
@@ -162,23 +162,23 @@ func (c *apiserverClient) updateTask(ctx context.Context, taskID string, status 
 	return nil
 }
 
-// apiStoreWrapper delegates UpdateTaskRun and SaveExecutionPlan to apiserver API,
+// APIStoreWrapper delegates UpdateTaskRun and SaveExecutionPlan to apiserver API,
 // while passing all other Store methods through to the underlying store.
 // This allows TM to use the apiserver for state writes while keeping read compatibility.
-type apiStoreWrapper struct {
+type APIStoreWrapper struct {
 	store.Store       // embeds all read methods
 	api *apiserverClient
 }
 
-func newAPIStoreWrapper(inner store.Store, api *apiserverClient) store.Store {
-	return &apiStoreWrapper{Store: inner, api: api}
+func NewAPIStoreWrapper(inner store.Store, api *apiserverClient) store.Store {
+	return &APIStoreWrapper{Store: inner, api: api}
 }
 
-func (w *apiStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {
+func (w *APIStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {
 	return w.api.updateTask(ctx, task.ID, string(task.Status), task.Output, task.Error)
 }
 
-func (w *apiStoreWrapper) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
+func (w *APIStoreWrapper) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
 	// ExecutionPlans are dispatched via MQTT — persistence can go through apiserver
 	log.Printf("[api-store] SaveExecutionPlan: %s → apiserver", plan.PlanID[:8])
 	return nil // plan already dispatched via MQTT, apiserver creates task_runs
