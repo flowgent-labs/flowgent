@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/cache/src"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
 	messaging "github.com/flowgent-labs/flowgent/messaging/src"
@@ -25,11 +26,25 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// RMTMState is the persisted state of TM scaling for JM failover.
+type RMTMState struct {
+	CurrentTMs   int32     `json:"current_tms"`
+	SlotsPerTM   int       `json:"slots_per_tm"`
+	MinTMs       int       `json:"min_tms"`
+	MaxTMs       int       `json:"max_tms"`
+	PendingPlans int64     `json:"pending_plans"`
+	LastActivity time.Time `json:"last_activity"`
+}
+
 // KubernetesResourceManager dispatches plans to TM pods via MQTT with elastic
 // scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
 // is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
+//
+// State is persisted to cache so that on JM failover the new JM can restore
+// the current TM replica count and slot allocation without querying K8s.
 type KubernetesResourceManager struct {
 	q           messaging.Messager
+	cache       cache.ICache
 	namespace   string
 	deployName  string
 	kubeClient  kubernetes.Interface
@@ -84,6 +99,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	ctx, cancel := context.WithCancel(context.Background())
 	rm := &KubernetesResourceManager{
 		q:           nil, // set via SetQueue
+		cache:       cfg.Cache,
 		namespace:   cfg.K8sNamespace,
 		deployName:  cfg.K8sDeploymentName,
 		kubeClient:  clientset,
@@ -98,6 +114,11 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		cancel:      cancel,
 	}
 
+	// Restore TM state from cache (JM failover recovery).
+	if cfg.Cache != nil {
+		rm.restoreFromCache(ctx)
+	}
+
 	if err := rm.ensureDeployment(ctx); err != nil {
 		slog.Warn("kubernetes rm: deployment check failed (will retry in loop)", "err", err)
 	}
@@ -106,6 +127,8 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		"deployment", rm.deployName, "namespace", rm.namespace, "replicas", rm.minTMs)
 	if err := rm.scaleDeployment(ctx, int32(rm.minTMs)); err != nil {
 		slog.Warn("kubernetes rm: initial scale failed", "err", err)
+	} else {
+		rm.persistToCache(ctx)
 	}
 
 	return rm, nil
@@ -205,6 +228,7 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 				return
 			}
 			atomic.StoreInt32(&s.currentTMs, int32(neededTMs))
+			s.persistToCache(ctx)
 		}
 		return
 	}
@@ -221,6 +245,7 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 			return
 		}
 		atomic.StoreInt32(&s.currentTMs, int32(targetTMs))
+		s.persistToCache(ctx)
 	}
 }
 
@@ -319,6 +344,58 @@ func getEnvOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// ─── Cache persistence for JM failover ─────────────────
+
+func cacheKey(namespace, deployName string) string {
+	return fmt.Sprintf("flowgent:rm:%s:%s", namespace, deployName)
+}
+
+func (s *KubernetesResourceManager) persistToCache(ctx context.Context) {
+	if s.cache == nil {
+		return
+	}
+	state := RMTMState{
+		CurrentTMs:   atomic.LoadInt32(&s.currentTMs),
+		SlotsPerTM:   s.slotsPerTM,
+		MinTMs:       s.minTMs,
+		MaxTMs:       s.maxTMs,
+		PendingPlans: atomic.LoadInt64(&s.pendingPlans),
+	}
+	s.mu.Lock()
+	state.LastActivity = s.lastActivity
+	s.mu.Unlock()
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		slog.Warn("kubernetes rm: marshal state for cache", "err", err)
+		return
+	}
+	if err := s.cache.Set(ctx, cacheKey(s.namespace, s.deployName), data, 30*time.Second); err != nil {
+		slog.Debug("kubernetes rm: cache set failed", "err", err)
+	}
+}
+
+func (s *KubernetesResourceManager) restoreFromCache(ctx context.Context) {
+	data, err := s.cache.Get(ctx, cacheKey(s.namespace, s.deployName))
+	if err != nil || data == nil {
+		return
+	}
+	var state RMTMState
+	if err := json.Unmarshal(data, &state); err != nil {
+		slog.Warn("kubernetes rm: unmarshal cached state", "err", err)
+		return
+	}
+	atomic.StoreInt32(&s.currentTMs, state.CurrentTMs)
+	s.mu.Lock()
+	if !state.LastActivity.IsZero() {
+		s.lastActivity = state.LastActivity
+	}
+	s.mu.Unlock()
+	atomic.StoreInt64(&s.pendingPlans, state.PendingPlans)
+	slog.Info("kubernetes rm: restored state from cache",
+		"current_tms", state.CurrentTMs, "last_activity", state.LastActivity)
 }
 
 // ─── Exported helpers for integration tests ──────────────

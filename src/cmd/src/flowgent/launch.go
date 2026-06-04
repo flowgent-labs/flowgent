@@ -853,9 +853,9 @@ func startTaskManager() error {
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Queue: q, Store: dbStore,
 		Agents: agentPtrs, MCPClients: mcpMap, Logger: logger,
-		SandboxQueue: q,
-
-		SandboxPolicy: svcCfg.Sandbox.Policy,
+		SandboxQueue:     q,
+		SandboxPolicy:    svcCfg.Sandbox.Policy,
+		SandboxWorkspace: svcCfg.Sandbox.Workspace,
 	})
 	if err != nil {
 		return fmt.Errorf("create taskmanager: %w", err)

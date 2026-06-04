@@ -275,12 +275,10 @@ orchestration:
     standard:
       enabled: false                # DB-backed agentflows (future Flowgent UI)
 
-# ── Sandbox ───────────────────────────────────────────────────────────────────
-#    Secure script execution worker (python3/bash/node) with network isolation.
+# ── Sandbox (inline in TaskManager) ────────────────────────────────────────────
+#    Secure script execution runs inside TM pods — no separate sandbox deployment.
 sandbox:
-  enabled: false                   # set true to enable sandbox worker
-  image: "flowgent-sandbox:latest"
-  workspace: "/var/flowgent/workspace"   # single persistent volume, per-{tenant}/{flow_id} subdirs
+  workspace: "/var/flowgent/workspace"   # shared PVC, per-{tenant}/{flow_id} subdirs
   policy:
     network:
       mode: none                   # none | allowlist | denylist

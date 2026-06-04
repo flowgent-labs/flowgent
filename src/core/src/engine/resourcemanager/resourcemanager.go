@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/cache/src"
 	"github.com/flowgent-labs/flowgent/common/src/utils"
 	"github.com/flowgent-labs/flowgent/config/src"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
@@ -40,8 +41,9 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue      messaging.Messager
-	Store      store.Store
+	Queue messaging.Messager
+	Cache cache.ICache
+	Store store.Store
 	Agents     []*config.AgentDef
 	MCPClients map[string]engine.MCPClient
 	LLMClient  engine.LLMClient

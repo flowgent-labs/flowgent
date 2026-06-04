@@ -205,11 +205,9 @@ type OrchestrationConfig struct {
 	MaxNodeRetries       int         `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
-// SandboxConfig configures the sandbox execution environment (global).
+// SandboxConfig configures the inline sandbox execution environment (runs inside TM pods).
 type SandboxConfig struct {
-	Enabled   bool                 `json:"enabled" yaml:"enabled"`
-	Image     string               `json:"image" yaml:"image"`
-	Workspace string               `json:"workspace" yaml:"workspace"` // persistent volume, per-{tenant}/{flow_id} subdirs
+	Workspace string               `json:"workspace" yaml:"workspace"`
 	Policy    *model.SandboxPolicy `json:"policy" yaml:"policy"`
 }
 

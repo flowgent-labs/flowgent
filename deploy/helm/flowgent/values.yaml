@@ -12,8 +12,6 @@ global:
     autoCleanup: true
     taskmanager:
       slots: 4
-    sandbox:
-      slots: 4
 
   image:
     repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent
@@ -132,33 +130,24 @@ jobmanager:
 
 # ═══════════════════════════════════════════════════════════════
 # TaskManager — [session] Elastic Worker Pool
+#   Sandbox is inline in TM pods (not separate deployment).
+#   Workspace, policy, and credentials are all under taskmanager.
 # ═══════════════════════════════════════════════════════════════
 taskmanager:
   replicas: 2
   image: ""
   slots: 4
-  resources:
-    requests: { cpu: "200m", memory: "256Mi" }
-    limits:   { cpu: "2", memory: "2Gi" }
-
-# ═══════════════════════════════════════════════════════════════
-# Sandbox — [session] Secure Script Execution Worker
-# ═══════════════════════════════════════════════════════════════
-sandbox:
-  enabled: true
-  replicas: 2
-  image: ""
-  slots: 4
-  workspace: "/var/flowgent/workspace"     # PVC mount path — shared across all sandbox pods
-  workspaceSize: "10Gi"                    # PVC size
-  # Credentials injected as env vars into sandbox pods for script access
+  # Sandbox workspace (shared PVC for script I/O between TM and inline sandbox)
+  workspace: "/var/flowgent/workspace"
+  workspaceSize: "10Gi"
+  # Credentials injected as env vars into TM pods for inline sandbox scripts
   credentials:
     nexus3:
       url: "http://nexus3:8081"
-      secret: "nexus3-creds"               # K8s secret with keys: username, password
+      secret: "nexus3-creds"
     sonatypeiq:
       url: "http://sonatypeiq:8070"
-      secret: "iq-creds"                   # K8s secret with keys: username, password (optional)
+      secret: "iq-creds"
   policy:
     network:
       mode: "none"
@@ -175,8 +164,8 @@ sandbox:
       cpu: "2000m"
       memory: "1Gi"
   resources:
-    requests: { cpu: "100m", memory: "128Mi" }
-    limits:   { cpu: "1", memory: "1Gi" }
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "2", memory: "2Gi" }
 
 # ═══════════════════════════════════════════════════════════════
 # Wallet — [optional] x402 Key Management & Payment Signing
