@@ -82,7 +82,7 @@ func toJSON(v any) []byte {
 
 // ─── AgentFlow definitions ─────────────────────────────────
 
-func (s *PostgresStore) SaveAgentFlowDefinition(ctx context.Context, def *model.AgentFlowVersion) error {
+func (s *PostgresStore) SaveAgentFlow(ctx context.Context, def *model.AgentFlowVersion) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment)
 		 VALUES ($1,$2,$3,$4,$5) ON CONFLICT (agentflow_id, version) DO NOTHING`,
@@ -90,30 +90,30 @@ func (s *PostgresStore) SaveAgentFlowDefinition(ctx context.Context, def *model.
 	return err
 }
 
-func (s *PostgresStore) GetLatestAgentFlowDefinition(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
+func (s *PostgresStore) GetAgentFlow(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
 		 FROM public.agentflow_definitions WHERE agentflow_id=$1 ORDER BY version DESC LIMIT 1`, agentFlowID)
 	return scanAgentFlowVersion(row)
 }
 
-func (s *PostgresStore) GetAgentFlowDefinition(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
+func (s *PostgresStore) GetAgentFlowVersion(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
 		 FROM public.agentflow_definitions WHERE agentflow_id=$1 AND version=$2`, agentFlowID, version)
 	return scanAgentFlowVersion(row)
 }
 
-func (s *PostgresStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error) {
+func (s *PostgresStore) ListAgentFlows(ctx context.Context) ([]model.AgentFlowVersion, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
 		 FROM public.agentflow_definitions ORDER BY created_at DESC`)
-	log.Printf("[pg] ListAgentFlowDefinitions ERROR: %v", err)
+	log.Printf("[pg] ListAgentFlows ERROR: %v", err)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	log.Printf("[pg] ListAgentFlowDefinitions: starting query")
+	log.Printf("[pg] ListAgentFlows: starting query")
 	var defs []model.AgentFlowVersion
 	for rows.Next() {
 		d, err := scanAgentFlowVersionRow(rows)
@@ -152,16 +152,16 @@ func (s *PostgresStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.A
 	if err := s.pool.QueryRow(ctx, "SHOW search_path").Scan(&searchPath); err == nil {
 		log.Printf("[pg] search_path: %s", searchPath)
 	}
-	log.Printf("[pg] ListAgentFlowDefinitions: returning %d rows", len(defs))
+	log.Printf("[pg] ListAgentFlows: returning %d rows", len(defs))
 	return defs, nil
 }
 
-func (s *PostgresStore) DeleteAgentFlowDefinition(ctx context.Context, id string) error {
+func (s *PostgresStore) DeleteAgentFlow(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM agentflow_definitions WHERE agentflow_id=$1`, id)
 	return err
 }
 
-func (s *PostgresStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
+func (s *PostgresStore) SaveAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
 	defJSON, err := json.Marshal(spec)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
@@ -180,7 +180,7 @@ func (s *PostgresStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.Age
 }
 
 func (s *PostgresStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
-	ver, err := s.GetLatestAgentFlowDefinition(ctx, agentFlowID)
+	ver, err := s.GetAgentFlow(ctx, agentFlowID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,8 +242,8 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, name string) error {
 
 // ─── AgentFlow runs ────────────────────────────────────────
 
-func (s *PostgresStore) CreateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
-	ctx, span := pgTracer.Start(ctx, "CreateAgentFlowRun",
+func (s *PostgresStore) CreateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
+	ctx, span := pgTracer.Start(ctx, "CreateFlowRun",
 		trace.WithAttributes(
 			attribute.String("agentflow_id", run.AgentFlowID),
 			attribute.String("run_id", run.ID),
@@ -265,7 +265,7 @@ func (s *PostgresStore) CreateAgentFlowRun(ctx context.Context, run *model.Agent
 	return err
 }
 
-func (s *PostgresStore) UpdateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
+func (s *PostgresStore) UpdateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
 	run.UpdatedAt = time.Now()
 	_, err := s.pool.Exec(ctx,
 		`UPDATE agentflow_runs SET status=$1,vars=$2,output=$3,error=$4,updated_at=$5,started_at=$6,finished_at=$7 WHERE id=$8`,
@@ -273,12 +273,12 @@ func (s *PostgresStore) UpdateAgentFlowRun(ctx context.Context, run *model.Agent
 	return err
 }
 
-func (s *PostgresStore) GetAgentFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
+func (s *PostgresStore) GetFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
 	row := s.pool.QueryRow(ctx, `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,tenant_id,namespace,priority,started_at,finished_at FROM agentflow_runs WHERE id=$1`, id)
 	return scanAgentFlowRun(row)
 }
 
-func (s *PostgresStore) ListAgentFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error) {
+func (s *PostgresStore) ListFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -307,12 +307,12 @@ func (s *PostgresStore) ListActiveRuns(ctx context.Context) ([]model.AgentFlowRu
 	return collectRunRows(rows)
 }
 
-func (s *PostgresStore) DeleteAgentFlowRun(ctx context.Context, id string) error {
+func (s *PostgresStore) DeleteFlowRun(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM agentflow_runs WHERE id=$1`, id)
 	return err
 }
 
-func (s *PostgresStore) CancelAgentFlowRun(ctx context.Context, id string) error {
+func (s *PostgresStore) CancelFlowRun(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agentflow_runs SET status='CANCELLED' WHERE id=$1`, id)
 	return err
 }
@@ -344,7 +344,7 @@ func (s *PostgresStore) GetTaskRun(ctx context.Context, id string) (*model.TaskR
 	return scanTaskRun(row)
 }
 
-func (s *PostgresStore) GetTaskRunsByAgentFlowRun(ctx context.Context, runID string) ([]model.TaskRun, error) {
+func (s *PostgresStore) ListTaskRunsByFlow(ctx context.Context, runID string) ([]model.TaskRun, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at FROM task_runs WHERE agentflow_run_id=$1 ORDER BY created_at`, runID)
 	if err != nil {
 		return nil, err
@@ -368,7 +368,7 @@ func (s *PostgresStore) GetTaskRunByExecID(ctx context.Context, execID string) (
 
 // ─── Human approvals ───────────────────────────────────────
 
-func (s *PostgresStore) CreateHumanApproval(ctx context.Context, approval *model.HumanApproval) error {
+func (s *PostgresStore) CreateApproval(ctx context.Context, approval *model.HumanApproval) error {
 	approval.Token = newUUID()
 	approval.CreatedAt = time.Now()
 	approval.UpdatedAt = approval.CreatedAt
@@ -382,12 +382,12 @@ func (s *PostgresStore) CreateHumanApproval(ctx context.Context, approval *model
 	return err
 }
 
-func (s *PostgresStore) GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
+func (s *PostgresStore) GetApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
 	row := s.pool.QueryRow(ctx, `SELECT task_run_id,token,status,(approved_at IS NOT NULL) as approved,comment,EXTRACT(EPOCH FROM GREATEST(timeout_at - NOW(), '0s'::interval))::int as timeout_seconds,created_at,updated_at,timeout_at as expires_at,approved_at as resolved_at FROM human_approvals WHERE token=$1`, token)
 	return scanHumanApproval(row)
 }
 
-func (s *PostgresStore) UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error {
+func (s *PostgresStore) UpdateApproval(ctx context.Context, approval *model.HumanApproval) error {
 	now := time.Now()
 	approval.UpdatedAt = now
 	if approval.Approved != nil {
@@ -398,7 +398,7 @@ func (s *PostgresStore) UpdateHumanApproval(ctx context.Context, approval *model
 	return err
 }
 
-func (s *PostgresStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
+func (s *PostgresStore) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
 	rows, err := s.pool.Query(ctx, `SELECT task_run_id,token,status,(approved_at IS NOT NULL) as approved,comment,EXTRACT(EPOCH FROM GREATEST(timeout_at - NOW(), '0s'::interval))::int as timeout_seconds,created_at,updated_at,timeout_at as expires_at,approved_at as resolved_at FROM human_approvals WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > NOW())`)
 	if err != nil {
 		return nil, err
@@ -417,7 +417,7 @@ func (s *PostgresStore) GetPendingApprovals(ctx context.Context) ([]model.HumanA
 
 // ─── Supervisor log ────────────────────────────────────────
 
-func (s *PostgresStore) LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error {
+func (s *PostgresStore) LogSupervisor(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO supervisor_log (agentflow_run_id,task_run_id,input_snapshot,decision) VALUES ($1,$2,$3,$4)`,
 		agentFlowRunID, taskRunID, toJSON(input), toJSON(decision))
 	return err
@@ -425,16 +425,16 @@ func (s *PostgresStore) LogSupervisorDecision(ctx context.Context, agentFlowRunI
 
 // ─── Notifier channels ─────────────────────────────────────
 
-func (s *PostgresStore) SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error {
+func (s *PostgresStore) SaveChannel(ctx context.Context, ch *model.NotifierChannel) error {
 	return nil
 }
-func (s *PostgresStore) GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
+func (s *PostgresStore) GetChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	return nil, nil
 }
-func (s *PostgresStore) ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
+func (s *PostgresStore) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
 	return nil, nil
 }
-func (s *PostgresStore) DeleteNotifierChannel(ctx context.Context, id string) error { return nil }
+func (s *PostgresStore) DeleteChannel(ctx context.Context, id string) error { return nil }
 
 // ─── LLM providers (in-memory, DB migration pending) ────
 
@@ -443,19 +443,19 @@ var pgLlmProviders = struct {
 	store map[string]*model.LlmProvider
 }{store: make(map[string]*model.LlmProvider)}
 
-func (s *PostgresStore) SaveLlmProvider(ctx context.Context, p *model.LlmProvider) error {
+func (s *PostgresStore) SaveProvider(ctx context.Context, p *model.LlmProvider) error {
 	pgLlmProviders.mu.Lock()
 	defer pgLlmProviders.mu.Unlock()
 	p.UpdatedAt = time.Now()
 	pgLlmProviders.store[p.ID] = p
 	return nil
 }
-func (s *PostgresStore) GetLlmProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
+func (s *PostgresStore) GetProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
 	pgLlmProviders.mu.Lock()
 	defer pgLlmProviders.mu.Unlock()
 	return pgLlmProviders.store[id], nil
 }
-func (s *PostgresStore) ListLlmProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
+func (s *PostgresStore) ListProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
 	pgLlmProviders.mu.Lock()
 	defer pgLlmProviders.mu.Unlock()
 	var out []model.LlmProvider
@@ -466,7 +466,7 @@ func (s *PostgresStore) ListLlmProviders(ctx context.Context, tenantID string) (
 	}
 	return out, nil
 }
-func (s *PostgresStore) DeleteLlmProvider(ctx context.Context, id string) error {
+func (s *PostgresStore) DeleteProvider(ctx context.Context, id string) error {
 	pgLlmProviders.mu.Lock()
 	defer pgLlmProviders.mu.Unlock()
 	delete(pgLlmProviders.store, id)
@@ -475,14 +475,14 @@ func (s *PostgresStore) DeleteLlmProvider(ctx context.Context, id string) error 
 
 // ─── Subscription routes ───────────────────────────────────
 
-func (s *PostgresStore) SaveSubscriptionRoute(ctx context.Context, r *model.SubscriptionRoute) error {
+func (s *PostgresStore) SaveRoute(ctx context.Context, r *model.SubscriptionRoute) error {
 	return nil
 }
-func (s *PostgresStore) GetSubscriptionRoutesByAgentFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) {
+func (s *PostgresStore) GetRoutesByFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) {
 	return nil, nil
 }
-func (s *PostgresStore) DeleteSubscriptionRoute(ctx context.Context, id string) error { return nil }
-func (s *PostgresStore) DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error {
+func (s *PostgresStore) DeleteRoute(ctx context.Context, id string) error { return nil }
+func (s *PostgresStore) DeleteRoutesByPod(ctx context.Context, podID string) error {
 	return nil
 }
 func (s *PostgresStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) {
@@ -491,7 +491,7 @@ func (s *PostgresStore) CleanupOrphanedRoutes(ctx context.Context, podID string,
 
 // ─── ExecutionPlan persistence ─────────────────────────────
 
-func (s *PostgresStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
+func (s *PostgresStore) SavePlan(ctx context.Context, plan *model.ExecutionPlan) error {
 	now := time.Now()
 	if plan.CreatedAt.IsZero() {
 		plan.CreatedAt = now
@@ -511,7 +511,7 @@ func (s *PostgresStore) SaveExecutionPlan(ctx context.Context, plan *model.Execu
 	return err
 }
 
-func (s *PostgresStore) LoadExecutionPlan(ctx context.Context, id string) (*model.ExecutionPlan, error) {
+func (s *PostgresStore) LoadPlan(ctx context.Context, id string) (*model.ExecutionPlan, error) {
 	task, err := s.GetTaskRun(ctx, id)
 	if err != nil {
 		return nil, err
@@ -532,8 +532,8 @@ func (s *PostgresStore) LoadExecutionPlan(ctx context.Context, id string) (*mode
 	}, nil
 }
 
-func (s *PostgresStore) ListExecutionPlans(ctx context.Context, runID string) ([]*model.ExecutionPlan, error) {
-	tasks, err := s.GetTaskRunsByAgentFlowRun(ctx, runID)
+func (s *PostgresStore) ListPlans(ctx context.Context, runID string) ([]*model.ExecutionPlan, error) {
+	tasks, err := s.ListTaskRunsByFlow(ctx, runID)
 	if err != nil {
 		return nil, err
 	}

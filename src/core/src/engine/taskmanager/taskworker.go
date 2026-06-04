@@ -79,7 +79,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			sw.metrics.TasksExecuted.Add(ctx, 1, metric.WithAttributes(taskTypeAttr(plan.TaskType)))
 		}
 
-		_ = sw.store.SaveExecutionPlan(ctx, &plan)
+		_ = sw.store.SavePlan(ctx, &plan)
 
 		if plan.Result != nil && plan.Result.Output != nil {
 			sw.emitDownstream(ctx, &plan)

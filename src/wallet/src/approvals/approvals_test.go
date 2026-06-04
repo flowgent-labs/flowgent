@@ -21,7 +21,7 @@ func newMockStore() *mockStore {
 	return &mockStore{approvals: make(map[string]*model.HumanApproval)}
 }
 
-func (s *mockStore) CreateHumanApproval(ctx context.Context, a *model.HumanApproval) error {
+func (s *mockStore) CreateApproval(ctx context.Context, a *model.HumanApproval) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a.Token = "tok-" + a.TaskRunID
@@ -29,7 +29,7 @@ func (s *mockStore) CreateHumanApproval(ctx context.Context, a *model.HumanAppro
 	return nil
 }
 
-func (s *mockStore) GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
+func (s *mockStore) GetApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.approvals {
@@ -40,7 +40,7 @@ func (s *mockStore) GetHumanApproval(ctx context.Context, token string) (*model.
 	return nil, nil
 }
 
-func (s *mockStore) UpdateHumanApproval(ctx context.Context, a *model.HumanApproval) error {
+func (s *mockStore) UpdateApproval(ctx context.Context, a *model.HumanApproval) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approvals[a.TaskRunID] = a

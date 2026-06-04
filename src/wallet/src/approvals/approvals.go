@@ -47,7 +47,7 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 		ExpiresAt: &expiresAt,
 	}
 
-	if err := a.store.CreateHumanApproval(ctx, approval); err != nil {
+	if err := a.store.CreateApproval(ctx, approval); err != nil {
 		return nil, fmt.Errorf("create payment approval: %w", err)
 	}
 
@@ -66,13 +66,13 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 			approval.Status = "EXPIRED"
 			rejected := false
 			approval.Approved = &rejected
-			_ = a.store.UpdateHumanApproval(ctx, approval)
+			_ = a.store.UpdateApproval(ctx, approval)
 			return nil, &payments.PaymentError{
 				Code:    "APPROVAL_TIMEOUT",
 				Message: fmt.Sprintf("payment approval %s timed out after %s", token, a.timeout),
 			}
 		case <-ticker.C:
-			updated, err := a.store.GetHumanApproval(ctx, token)
+			updated, err := a.store.GetApproval(ctx, token)
 			if err != nil {
 				continue
 			}

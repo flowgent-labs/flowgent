@@ -29,14 +29,14 @@ func TestSQLiteStore_AgentFlowRuns(t *testing.T) {
 		AgentFlowID: "test-flow", Version: 1, Status: model.RunPending,
 		Trigger: model.TriggerInfo{Type: "manual", Source: "ut"},
 	}
-	if err := s.CreateAgentFlowRun(ctx, run); err != nil {
+	if err := s.CreateFlowRun(ctx, run); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if run.ID == "" {
 		t.Fatal("ID should be set")
 	}
 
-	got, err := s.GetAgentFlowRun(ctx, run.ID)
+	got, err := s.GetFlowRun(ctx, run.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -45,11 +45,11 @@ func TestSQLiteStore_AgentFlowRuns(t *testing.T) {
 	}
 
 	run.Status = model.RunRunning
-	if err := s.UpdateAgentFlowRun(ctx, run); err != nil {
+	if err := s.UpdateFlowRun(ctx, run); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
-	runs, err := s.ListAgentFlowRuns(ctx, "test-flow", 10)
+	runs, err := s.ListFlowRuns(ctx, "test-flow", 10)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestSQLiteStore_AgentFlowRuns(t *testing.T) {
 	}
 
 	// Empty agentFlowID should list all
-	allRuns, _ := s.ListAgentFlowRuns(ctx, "", 100)
+	allRuns, _ := s.ListFlowRuns(ctx, "", 100)
 	if len(allRuns) < 1 {
 		t.Errorf("expected at least 1 run, got %d", len(allRuns))
 	}
@@ -72,7 +72,7 @@ func TestSQLiteStore_TaskRuns(t *testing.T) {
 
 	// Create a parent run first
 	run := &model.AgentFlowRun{AgentFlowID: "f1", Version: 1, Status: model.RunPending}
-	s.CreateAgentFlowRun(ctx, run)
+	s.CreateFlowRun(ctx, run)
 
 	task := &model.TaskRun{
 		AgentFlowRunID: run.ID, NodeID: "node-1", Status: model.TaskPending,
@@ -97,7 +97,7 @@ func TestSQLiteStore_TaskRuns(t *testing.T) {
 	task.Output = map[string]any{"result": "ok"}
 	s.UpdateTaskRun(ctx, task)
 
-	tasks, err := s.GetTaskRunsByAgentFlowRun(ctx, run.ID)
+	tasks, err := s.ListTaskRunsByFlow(ctx, run.ID)
 	if err != nil {
 		t.Fatalf("GetTaskRuns: %v", err)
 	}
@@ -121,21 +121,21 @@ func TestSQLiteStore_HumanApproval(t *testing.T) {
 	ctx := context.Background()
 
 	run := &model.AgentFlowRun{AgentFlowID: "f1", Version: 1, Status: model.RunPending}
-	s.CreateAgentFlowRun(ctx, run)
+	s.CreateFlowRun(ctx, run)
 	task := &model.TaskRun{AgentFlowRunID: run.ID, NodeID: "human", Status: model.TaskPending, ExecID: "e1"}
 	s.CreateTaskRun(ctx, task)
 
 	approval := &model.HumanApproval{
 		TaskRunID: task.ID, Status: "PENDING", Timeout: 1 * time.Hour,
 	}
-	if err := s.CreateHumanApproval(ctx, approval); err != nil {
+	if err := s.CreateApproval(ctx, approval); err != nil {
 		t.Fatalf("CreateHuman: %v", err)
 	}
 	if approval.Token == "" {
 		t.Fatal("Token should be set")
 	}
 
-	got, err := s.GetHumanApproval(ctx, approval.Token)
+	got, err := s.GetApproval(ctx, approval.Token)
 	if err != nil {
 		t.Fatalf("GetHuman: %v", err)
 	}
@@ -146,9 +146,9 @@ func TestSQLiteStore_HumanApproval(t *testing.T) {
 	approved := true
 	approval.Approved = &approved
 	approval.Status = "APPROVED"
-	s.UpdateHumanApproval(ctx, approval)
+	s.UpdateApproval(ctx, approval)
 
-	pending, _ := s.GetPendingApprovals(ctx)
+	pending, _ := s.ListPendingApprovals(ctx)
 	if len(pending) != 0 {
 		t.Errorf("expected 0 pending, got %d", len(pending))
 	}
@@ -164,9 +164,9 @@ func TestSQLiteStore_AgentFlowDefinitions(t *testing.T) {
 		AgentFlowID: "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
 		CreatedBy: "test", Comment: "initial",
 	}
-	s.SaveAgentFlowDefinition(ctx, def)
+	s.SaveAgentFlow(ctx, def)
 
-	latest, err := s.GetLatestAgentFlowDefinition(ctx, "flow-1")
+	latest, err := s.GetAgentFlow(ctx, "flow-1")
 	if err != nil {
 		t.Fatalf("GetLatest: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSQLiteStore_AgentFlowDefinitions(t *testing.T) {
 		t.Errorf("expected v1, got %d", latest.Version)
 	}
 
-	got, err := s.GetAgentFlowDefinition(ctx, "flow-1", 1)
+	got, err := s.GetAgentFlowVersion(ctx, "flow-1", 1)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestSQLiteStore_AgentFlowDefinitions(t *testing.T) {
 		t.Errorf("expected flow-1, got %s", got.AgentFlowID)
 	}
 
-	all, _ := s.ListAgentFlowDefinitions(ctx)
+	all, _ := s.ListAgentFlows(ctx)
 	if len(all) < 1 {
 		t.Errorf("expected at least 1 def, got %d", len(all))
 	}

@@ -40,7 +40,7 @@ func NewLlmProviderManager(cfg *config.LLMConfig, store store.IStore) *LlmProvid
 
 	// Load DB-backed providers (standard mode)
 	if cfg.Providers.Standard.Enabled && store != nil {
-		dbProviders, err := store.ListLlmProviders(context.Background(), "")
+		dbProviders, err := store.ListProviders(context.Background(), "")
 		if err == nil {
 			for _, dbp := range dbProviders {
 				if !dbp.Enabled || dbp.ID == "" {

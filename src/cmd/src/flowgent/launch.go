@@ -347,7 +347,7 @@ func startServer(mode string) {
 	triggerFunc := func(ctx context.Context, id string) {
 		run := &model.AgentFlowRun{AgentFlowID: id, Version: 1, Status: model.RunPending,
 			Trigger: model.TriggerInfo{Type: "schedule", Source: "cron"}}
-		if err := storeImpl.CreateAgentFlowRun(ctx, run); err != nil {
+		if err := storeImpl.CreateFlowRun(ctx, run); err != nil {
 			slog.Error("schedule trigger failed", "error", err)
 		}
 	}
@@ -468,7 +468,7 @@ func startServer(mode string) {
 				Status: model.RunPending, Vars: req.Vars,
 				Trigger: model.TriggerInfo{Type: "api", Source: "a2a"},
 			}
-			if err := storeImpl.CreateAgentFlowRun(r.Context(), run); err != nil {
+			if err := storeImpl.CreateFlowRun(r.Context(), run); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -478,7 +478,7 @@ func startServer(mode string) {
 			})
 		})
 		a2aMux.HandleFunc("GET /a2a/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
-			run, err := storeImpl.GetAgentFlowRun(r.Context(), r.PathValue("id"))
+			run, err := storeImpl.GetFlowRun(r.Context(), r.PathValue("id"))
 			if err != nil || run == nil {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
@@ -677,13 +677,13 @@ func loadAgentFlowsFromDB(ctx context.Context, s engine.Store) ([]model.AgentFlo
 	var flows []model.AgentFlowSpec
 	subFlows := make(map[string]model.AgentFlowSpec)
 
-	versions, err := s.ListAgentFlowDefinitions(ctx)
+	versions, err := s.ListAgentFlows(ctx)
 	if err != nil {
 		return flows, subFlows, fmt.Errorf("list agentflow definitions: %w", err)
 	}
 
 	// Deduplicate: only take the latest version per agentflow_id.
-	// ListAgentFlowDefinitions returns (agentflow_id, version DESC) ordered.
+	// ListAgentFlows returns (agentflow_id, version DESC) ordered.
 	seen := make(map[string]bool)
 	for _, v := range versions {
 		if seen[v.AgentFlowID] {
@@ -732,7 +732,7 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 		case <-ticker.C:
 			// Session: agentFlowID="" → DB returns ALL runs (tenant-wide scan)
 			// Application: agentFlowID="<flow>" → DB returns only that flow's runs
-			runs, _ := s.ListAgentFlowRuns(ctx, agentFlowID, 50)
+			runs, _ := s.ListFlowRuns(ctx, agentFlowID, 50)
 			for _, run := range runs {
 				if run.Status != model.RunPending {
 					continue
@@ -1216,7 +1216,7 @@ func (c *Controller) Run(ctx context.Context) error {
 
 // reconcile polls PG for agentflow definitions and dispatches newly discovered flows.
 func (c *Controller) reconcile(ctx context.Context) {
-	versions, err := c.store.ListAgentFlowDefinitions(ctx)
+	versions, err := c.store.ListAgentFlows(ctx)
 	if err != nil {
 		c.logger.Error("Failed to list agentflow definitions", "error", err)
 		return
@@ -1304,7 +1304,7 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
 
-	if err := c.store.CreateAgentFlowRun(ctx, run); err != nil {
+	if err := c.store.CreateFlowRun(ctx, run); err != nil {
 		c.logger.Error("Failed to create session run", "flow_id", spec.ID, "error", err)
 		return
 	}
@@ -1319,7 +1319,7 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r, err := c.store.GetAgentFlowRun(ctx, run.ID)
+			r, err := c.store.GetFlowRun(ctx, run.ID)
 			if err != nil || r == nil {
 				continue
 			}
@@ -1411,7 +1411,7 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *model.Ag
 		Vars:        spec.Vars,
 		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
-	if err := c.store.CreateAgentFlowRun(ctx, run); err != nil {
+	if err := c.store.CreateFlowRun(ctx, run); err != nil {
 		c.logger.Error("Failed to create application run", "flow_id", spec.ID, "error", err)
 	}
 }

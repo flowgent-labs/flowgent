@@ -162,7 +162,7 @@ func (c *FlowgentClient) updateTask(ctx context.Context, taskID string, status s
 	return nil
 }
 
-// APIStoreWrapper delegates UpdateTaskRun and SaveExecutionPlan to apiserver API,
+// APIStoreWrapper delegates UpdateTaskRun and SavePlan to apiserver API,
 // while passing all other Store methods through to the underlying store.
 // This allows TM to use the apiserver for state writes while keeping read compatibility.
 type APIStoreWrapper struct {
@@ -178,8 +178,8 @@ func (w *APIStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun
 	return w.api.updateTask(ctx, task.ID, string(task.Status), task.Output, task.Error)
 }
 
-func (w *APIStoreWrapper) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
+func (w *APIStoreWrapper) SavePlan(ctx context.Context, plan *model.ExecutionPlan) error {
 	// ExecutionPlans are dispatched via MQTT — persistence can go through apiserver
-	log.Printf("[api-store] SaveExecutionPlan: %s → apiserver", plan.PlanID[:8])
+	log.Printf("[api-store] SavePlan: %s → apiserver", plan.PlanID[:8])
 	return nil // plan already dispatched via MQTT, apiserver creates task_runs
 }

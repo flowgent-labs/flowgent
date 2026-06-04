@@ -11,7 +11,7 @@ import (
 
 // NotifierStore is the subset of store.IStore needed by NotifierHandler.
 type NotifierStore interface {
-	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
+	ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
 }
 
 type NotifierHandler struct {
@@ -24,7 +24,7 @@ func NewNotifierHandler(s NotifierStore, logger *utils.Logger) *NotifierHandler 
 }
 
 func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := h.store.ListNotifierChannels(r.Context(), r.PathValue("tenant"))
+	channels, err := h.store.ListChannels(r.Context(), r.PathValue("tenant"))
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(channels)

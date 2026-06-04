@@ -16,11 +16,11 @@ import (
 
 // Store is the subset of store.IStore needed by the notification service.
 type Store interface {
-	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
-	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
-	SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error
-	GetSubscriptionRoutesByAgentFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error)
-	DeleteSubscriptionRoute(ctx context.Context, id string) error
+	ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
+	ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
+	SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error
+	GetRoutesByFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error)
+	DeleteRoute(ctx context.Context, id string) error
 	CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error)
 }
 
@@ -224,7 +224,7 @@ func (s *Service) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, e
 		WSID:        conn.ID,
 		PodID:       s.podID,
 	}
-	if err := s.store.SaveSubscriptionRoute(ctx, route); err != nil {
+	if err := s.store.SaveRoute(ctx, route); err != nil {
 		return nil, fmt.Errorf("save subscription route: %w", err)
 	}
 
@@ -243,7 +243,7 @@ func (s *Service) UnregisterWS(ctx context.Context, wsID string) {
 	s.mu.Unlock()
 
 	// Find and delete the route
-	_ = s.store.DeleteSubscriptionRoute(ctx, wsID) // wsID == route ID in our convention
+	_ = s.store.DeleteRoute(ctx, wsID) // wsID == route ID in our convention
 }
 
 // scanHumanApprovals polls for pending human approvals and dispatches notifications.
@@ -256,7 +256,7 @@ func (s *Service) scanHumanApprovals(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			approvals, err := s.store.GetPendingApprovals(ctx)
+			approvals, err := s.store.ListPendingApprovals(ctx)
 			if err != nil {
 				s.logger.Error("scan pending approvals", "error", err)
 				continue
@@ -301,7 +301,7 @@ func (s *Service) scanHumanApprovals(ctx context.Context) {
 // pushToSubscribers looks up the subscription routing table and publishes
 // to each subscriber pod's MQTT channel.
 func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
-	routes, err := s.store.GetSubscriptionRoutesByAgentFlow(ctx, agentFlowID)
+	routes, err := s.store.GetRoutesByFlow(ctx, agentFlowID)
 	if err != nil {
 		s.logger.Error("lookup subscription routes", "error", err)
 		return
@@ -318,7 +318,7 @@ func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg
 
 // notifyChannels sends a notification through all configured notification channels.
 func (s *Service) notifyChannels(ctx context.Context, recipient, title, body string) {
-	channels, err := s.store.ListNotifierChannels(ctx, "")
+	channels, err := s.store.ListChannels(ctx, "")
 	if err != nil {
 		s.logger.Error("list notification channels", "error", err)
 		return

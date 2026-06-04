@@ -73,7 +73,7 @@ func (h *FlowDefHandler) Reload(flows []model.AgentFlowSpec, subFlows map[string
 }
 
 func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
-	defs, err := h.store.ListAgentFlowDefinitions(r.Context())
+	defs, err := h.store.ListAgentFlows(r.Context())
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(defs)
@@ -86,7 +86,7 @@ func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if spec.ID == "" { http.Error(w, "id required", 400); return }
 	spec.TenantID = tenant
 	createdBy, _ := r.Context().Value(CtxUserID).(string)
-	if err := h.store.UpdateAgentFlowSpec(r.Context(), &spec, createdBy, "API create"); err != nil { http.Error(w, "internal", 500); return }
+	if err := h.store.SaveAgentFlowSpec(r.Context(), &spec, createdBy, "API create"); err != nil { http.Error(w, "internal", 500); return }
 	h.agentFlows[spec.ID] = &spec
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201); json.NewEncoder(w).Encode(spec); h.notifyWatchers()
@@ -104,13 +104,13 @@ func (h *FlowDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil { http.Error(w, "invalid body", 400); return }
 	spec.ID, spec.TenantID = id, tenant
 	createdBy, _ := r.Context().Value(CtxUserID).(string)
-	if err := h.store.UpdateAgentFlowSpec(r.Context(), &spec, createdBy, "API update"); err != nil { http.Error(w, "internal", 500); return }
+	if err := h.store.SaveAgentFlowSpec(r.Context(), &spec, createdBy, "API update"); err != nil { http.Error(w, "internal", 500); return }
 	h.agentFlows[id] = &spec
 	w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(spec); h.notifyWatchers()
 }
 
 func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.store.DeleteAgentFlowDefinition(r.Context(), r.PathValue("id")); err != nil { http.Error(w, "internal", 500); return }
+	if err := h.store.DeleteAgentFlow(r.Context(), r.PathValue("id")); err != nil { http.Error(w, "internal", 500); return }
 	delete(h.agentFlows, r.PathValue("id")); w.WriteHeader(204); h.notifyWatchers()
 }
 
@@ -121,7 +121,7 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 	if spec == nil && h.store != nil { spec, _ = h.store.GetAgentFlowSpec(ctx, agentFlowID) }
 	if spec == nil { http.Error(w, "agentflow not found", 404); return }
 	run := &model.AgentFlowRun{AgentFlowID: agentFlowID, Version: 1, Status: model.RunPending, Vars: vars, Trigger: trigger}
-	if err := h.store.CreateAgentFlowRun(ctx, run); err != nil { http.Error(w, "internal", 500); return }
+	if err := h.store.CreateFlowRun(ctx, run); err != nil { http.Error(w, "internal", 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"run_id": run.ID, "status": string(run.Status), "tenant": r.PathValue("tenant"), "agentflow_id": agentFlowID})
 }

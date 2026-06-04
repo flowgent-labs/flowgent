@@ -120,7 +120,7 @@ func startConsole() {
 }
 
 func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
-	defs, err := s.ListAgentFlowDefinitions(ctx)
+	defs, err := s.ListAgentFlows(ctx)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -138,7 +138,7 @@ func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
 }
 
 func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
-	runs, err := s.ListAgentFlowRuns(ctx, agentFlowID, 50)
+	runs, err := s.ListFlowRuns(ctx, agentFlowID, 50)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -156,7 +156,7 @@ func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
 }
 
 func showRunCmd(ctx context.Context, s store.IStore, id string) {
-	run, err := s.GetAgentFlowRun(ctx, id)
+	run, err := s.GetFlowRun(ctx, id)
 	if err != nil || run == nil {
 		fmt.Printf("Run not found: %s\n", id)
 		return
@@ -175,7 +175,7 @@ func showTaskCmd(ctx context.Context, s store.IStore, id string) {
 }
 
 func tasksCmd(ctx context.Context, s store.IStore, runID string) {
-	tasks, err := s.GetTaskRunsByAgentFlowRun(ctx, runID)
+	tasks, err := s.ListTaskRunsByFlow(ctx, runID)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

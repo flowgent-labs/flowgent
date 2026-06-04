@@ -11,11 +11,11 @@ import (
 
 // FlowRunStore is the subset of store.IStore needed by FlowRunHandler.
 type FlowRunStore interface {
-	GetAgentFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error)
-	ListAgentFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error)
-	DeleteAgentFlowRun(ctx context.Context, id string) error
-	CancelAgentFlowRun(ctx context.Context, id string) error
-	GetTaskRunsByAgentFlowRun(ctx context.Context, runID string) ([]model.TaskRun, error)
+	GetFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error)
+	ListFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error)
+	DeleteFlowRun(ctx context.Context, id string) error
+	CancelFlowRun(ctx context.Context, id string) error
+	ListTaskRunsByFlow(ctx context.Context, runID string) ([]model.TaskRun, error)
 	GetTaskRun(ctx context.Context, id string) (*model.TaskRun, error)
 	UpdateTaskRun(ctx context.Context, task *model.TaskRun) error
 }
@@ -30,31 +30,31 @@ func NewFlowRunHandler(s FlowRunStore, logger *utils.Logger) *FlowRunHandler {
 }
 
 func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
-	runs, err := h.store.ListAgentFlowRuns(r.Context(), r.URL.Query().Get("agentflow_id"), 50)
+	runs, err := h.store.ListFlowRuns(r.Context(), r.URL.Query().Get("agentflow_id"), 50)
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(runs)
 }
 
 func (h *FlowRunHandler) Get(w http.ResponseWriter, r *http.Request) {
-	run, err := h.store.GetAgentFlowRun(r.Context(), r.PathValue("id"))
+	run, err := h.store.GetFlowRun(r.Context(), r.PathValue("id"))
 	if err != nil || run == nil { http.Error(w, "not found", 404); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(run)
 }
 
 func (h *FlowRunHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.store.DeleteAgentFlowRun(r.Context(), r.PathValue("id")); err != nil { http.Error(w, "internal", 500); return }
+	if err := h.store.DeleteFlowRun(r.Context(), r.PathValue("id")); err != nil { http.Error(w, "internal", 500); return }
 	w.WriteHeader(200)
 }
 
 func (h *FlowRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	if err := h.store.CancelAgentFlowRun(r.Context(), r.PathValue("id")); err != nil { http.Error(w, "internal", 500); return }
+	if err := h.store.CancelFlowRun(r.Context(), r.PathValue("id")); err != nil { http.Error(w, "internal", 500); return }
 	w.WriteHeader(200)
 }
 
 func (h *FlowRunHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.store.GetTaskRunsByAgentFlowRun(r.Context(), r.PathValue("id"))
+	tasks, err := h.store.ListTaskRunsByFlow(r.Context(), r.PathValue("id"))
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)

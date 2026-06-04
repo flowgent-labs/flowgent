@@ -61,11 +61,11 @@ func TestPostgresStore_AgentFlowRunCRUD(t *testing.T) {
 		AgentFlowID: "pg-test-flow", Version: 1, Status: model.RunPending,
 		Trigger: model.TriggerInfo{Type: "manual", Source: "pg-ut"},
 	}
-	if err := s.CreateAgentFlowRun(ctx, run); err != nil {
+	if err := s.CreateFlowRun(ctx, run); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := s.GetAgentFlowRun(ctx, run.ID)
+	got, err := s.GetFlowRun(ctx, run.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -73,16 +73,16 @@ func TestPostgresStore_AgentFlowRunCRUD(t *testing.T) {
 		t.Errorf("expected pg-test-flow, got %s", got.AgentFlowID)
 	}
 
-	runs, _ := s.ListAgentFlowRuns(ctx, "pg-test-flow", 10)
+	runs, _ := s.ListFlowRuns(ctx, "pg-test-flow", 10)
 	if len(runs) != 1 {
 		t.Errorf("expected 1 run, got %d", len(runs))
 	}
 
 	run.Status = model.RunCompleted
-	s.UpdateAgentFlowRun(ctx, run)
+	s.UpdateFlowRun(ctx, run)
 
 	// Empty filter lists all
-	allRuns, _ := s.ListAgentFlowRuns(ctx, "", 100)
+	allRuns, _ := s.ListFlowRuns(ctx, "", 100)
 	if len(allRuns) < 1 {
 		t.Errorf("expected at least 1 run with empty filter, got %d", len(allRuns))
 	}
@@ -99,7 +99,7 @@ func TestPostgresStore_TaskRunCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	run := &model.AgentFlowRun{AgentFlowID: "f1", Version: 1, Status: model.RunPending}
-	s.CreateAgentFlowRun(ctx, run)
+	s.CreateFlowRun(ctx, run)
 
 	task := &model.TaskRun{
 		AgentFlowRunID: run.ID, NodeID: "n1", Status: model.TaskPending, ExecID: "pg-exec-1",
@@ -107,7 +107,7 @@ func TestPostgresStore_TaskRunCRUD(t *testing.T) {
 	s.CreateTaskRun(ctx, task)
 	s.UpdateTaskRun(ctx, task)
 
-	_, err := s.GetTaskRunsByAgentFlowRun(ctx, run.ID)
+	_, err := s.ListTaskRunsByFlow(ctx, run.ID)
 	if err != nil {
 		t.Fatalf("GetTaskRuns: %v", err)
 	}

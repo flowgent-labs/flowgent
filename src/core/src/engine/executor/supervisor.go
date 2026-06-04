@@ -48,7 +48,7 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *model.ExecutionP
 		return nil, fmt.Errorf("supervisor output invalid JSON: %w (raw: %s)", err, resp[:min(len(resp), 200)])
 	}
 
-	_ = e.store.LogSupervisorDecision(ctx, plan.AgentFlowRunID, plan.TaskID, plan.Input, decision)
+	_ = e.store.LogSupervisor(ctx, plan.AgentFlowRunID, plan.TaskID, plan.Input, decision)
 
 	action, _ := decision["action"].(string)
 	// Default to "continue" if action is missing or empty (defensive)

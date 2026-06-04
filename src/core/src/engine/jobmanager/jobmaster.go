@@ -279,7 +279,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 	run.Status = model.RunRunning
 	now := time.Now()
 	run.StartedAt = &now
-	_ = jm.store.UpdateAgentFlowRun(ctx, run)
+	_ = jm.store.UpdateFlowRun(ctx, run)
 
 	if jm.timeout > 0 {
 		var cancel context.CancelFunc
@@ -298,13 +298,13 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 			run.Error = jm.collectFirstError()
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Error, "failed")
-			return jm.store.UpdateAgentFlowRun(ctx, run)
+			return jm.store.UpdateFlowRun(ctx, run)
 		}
 		if jm.IsComplete() {
 			run.Status = model.RunCompleted
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Ok, "done")
-			return jm.store.UpdateAgentFlowRun(ctx, run)
+			return jm.store.UpdateFlowRun(ctx, run)
 		}
 
 		ready := jm.Ready()
@@ -318,7 +318,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 				continue
 			}
 			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
-			_ = jm.store.SaveExecutionPlan(ctx, plan)
+			_ = jm.store.SavePlan(ctx, plan)
 
 			result, err := jm.rm.Schedule(ctx, plan)
 			if err != nil {

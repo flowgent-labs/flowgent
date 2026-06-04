@@ -31,7 +31,7 @@ func (e *HumanExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		Timeout:   timeout,
 		Status:    "PENDING",
 	}
-	if err := e.store.CreateHumanApproval(ctx, approval); err != nil {
+	if err := e.store.CreateApproval(ctx, approval); err != nil {
 		return nil, fmt.Errorf("create human approval: %w", err)
 	}
 

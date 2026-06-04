@@ -56,7 +56,7 @@ func (s *SQLiteStore) Close() error {
 
 // --- AgentFlow definitions ---
 
-func (s *SQLiteStore) SaveAgentFlowDefinition(ctx context.Context, def *model.AgentFlowVersion) error {
+func (s *SQLiteStore) SaveAgentFlow(ctx context.Context, def *model.AgentFlowVersion) error {
 	definitionJSON, err := json.Marshal(def.Definition)
 	if err != nil {
 	}
@@ -67,7 +67,7 @@ func (s *SQLiteStore) SaveAgentFlowDefinition(ctx context.Context, def *model.Ag
 	return err
 }
 
-func (s *SQLiteStore) GetLatestAgentFlowDefinition(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
+func (s *SQLiteStore) GetAgentFlow(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT agentflow_id, version, definition, created_by, comment, created_at
 		 FROM agentflow_definitions WHERE agentflow_id = ?1
@@ -75,7 +75,7 @@ func (s *SQLiteStore) GetLatestAgentFlowDefinition(ctx context.Context, agentFlo
 	return scanAgentFlowVersion(row)
 }
 
-func (s *SQLiteStore) GetAgentFlowDefinition(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
+func (s *SQLiteStore) GetAgentFlowVersion(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT agentflow_id, version, definition, created_by, comment, created_at
 		 FROM agentflow_definitions WHERE agentflow_id = ?1 AND version = ?2`,
@@ -83,7 +83,7 @@ func (s *SQLiteStore) GetAgentFlowDefinition(ctx context.Context, agentFlowID st
 	return scanAgentFlowVersion(row)
 }
 
-func (s *SQLiteStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.AgentFlowVersion, error) {
+func (s *SQLiteStore) ListAgentFlows(ctx context.Context) ([]model.AgentFlowVersion, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT agentflow_id, version, definition, created_by, comment, created_at
 		 FROM agentflow_definitions ORDER BY agentflow_id, version DESC`)
@@ -104,7 +104,7 @@ func (s *SQLiteStore) ListAgentFlowDefinitions(ctx context.Context) ([]model.Age
 
 // --- AgentFlow runs ---
 
-func (s *SQLiteStore) CreateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
+func (s *SQLiteStore) CreateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
 	run.ID = uuid.New().String()
 	run.CreatedAt = time.Now()
 	run.UpdatedAt = run.CreatedAt
@@ -116,7 +116,7 @@ func (s *SQLiteStore) CreateAgentFlowRun(ctx context.Context, run *model.AgentFl
 	return err
 }
 
-func (s *SQLiteStore) UpdateAgentFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
+func (s *SQLiteStore) UpdateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
 	run.UpdatedAt = time.Now()
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agentflow_runs SET status=?1,vars=?2,output=?3,error=?4,updated_at=?5,started_at=?6,finished_at=?7 WHERE id=?8`,
@@ -124,14 +124,14 @@ func (s *SQLiteStore) UpdateAgentFlowRun(ctx context.Context, run *model.AgentFl
 	return err
 }
 
-func (s *SQLiteStore) GetAgentFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
+func (s *SQLiteStore) GetFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at
 		 FROM agentflow_runs WHERE id=?1`, id)
 	return scanAgentFlowRun(row)
 }
 
-func (s *SQLiteStore) ListAgentFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error) {
+func (s *SQLiteStore) ListFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -209,7 +209,7 @@ func (s *SQLiteStore) GetTaskRun(ctx context.Context, id string) (*model.TaskRun
 	return scanTaskRun(row)
 }
 
-func (s *SQLiteStore) GetTaskRunsByAgentFlowRun(ctx context.Context, agentFlowRunID string) ([]model.TaskRun, error) {
+func (s *SQLiteStore) ListTaskRunsByFlow(ctx context.Context, agentFlowRunID string) ([]model.TaskRun, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at
 		 FROM task_runs WHERE agentflow_run_id=?1 ORDER BY created_at`, agentFlowRunID)
@@ -237,7 +237,7 @@ func (s *SQLiteStore) GetTaskRunByExecID(ctx context.Context, execID string) (*m
 
 // --- Human approvals ---
 
-func (s *SQLiteStore) CreateHumanApproval(ctx context.Context, approval *model.HumanApproval) error {
+func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *model.HumanApproval) error {
 	approval.Token = uuid.New().String()
 	approval.CreatedAt = time.Now()
 	approval.UpdatedAt = approval.CreatedAt
@@ -252,14 +252,14 @@ func (s *SQLiteStore) CreateHumanApproval(ctx context.Context, approval *model.H
 	return err
 }
 
-func (s *SQLiteStore) GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
+func (s *SQLiteStore) GetApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT task_run_id,token,status,approved,comment,timeout_seconds,created_at,updated_at,expires_at,resolved_at
 		 FROM human_approvals WHERE token=?1`, token)
 	return scanHumanApproval(row)
 }
 
-func (s *SQLiteStore) UpdateHumanApproval(ctx context.Context, approval *model.HumanApproval) error {
+func (s *SQLiteStore) UpdateApproval(ctx context.Context, approval *model.HumanApproval) error {
 	approval.UpdatedAt = time.Now()
 	if approval.Approved != nil {
 		now := time.Now()
@@ -271,7 +271,7 @@ func (s *SQLiteStore) UpdateHumanApproval(ctx context.Context, approval *model.H
 	return err
 }
 
-func (s *SQLiteStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
+func (s *SQLiteStore) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT task_run_id,token,status,approved,comment,timeout_seconds,created_at,updated_at,expires_at,resolved_at
 		 FROM human_approvals WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > datetime('now'))`)
@@ -292,7 +292,7 @@ func (s *SQLiteStore) GetPendingApprovals(ctx context.Context) ([]model.HumanApp
 
 // --- Supervisor log ---
 
-func (s *SQLiteStore) LogSupervisorDecision(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error {
+func (s *SQLiteStore) LogSupervisor(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO supervisor_log (id,agentflow_run_id,task_run_id,input_snapshot,decision) VALUES (?1,?2,?3,?4,?5)`,
 		uuid.New().String(), agentFlowRunID, taskRunID, toJSON(input), toJSON(decision))
@@ -411,13 +411,13 @@ func scanHumanApprovalRow(r rowsScanner) (*model.HumanApproval, error) {
 }
 
 // ExecutionPlan stubs (TODO: full implementation)
-func (s *SQLiteStore) SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error {
+func (s *SQLiteStore) SavePlan(ctx context.Context, plan *model.ExecutionPlan) error {
 	return nil
 }
-func (s *SQLiteStore) LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) {
+func (s *SQLiteStore) LoadPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error) {
 	return nil, nil
 }
-func (s *SQLiteStore) ListExecutionPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) {
+func (s *SQLiteStore) ListPlans(ctx context.Context, agentFlowRunID string) ([]*model.ExecutionPlan, error) {
 	return nil, nil
 }
 func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error {
@@ -431,11 +431,11 @@ func (s *SQLiteStore) ClaimLease(ctx context.Context, planID, tmID string, dur t
 }
 func (s *SQLiteStore) ReleaseLease(ctx context.Context, planID string) error { return nil }
 
-func (s *SQLiteStore) CancelAgentFlowRun(ctx context.Context, id string) error {
+func (s *SQLiteStore) CancelFlowRun(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE agentflow_runs SET status='CANCELLED' WHERE id=?`, id)
 	return err
 }
-func (s *SQLiteStore) DeleteAgentFlowRun(ctx context.Context, id string) error {
+func (s *SQLiteStore) DeleteFlowRun(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM agentflow_runs WHERE id=?`, id)
 	return err
 }
@@ -449,14 +449,14 @@ func (s *SQLiteStore) ListNotificationChannels(ctx context.Context, tenantID str
 	return nil, nil
 }
 func (s *SQLiteStore) DeleteNotificationChannel(ctx context.Context, id string) error { return nil }
-func (s *SQLiteStore) SaveSubscriptionRoute(ctx context.Context, route *model.SubscriptionRoute) error {
+func (s *SQLiteStore) SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error {
 	return nil
 }
-func (s *SQLiteStore) GetSubscriptionRoutesByAgentFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) {
+func (s *SQLiteStore) GetRoutesByFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) {
 	return nil, nil
 }
-func (s *SQLiteStore) DeleteSubscriptionRoute(ctx context.Context, id string) error { return nil }
-func (s *SQLiteStore) DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error {
+func (s *SQLiteStore) DeleteRoute(ctx context.Context, id string) error { return nil }
+func (s *SQLiteStore) DeleteRoutesByPod(ctx context.Context, podID string) error {
 	return nil
 }
 func (s *SQLiteStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) {
@@ -467,17 +467,17 @@ func (s *SQLiteStore) DeleteAgent(ctx context.Context, name string) error {
 	return err
 }
 
-func (s *SQLiteStore) DeleteAgentFlowDefinition(ctx context.Context, agentFlowID string) error {
+func (s *SQLiteStore) DeleteAgentFlow(ctx context.Context, agentFlowID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM agentflow_definitions WHERE agentflow_id=?`, agentFlowID)
 	return err
 }
-func (s *SQLiteStore) UpdateAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
+func (s *SQLiteStore) SaveAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
 	defJSON, _ := json.Marshal(spec)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment) VALUES (?,1,?,?,?)`, spec.ID, defJSON, createdBy, comment)
 	return err
 }
 func (s *SQLiteStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
-	ver, err := s.GetLatestAgentFlowDefinition(ctx, agentFlowID)
+	ver, err := s.GetAgentFlow(ctx, agentFlowID)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +487,7 @@ func (s *SQLiteStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) 
 	}
 	return &spec, nil
 }
-func (s *SQLiteStore) DeleteNotifierChannel(ctx context.Context, id string) error { return nil }
+func (s *SQLiteStore) DeleteChannel(ctx context.Context, id string) error { return nil }
 
 // ─── LLM providers ─────────────────────────────────────
 
@@ -496,19 +496,19 @@ var sqliteLlmProviders = struct {
 	store map[string]*model.LlmProvider
 }{store: make(map[string]*model.LlmProvider)}
 
-func (s *SQLiteStore) SaveLlmProvider(ctx context.Context, p *model.LlmProvider) error {
+func (s *SQLiteStore) SaveProvider(ctx context.Context, p *model.LlmProvider) error {
 	sqliteLlmProviders.mu.Lock()
 	defer sqliteLlmProviders.mu.Unlock()
 	p.UpdatedAt = time.Now()
 	sqliteLlmProviders.store[p.ID] = p
 	return nil
 }
-func (s *SQLiteStore) GetLlmProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
+func (s *SQLiteStore) GetProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
 	sqliteLlmProviders.mu.Lock()
 	defer sqliteLlmProviders.mu.Unlock()
 	return sqliteLlmProviders.store[id], nil
 }
-func (s *SQLiteStore) ListLlmProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
+func (s *SQLiteStore) ListProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
 	sqliteLlmProviders.mu.Lock()
 	defer sqliteLlmProviders.mu.Unlock()
 	var out []model.LlmProvider
@@ -519,7 +519,7 @@ func (s *SQLiteStore) ListLlmProviders(ctx context.Context, tenantID string) ([]
 	}
 	return out, nil
 }
-func (s *SQLiteStore) DeleteLlmProvider(ctx context.Context, id string) error {
+func (s *SQLiteStore) DeleteProvider(ctx context.Context, id string) error {
 	sqliteLlmProviders.mu.Lock()
 	defer sqliteLlmProviders.mu.Unlock()
 	delete(sqliteLlmProviders.store, id)
@@ -533,13 +533,13 @@ func (s *SQLiteStore) ListAgents(ctx context.Context, tenantID string) ([]model.
 	return nil, nil
 }
 
-func (s *SQLiteStore) SaveNotifierChannel(ctx context.Context, ch *model.NotifierChannel) error {
+func (s *SQLiteStore) SaveChannel(ctx context.Context, ch *model.NotifierChannel) error {
 	return nil
 }
-func (s *SQLiteStore) GetNotifierChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
+func (s *SQLiteStore) GetChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	return nil, nil
 }
-func (s *SQLiteStore) ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
+func (s *SQLiteStore) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
 	return nil, nil
 }
 func (s *SQLiteStore) SaveAgent(ctx context.Context, agent *model.AgentDef) error { return nil }

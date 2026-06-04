@@ -22,7 +22,7 @@ func NewHumanHandler(s model.HumanApprovalStore, logger *utils.Logger) *HumanHan
 // Approve approves a human task by token.
 func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	approval, err := h.store.GetHumanApproval(r.Context(), token)
+	approval, err := h.store.GetApproval(r.Context(), token)
 	if err != nil || approval == nil {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
@@ -30,7 +30,7 @@ func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	approved := true
 	approval.Approved = &approved
 	approval.Status = "APPROVED"
-	if err := h.store.UpdateHumanApproval(r.Context(), approval); err != nil {
+	if err := h.store.UpdateApproval(r.Context(), approval); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -41,7 +41,7 @@ func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
 // Reject rejects a human task by token.
 func (h *HumanHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	approval, err := h.store.GetHumanApproval(r.Context(), token)
+	approval, err := h.store.GetApproval(r.Context(), token)
 	if err != nil || approval == nil {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
@@ -49,7 +49,7 @@ func (h *HumanHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	approved := false
 	approval.Approved = &approved
 	approval.Status = "REJECTED"
-	if err := h.store.UpdateHumanApproval(r.Context(), approval); err != nil {
+	if err := h.store.UpdateApproval(r.Context(), approval); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

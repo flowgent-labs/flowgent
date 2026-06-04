@@ -14,9 +14,9 @@ import (
 // Both the engine and the payments module consume this interface,
 // ensuring a single approval subsystem.
 type HumanApprovalStore interface {
-	CreateHumanApproval(ctx context.Context, approval *HumanApproval) error
-	GetHumanApproval(ctx context.Context, token string) (*HumanApproval, error)
-	UpdateHumanApproval(ctx context.Context, approval *HumanApproval) error
+	CreateApproval(ctx context.Context, approval *HumanApproval) error
+	GetApproval(ctx context.Context, token string) (*HumanApproval, error)
+	UpdateApproval(ctx context.Context, approval *HumanApproval) error
 }
 
 // HumanApproval represents a pending human approval gate.
