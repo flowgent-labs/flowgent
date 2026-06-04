@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/store/src/migration"
+	"github.com/flowgent-labs/flowgent/migration"
 )
 
 // RunMigrations applies pending SQL migration files from the embedded migration/ data.
