@@ -269,7 +269,7 @@ func startServer(mode string) {
 	}
 
 	// ── MCP Clients ────────────────────────────────────
-	mcpFactory := mcp.NewFactory()
+	mcpFactory := mcp.NewMcpManager()
 	for _, mcpDef := range serviceCfg.Orchestration.MCPs {
 		if mcpDef.Enabled {
 			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
@@ -662,7 +662,7 @@ func logConfig(cfg *config.ServiceConfig) {
 // ── Supporting types & functions ──────────────────────────────
 
 type mcpAdapter struct {
-	factory *mcp.Factory
+	factory *mcp.McpManager
 	name    string
 }
 
@@ -841,7 +841,7 @@ func startTaskManager() error {
 	}
 
 	// ── MCP Clients ────────────────────────────────────
-	mcpFactory := mcp.NewFactory()
+	mcpFactory := mcp.NewMcpManager()
 	for _, mcpDef := range svcCfg.Orchestration.MCPs {
 		if mcpDef.Enabled {
 			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
@@ -936,7 +936,7 @@ func startJobManager() error {
 		if agents, err := config.LoadAgents(svcCfg, cfgPath); err == nil {
 			for i := range agents { agentPtrs = append(agentPtrs, &agents[i]) }
 		}
-		mcpFactory := mcp.NewFactory()
+		mcpFactory := mcp.NewMcpManager()
 		for _, mcpDef := range svcCfg.Orchestration.MCPs {
 			if mcpDef.Enabled { mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env) }
 		}

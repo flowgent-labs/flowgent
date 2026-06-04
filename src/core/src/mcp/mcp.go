@@ -11,8 +11,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// Factory manages MCP client lifecycle.
-type Factory struct {
+// McpManager manages MCP client lifecycle.
+type McpManager struct {
 	mu      sync.Mutex
 	clients map[string]*client.Client
 	defs    map[string]definition
@@ -24,23 +24,23 @@ type definition struct {
 	env     map[string]string
 }
 
-// NewFactory creates an MCP client factory.
-func NewFactory() *Factory {
-	return &Factory{
+// NewFactory creates an MCP client manager.
+func NewMcpManager() *McpManager {
+	return &McpManager{
 		clients: make(map[string]*client.Client),
 		defs:    make(map[string]definition),
 	}
 }
 
 // Register adds an MCP server definition.
-func (f *Factory) Register(name string, command, args []string, env map[string]string) {
+func (f *McpManager) Register(name string, command, args []string, env map[string]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.defs[name] = definition{command: command, args: args, env: env}
 }
 
 // GetClient returns a connected MCP client for the given server name.
-func (f *Factory) GetClient(ctx context.Context, name string) (*client.Client, error) {
+func (f *McpManager) GetClient(ctx context.Context, name string) (*client.Client, error) {
 	f.mu.Lock()
 	if c, ok := f.clients[name]; ok {
 		f.mu.Unlock()
@@ -97,7 +97,7 @@ func (f *Factory) GetClient(ctx context.Context, name string) (*client.Client, e
 }
 
 // CallTool invokes a tool on the named MCP server.
-func (f *Factory) CallTool(ctx context.Context, clientName, toolName string, args map[string]any) (map[string]any, error) {
+func (f *McpManager) CallTool(ctx context.Context, clientName, toolName string, args map[string]any) (map[string]any, error) {
 	c, err := f.GetClient(ctx, clientName)
 	if err != nil {
 		return nil, err
