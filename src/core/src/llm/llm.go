@@ -1,67 +1,73 @@
 package llm
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/anthropics/anthropic-sdk-go"
+	anthropicopt "github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/openai/openai-go"
+	openaiopt "github.com/openai/openai-go/option"
 	"golang.org/x/time/rate"
+
+	"github.com/flowgent-labs/flowgent/config/src"
 )
 
 const defaultTimeout = 120 * time.Second
 
-// Adapter implements engine.LLMClient using OpenAI-compatible HTTP API.
+// Adapter implements engine.LLMClient using OpenAI and Anthropic Go SDKs.
 type Adapter struct {
-	clients map[string]*providerClient
+	clients map[string]*llmProviderClient
 	mu      sync.Mutex
 }
 
-type providerClient struct {
-	endpoint   string
-	apiKey     string
-	proxy      *url.URL
-	httpClient *http.Client
-	limiter    *rate.Limiter
-	models     map[string]*config.ModelDef
+type llmProviderClient struct {
+	providerType string // "openai" | "anthropic"
+	openai       *openai.Client
+	anthropic    *anthropic.Client
+	limiter      *rate.Limiter
+	models       map[string]*config.ModelDef
+}
+
+func newOpenAIClient(apiKey, endpoint string, timeout time.Duration) *openai.Client {
+	opts := []openaiopt.RequestOption{
+		openaiopt.WithAPIKey(apiKey),
+		openaiopt.WithRequestTimeout(timeout),
+	}
+	if endpoint != "" {
+		opts = append(opts, openaiopt.WithBaseURL(endpoint))
+	}
+	c := openai.NewClient(opts...)
+	return &c
+}
+
+func newAnthropicClient(apiKey, endpoint string, timeout time.Duration) *anthropic.Client {
+	opts := []anthropicopt.RequestOption{
+		anthropicopt.WithAPIKey(apiKey),
+		anthropicopt.WithRequestTimeout(timeout),
+	}
+	if endpoint != "" {
+		opts = append(opts, anthropicopt.WithBaseURL(endpoint))
+	}
+	c := anthropic.NewClient(opts...)
+	return &c
 }
 
 // New creates an LLM adapter from config.
 func New(cfg *config.LLMConfig) *Adapter {
-	a := &Adapter{
-		clients: make(map[string]*providerClient),
-	}
+	a := &Adapter{clients: make(map[string]*llmProviderClient)}
 	if cfg == nil {
 		return a
 	}
 	for _, p := range cfg.Providers.Static {
-		if !p.Enabled {
-			continue
-		}
-		name := p.ID
-		if name == "" {
+		if !p.Enabled || p.ID == "" {
 			continue
 		}
 		timeout := defaultTimeout
 		if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {
 			timeout = d
-		}
-		var proxyURL *url.URL
-		if p.Proxy != "" {
-			proxyURL, _ = url.Parse(p.Proxy)
-		}
-		transport := &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		}
-		httpClient := &http.Client{
-			Transport: transport,
-			Timeout:   timeout,
 		}
 		apiKey := ""
 		if v, ok := p.Credentials["apikey"]; ok {
@@ -71,7 +77,6 @@ func New(cfg *config.LLMConfig) *Adapter {
 		if rpm <= 0 {
 			rpm = 60
 		}
-		limiter := rate.NewLimiter(rate.Limit(float64(rpm)/60.0), rpm)
 
 		modelMap := make(map[string]*config.ModelDef)
 		for i := range p.Models {
@@ -79,105 +84,103 @@ func New(cfg *config.LLMConfig) *Adapter {
 			modelMap[m.Name] = m
 		}
 
-		a.clients[name] = &providerClient{
-			endpoint:   p.Endpoint,
-			apiKey:     apiKey,
-			proxy:      proxyURL,
-			httpClient: httpClient,
-			limiter:    limiter,
-			models:     modelMap,
+		pc := &llmProviderClient{
+			providerType: p.Type,
+			limiter:      rate.NewLimiter(rate.Limit(float64(rpm)/60.0), rpm),
+			models:       modelMap,
 		}
+
+		switch p.Type {
+		case "anthropic":
+			pc.anthropic = newAnthropicClient(apiKey, p.Endpoint, timeout)
+		default: // "openai", "dashscope", "deepseek", or empty → OpenAI-compatible
+			pc.openai = newOpenAIClient(apiKey, p.Endpoint, timeout)
+		}
+
+		a.clients[p.ID] = pc
 	}
 	return a
 }
 
 // Generate sends a chat completion request and returns the response text.
 func (a *Adapter) Generate(ctx context.Context, systemPrompt, userPrompt, providerModel string, temperature float64) (string, error) {
-	providerName, modelName := "default", providerModel
-	for name := range a.clients {
-		if len(providerModel) > len(name) && providerModel[:len(name)] == name {
-			providerName = name
-			if len(providerModel) > len(name)+1 && providerModel[len(name)] == '/' {
-				modelName = providerModel[len(name)+1:]
-			}
-			break
-		}
-	}
-
-	pc, ok := a.clients[providerName]
+	providerID, modelName := resolveProvider(providerModel, a.clients)
+	pc, ok := a.clients[providerID]
 	if !ok {
-		return "", fmt.Errorf("provider not found: %s", providerName)
+		return "", fmt.Errorf("llm provider not found: %s", providerID)
 	}
 
 	if err := pc.limiter.Wait(ctx); err != nil {
 		return "", err
 	}
 
-	if md, ok := pc.models[modelName]; ok {
-		if md.Temperature > 0 {
-			temperature = md.Temperature
-		}
+	if md, ok := pc.models[modelName]; ok && md.Temperature > 0 {
+		temperature = md.Temperature
 	}
 
-	reqBody := map[string]any{
-		"model": modelName,
-		"messages": []map[string]any{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
-		"temperature": float64(temperature),
-		"max_tokens":  8192,
+	switch pc.providerType {
+	case "anthropic":
+		return pc.generateAnthropic(ctx, systemPrompt, userPrompt, modelName, temperature)
+	default:
+		return pc.generateOpenAI(ctx, systemPrompt, userPrompt, modelName, temperature)
 	}
-
-	if md, ok := pc.models[modelName]; ok {
-		if md.TopK > 0 {
-			reqBody["top_k"] = md.TopK
-		}
-		if md.Modalities != nil {
-			reqBody["modalities"] = map[string]any{
-				"input":  md.Modalities.Input,
-				"output": md.Modalities.Output,
-			}
-		}
-		if md.Thinking != nil {
-			reqBody["thinking"] = map[string]any{
-				"type":          md.Thinking.Type,
-				"budget_tokens": md.Thinking.BudgetTokens,
-			}
-		}
-	}
-
-	jsonBody, _ := json.Marshal(reqBody)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", pc.endpoint, bytes.NewReader(jsonBody))
-	if err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+pc.apiKey)
-
-	resp, err := pc.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("LLM request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var llmResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &llmResp); err != nil {
-		return "", fmt.Errorf("parse LLM response: %w", err)
-	}
-	if len(llmResp.Choices) == 0 {
-		return "", fmt.Errorf("no choices in LLM response")
-	}
-	return llmResp.Choices[0].Message.Content, nil
 }
+
+func (pc *llmProviderClient) generateOpenAI(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error) {
+	params := openai.ChatCompletionNewParams{
+		Model: modelName,
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(systemPrompt),
+			openai.UserMessage(userPrompt),
+		},
+		Temperature: openai.Float(temperature),
+		MaxTokens:   openai.Int(8192),
+	}
+
+	completion, err := pc.openai.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return "", fmt.Errorf("openai: %w", err)
+	}
+	if len(completion.Choices) == 0 {
+		return "", fmt.Errorf("openai: no choices in response")
+	}
+	return completion.Choices[0].Message.Content, nil
+}
+
+func (pc *llmProviderClient) generateAnthropic(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error) {
+	params := anthropic.MessageNewParams{
+		Model: modelName,
+		System: []anthropic.TextBlockParam{
+			{Text: systemPrompt},
+		},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock(userPrompt)),
+		},
+		MaxTokens:   8192,
+		Temperature: anthropic.Float(temperature),
+	}
+
+	msg, err := pc.anthropic.Messages.New(ctx, params)
+	if err != nil {
+		return "", fmt.Errorf("anthropic: %w", err)
+	}
+	if len(msg.Content) == 0 {
+		return "", fmt.Errorf("anthropic: empty response")
+	}
+	return msg.Content[0].Text, nil
+}
+
+func resolveProvider(providerModel string, clients map[string]*llmProviderClient) (providerID, modelName string) {
+	providerID, modelName = "default", providerModel
+	for id := range clients {
+		if len(providerModel) > len(id) && providerModel[:len(id)] == id {
+			providerID = id
+			if len(providerModel) > len(id)+1 && providerModel[len(id)] == '/' {
+				modelName = providerModel[len(id)+1:]
+			}
+			break
+		}
+	}
+	return
+}
+
