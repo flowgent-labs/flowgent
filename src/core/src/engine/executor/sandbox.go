@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	"github.com/flowgent-labs/flowgent/messager/src"
 )
 
 // SandboxExecutor dispatches scripts to sandbox workers via a shared workspace
@@ -25,12 +25,12 @@ import (
 //	  ├── status
 //	  └── original/   (pre-modification snapshot for undo)
 type SandboxExecutor struct {
-	queue     messaging.IMessager
+	queue     messager.IMessager
 	policy    *model.SandboxPolicy
 	workspace string
 }
 
-func NewSandboxExecutor(q messaging.IMessager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
+func NewSandboxExecutor(q messager.IMessager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
 	return &SandboxExecutor{queue: q, policy: policy, workspace: workspace}
 }
 
@@ -71,7 +71,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 	}
 
 	resultCh := make(chan *model.TaskResult, 1)
-	resultTopic := messaging.TopicSandboxRes + "/" + plan.PlanID
+	resultTopic := messager.TopicSandboxRes + "/" + plan.PlanID
 
 	if err := e.queue.Subscribe(ctx, resultTopic, func(topic string, payload []byte) {
 		var result model.TaskResult
@@ -86,7 +86,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		return nil, fmt.Errorf("sandbox subscribe: %w", err)
 	}
 
-	if err := e.queue.Publish(ctx, messaging.TopicSandboxTrig, &messaging.Message{
+	if err := e.queue.Publish(ctx, messager.TopicSandboxTrig, &messager.Message{
 		ID: plan.PlanID, Payload: payload,
 	}); err != nil {
 		return nil, fmt.Errorf("sandbox publish: %w", err)

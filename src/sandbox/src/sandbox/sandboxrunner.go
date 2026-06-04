@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	"github.com/flowgent-labs/flowgent/messager/src"
 )
 
 // ─── Trigger message ─────────────────────────────────────────
@@ -47,7 +47,7 @@ type sandboxTrigger struct {
 // SandboxRunner consumes and executes sandbox triggers.
 type SandboxRunner struct {
 	ID        string
-	queue     messaging.IMessager
+	queue     messager.IMessager
 	policy    *model.SandboxPolicy
 	image     string
 	workspace string
@@ -56,7 +56,7 @@ type SandboxRunner struct {
 }
 
 // NewSandboxRunner creates a sandbox worker.
-func NewSandboxRunner(id string, q messaging.IMessager, image, workspace string, policy *model.SandboxPolicy) *SandboxRunner {
+func NewSandboxRunner(id string, q messager.IMessager, image, workspace string, policy *model.SandboxPolicy) *SandboxRunner {
 	if policy == nil {
 		policy = &model.SandboxPolicy{
 			Network:          model.NetworkPolicy{Mode: "none"},
@@ -83,7 +83,7 @@ func (w *SandboxRunner) GetID() string { return w.ID }
 
 // Start subscribes to sandbox triggers and blocks until ctx is done.
 func (w *SandboxRunner) Start(ctx context.Context) error {
-	w.queue.Subscribe(ctx, messaging.TopicSandboxTrig, func(topic string, payload []byte) {
+	w.queue.Subscribe(ctx, messager.TopicSandboxTrig, func(topic string, payload []byte) {
 		var trigger sandboxTrigger
 		if err := json.Unmarshal(payload, &trigger); err != nil {
 			slog.Error("invalid sandbox trigger", "error", err)
@@ -152,7 +152,7 @@ func (w *SandboxRunner) checkBanned(script string) string {
 
 func (w *SandboxRunner) publishResult(msgID string, trigger *sandboxTrigger, result *model.TaskResult) {
 	payload, _ := json.Marshal(result)
-	_ = w.queue.Publish(context.Background(), messaging.TopicSandboxRes+"/"+trigger.PlanID, &messaging.Message{
+	_ = w.queue.Publish(context.Background(), messager.TopicSandboxRes+"/"+trigger.PlanID, &messager.Message{
 		ID:      msgID,
 		Payload: payload,
 	})

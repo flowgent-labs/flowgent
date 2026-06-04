@@ -7,7 +7,7 @@ require (
 	github.com/flowgent-labs/flowgent/cache v0.0.0
 	github.com/flowgent-labs/flowgent/common v0.0.0
 	github.com/flowgent-labs/flowgent/config v0.0.0
-	github.com/flowgent-labs/flowgent/messaging v0.0.0
+	github.com/flowgent-labs/flowgent/messager v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/flowgent-labs/flowgent/notifier v0.0.0
 	github.com/flowgent-labs/flowgent/sandbox v0.0.0
@@ -55,7 +55,7 @@ replace (
 	github.com/flowgent-labs/flowgent/cache => ../cache
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/config => ../config
-	github.com/flowgent-labs/flowgent/messaging => ../messaging
+	github.com/flowgent-labs/flowgent/messager => ../messager
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../sandbox

@@ -35,7 +35,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/src/mcp"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/notifier/src"
-	messaging "github.com/flowgent-labs/flowgent/messaging/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -1620,20 +1620,20 @@ func newJobManagerConfig(cfg *config.ServiceConfig) *jobmanager.JobManagerConfig
 	}
 }
 
-func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.IMessager {
+func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messager.IMessager {
 	// Determine if this is a distributed deployment (Helm — session or application mode).
 	// In distributed mode, MQTT is mandatory; failing to connect is a fatal error.
 	distributed := cfg != nil && (cfg.Deployment.Mode == "session" || cfg.Deployment.Mode == "application")
 
 	qc := cfg.Messaging
 	if qc.Type == "mqtt" && qc.MQTT.Broker != "" {
-		mqc := &messaging.MQTTConfig{
+		mqc := &messager.MQTTConfig{
 			Broker:   qc.MQTT.Broker,
 			ClientID: clientID,
 			Username: qc.MQTT.Username,
 			Password: qc.MQTT.Password,
 		}
-		mq, err := messaging.NewMQTTMessager(mqc)
+		mq, err := messager.NewMQTTMessager(mqc)
 		if err == nil {
 			return mq
 		}
@@ -1643,7 +1643,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.IM
 		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory queue", err)
 	}
 	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
-		mq, err := messaging.NewMQTTMessager(&messaging.MQTTConfig{Broker: broker, ClientID: clientID})
+		mq, err := messager.NewMQTTMessager(&messager.MQTTConfig{Broker: broker, ClientID: clientID})
 		if err == nil {
 			return mq
 		}
@@ -1656,7 +1656,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.IM
 		log.Fatalf("FATAL: MQTT broker not configured. In %s mode, set queue.mqtt.broker in flowgent.yaml or FLOWGENT_MQTT_BROKER env var.", cfg.Deployment.Mode)
 	}
 	log.Printf("WARNING: Using in-memory queue (local dev mode — not suitable for distributed deployment)")
-	return messaging.NewLocalMessager(1000)
+	return messager.NewLocalMessager(1000)
 }
 
 func startNotifierService() error {

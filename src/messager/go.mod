@@ -1,4 +1,4 @@
-module github.com/flowgent-labs/flowgent/messaging
+module github.com/flowgent-labs/flowgent/messager
 
 go 1.26.0
 

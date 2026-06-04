@@ -14,7 +14,7 @@ import (
 	"github.com/flowgent-labs/flowgent/cache/src"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
-	messaging "github.com/flowgent-labs/flowgent/messaging/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -43,7 +43,7 @@ type RMTMState struct {
 // State is persisted to cache so that on JM failover the new JM can restoreFromCache
 // the current TM replica count and slot allocation without querying K8s.
 type KubernetesResourceManager struct {
-	q           messaging.IMessager
+	q           messager.IMessager
 	cache       cache.ICache
 	namespace   string
 	deployName  string
@@ -134,7 +134,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	return rm, nil
 }
 
-func (s *KubernetesResourceManager) SetQueue(q messaging.IMessager) { s.q = q }
+func (s *KubernetesResourceManager) SetQueue(q messager.IMessager) { s.q = q }
 func (s *KubernetesResourceManager) Provider() engine.Provider {
 	return engine.ProviderKubernetes
 }
@@ -167,7 +167,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.Ex
 	defer cancel()
 
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+	if err := s.q.Publish(ctx, messager.TopicExec, &messager.Message{
 		ID: plan.PlanID,
 		Headers: map[string]string{
 			"task_run_id": plan.AgentFlowRunID,

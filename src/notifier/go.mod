@@ -11,6 +11,6 @@ require gopkg.in/yaml.v3 v3.0.1 // indirect
 
 replace (
 	github.com/flowgent-labs/flowgent/config => ../config
-	github.com/flowgent-labs/flowgent/messaging => ../messaging
+	github.com/flowgent-labs/flowgent/messager => ../messager
 	github.com/flowgent-labs/flowgent/model => ../model
 )

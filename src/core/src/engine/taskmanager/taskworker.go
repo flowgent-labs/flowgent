@@ -9,7 +9,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messaging/src"
+	"github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 
 	"go.opentelemetry.io/otel/metric"
@@ -21,13 +21,13 @@ import (
 type SlotWorker struct {
 	id      string
 	tmID    string
-	q       messaging.IMessager
+	q       messager.IMessager
 	router  *executor.TaskExecutorRouter
 	store   store.IStore
 	metrics *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q messaging.IMessager, router *executor.TaskExecutorRouter, store store.IStore, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskExecutorRouter, store store.IStore, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:      id,
 		tmID:    tmID,
@@ -43,7 +43,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 	slog.Info("slot worker started", "tm_id", sw.tmID, "slot_id", sw.id)
 	defer slog.Info("slot worker stopped", "tm_id", sw.tmID, "slot_id", sw.id)
 
-	sw.q.Subscribe(ctx, messaging.TopicExec, func(topic string, payload []byte) {
+	sw.q.Subscribe(ctx, messager.TopicExec, func(topic string, payload []byte) {
 		var plan model.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
 			slog.Error("slot worker cannot unmarshal execution plan", "error", err)
@@ -98,7 +98,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *model.ExecutionP
 		"node_id":          plan.NodeID,
 		"state":            string(plan.State),
 	})
-	_ = sw.q.Publish(ctx, messaging.TopicExecResult, &messaging.Message{
+	_ = sw.q.Publish(ctx, messager.TopicExecResult, &messager.Message{
 		ID:      fmt.Sprintf("status-%s-%s", plan.AgentFlowRunID, plan.NodeID),
 		Headers: map[string]string{"task_run_id": plan.AgentFlowRunID, "node_id": plan.NodeID},
 		Payload: b,

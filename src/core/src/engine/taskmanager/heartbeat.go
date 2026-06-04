@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	messaging "github.com/flowgent-labs/flowgent/messaging/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 
 // ─── TM-side heartbeat ─────────────────────────────────
 
-func startHeartbeat(tmID string, q messaging.IMessager, interval time.Duration) {
+func startHeartbeat(tmID string, q messager.IMessager, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
 	}
@@ -25,9 +25,9 @@ func startHeartbeat(tmID string, q messaging.IMessager, interval time.Duration) 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			hb := &messaging.Heartbeat{TMID: tmID, Timestamp: time.Now()}
+			hb := &messager.Heartbeat{TMID: tmID, Timestamp: time.Now()}
 			data, _ := json.Marshal(hb)
-			_ = q.Publish(context.Background(), messaging.TopicHeartbeat, &messaging.Message{
+			_ = q.Publish(context.Background(), messager.TopicHeartbeat, &messager.Message{
 				ID:      fmt.Sprintf("hb-%s-%d", tmID, time.Now().UnixNano()),
 				Payload: data,
 			})
@@ -48,13 +48,13 @@ type TMState struct {
 // HeartbeatMonitor consumes heartbeats from the queue and detects
 // failed TMs by lease expiration.
 type HeartbeatMonitor struct {
-	q            messaging.IMessager
+	q            messager.IMessager
 	activeTMs    map[string]*TMState
 	mu           sync.Mutex
 	leaseTimeout time.Duration
 }
 
-func NewHeartbeatMonitor(q messaging.IMessager, leaseTimeout time.Duration) *HeartbeatMonitor {
+func NewHeartbeatMonitor(q messager.IMessager, leaseTimeout time.Duration) *HeartbeatMonitor {
 	if leaseTimeout <= 0 {
 		leaseTimeout = defaultLeaseTimeout
 	}
@@ -78,8 +78,8 @@ func (hm *HeartbeatMonitor) ActiveTMs() []TMState {
 }
 
 func (hm *HeartbeatMonitor) Start(ctx context.Context) {
-	hm.q.Subscribe(ctx, messaging.TopicHeartbeat, func(topic string, payload []byte) {
-		var hb messaging.Heartbeat
+	hm.q.Subscribe(ctx, messager.TopicHeartbeat, func(topic string, payload []byte) {
+		var hb messager.Heartbeat
 		if err := json.Unmarshal(payload, &hb); err != nil {
 			return
 		}
@@ -100,7 +100,7 @@ func (hm *HeartbeatMonitor) Start(ctx context.Context) {
 	}()
 }
 
-func (hm *HeartbeatMonitor) recordBeat(hb *messaging.Heartbeat) {
+func (hm *HeartbeatMonitor) recordBeat(hb *messager.Heartbeat) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 	s, ok := hm.activeTMs[hb.TMID]

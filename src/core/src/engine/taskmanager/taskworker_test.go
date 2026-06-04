@@ -8,11 +8,11 @@ import (
 
 	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/src"
-	messaging "github.com/flowgent-labs/flowgent/messaging/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 )
 
 func TestSlotWorker_Execute(t *testing.T) {
-	q := messaging.NewLocalMessager(10)
+	q := messager.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	router.Register(&executor.NoopExecutor{})
 
@@ -34,7 +34,7 @@ func TestSlotWorker_Execute(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond) // let subscription register
 
-	q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+	q.Publish(ctx, messager.TopicExec, &messager.Message{
 		ID:      "msg-1",
 		Payload: payload,
 	})
@@ -43,7 +43,7 @@ func TestSlotWorker_Execute(t *testing.T) {
 }
 
 func TestSlotWorker_InvalidPayload(t *testing.T) {
-	q := messaging.NewLocalMessager(10)
+	q := messager.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	worker := NewSlotWorker("slot-2", "tm-test", q, router, nil, nil)
 
@@ -53,7 +53,7 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+	q.Publish(ctx, messager.TopicExec, &messager.Message{
 		ID:      "msg-bad",
 		Payload: []byte("not-valid-json"),
 	})
@@ -62,7 +62,7 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 }
 
 func TestSlotWorker_ExecuteError(t *testing.T) {
-	q := messaging.NewLocalMessager(10)
+	q := messager.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
 	router.Register(&failingExecutor{})
 
@@ -83,7 +83,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messaging.TopicExec, &messaging.Message{
+	q.Publish(ctx, messager.TopicExec, &messager.Message{
 		ID:      "msg-fail",
 		Payload: payload,
 	})

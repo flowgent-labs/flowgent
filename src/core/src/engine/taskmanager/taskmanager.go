@@ -12,7 +12,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/src"
-	messaging "github.com/flowgent-labs/flowgent/messaging/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -22,14 +22,14 @@ import (
 type TaskManagerConfig struct {
 	ID                string
 	SlotCount         int
-	Queue             messaging.IMessager
+	Queue             messager.IMessager
 	Store             store.IStore
 	Agents            []*config.AgentDef
 	MCPClients        map[string]engine.MCPClient
 	LLMClient         engine.LLMClient
 	Logger            *utils.Logger
 	HeartbeatInterval time.Duration
-	SandboxQueue      messaging.IMessager
+	SandboxQueue      messager.IMessager
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
 }
@@ -41,7 +41,7 @@ type TaskManager struct {
 	ID          string
 	slotWorkers []*SlotWorker
 	router      *executor.TaskExecutorRouter
-	queue       messaging.IMessager
+	queue       messager.IMessager
 	store       store.IStore
 	metrics     *TaskManagerMetrics
 	logger      *utils.Logger

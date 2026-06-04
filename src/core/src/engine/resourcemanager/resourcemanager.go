@@ -11,7 +11,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/src"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
-	messaging "github.com/flowgent-labs/flowgent/messaging/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 )
 
@@ -41,7 +41,7 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue messaging.IMessager
+	Queue messager.IMessager
 	Cache cache.ICache
 	Store store.IStore
 	Agents     []*config.AgentDef

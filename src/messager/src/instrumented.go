@@ -1,4 +1,4 @@
-package messaging
+package messager
 
 import (
 	"context"
@@ -21,13 +21,13 @@ type InstrumentedMessager struct {
 func NewInstrumentedMessager(inner IMessager) *InstrumentedMessager {
 	meter := tracing.Meter("flowgent/messaging")
 	m := &InstrumentedMessager{inner: inner}
-	m.publishTotal, _ = meter.Int64Counter("flowgent.messaging.publish.total",
+	m.publishTotal, _ = meter.Int64Counter("flowgent.messager.publish.total",
 		metric.WithDescription("Total messages published"))
-	m.ackTotal, _ = meter.Int64Counter("flowgent.messaging.ack.total",
+	m.ackTotal, _ = meter.Int64Counter("flowgent.messager.ack.total",
 		metric.WithDescription("Successful acks"))
-	m.nackTotal, _ = meter.Int64Counter("flowgent.messaging.nack.total",
+	m.nackTotal, _ = meter.Int64Counter("flowgent.messager.nack.total",
 		metric.WithDescription("Failed → requeue"))
-	m.handleLatency, _ = meter.Float64Histogram("flowgent.messaging.handle.latency",
+	m.handleLatency, _ = meter.Float64Histogram("flowgent.messager.handle.latency",
 		metric.WithDescription("Message handler latency (ms)"),
 		metric.WithExplicitBucketBoundaries(1, 5, 10, 50, 100, 500, 1000))
 	return m
