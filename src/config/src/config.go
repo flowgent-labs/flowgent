@@ -190,8 +190,7 @@ type PostgresConfig struct {
 // ─── LLM / Orchestration ─────────────────────────────────────
 
 type LLMConfig struct {
-	RequestTimeout string            `json:"request-timeout" yaml:"request-timeout"`
-	Providers      LLMProvidersConfig `json:"providers" yaml:"providers"`
+	Providers LLMProvidersConfig `json:"providers" yaml:"providers"`
 }
 
 type LLMProvidersConfig struct {
@@ -246,6 +245,7 @@ type LLMProviderDef struct {
 	ID          string            `json:"id" yaml:"id"`
 	Type        string            `json:"type" yaml:"type"`
 	Enabled     bool              `json:"enabled" yaml:"enabled"`
+	Timeout     string            `json:"timeout" yaml:"timeout"`
 	Endpoint    string            `json:"endpoint" yaml:"endpoint"`
 	Credentials map[string]string `json:"credentials" yaml:"credentials"`
 	Proxy       string            `json:"proxy" yaml:"proxy"`

@@ -139,12 +139,12 @@ lock:
 
 # ── LLM Providers ────────────────────────────────────────────────────────────
 llm:
-  request-timeout: 120s
   providers:
     static:
       - id: bailian
         type: dashscope
         enabled: true
+        timeout: 120s
         endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
         rate_limit: 60
         credentials:
@@ -172,6 +172,7 @@ llm:
       - id: deepseek
         type: deepseek
         enabled: true
+        timeout: 120s
         endpoint: https://api.deepseek.com/v1/chat/completions
         rate_limit: 60
         credentials:

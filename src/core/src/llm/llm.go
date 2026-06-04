@@ -15,11 +15,12 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const defaultTimeout = 120 * time.Second
+
 // Adapter implements engine.LLMClient using OpenAI-compatible HTTP API.
 type Adapter struct {
 	clients map[string]*providerClient
 	mu      sync.Mutex
-	timeout time.Duration
 }
 
 type providerClient struct {
@@ -35,13 +36,9 @@ type providerClient struct {
 func New(cfg *config.LLMConfig) *Adapter {
 	a := &Adapter{
 		clients: make(map[string]*providerClient),
-		timeout: 120 * time.Second,
 	}
 	if cfg == nil {
 		return a
-	}
-	if d, err := time.ParseDuration(cfg.RequestTimeout); err == nil {
-		a.timeout = d
 	}
 	for _, p := range cfg.Providers.Static {
 		if !p.Enabled {
@@ -50,6 +47,10 @@ func New(cfg *config.LLMConfig) *Adapter {
 		name := p.ID
 		if name == "" {
 			continue
+		}
+		timeout := defaultTimeout
+		if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {
+			timeout = d
 		}
 		var proxyURL *url.URL
 		if p.Proxy != "" {
@@ -60,7 +61,7 @@ func New(cfg *config.LLMConfig) *Adapter {
 		}
 		httpClient := &http.Client{
 			Transport: transport,
-			Timeout:   a.timeout,
+			Timeout:   timeout,
 		}
 		apiKey := ""
 		if v, ok := p.Credentials["apikey"]; ok {

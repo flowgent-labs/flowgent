@@ -8,6 +8,7 @@ type LlmProvider struct {
 	ID          string         `json:"id" yaml:"id"`
 	Type        string         `json:"type" yaml:"type"`
 	Enabled     bool           `json:"enabled" yaml:"enabled"`
+	Timeout     string         `json:"timeout" yaml:"timeout"`
 	Endpoint    string         `json:"endpoint" yaml:"endpoint"`
 	Credentials map[string]any `json:"credentials" yaml:"credentials"`
 	Proxy       string         `json:"proxy,omitempty" yaml:"proxy,omitempty"`
