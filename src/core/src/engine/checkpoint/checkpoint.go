@@ -16,10 +16,10 @@ import (
 // Default strategy: CheckpointPerTask — persist at task boundary.
 // AgentExecutor can call Save in its inner loop for incremental checkpoints.
 type Checkpointer struct {
-	store store.Store
+	store store.IStore
 }
 
-func NewCheckpointer(store store.Store) *Checkpointer {
+func NewCheckpointer(store store.IStore) *Checkpointer {
 	return &Checkpointer{store: store}
 }
 

@@ -26,12 +26,12 @@ func (e *MapExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, sc
 // ─── MapRunner (kept for inline fan-out within map nodes) ─
 
 type MapRunner struct {
-	store  store.Store
+	store  store.IStore
 	logger *utils.Logger
 	mu     sync.Mutex
 }
 
-func newMapRunner(store store.Store, logger *utils.Logger) *MapRunner {
+func newMapRunner(store store.IStore, logger *utils.Logger) *MapRunner {
 	return &MapRunner{store: store, logger: logger}
 }
 

@@ -15,7 +15,7 @@ type AgentDefHandler struct {
 	logger *utils.Logger
 }
 
-// AgentStore is the subset of store.Store needed by AgentDefHandler.
+// AgentStore is the subset of store.IStore needed by AgentDefHandler.
 type AgentStore interface {
 	SaveAgent(ctx context.Context, agent *model.AgentDef) error
 	GetAgent(ctx context.Context, name string) (*model.AgentDef, error)

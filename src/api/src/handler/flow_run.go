@@ -9,7 +9,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
-// FlowRunStore is the subset of store.Store needed by FlowRunHandler.
+// FlowRunStore is the subset of store.IStore needed by FlowRunHandler.
 type FlowRunStore interface {
 	GetAgentFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error)
 	ListAgentFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error)

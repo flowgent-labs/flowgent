@@ -22,14 +22,14 @@ import (
 type TaskManagerConfig struct {
 	ID                string
 	SlotCount         int
-	Queue             messaging.Messager
-	Store             store.Store
+	Queue             messaging.IMessager
+	Store             store.IStore
 	Agents            []*config.AgentDef
 	MCPClients        map[string]engine.MCPClient
 	LLMClient         engine.LLMClient
 	Logger            *utils.Logger
 	HeartbeatInterval time.Duration
-	SandboxQueue      messaging.Messager
+	SandboxQueue      messaging.IMessager
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
 }
@@ -41,8 +41,8 @@ type TaskManager struct {
 	ID          string
 	slotWorkers []*SlotWorker
 	router      *executor.TaskExecutorRouter
-	queue       messaging.Messager
-	store       store.Store
+	queue       messaging.IMessager
+	store       store.IStore
 	metrics     *TaskManagerMetrics
 	logger      *utils.Logger
 	mu          sync.Mutex

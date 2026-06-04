@@ -24,7 +24,7 @@ type LlmProviderManager struct {
 }
 
 // NewLlmProviderManager creates a manager and loads all configured providers.
-func NewLlmProviderManager(cfg *config.LLMConfig, store store.Store) *LlmProviderManager {
+func NewLlmProviderManager(cfg *config.LLMConfig, store store.IStore) *LlmProviderManager {
 	m := &LlmProviderManager{providers: make(map[string]ILlmProvider)}
 	if cfg == nil {
 		return m

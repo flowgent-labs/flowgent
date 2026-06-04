@@ -8,9 +8,9 @@ import (
 )
 
 // StoreManager is the unified entry point for store implementations.
-// It embeds Store so all persistence operations are directly available.
+// It embeds IStore so all persistence operations are directly available.
 type StoreManager struct {
-	Store
+	IStore
 }
 
 // StoreManagerConfig mirrors config.StorageConfig, decoupled from config.
@@ -39,7 +39,7 @@ type PostgresConfig struct {
 
 // NewStoreManager creates the correct Store implementation from config.
 func NewStoreManager(cfg *StoreManagerConfig) *StoreManager {
-	var s Store
+	var s IStore
 
 	switch {
 	case cfg.DSN != "":
@@ -79,7 +79,7 @@ func NewStoreManager(cfg *StoreManagerConfig) *StoreManager {
 	if s == nil {
 		log.Fatalf("StoreManager: failed to create store")
 	}
-	return &StoreManager{Store: s}
+	return &StoreManager{IStore: s}
 }
 
 // StoreDSNFromEnv returns FLOWGENT_DATABASE_URL if set.

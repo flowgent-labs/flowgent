@@ -119,7 +119,7 @@ func startConsole() {
 	}
 }
 
-func listAgentFlowsCmd(ctx context.Context, s store.Store) {
+func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
 	defs, err := s.ListAgentFlowDefinitions(ctx)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -137,7 +137,7 @@ func listAgentFlowsCmd(ctx context.Context, s store.Store) {
 	fmt.Printf("(%d agentflows)\n", len(defs))
 }
 
-func listRunsCmd(ctx context.Context, s store.Store, agentFlowID string) {
+func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
 	runs, err := s.ListAgentFlowRuns(ctx, agentFlowID, 50)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -155,7 +155,7 @@ func listRunsCmd(ctx context.Context, s store.Store, agentFlowID string) {
 	fmt.Printf("(%d runs)\n", len(runs))
 }
 
-func showRunCmd(ctx context.Context, s store.Store, id string) {
+func showRunCmd(ctx context.Context, s store.IStore, id string) {
 	run, err := s.GetAgentFlowRun(ctx, id)
 	if err != nil || run == nil {
 		fmt.Printf("Run not found: %s\n", id)
@@ -164,7 +164,7 @@ func showRunCmd(ctx context.Context, s store.Store, id string) {
 	printJSON(run)
 }
 
-func showTaskCmd(ctx context.Context, s store.Store, id string) {
+func showTaskCmd(ctx context.Context, s store.IStore, id string) {
 	task, err := s.GetTaskRun(ctx, id)
 	if err != nil || task == nil {
 		fmt.Printf("Task not found: %s\n", id)
@@ -174,7 +174,7 @@ func showTaskCmd(ctx context.Context, s store.Store, id string) {
 	printJSON(task)
 }
 
-func tasksCmd(ctx context.Context, s store.Store, runID string) {
+func tasksCmd(ctx context.Context, s store.IStore, runID string) {
 	tasks, err := s.GetTaskRunsByAgentFlowRun(ctx, runID)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)

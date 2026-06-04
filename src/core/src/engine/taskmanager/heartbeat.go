@@ -17,7 +17,7 @@ const (
 
 // ─── TM-side heartbeat ─────────────────────────────────
 
-func startHeartbeat(tmID string, q messaging.Messager, interval time.Duration) {
+func startHeartbeat(tmID string, q messaging.IMessager, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
 	}
@@ -48,13 +48,13 @@ type TMState struct {
 // HeartbeatMonitor consumes heartbeats from the queue and detects
 // failed TMs by lease expiration.
 type HeartbeatMonitor struct {
-	q            messaging.Messager
+	q            messaging.IMessager
 	activeTMs    map[string]*TMState
 	mu           sync.Mutex
 	leaseTimeout time.Duration
 }
 
-func NewHeartbeatMonitor(q messaging.Messager, leaseTimeout time.Duration) *HeartbeatMonitor {
+func NewHeartbeatMonitor(q messaging.IMessager, leaseTimeout time.Duration) *HeartbeatMonitor {
 	if leaseTimeout <= 0 {
 		leaseTimeout = defaultLeaseTimeout
 	}

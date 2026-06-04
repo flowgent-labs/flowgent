@@ -8,7 +8,7 @@ import (
 )
 
 // Store is the unified persistence interface for the flowgent engine.
-type Store interface {
+type IStore interface {
 	// AgentFlow definitions
 	SaveAgentFlowDefinition(ctx context.Context, def *model.AgentFlowVersion) error
 	GetLatestAgentFlowDefinition(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error)

@@ -166,12 +166,12 @@ func (c *apiserverClient) updateTask(ctx context.Context, taskID string, status 
 // while passing all other Store methods through to the underlying store.
 // This allows TM to use the apiserver for state writes while keeping read compatibility.
 type APIStoreWrapper struct {
-	store.Store       // embeds all read methods
+	store.IStore       // embeds all read methods
 	api *apiserverClient
 }
 
-func NewAPIStoreWrapper(inner store.Store, api *apiserverClient) store.Store {
-	return &APIStoreWrapper{Store: inner, api: api}
+func NewAPIStoreWrapper(inner store.IStore, api *apiserverClient) store.IStore {
+	return &APIStoreWrapper{IStore: inner, api: api}
 }
 
 func (w *APIStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {

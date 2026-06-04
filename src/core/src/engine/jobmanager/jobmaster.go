@@ -26,7 +26,7 @@ type EdgeCondition struct {
 // from an AgentFlowSpec and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
-	store     store.Store
+	store     store.IStore
 	rm        resourcemanager.ResourceManager
 	logger    *utils.Logger
 	tracer    trace.Tracer
@@ -52,7 +52,7 @@ type JobMaster struct {
 }
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
-func NewJobMaster(store store.Store, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
+func NewJobMaster(store store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
 	timeout := cfg.FlowExecutionTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute

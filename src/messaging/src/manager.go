@@ -6,9 +6,9 @@ import (
 )
 
 // MessagingManager is the unified entry point for messaging implementations.
-// It embeds Messager so all messaging operations are directly available.
+// It embeds IMessager so all messaging operations are directly available.
 type MessagingManager struct {
-	Messager
+	IMessager
 }
 
 // MessagingManagerConfig mirrors config.MessagingConfig, decoupled from config.
@@ -21,7 +21,7 @@ type MessagingManagerConfig struct {
 	Distributed bool // session/application mode: MQTT mandatory
 }
 
-// NewMessagingManager creates the correct Messager implementation from config.
+// NewMessagingManager creates the correct IMessager implementation from config.
 func NewMessagingManager(cfg *MessagingManagerConfig) *MessagingManager {
 	if cfg.Type == "mqtt" && cfg.Broker != "" {
 		mq, err := NewMQTTMessager(&MQTTConfig{
@@ -31,7 +31,7 @@ func NewMessagingManager(cfg *MessagingManagerConfig) *MessagingManager {
 			Password: cfg.Password,
 		})
 		if err == nil {
-			return &MessagingManager{Messager: mq}
+			return &MessagingManager{IMessager: mq}
 		}
 		if cfg.Distributed {
 			log.Fatalf("FATAL: MQTT connect failed in distributed mode: %v — broker=%s", err, cfg.Broker)
@@ -42,7 +42,7 @@ func NewMessagingManager(cfg *MessagingManagerConfig) *MessagingManager {
 	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
 		mq, err := NewMQTTMessager(&MQTTConfig{Broker: broker, ClientID: cfg.ClientID})
 		if err == nil {
-			return &MessagingManager{Messager: mq}
+			return &MessagingManager{IMessager: mq}
 		}
 		if cfg.Distributed {
 			log.Fatalf("FATAL: MQTT (env) connect failed in distributed mode: %v — broker=%s", err, broker)
@@ -55,8 +55,8 @@ func NewMessagingManager(cfg *MessagingManagerConfig) *MessagingManager {
 	}
 
 	log.Printf("WARNING: Using in-memory queue (local dev mode)")
-	return &MessagingManager{Messager: NewLocalMessager(1000)}
+	return &MessagingManager{IMessager: NewLocalMessager(1000)}
 }
 
-// Ensure MessagingManager satisfies Messager.
-var _ Messager = (*MessagingManager)(nil)
+// Ensure MessagingManager satisfies IMessager.
+var _ IMessager = (*MessagingManager)(nil)

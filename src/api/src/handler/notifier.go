@@ -9,7 +9,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
-// NotifierStore is the subset of store.Store needed by NotifierHandler.
+// NotifierStore is the subset of store.IStore needed by NotifierHandler.
 type NotifierStore interface {
 	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
 }

@@ -549,8 +549,8 @@ func startServer(mode string) {
 }
 
 // initStore creates the Store implementation based on config.
-func initStore(cfg *config.ServiceConfig) store.Store {
-	var s store.Store
+func initStore(cfg *config.ServiceConfig) store.IStore {
+	var s store.IStore
 	// Fallback: use FLOWGENT_DATABASE_URL env var if config is empty (external PG)
 	pgCfg := cfg.Storage.Postgres
 	if pgCfg.Host == "" {
@@ -1058,7 +1058,7 @@ func (a *notifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (
 func (a *notifToWSAdapter) PodID() string { return a.svc.PodID() }
 
 // createNotifierService builds a notifier.Service from config, or nil if disabled.
-func createNotifierService(s store.Store, cfg *config.ServiceConfig) *notifier.Service {
+func createNotifierService(s store.IStore, cfg *config.ServiceConfig) *notifier.Service {
 	if !cfg.Notifier.Enabled {
 		return nil
 	}
@@ -1108,7 +1108,7 @@ func isTerminalStatus(s model.RunStatus) bool {
 //	→ Create dedicated K8s Namespace + JM Deployment + TM Deployment
 //	→ Flow runs in isolated cluster (like Flink Application Mode)
 type Controller struct {
-	store   store.Store
+	store   store.IStore
 	rm      resourcemanager.ResourceManager
 	logger  *utils.Logger
 	cfg     *config.ServiceConfig
@@ -1123,7 +1123,7 @@ type Controller struct {
 }
 
 // NewController creates a Controller instance.
-func NewController(s store.Store, rm resourcemanager.ResourceManager, logger *utils.Logger,
+func NewController(s store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger,
 	cfg *config.ServiceConfig, cfgPath string, disc discovery.IDiscoveryClient) *Controller {
 	return &Controller{
 		store:        s,
@@ -1505,7 +1505,7 @@ func startController() error {
 	logger := utils.NewLogger(logMode, logLevel)
 
 	// Init store (requires PG for distributed mode)
-	var storeImpl store.Store
+	var storeImpl store.IStore
 	if dbURL := os.Getenv("FLOWGENT_DATABASE_URL"); dbURL != "" {
 		pg := store.NewPostgresStore(dbURL)
 		if err := pg.Init(context.Background()); err != nil {
@@ -1620,7 +1620,7 @@ func newJobManagerConfig(cfg *config.ServiceConfig) *jobmanager.JobManagerConfig
 	}
 }
 
-func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Messager {
+func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.IMessager {
 	// Determine if this is a distributed deployment (Helm — session or application mode).
 	// In distributed mode, MQTT is mandatory; failing to connect is a fatal error.
 	distributed := cfg != nil && (cfg.Deployment.Mode == "session" || cfg.Deployment.Mode == "application")

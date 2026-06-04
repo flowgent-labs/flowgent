@@ -20,7 +20,7 @@ var flowDefTracer = tracing.Tracer("flowgent/api/flowdef")
 
 // FlowDefHandler manages flow definition CRUD, watch API, and in-memory cache.
 type FlowDefHandler struct {
-	store        store.Store
+	store        store.IStore
 	logger       *utils.Logger
 	agentFlows   map[string]*model.AgentFlowSpec
 	mu           sync.RWMutex
@@ -28,7 +28,7 @@ type FlowDefHandler struct {
 	watchChs     []chan struct{}
 }
 
-func NewFlowDefHandler(s store.Store, logger *utils.Logger, agentFlows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *FlowDefHandler {
+func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *FlowDefHandler {
 	afMap := make(map[string]*model.AgentFlowSpec)
 	for i := range agentFlows { afMap[agentFlows[i].ID] = &agentFlows[i] }
 	for k, v := range subFlows { afMap[k] = &v }

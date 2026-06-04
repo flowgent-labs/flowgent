@@ -17,10 +17,10 @@ import (
 type SupervisorExecutor struct {
 	llmClient engine.LLMClient
 	agents    map[string]*config.AgentDef
-	store     store.Store
+	store     store.IStore
 }
 
-func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef, store store.Store) *SupervisorExecutor {
+func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef, store store.IStore) *SupervisorExecutor {
 	m := make(map[string]*config.AgentDef)
 	for _, a := range agents {
 		m[a.Name] = a

@@ -11,14 +11,14 @@ import (
 
 // InstrumentedMessager wraps a Messager with OTEL metric instrumentation.
 type InstrumentedMessager struct {
-	inner          Messager
+	inner          IMessager
 	publishTotal   metric.Int64Counter
 	ackTotal       metric.Int64Counter
 	nackTotal      metric.Int64Counter
 	handleLatency  metric.Float64Histogram
 }
 
-func NewInstrumentedMessager(inner Messager) *InstrumentedMessager {
+func NewInstrumentedMessager(inner IMessager) *InstrumentedMessager {
 	meter := tracing.Meter("flowgent/messaging")
 	m := &InstrumentedMessager{inner: inner}
 	m.publishTotal, _ = meter.Int64Counter("flowgent.messaging.publish.total",

@@ -25,5 +25,5 @@ type LLMClient interface {
 }
 
 // Store is the persistence layer interface used by all engine components.
-// This is an alias of store.Store — the canonical definition lives in src/store/.
-type Store = store.Store
+// This is an alias of store.IStore — the canonical definition lives in src/store/.
+type Store = store.IStore

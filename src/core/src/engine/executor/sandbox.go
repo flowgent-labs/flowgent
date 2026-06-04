@@ -25,12 +25,12 @@ import (
 //	  ├── status
 //	  └── original/   (pre-modification snapshot for undo)
 type SandboxExecutor struct {
-	queue     messaging.Messager
+	queue     messaging.IMessager
 	policy    *model.SandboxPolicy
 	workspace string
 }
 
-func NewSandboxExecutor(q messaging.Messager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
+func NewSandboxExecutor(q messaging.IMessager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
 	return &SandboxExecutor{queue: q, policy: policy, workspace: workspace}
 }
 

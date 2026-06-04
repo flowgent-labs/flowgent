@@ -41,9 +41,9 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue messaging.Messager
+	Queue messaging.IMessager
 	Cache cache.ICache
-	Store store.Store
+	Store store.IStore
 	Agents     []*config.AgentDef
 	MCPClients map[string]engine.MCPClient
 	LLMClient  engine.LLMClient
@@ -89,7 +89,7 @@ var _ ResourceManager = (*KubernetesResourceManager)(nil)
 // ─── Validation ───────────────────────────────────────────────
 
 // ValidateComponents checks cross-component compatibility. Returns fatal errors.
-func ValidateComponents(rm ResourceManager, store store.Store) []error {
+func ValidateComponents(rm ResourceManager, store store.IStore) []error {
 	var errs []error
 	if rm == nil {
 		return append(errs, fmt.Errorf("resource manager is nil"))
@@ -106,7 +106,7 @@ func ValidateComponents(rm ResourceManager, store store.Store) []error {
 }
 
 // WarnCompatibility logs warnings for unusual but non-fatal configurations.
-func WarnCompatibility(rm ResourceManager, store store.Store) {
+func WarnCompatibility(rm ResourceManager, store store.IStore) {
 	if rm == nil || store == nil {
 		return
 	}

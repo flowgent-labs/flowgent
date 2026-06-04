@@ -40,7 +40,7 @@ type Heartbeat struct {
 type SubHandler func(topic string, payload []byte)
 
 // Messager is the unified message queue interface.
-type Messager interface {
+type IMessager interface {
 	// Publish sends msg to the given topic.
 	Publish(ctx context.Context, topic string, msg *Message) error
 

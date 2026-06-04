@@ -43,7 +43,7 @@ type RMTMState struct {
 // State is persisted to cache so that on JM failover the new JM can restoreFromCache
 // the current TM replica count and slot allocation without querying K8s.
 type KubernetesResourceManager struct {
-	q           messaging.Messager
+	q           messaging.IMessager
 	cache       cache.ICache
 	namespace   string
 	deployName  string
@@ -134,7 +134,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	return rm, nil
 }
 
-func (s *KubernetesResourceManager) SetQueue(q messaging.Messager) { s.q = q }
+func (s *KubernetesResourceManager) SetQueue(q messaging.IMessager) { s.q = q }
 func (s *KubernetesResourceManager) Provider() engine.Provider {
 	return engine.ProviderKubernetes
 }

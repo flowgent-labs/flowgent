@@ -14,7 +14,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
-// Store is the subset of store.Store needed by the notification service.
+// Store is the subset of store.IStore needed by the notification service.
 type Store interface {
 	GetPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
 	ListNotifierChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)

@@ -11,10 +11,10 @@ import (
 // ─── Human Executor ────────────────────────────────────
 
 type HumanExecutor struct {
-	store store.Store
+	store store.IStore
 }
 
-func NewHumanExecutor(store store.Store) *HumanExecutor {
+func NewHumanExecutor(store store.IStore) *HumanExecutor {
 	return &HumanExecutor{store: store}
 }
 

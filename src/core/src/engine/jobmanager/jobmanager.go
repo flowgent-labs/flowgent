@@ -21,14 +21,14 @@ type JobManagerConfig struct {
 // JobManager is the singleton JobManager (like Flink's Dispatcher in session mode).
 // It receives agentflow run submissions and spawns a JobMaster per run.
 type JobManager struct {
-	store  store.Store
+	store  store.IStore
 	rm     resourcemanager.ResourceManager
 	logger *utils.Logger
 	cfg    *JobManagerConfig
 }
 
 // NewJobManager creates the shared JobManager singleton.
-func NewJobManager(store store.Store, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
+func NewJobManager(store store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
 	if errs := resourcemanager.ValidateComponents(rm, store); len(errs) > 0 {
 		for _, e := range errs {
 			logger.Error("component validation failed", "error", e.Error())
