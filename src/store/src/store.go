@@ -2,8 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"os"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
@@ -85,4 +89,62 @@ type IStore interface {
 
 	// DB access for memory store and RAG
 	DB() any
+}
+// StoreManager is the unified entry point for store implementations.
+// It embeds IStore so all persistence operations are directly available.
+type StoreManager struct {
+	IStore
+}
+
+// NewStoreManager creates the correct IStore implementation from FlowgentConfig.
+func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
+	var s IStore
+
+	switch {
+	case StoreDSNFromEnv() != "":
+		log.Printf("StoreManager: using external PG DSN")
+		s = NewPostgresStore(StoreDSNFromEnv())
+
+	case cfg.Storage.Type == "POSTGRE":
+		pg := cfg.Storage.Postgres
+		sslMode := "disable"
+		if pg.UseSSL {
+			sslMode = "require"
+		}
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, sslMode)
+		ps := NewPostgresStore(dsn)
+		ps.SetPoolConfig(pg.MinConnections, pg.MaxConnections)
+		if pg.Schema != "" {
+			ps.SetSchema(pg.Schema)
+		}
+		if err := ps.Init(context.Background()); err != nil {
+			log.Fatalf("Failed to init Postgres: %v", err)
+		}
+		s = ps
+
+	default: // SQLITE or empty
+		dir := cfg.Storage.SQLite.Dir
+		if dir == "" {
+			dir = "~/.flowgent/sqlite"
+		}
+		sq := NewSQLiteStore(dir)
+		if err := sq.Init(context.Background()); err != nil {
+			log.Fatalf("Failed to init SQLite: %v", err)
+		}
+		s = sq
+	}
+
+	if s == nil {
+		log.Fatalf("StoreManager: failed to create store")
+	}
+	return &StoreManager{IStore: s}
+}
+
+// StoreDSNFromEnv returns FLOWGENT_DATABASE_URL if set.
+func StoreDSNFromEnv() string {
+	if u := os.Getenv("FLOWGENT_DATABASE_URL"); u != "" {
+		return u
+	}
+	return ""
 }
