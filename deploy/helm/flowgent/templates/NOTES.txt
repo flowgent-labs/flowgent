@@ -35,8 +35,7 @@ Mode: {{ .Values.global.mode }}
 ━━━ Session Mode — Shared Pool ━━━
   API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
   JobManager       — {{ .Values.jobmanager.replicas }} replicas{{ if .Values.jobmanager.ha.enabled }} (HA){{ end }}
-  TaskManager      — {{ .Values.taskmanager.replicas }} replicas × {{ .Values.taskmanager.slots }} slots
-  Sandbox          — {{ .Values.sandbox.replicas }} replicas × {{ .Values.sandbox.slots }} slots
+  TaskManager      — {{ .Values.taskmanager.replicas }} replicas × {{ .Values.taskmanager.slots }} slots (inline sandbox)
   Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
 {{- else }}
 ━━━ Application Mode — Controller-Managed ━━━

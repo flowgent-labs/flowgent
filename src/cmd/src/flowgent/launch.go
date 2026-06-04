@@ -1621,7 +1621,7 @@ func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messaging.Me
 	// In distributed mode, MQTT is mandatory; failing to connect is a fatal error.
 	distributed := cfg != nil && (cfg.Deployment.Mode == "session" || cfg.Deployment.Mode == "application")
 
-	qc := cfg.Queue
+	qc := cfg.Messaging
 	if qc.Type == "mqtt" && qc.MQTT.Broker != "" {
 		mqc := &messaging.MQTTConfig{
 			Broker:   qc.MQTT.Broker,

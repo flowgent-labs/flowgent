@@ -75,7 +75,7 @@ data:
       agentflows:
         static: { enabled: false }
         standard: { enabled: true }
-    queue:
+    messaging:
       type: {{ .Values.queue.type | quote }}
       mqtt:
         broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
@@ -91,17 +91,11 @@ data:
     credential-paths:
       base-path: {{ .Values.global.credentialPaths.basePath | default "/var/secret/flowgent" | quote }}
     sandbox:
-      workspace: {{ .Values.taskmanager.workspace | default "/var/flowgent/workspace" | quote }}
+      workspace: {{ .Values.taskmanager.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
       policy:
         network:
-          mode: {{ .Values.taskmanager.policy.network.mode | default "none" | quote }}
-        allowed_runtimes: {{ .Values.taskmanager.policy.allowedRuntimes | toJson }}
-        banned_commands: {{ .Values.taskmanager.policy.bannedCommands | toJson }}
-        default_timeout: {{ .Values.taskmanager.policy.defaultTimeout | default "120s" | quote }}
-        max_timeout: {{ .Values.taskmanager.policy.maxTimeout | default "600s" | quote }}
-        default_resources:
-          cpu: {{ .Values.taskmanager.policy.defaultResources.cpu | default "500m" | quote }}
-          memory: {{ .Values.taskmanager.policy.defaultResources.memory | default "256Mi" | quote }}
-        max_resources:
-          cpu: {{ .Values.taskmanager.policy.maxResources.cpu | default "2000m" | quote }}
-          memory: {{ .Values.taskmanager.policy.maxResources.memory | default "1Gi" | quote }}
+          mode: {{ .Values.taskmanager.sandbox.policy.network.mode | default "none" | quote }}
+        allowed_runtimes: {{ .Values.taskmanager.sandbox.policy.allowedRuntimes | toJson }}
+        banned_commands: {{ .Values.taskmanager.sandbox.policy.bannedCommands | toJson }}
+        default_timeout: {{ .Values.taskmanager.sandbox.policy.defaultTimeout | default "120s" | quote }}
+        max_timeout: {{ .Values.taskmanager.sandbox.policy.maxTimeout | default "600s" | quote }}

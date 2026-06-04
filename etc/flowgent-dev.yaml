@@ -118,9 +118,9 @@ storage:
     max-connections: 20
     use-ssl: false
 
-# ── Queue ────────────────────────────────────────────────────────────────────
+# ── Messaging ──────────────────────────────────────────────────────────────────
 #    Type: memory (all-in-one/dev) | mqtt (production/distributed)
-queue:
+messaging:
   type: memory                    # memory | mqtt
   mqtt:
     broker: "tcp://127.0.0.1:1883"
@@ -276,7 +276,8 @@ orchestration:
       enabled: false                # DB-backed agentflows (future Flowgent UI)
 
 # ── Sandbox (inline in TaskManager) ────────────────────────────────────────────
-#    Secure script execution runs inside TM pods — no separate sandbox deployment.
+#    Secure script execution runs inside TM pods — no separate deployment.
+#    Resource limits come from the TM pod spec, not from sandbox policy.
 sandbox:
   workspace: "/var/flowgent/workspace"   # shared PVC, per-{tenant}/{flow_id} subdirs
   policy:
@@ -288,12 +289,6 @@ sandbox:
     banned_commands: []            # e.g. ["curl", "wget"]
     default_timeout: 120s
     max_timeout: 600s
-    default_resources:
-      cpu: "500m"
-      memory: "256Mi"
-    max_resources:
-      cpu: "2000m"
-      memory: "1Gi"
 
 # ── Notifier Service ─────────────────────────────────────────────────────
 notifier:

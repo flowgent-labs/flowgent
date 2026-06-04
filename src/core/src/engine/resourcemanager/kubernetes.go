@@ -40,7 +40,7 @@ type RMTMState struct {
 // scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
 // is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
 //
-// State is persisted to cache so that on JM failover the new JM can restore
+// State is persisted to cache so that on JM failover the new JM can restoreFromCache
 // the current TM replica count and slot allocation without querying K8s.
 type KubernetesResourceManager struct {
 	q           messaging.Messager
@@ -116,7 +116,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 
 	// Restore TM state from cache (JM failover recovery).
 	if cfg.Cache != nil {
-		rm.restoreFromCache(ctx)
+		rm.restore(ctx)
 	}
 
 	if err := rm.ensureDeployment(ctx); err != nil {
@@ -128,7 +128,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	if err := rm.scaleDeployment(ctx, int32(rm.minTMs)); err != nil {
 		slog.Warn("kubernetes rm: initial scale failed", "err", err)
 	} else {
-		rm.persistToCache(ctx)
+		rm.persist(ctx)
 	}
 
 	return rm, nil
@@ -228,7 +228,7 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 				return
 			}
 			atomic.StoreInt32(&s.currentTMs, int32(neededTMs))
-			s.persistToCache(ctx)
+			s.persist(ctx)
 		}
 		return
 	}
@@ -245,7 +245,7 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 			return
 		}
 		atomic.StoreInt32(&s.currentTMs, int32(targetTMs))
-		s.persistToCache(ctx)
+		s.persist(ctx)
 	}
 }
 
@@ -352,7 +352,7 @@ func cacheKey(namespace, deployName string) string {
 	return fmt.Sprintf("flowgent:rm:%s:%s", namespace, deployName)
 }
 
-func (s *KubernetesResourceManager) persistToCache(ctx context.Context) {
+func (s *KubernetesResourceManager) persist(ctx context.Context) {
 	if s.cache == nil {
 		return
 	}
@@ -377,7 +377,7 @@ func (s *KubernetesResourceManager) persistToCache(ctx context.Context) {
 	}
 }
 
-func (s *KubernetesResourceManager) restoreFromCache(ctx context.Context) {
+func (s *KubernetesResourceManager) restore(ctx context.Context) {
 	data, err := s.cache.Get(ctx, cacheKey(s.namespace, s.deployName))
 	if err != nil || data == nil {
 		return
@@ -394,7 +394,7 @@ func (s *KubernetesResourceManager) restoreFromCache(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	atomic.StoreInt64(&s.pendingPlans, state.PendingPlans)
-	slog.Info("kubernetes rm: restored state from cache",
+	slog.Info("kubernetes rm: restoreFromCached state from cache",
 		"current_tms", state.CurrentTMs, "last_activity", state.LastActivity)
 }
 

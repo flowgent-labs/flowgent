@@ -29,7 +29,7 @@ type ServiceConfig struct {
 	Storage         StorageConfig         `json:"storage" yaml:"storage"`
 	LLM             LLMConfig             `json:"llm" yaml:"llm"`
 	Orchestration   OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
-	Queue           QueueConfig           `json:"queue" yaml:"queue"`
+	Messaging       MessagingConfig       `json:"messaging" yaml:"messaging"`
 	Lock            LockConfig            `json:"lock" yaml:"lock"`
 	Sandbox         SandboxConfig         `json:"sandbox" yaml:"sandbox"`
 	Payments        *PaymentsConfig       `json:"payments" yaml:"payments"`
@@ -211,8 +211,8 @@ type SandboxConfig struct {
 	Policy    *model.SandboxPolicy `json:"policy" yaml:"policy"`
 }
 
-// QueueConfig configures the message queue for inter-component communication.
-type QueueConfig struct {
+// MessagingConfig configures the message queue for inter-component communication.
+type MessagingConfig struct {
 	Type string     `json:"type" yaml:"type"` // memory | mqtt
 	MQTT MQTTConfig `json:"mqtt" yaml:"mqtt"`
 }

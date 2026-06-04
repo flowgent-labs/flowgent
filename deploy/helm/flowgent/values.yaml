@@ -137,32 +137,26 @@ taskmanager:
   replicas: 2
   image: ""
   slots: 4
-  # Sandbox workspace (shared PVC for script I/O between TM and inline sandbox)
-  workspace: "/var/flowgent/workspace"
-  workspaceSize: "10Gi"
-  # Credentials injected as env vars into TM pods for inline sandbox scripts
-  credentials:
-    nexus3:
-      url: "http://nexus3:8081"
-      secret: "nexus3-creds"
-    sonatypeiq:
-      url: "http://sonatypeiq:8070"
-      secret: "iq-creds"
-  policy:
-    network:
-      mode: "none"
-      allowed: []
-      denied: []
-    allowedRuntimes: [python3, bash, node]
-    bannedCommands: []
-    defaultTimeout: "120s"
-    maxTimeout: "600s"
-    defaultResources:
-      cpu: "500m"
-      memory: "256Mi"
-    maxResources:
-      cpu: "2000m"
-      memory: "1Gi"
+  # ── Inline sandbox (runs inside TM pod, not separate deployment) ──
+  sandbox:
+    workspace: "/var/flowgent/workspace"
+    workspaceSize: "10Gi"
+    credentials:
+      nexus3:
+        url: "http://nexus3:8081"
+        secret: "nexus3-creds"
+      sonatypeiq:
+        url: "http://sonatypeiq:8070"
+        secret: "iq-creds"
+    policy:
+      network:
+        mode: "none"
+        allowed: []
+        denied: []
+      allowedRuntimes: [python3, bash, node]
+      bannedCommands: []
+      defaultTimeout: "120s"
+      maxTimeout: "600s"
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2", memory: "2Gi" }

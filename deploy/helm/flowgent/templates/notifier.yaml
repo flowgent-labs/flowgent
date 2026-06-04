@@ -61,7 +61,7 @@ spec:
         {{- if eq .Values.global.mode "session" }}
         - name: workspace
           hostPath:
-            path: {{ .Values.sandbox.workspace }}
+            path: {{ .Values.taskmanager.sandbox.workspace }}
             type: DirectoryOrCreate
         {{- end }}
 ---
