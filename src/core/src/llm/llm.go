@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 )

@@ -90,7 +90,7 @@ func readEnvFile(path string) map[string]string {
 }
 
 // CredentialPathsOrDefault returns the credential paths config, filling defaults.
-func CredentialPathsOrDefault(cfg *ServiceConfig) CredentialPathsConfig {
+func CredentialPathsOrDefault(cfg *FlowgentConfig) CredentialPathsConfig {
 	if cfg == nil {
 		return CredentialPathsConfig{BasePath: "/var/secret/flowgent"}
 	}

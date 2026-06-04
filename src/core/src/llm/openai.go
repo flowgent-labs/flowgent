@@ -9,7 +9,7 @@ import (
 	openaiopt "github.com/openai/openai-go/option"
 	"golang.org/x/time/rate"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 const defaultTimeout = 120 * time.Second

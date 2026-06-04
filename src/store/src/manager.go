@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 // StoreManager is the unified entry point for store implementations.
@@ -13,41 +15,17 @@ type StoreManager struct {
 	IStore
 }
 
-// StoreManagerConfig mirrors config.StorageConfig, decoupled from config.
-type StoreManagerConfig struct {
-	Type     string // "POSTGRE" | "SQLITE" | ""
-	DSN      string // direct DSN override (e.g. FLOWGENT_DATABASE_URL)
-	SQLite   SQLiteConfig
-	Postgres PostgresConfig
-}
-
-type SQLiteConfig struct {
-	Dir string
-}
-
-type PostgresConfig struct {
-	Host           string
-	Port           int
-	Database       string
-	Schema         string
-	Username       string
-	Password       string
-	MinConnections int
-	MaxConnections int
-	UseSSL         bool
-}
-
-// NewStoreManager creates the correct Store implementation from config.
-func NewStoreManager(cfg *StoreManagerConfig) *StoreManager {
+// NewStoreManager creates the correct IStore implementation from FlowgentConfig.
+func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 	var s IStore
 
 	switch {
-	case cfg.DSN != "":
+	case StoreDSNFromEnv() != "":
 		log.Printf("StoreManager: using external PG DSN")
-		s = NewPostgresStore(cfg.DSN)
+		s = NewPostgresStore(StoreDSNFromEnv())
 
-	case cfg.Type == "POSTGRE":
-		pg := cfg.Postgres
+	case cfg.Storage.Type == "POSTGRE":
+		pg := cfg.Storage.Postgres
 		sslMode := "disable"
 		if pg.UseSSL {
 			sslMode = "require"
@@ -65,7 +43,7 @@ func NewStoreManager(cfg *StoreManagerConfig) *StoreManager {
 		s = ps
 
 	default: // SQLITE or empty
-		dir := cfg.SQLite.Dir
+		dir := cfg.Storage.SQLite.Dir
 		if dir == "" {
 			dir = "~/.flowgent/sqlite"
 		}

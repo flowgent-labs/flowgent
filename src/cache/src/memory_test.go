@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 func TestMemoryCache_SetGet(t *testing.T) {

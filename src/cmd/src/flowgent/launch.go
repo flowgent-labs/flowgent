@@ -24,7 +24,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/src/tracing"
 	"github.com/flowgent-labs/flowgent/core/src/client"
 	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/core/src/engine/discovery"
 	"github.com/flowgent-labs/flowgent/core/src/engine/jobmanager"
@@ -549,7 +549,7 @@ func startServer(mode string) {
 }
 
 // initStore creates the Store implementation based on config.
-func initStore(cfg *config.ServiceConfig) store.IStore {
+func initStore(cfg *config.FlowgentConfig) store.IStore {
 	var s store.IStore
 	// Fallback: use FLOWGENT_DATABASE_URL env var if config is empty (external PG)
 	pgCfg := cfg.Storage.Postgres
@@ -601,7 +601,7 @@ func initStore(cfg *config.ServiceConfig) store.IStore {
 }
 
 // logConfig prints key configuration details (masks sensitive fields).
-func logConfig(cfg *config.ServiceConfig) {
+func logConfig(cfg *config.FlowgentConfig) {
 	// Storage
 	switch cfg.Storage.Type {
 	case "POSTGRE":
@@ -1058,7 +1058,7 @@ func (a *notifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (
 func (a *notifToWSAdapter) PodID() string { return a.svc.PodID() }
 
 // createNotifierService builds a notifier.Service from config, or nil if disabled.
-func createNotifierService(s store.IStore, cfg *config.ServiceConfig) *notifier.Service {
+func createNotifierService(s store.IStore, cfg *config.FlowgentConfig) *notifier.Service {
 	if !cfg.Notifier.Enabled {
 		return nil
 	}
@@ -1111,7 +1111,7 @@ type Controller struct {
 	store   store.IStore
 	rm      resourcemanager.ResourceManager
 	logger  *utils.Logger
-	cfg     *config.ServiceConfig
+	cfg     *config.FlowgentConfig
 	cfgPath string
 
 	// discovery: pluggable service discovery (K8s or static env-based)
@@ -1124,7 +1124,7 @@ type Controller struct {
 
 // NewController creates a Controller instance.
 func NewController(s store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger,
-	cfg *config.ServiceConfig, cfgPath string, disc discovery.IDiscoveryClient) *Controller {
+	cfg *config.FlowgentConfig, cfgPath string, disc discovery.IDiscoveryClient) *Controller {
 	return &Controller{
 		store:        s,
 		rm:           rm,
@@ -1608,7 +1608,7 @@ func runNotifier(action, pidFile string) error {
 	}
 }
 
-func newJobManagerConfig(cfg *config.ServiceConfig) *jobmanager.JobManagerConfig {
+func newJobManagerConfig(cfg *config.FlowgentConfig) *jobmanager.JobManagerConfig {
 	timeout, _ := time.ParseDuration(cfg.Orchestration.FlowExecutionTimeout)
 	if timeout == 0 {
 		timeout = 30 * time.Minute
@@ -1620,7 +1620,7 @@ func newJobManagerConfig(cfg *config.ServiceConfig) *jobmanager.JobManagerConfig
 	}
 }
 
-func newQueueFromConfig(cfg *config.ServiceConfig, clientID string) messager.IMessager {
+func newQueueFromConfig(cfg *config.FlowgentConfig, clientID string) messager.IMessager {
 	// Determine if this is a distributed deployment (Helm — session or application mode).
 	// In distributed mode, MQTT is mandatory; failing to connect is a fatal error.
 	distributed := cfg != nil && (cfg.Deployment.Mode == "session" || cfg.Deployment.Mode == "application")

@@ -13,7 +13,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/flowgent-labs/flowgent/wallet/src"
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 // Engine evaluates payment intents against configured spending policies.

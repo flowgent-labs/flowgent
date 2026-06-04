@@ -16,8 +16,8 @@ import (
 
 // ─── Top-level config ────────────────────────────────────────
 
-// ServiceConfig is the top-level runtime configuration for the flowgent engine.
-type ServiceConfig struct {
+// FlowgentConfig is the top-level runtime configuration for the flowgent engine.
+type FlowgentConfig struct {
 	ServiceName     string                `json:"service-name" yaml:"service-name"`
 	Deployment      DeploymentConfig      `json:"deployment" yaml:"deployment"`
 	Server          ServerConfig          `json:"server" yaml:"server"`
@@ -347,7 +347,7 @@ type StandardAgentCfg struct {
 // AppConfig is the aggregate application configuration combining service config
 // with loaded agentflow definitions.
 type AppConfig struct {
-	Service  ServiceConfig                  `json:"service" yaml:"service"`
+	Service  FlowgentConfig                  `json:"service" yaml:"service"`
 	Agents   []AgentDef                     `json:"agents,omitempty" yaml:"agents,omitempty"`
 	Flows    []model.AgentFlowSpec          `json:"flows" yaml:"flows"`
 	SubFlows map[string]model.AgentFlowSpec `json:"sub_flows,omitempty" yaml:"sub_flows,omitempty"`
@@ -404,7 +404,7 @@ func (c *AppConfig) GetModel(provider string) string {
 // Load reads the main service config YAML file with env var overrides via viper.
 // Environment variables prefixed with FLOWGENT_ take precedence over YAML values.
 // Naming: FLOWGENT_SERVER_PORT overrides server.port, etc.
-func Load(path string) (*ServiceConfig, error) {
+func Load(path string) (*FlowgentConfig, error) {
 	v := viper.New()
 
 	// Config file
@@ -420,7 +420,7 @@ func Load(path string) (*ServiceConfig, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
-	var cfg ServiceConfig
+	var cfg FlowgentConfig
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
@@ -454,7 +454,7 @@ func loadResourceDir[T any](dir string) ([]T, error) {
 }
 
 // LoadAgents loads agent definitions from the static directory.
-func LoadAgents(cfg *ServiceConfig, cfgPath string) ([]AgentDef, error) {
+func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentDef, error) {
 	var agents []AgentDef
 	if cfg.Orchestration.Agents.Static.Enabled {
 		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.Agents.Static.LoadDir)
@@ -464,7 +464,7 @@ func LoadAgents(cfg *ServiceConfig, cfgPath string) ([]AgentDef, error) {
 }
 
 // LoadAgentFlows discovers and loads all L2 agentflow YAML files from the static directory.
-func LoadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
+func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
 	var flows []model.AgentFlowSpec
 	subFlows := make(map[string]model.AgentFlowSpec)
 
@@ -524,12 +524,12 @@ func LoadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, 
 }
 
 // ReloadAgentFlows re-reads agentflow YAML files (for hot reload).
-func ReloadAgentFlows(cfg *ServiceConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
+func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
 	return LoadAgentFlows(cfg, cfgPath)
 }
 
 // BuildAppConfig combines service config with loaded agents and flows.
-func BuildAppConfig(cfg *ServiceConfig, agents []AgentDef, flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *AppConfig {
+func BuildAppConfig(cfg *FlowgentConfig, agents []AgentDef, flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *AppConfig {
 	return &AppConfig{
 		Service:  *cfg,
 		Agents:   agents,

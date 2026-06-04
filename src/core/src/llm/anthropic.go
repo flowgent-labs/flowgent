@@ -9,7 +9,7 @@ import (
 	anthropicopt "github.com/anthropics/anthropic-sdk-go/option"
 	"golang.org/x/time/rate"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 // AnthropicProvider implements ILlmProvider for the Anthropic Messages API.

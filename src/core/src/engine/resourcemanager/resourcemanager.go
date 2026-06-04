@@ -8,7 +8,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cache/src"
 	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
 	messager "github.com/flowgent-labs/flowgent/messager/src"

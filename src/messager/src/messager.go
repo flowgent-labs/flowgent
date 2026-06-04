@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 // ─── Topic Constants ───────────────────────────────────────────
@@ -68,46 +70,36 @@ type MessagerManager struct {
 	IMessager
 }
 
-// MessagerManagerConfig mirrors config.MessagerConfig, decoupled from config.
-type MessagerManagerConfig struct {
-	Type        string // "memory" | "mqtt"
-	ClientID    string
-	Broker      string
-	Username    string
-	Password    string
-	Distributed bool // session/application mode: MQTT mandatory
-}
-
-// NewMessagerManager creates the correct IMessager implementation from config.
-func NewMessagerManager(cfg *MessagerManagerConfig) *MessagerManager {
-	if cfg.Type == "mqtt" && cfg.Broker != "" {
+// NewMessagerManager creates the correct IMessager implementation from FlowgentConfig.
+func NewMessagerManager(cfg *config.FlowgentConfig, clientID string) *MessagerManager {
+	if cfg.Messaging.Type == "mqtt" && cfg.Messaging.MQTT.Broker != "" {
 		mq, err := NewMQTTMessager(&MQTTConfig{
-			Broker:   cfg.Broker,
-			ClientID: cfg.ClientID,
-			Username: cfg.Username,
-			Password: cfg.Password,
+			Broker:   cfg.Messaging.MQTT.Broker,
+			ClientID: clientID,
+			Username: cfg.Messaging.MQTT.Username,
+			Password: cfg.Messaging.MQTT.Password,
 		})
 		if err == nil {
 			return &MessagerManager{IMessager: mq}
 		}
-		if cfg.Distributed {
-			log.Fatalf("FATAL: MQTT connect failed in distributed mode: %v — broker=%s", err, cfg.Broker)
+		if cfg.Deployment.Mode != "" {
+			log.Fatalf("FATAL: MQTT connect failed in distributed mode: %v — broker=%s", err, cfg.Messaging.MQTT.Broker)
 		}
 		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory", err)
 	}
 
 	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
-		mq, err := NewMQTTMessager(&MQTTConfig{Broker: broker, ClientID: cfg.ClientID})
+		mq, err := NewMQTTMessager(&MQTTConfig{Broker: broker, ClientID: clientID})
 		if err == nil {
 			return &MessagerManager{IMessager: mq}
 		}
-		if cfg.Distributed {
+		if cfg.Deployment.Mode != "" {
 			log.Fatalf("FATAL: MQTT (env) connect failed in distributed mode: %v — broker=%s", err, broker)
 		}
 		log.Printf("WARNING: MQTT (env) connect failed (%v), using memory", err)
 	}
 
-	if cfg.Distributed {
+	if cfg.Deployment.Mode != "" {
 		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker or FLOWGENT_MQTT_BROKER env var.")
 	}
 

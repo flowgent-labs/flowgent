@@ -8,7 +8,7 @@ import (
 
 func TestAppConfig_Helpers(t *testing.T) {
 	cfg := &AppConfig{
-		Service: ServiceConfig{
+		Service: FlowgentConfig{
 			Orchestration: OrchestrationConfig{
 				Agents: ResourceCfg{
 					Static: StaticResourceCfg{Enabled: true, LoadDir: "agents/", Refresh: "30s"},

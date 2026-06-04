@@ -3,7 +3,7 @@ package cache
 import (
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
 func TestRedisCache_Standalone(t *testing.T) {

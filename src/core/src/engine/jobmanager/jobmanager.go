@@ -11,7 +11,7 @@ import (
 )
 
 // JobManagerConfig is the startup configuration for a JobManager, extracted
-// from the full ServiceConfig to decouple JM from YAML layout changes.
+// from the full FlowgentConfig to decouple JM from YAML layout changes.
 type JobManagerConfig struct {
 	FlowExecutionTimeout time.Duration
 	MaxNodeRetries       int

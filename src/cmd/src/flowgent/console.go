@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/flowgent-labs/flowgent/config/src"
+	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/store/src"
 )
 
