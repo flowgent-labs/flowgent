@@ -9,15 +9,15 @@ import (
 
 // ─── Base ────────────────────────────────────────────────
 
-// IBaseRepository provides DB access.
-type IBaseRepository interface {
+// IBaseStore provides DB access.
+type IBaseStore interface {
 	DB() any
 }
 
 // ─── Entity Repositories ─────────────────────────────────
 
-// IAgentFlowRepository manages AgentFlow definitions (spec, version, CRUD).
-type IAgentFlowRepository interface {
+// IAgentFlowStore manages AgentFlow definitions (spec, version, CRUD).
+type IAgentFlowStore interface {
 	SaveAgentFlow(ctx context.Context, def *model.AgentFlowVersion) error
 	GetAgentFlow(ctx context.Context, id string) (*model.AgentFlowVersion, error)
 	GetAgentFlowVersion(ctx context.Context, id string, version int64) (*model.AgentFlowVersion, error)
@@ -27,8 +27,8 @@ type IAgentFlowRepository interface {
 	GetAgentFlowSpec(ctx context.Context, id string) (*model.AgentFlowSpec, error)
 }
 
-// IFlowRunRepository manages AgentFlowRun instances.
-type IFlowRunRepository interface {
+// IFlowRunStore manages AgentFlowRun instances.
+type IFlowRunStore interface {
 	CreateFlowRun(ctx context.Context, run *model.AgentFlowRun) error
 	UpdateFlowRun(ctx context.Context, run *model.AgentFlowRun) error
 	GetFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error)
@@ -38,8 +38,8 @@ type IFlowRunRepository interface {
 	CancelFlowRun(ctx context.Context, id string) error
 }
 
-// ITaskPlanRepository manages TaskRuns, ExecutionPlans, Checkpoints, Leases, and Supervisor logs.
-type ITaskPlanRepository interface {
+// ITaskPlanStore manages TaskRuns, ExecutionPlans, Checkpoints, Leases, and Supervisor logs.
+type ITaskPlanStore interface {
 	CreateTaskRun(ctx context.Context, task *model.TaskRun) error
 	UpdateTaskRun(ctx context.Context, task *model.TaskRun) error
 	GetTaskRun(ctx context.Context, id string) (*model.TaskRun, error)
@@ -59,24 +59,24 @@ type ITaskPlanRepository interface {
 	LogSupervisor(ctx context.Context, flowRunID, taskRunID string, input, decision map[string]any) error
 }
 
-// IAgentRepository manages AgentDef entities.
-type IAgentRepository interface {
+// IAgentStore manages AgentDef entities.
+type IAgentStore interface {
 	SaveAgent(ctx context.Context, agent *model.AgentDef) error
 	GetAgent(ctx context.Context, name string) (*model.AgentDef, error)
 	ListAgents(ctx context.Context, tenantID string) ([]model.AgentDef, error)
 	DeleteAgent(ctx context.Context, name string) error
 }
 
-// IApprovalRepository manages HumanApproval entities.
-type IApprovalRepository interface {
+// IApprovalStore manages HumanApproval entities.
+type IApprovalStore interface {
 	CreateApproval(ctx context.Context, a *model.HumanApproval) error
 	GetApproval(ctx context.Context, token string) (*model.HumanApproval, error)
 	UpdateApproval(ctx context.Context, a *model.HumanApproval) error
 	ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
 }
 
-// INotifierRepository manages NotifierChannel and SubscriptionRoute entities.
-type INotifierRepository interface {
+// INotifierStore manages NotifierChannel and SubscriptionRoute entities.
+type INotifierStore interface {
 	SaveChannel(ctx context.Context, ch *model.NotifierChannel) error
 	GetChannel(ctx context.Context, id string) (*model.NotifierChannel, error)
 	ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
@@ -89,8 +89,8 @@ type INotifierRepository interface {
 	CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error)
 }
 
-// ILlmProviderRepository manages LlmProvider entities.
-type ILlmProviderRepository interface {
+// ILlmProviderStore manages LlmProvider entities.
+type ILlmProviderStore interface {
 	SaveProvider(ctx context.Context, p *model.LlmProvider) error
 	GetProvider(ctx context.Context, id string) (*model.LlmProvider, error)
 	ListProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error)
@@ -101,12 +101,12 @@ type ILlmProviderRepository interface {
 
 // IStore composes all entity repository interfaces (JPA SessionFactory pattern).
 type IStore interface {
-	IBaseRepository
-	IAgentFlowRepository
-	IFlowRunRepository
-	ITaskPlanRepository
-	IAgentRepository
-	IApprovalRepository
-	INotifierRepository
-	ILlmProviderRepository
+	IBaseStore
+	IAgentFlowStore
+	IFlowRunStore
+	ITaskPlanStore
+	IAgentStore
+	IApprovalStore
+	INotifierStore
+	ILlmProviderStore
 }

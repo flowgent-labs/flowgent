@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -16,43 +14,16 @@ import (
 )
 
 type SQLiteStore struct {
-	dir string
-	db  *sql.DB
+	BaseSQLiteStore
 }
 
 func NewSQLiteStore(dir string) *SQLiteStore {
-	return &SQLiteStore{dir: dir}
+	return &SQLiteStore{BaseSQLiteStore: BaseSQLiteStore{Dir: dir}}
 }
 
-func (s *SQLiteStore) DB() any {
-	return s.db
-}
-
-func (s *SQLiteStore) Init(ctx context.Context) error {
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
-		return fmt.Errorf("create sqlite dir: %w", err)
-	}
-	dbPath := filepath.Join(s.dir, "flowgent.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_busy_timeout=5000")
-	if err != nil {
-		return fmt.Errorf("open sqlite: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	s.db = db
-	if err := RunMigrations(db, "sqlite"); err != nil {
-		return fmt.Errorf("sqlite migrations: %w", err)
-	}
-
-	return nil
-}
-
-func (s *SQLiteStore) Close() error {
-	if s.db != nil {
-		return s.db.Close()
-	}
-	return nil
-}
+func (s *SQLiteStore) DB() any   { return s.Conn }
+func (s *SQLiteStore) Init(ctx context.Context) error  { return s.InitDB(ctx) }
+func (s *SQLiteStore) Close() error { s.CloseDB(); return nil }
 
 // --- AgentFlow definitions ---
 
@@ -60,7 +31,7 @@ func (s *SQLiteStore) SaveAgentFlow(ctx context.Context, def *model.AgentFlowVer
 	definitionJSON, err := json.Marshal(def.Definition)
 	if err != nil {
 	}
-	_, err = s.db.ExecContext(ctx,
+	_, err = s.Conn.ExecContext(ctx,
 		`INSERT OR REPLACE INTO agentflow_definitions (agentflow_id, version, definition, checksum, created_by, comment)
 		 VALUES (?1, ?2, ?3, '', ?4, ?5)`,
 		def.AgentFlowID, def.Version, definitionJSON, def.CreatedBy, def.Comment)
@@ -68,7 +39,7 @@ func (s *SQLiteStore) SaveAgentFlow(ctx context.Context, def *model.AgentFlowVer
 }
 
 func (s *SQLiteStore) GetAgentFlow(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.Conn.QueryRowContext(ctx,
 		`SELECT agentflow_id, version, definition, created_by, comment, created_at
 		 FROM agentflow_definitions WHERE agentflow_id = ?1
 		 ORDER BY version DESC LIMIT 1`, agentFlowID)
@@ -76,7 +47,7 @@ func (s *SQLiteStore) GetAgentFlow(ctx context.Context, agentFlowID string) (*mo
 }
 
 func (s *SQLiteStore) GetAgentFlowVersion(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.Conn.QueryRowContext(ctx,
 		`SELECT agentflow_id, version, definition, created_by, comment, created_at
 		 FROM agentflow_definitions WHERE agentflow_id = ?1 AND version = ?2`,
 		agentFlowID, version)
@@ -84,7 +55,7 @@ func (s *SQLiteStore) GetAgentFlowVersion(ctx context.Context, agentFlowID strin
 }
 
 func (s *SQLiteStore) ListAgentFlows(ctx context.Context) ([]model.AgentFlowVersion, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.Conn.QueryContext(ctx,
 		`SELECT agentflow_id, version, definition, created_by, comment, created_at
 		 FROM agentflow_definitions ORDER BY agentflow_id, version DESC`)
 	if err != nil {
@@ -109,7 +80,7 @@ func (s *SQLiteStore) CreateFlowRun(ctx context.Context, run *model.AgentFlowRun
 	run.CreatedAt = time.Now()
 	run.UpdatedAt = run.CreatedAt
 	triggerPayload, _ := json.Marshal(run.Trigger.Payload)
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`INSERT INTO agentflow_runs (id, agentflow_id, version, status, vars, trigger_type, trigger_source, trigger_payload, created_at, updated_at)
 		 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`,
 		run.ID, run.AgentFlowID, run.Version, run.Status, toJSON(run.Vars), run.Trigger.Type, run.Trigger.Source, triggerPayload, run.CreatedAt, run.UpdatedAt)
@@ -118,14 +89,14 @@ func (s *SQLiteStore) CreateFlowRun(ctx context.Context, run *model.AgentFlowRun
 
 func (s *SQLiteStore) UpdateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
 	run.UpdatedAt = time.Now()
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`UPDATE agentflow_runs SET status=?1,vars=?2,output=?3,error=?4,updated_at=?5,started_at=?6,finished_at=?7 WHERE id=?8`,
 		run.Status, toJSON(run.Vars), toJSON(run.Output), run.Error, run.UpdatedAt, run.StartedAt, run.FinishedAt, run.ID)
 	return err
 }
 
 func (s *SQLiteStore) GetFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.Conn.QueryRowContext(ctx,
 		`SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at
 		 FROM agentflow_runs WHERE id=?1`, id)
 	return scanAgentFlowRun(row)
@@ -138,11 +109,11 @@ func (s *SQLiteStore) ListFlowRuns(ctx context.Context, agentFlowID string, limi
 	var rows *sql.Rows
 	var err error
 	if agentFlowID == "" {
-		rows, err = s.db.QueryContext(ctx,
+		rows, err = s.Conn.QueryContext(ctx,
 			`SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at
 			 FROM agentflow_runs ORDER BY created_at DESC LIMIT ?1`, limit)
 	} else {
-		rows, err = s.db.QueryContext(ctx,
+		rows, err = s.Conn.QueryContext(ctx,
 			`SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at
 			 FROM agentflow_runs WHERE agentflow_id=?1 ORDER BY created_at DESC LIMIT ?2`,
 			agentFlowID, limit)
@@ -163,7 +134,7 @@ func (s *SQLiteStore) ListFlowRuns(ctx context.Context, agentFlowID string, limi
 }
 
 func (s *SQLiteStore) ListActiveRuns(ctx context.Context) ([]model.AgentFlowRun, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.Conn.QueryContext(ctx,
 		`SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,started_at,finished_at
 		 FROM agentflow_runs WHERE status IN ('RUNNING','PAUSED') ORDER BY created_at DESC`)
 	if err != nil {
@@ -187,7 +158,7 @@ func (s *SQLiteStore) CreateTaskRun(ctx context.Context, task *model.TaskRun) er
 	task.ID = uuid.New().String()
 	task.CreatedAt = time.Now()
 	task.UpdatedAt = task.CreatedAt
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`INSERT INTO task_runs (id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at)
 		 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`,
 		task.ID, task.AgentFlowRunID, task.NodeID, task.Status, toJSON(task.Input), toJSON(task.Output), task.Error, task.RetryCount, task.MaxRetries, task.ExecID, task.ParentTaskRunID, task.Sequence, task.CreatedAt, task.UpdatedAt)
@@ -196,21 +167,21 @@ func (s *SQLiteStore) CreateTaskRun(ctx context.Context, task *model.TaskRun) er
 
 func (s *SQLiteStore) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {
 	task.UpdatedAt = time.Now()
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`UPDATE task_runs SET status=?1,input=?2,output=?3,error=?4,retry_count=?5,max_retries=?6,exec_id=?7,parent_task_run_id=?8,sequence=?9,updated_at=?10,started_at=?11,finished_at=?12 WHERE id=?13`,
 		task.Status, toJSON(task.Input), toJSON(task.Output), task.Error, task.RetryCount, task.MaxRetries, task.ExecID, task.ParentTaskRunID, task.Sequence, task.UpdatedAt, task.StartedAt, task.FinishedAt, task.ID)
 	return err
 }
 
 func (s *SQLiteStore) GetTaskRun(ctx context.Context, id string) (*model.TaskRun, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.Conn.QueryRowContext(ctx,
 		`SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at
 		 FROM task_runs WHERE id=?1`, id)
 	return scanTaskRun(row)
 }
 
 func (s *SQLiteStore) ListTaskRunsByFlow(ctx context.Context, agentFlowRunID string) ([]model.TaskRun, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.Conn.QueryContext(ctx,
 		`SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at
 		 FROM task_runs WHERE agentflow_run_id=?1 ORDER BY created_at`, agentFlowRunID)
 	if err != nil {
@@ -229,7 +200,7 @@ func (s *SQLiteStore) ListTaskRunsByFlow(ctx context.Context, agentFlowRunID str
 }
 
 func (s *SQLiteStore) GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.Conn.QueryRowContext(ctx,
 		`SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at
 		 FROM task_runs WHERE exec_id=?1`, execID)
 	return scanTaskRun(row)
@@ -245,7 +216,7 @@ func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *model.HumanA
 		expires := approval.CreatedAt.Add(approval.Timeout)
 		approval.ExpiresAt = &expires
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`INSERT INTO human_approvals (task_run_id,token,status,timeout_seconds,created_at,updated_at,expires_at)
 		 VALUES (?1,?2,?3,?4,?5,?6,?7)`,
 		approval.TaskRunID, approval.Token, approval.Status, int(approval.Timeout.Seconds()), approval.CreatedAt, approval.UpdatedAt, approval.ExpiresAt)
@@ -253,7 +224,7 @@ func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *model.HumanA
 }
 
 func (s *SQLiteStore) GetApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.Conn.QueryRowContext(ctx,
 		`SELECT task_run_id,token,status,approved,comment,timeout_seconds,created_at,updated_at,expires_at,resolved_at
 		 FROM human_approvals WHERE token=?1`, token)
 	return scanHumanApproval(row)
@@ -265,14 +236,14 @@ func (s *SQLiteStore) UpdateApproval(ctx context.Context, approval *model.HumanA
 		now := time.Now()
 		approval.ResolvedAt = &now
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`UPDATE human_approvals SET status=?1,approved=?2,comment=?3,updated_at=?4,resolved_at=?5 WHERE token=?6`,
 		approval.Status, approval.Approved, approval.Comment, approval.UpdatedAt, approval.ResolvedAt, approval.Token)
 	return err
 }
 
 func (s *SQLiteStore) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.Conn.QueryContext(ctx,
 		`SELECT task_run_id,token,status,approved,comment,timeout_seconds,created_at,updated_at,expires_at,resolved_at
 		 FROM human_approvals WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > datetime('now'))`)
 	if err != nil {
@@ -293,7 +264,7 @@ func (s *SQLiteStore) ListPendingApprovals(ctx context.Context) ([]model.HumanAp
 // --- Supervisor log ---
 
 func (s *SQLiteStore) LogSupervisor(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error {
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.Conn.ExecContext(ctx,
 		`INSERT INTO supervisor_log (id,agentflow_run_id,task_run_id,input_snapshot,decision) VALUES (?1,?2,?3,?4,?5)`,
 		uuid.New().String(), agentFlowRunID, taskRunID, toJSON(input), toJSON(decision))
 	return err
@@ -432,11 +403,11 @@ func (s *SQLiteStore) ClaimLease(ctx context.Context, planID, tmID string, dur t
 func (s *SQLiteStore) ReleaseLease(ctx context.Context, planID string) error { return nil }
 
 func (s *SQLiteStore) CancelFlowRun(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE agentflow_runs SET status='CANCELLED' WHERE id=?`, id)
+	_, err := s.Conn.ExecContext(ctx, `UPDATE agentflow_runs SET status='CANCELLED' WHERE id=?`, id)
 	return err
 }
 func (s *SQLiteStore) DeleteFlowRun(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM agentflow_runs WHERE id=?`, id)
+	_, err := s.Conn.ExecContext(ctx, `DELETE FROM agentflow_runs WHERE id=?`, id)
 	return err
 }
 func (s *SQLiteStore) SaveNotificationChannel(ctx context.Context, ch *model.NotifierChannel) error {
@@ -463,17 +434,17 @@ func (s *SQLiteStore) CleanupOrphanedRoutes(ctx context.Context, podID string, m
 	return 0, nil
 }
 func (s *SQLiteStore) DeleteAgent(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE name=?`, name)
+	_, err := s.Conn.ExecContext(ctx, `DELETE FROM agents WHERE name=?`, name)
 	return err
 }
 
 func (s *SQLiteStore) DeleteAgentFlow(ctx context.Context, agentFlowID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM agentflow_definitions WHERE agentflow_id=?`, agentFlowID)
+	_, err := s.Conn.ExecContext(ctx, `DELETE FROM agentflow_definitions WHERE agentflow_id=?`, agentFlowID)
 	return err
 }
 func (s *SQLiteStore) SaveAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
 	defJSON, _ := json.Marshal(spec)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment) VALUES (?,1,?,?,?)`, spec.ID, defJSON, createdBy, comment)
+	_, err := s.Conn.ExecContext(ctx, `INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment) VALUES (?,1,?,?,?)`, spec.ID, defJSON, createdBy, comment)
 	return err
 }
 func (s *SQLiteStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
