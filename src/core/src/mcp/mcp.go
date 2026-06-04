@@ -1,4 +1,4 @@
-package llm
+package mcp
 
 import (
 	"context"

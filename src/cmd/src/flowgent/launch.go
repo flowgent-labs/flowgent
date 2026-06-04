@@ -32,6 +32,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/src/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/core/src/engine/trigger"
 	"github.com/flowgent-labs/flowgent/core/src/llm"
+	"github.com/flowgent-labs/flowgent/core/src/mcp"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/notifier/src"
 	messaging "github.com/flowgent-labs/flowgent/messaging/src"
@@ -268,7 +269,7 @@ func startServer(mode string) {
 	}
 
 	// ── MCP Clients ────────────────────────────────────
-	mcpFactory := llm.NewFactory()
+	mcpFactory := mcp.NewFactory()
 	for _, mcpDef := range serviceCfg.Orchestration.MCPs {
 		if mcpDef.Enabled {
 			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
@@ -661,7 +662,7 @@ func logConfig(cfg *config.ServiceConfig) {
 // ── Supporting types & functions ──────────────────────────────
 
 type mcpAdapter struct {
-	factory *llm.Factory
+	factory *mcp.Factory
 	name    string
 }
 
@@ -840,7 +841,7 @@ func startTaskManager() error {
 	}
 
 	// ── MCP Clients ────────────────────────────────────
-	mcpFactory := llm.NewFactory()
+	mcpFactory := mcp.NewFactory()
 	for _, mcpDef := range svcCfg.Orchestration.MCPs {
 		if mcpDef.Enabled {
 			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
@@ -935,7 +936,7 @@ func startJobManager() error {
 		if agents, err := config.LoadAgents(svcCfg, cfgPath); err == nil {
 			for i := range agents { agentPtrs = append(agentPtrs, &agents[i]) }
 		}
-		mcpFactory := llm.NewFactory()
+		mcpFactory := mcp.NewFactory()
 		for _, mcpDef := range svcCfg.Orchestration.MCPs {
 			if mcpDef.Enabled { mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env) }
 		}
