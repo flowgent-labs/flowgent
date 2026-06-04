@@ -190,9 +190,13 @@ type PostgresConfig struct {
 // ─── LLM / Orchestration ─────────────────────────────────────
 
 type LLMConfig struct {
-	Providers      map[string]LLMProviderDef `json:"providers" yaml:"providers"`
-	RequestTimeout string                    `json:"request-timeout" yaml:"request-timeout"`
-	RateLimit      map[string]int            `json:"rate-limit" yaml:"rate-limit"`
+	RequestTimeout string            `json:"request-timeout" yaml:"request-timeout"`
+	Providers      LLMProvidersConfig `json:"providers" yaml:"providers"`
+}
+
+type LLMProvidersConfig struct {
+	Static   []LLMProviderDef  `json:"static" yaml:"static"`
+	Standard StandardAgentCfg  `json:"standard" yaml:"standard"`
 }
 
 type OrchestrationConfig struct {
@@ -239,9 +243,13 @@ type RedisLockConfig struct {
 }
 
 type LLMProviderDef struct {
+	ID          string            `json:"id" yaml:"id"`
+	Type        string            `json:"type" yaml:"type"`
+	Enabled     bool              `json:"enabled" yaml:"enabled"`
 	Endpoint    string            `json:"endpoint" yaml:"endpoint"`
 	Credentials map[string]string `json:"credentials" yaml:"credentials"`
 	Proxy       string            `json:"proxy" yaml:"proxy"`
+	RateLimit   int               `json:"rate_limit" yaml:"rate_limit"`
 	Models      []ModelDef        `json:"models" yaml:"models"`
 }
 
@@ -383,8 +391,8 @@ func (c *AppConfig) GetFlow(id string) *model.AgentFlowSpec {
 
 // GetModel returns the first model name for the given provider.
 func (c *AppConfig) GetModel(provider string) string {
-	if p, ok := c.Service.LLM.Providers[provider]; ok {
-		if len(p.Models) > 0 {
+	for _, p := range c.Service.LLM.Providers.Static {
+		if p.ID == provider && len(p.Models) > 0 {
 			return p.Models[0].Name
 		}
 	}

@@ -635,7 +635,10 @@ func logConfig(cfg *config.ServiceConfig) {
 		cfg.Orchestration.MaxConcurrentFlows, cfg.Orchestration.FlowExecutionTimeout, cfg.Orchestration.MaxNodeRetries)
 
 	// LLM providers
-	for name, p := range cfg.LLM.Providers {
+	for _, p := range cfg.LLM.Providers.Static {
+		if !p.Enabled {
+			continue
+		}
 		models := make([]string, len(p.Models))
 		for i, m := range p.Models {
 			models[i] = m.Name
@@ -644,7 +647,7 @@ func logConfig(cfg *config.ServiceConfig) {
 		if proxy == "" {
 			proxy = "(direct)"
 		}
-		log.Printf("LLM:        provider=%s endpoint=%s proxy=%s models=%v", name, p.Endpoint, proxy, models)
+		log.Printf("LLM:        id=%s type=%s endpoint=%s proxy=%s models=%v", p.ID, p.Type, p.Endpoint, proxy, models)
 	}
 
 	// MCP tools

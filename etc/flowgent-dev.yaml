@@ -140,56 +140,59 @@ lock:
 # ── LLM Providers ────────────────────────────────────────────────────────────
 llm:
   request-timeout: 120s
-  rate-limit:                     # max requests/minute per provider
-    bailian: 60
-    deepseek: 60
   providers:
-    # -- Aliyun Bailian (DashScope) -------------------------------------------
-    bailian:
-      endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-      credentials:
-        apikey: "${BAILIAN_APIKEY}"
-        #apikey-file: /path/to/.credentials
-      #proxy: "socks5h://127.0.0.1:1080"   # optional SOCKS5/HTTP proxy for external API
-      models:
-        - name: qwen-plus
-          temperature: 0.3
-          topk: 5
-          modalities:
-            input: [text]
-            output: [text]
-          thinking:
-            type: enabled
-            budget_tokens: 8192
-        - name: qwen3.5-coder
-          temperature: 0.3
-          topk: 5
-          modalities:
-            input: [text]
-            output: [text]
-          thinking:
-            type: enabled
-            budget_tokens: 8192
+    static:
+      - id: bailian
+        type: dashscope
+        enabled: true
+        endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+        rate_limit: 60
+        credentials:
+          apikey: "${BAILIAN_APIKEY}"
+        models:
+          - name: qwen-plus
+            temperature: 0.3
+            topk: 5
+            modalities:
+              input: [text]
+              output: [text]
+            thinking:
+              type: enabled
+              budget_tokens: 8192
+          - name: qwen3.5-coder
+            temperature: 0.3
+            topk: 5
+            modalities:
+              input: [text]
+              output: [text]
+            thinking:
+              type: enabled
+              budget_tokens: 8192
 
-    # -- DeepSeek --------------------------------------------------------------
-    deepseek:
-      endpoint: https://api.deepseek.com/v1/chat/completions
-      credentials:
-        apikey: "${DEEPSEEK_APIKEY}"
-      #proxy: "socks5h://127.0.0.1:1080"
-      models:
-        - name: deepseek-chat
-          temperature: 0.3
+      - id: deepseek
+        type: deepseek
+        enabled: true
+        endpoint: https://api.deepseek.com/v1/chat/completions
+        rate_limit: 60
+        credentials:
+          apikey: "${DEEPSEEK_APIKEY}"
+        models:
+          - name: deepseek-chat
+            temperature: 0.3
 
-#    # -- Anthropic (optional) -------------------------------------------------
-#    anthropic:
-#      endpoint: https://api.anthropic.com/v1/messages
-#      credentials:
-#        apikey: "<YOUR_ANTHROPIC_API_KEY>"
-#      models:
-#        - name: claude-sonnet-4-6
-#          temperature: 0.3
-#          max_tokens: 8192
+#      - id: anthropic
+#        type: anthropic
+#        enabled: false
+#        endpoint: https://api.anthropic.com/v1/messages
+#        rate_limit: 30
+#        credentials:
+#          apikey: "<YOUR_ANTHROPIC_API_KEY>"
+#        models:
+#          - name: claude-sonnet-4-6
+#            temperature: 0.3
+
+    standard:
+      enabled: false                # DB-backed providers (future Flowgent UI)
 
 # ── Orchestration Engine ─────────────────────────────────────────────────────
 orchestration:

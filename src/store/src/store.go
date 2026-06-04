@@ -64,6 +64,12 @@ type Store interface {
 	DeleteSubscriptionRoutesByPod(ctx context.Context, podID string) error
 	CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error)
 
+	// LLM providers
+	SaveLlmProvider(ctx context.Context, provider *model.LlmProvider) error
+	GetLlmProvider(ctx context.Context, id string) (*model.LlmProvider, error)
+	ListLlmProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error)
+	DeleteLlmProvider(ctx context.Context, id string) error
+
 	// ExecutionPlan methods
 	SaveExecutionPlan(ctx context.Context, plan *model.ExecutionPlan) error
 	LoadExecutionPlan(ctx context.Context, planID string) (*model.ExecutionPlan, error)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -434,6 +435,43 @@ func (s *PostgresStore) ListNotifierChannels(ctx context.Context, tenantID strin
 	return nil, nil
 }
 func (s *PostgresStore) DeleteNotifierChannel(ctx context.Context, id string) error { return nil }
+
+// ─── LLM providers (in-memory, DB migration pending) ────
+
+var pgLlmProviders = struct {
+	mu    sync.Mutex
+	store map[string]*model.LlmProvider
+}{store: make(map[string]*model.LlmProvider)}
+
+func (s *PostgresStore) SaveLlmProvider(ctx context.Context, p *model.LlmProvider) error {
+	pgLlmProviders.mu.Lock()
+	defer pgLlmProviders.mu.Unlock()
+	p.UpdatedAt = time.Now()
+	pgLlmProviders.store[p.ID] = p
+	return nil
+}
+func (s *PostgresStore) GetLlmProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
+	pgLlmProviders.mu.Lock()
+	defer pgLlmProviders.mu.Unlock()
+	return pgLlmProviders.store[id], nil
+}
+func (s *PostgresStore) ListLlmProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
+	pgLlmProviders.mu.Lock()
+	defer pgLlmProviders.mu.Unlock()
+	var out []model.LlmProvider
+	for _, p := range pgLlmProviders.store {
+		if tenantID == "" || p.TenantID == tenantID {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
+func (s *PostgresStore) DeleteLlmProvider(ctx context.Context, id string) error {
+	pgLlmProviders.mu.Lock()
+	defer pgLlmProviders.mu.Unlock()
+	delete(pgLlmProviders.store, id)
+	return nil
+}
 
 // ─── Subscription routes ───────────────────────────────────
 

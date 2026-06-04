@@ -43,7 +43,14 @@ func New(cfg *config.LLMConfig) *Adapter {
 	if d, err := time.ParseDuration(cfg.RequestTimeout); err == nil {
 		a.timeout = d
 	}
-	for name, p := range cfg.Providers {
+	for _, p := range cfg.Providers.Static {
+		if !p.Enabled {
+			continue
+		}
+		name := p.ID
+		if name == "" {
+			continue
+		}
 		var proxyURL *url.URL
 		if p.Proxy != "" {
 			proxyURL, _ = url.Parse(p.Proxy)
@@ -59,9 +66,9 @@ func New(cfg *config.LLMConfig) *Adapter {
 		if v, ok := p.Credentials["apikey"]; ok {
 			apiKey = v
 		}
-		rpm := 60
-		if v, ok := cfg.RateLimit[name]; ok && v > 0 {
-			rpm = v
+		rpm := p.RateLimit
+		if rpm <= 0 {
+			rpm = 60
 		}
 		limiter := rate.NewLimiter(rate.Limit(float64(rpm)/60.0), rpm)
 
@@ -105,7 +112,6 @@ func (a *Adapter) Generate(ctx context.Context, systemPrompt, userPrompt, provid
 		return "", err
 	}
 
-	// Apply model-specific config (temperature, topk, modalities, thinking)
 	if md, ok := pc.models[modelName]; ok {
 		if md.Temperature > 0 {
 			temperature = md.Temperature

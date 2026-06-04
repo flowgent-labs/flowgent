@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/src"
@@ -487,6 +488,44 @@ func (s *SQLiteStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) 
 	return &spec, nil
 }
 func (s *SQLiteStore) DeleteNotifierChannel(ctx context.Context, id string) error { return nil }
+
+// ─── LLM providers ─────────────────────────────────────
+
+var sqliteLlmProviders = struct {
+	mu    sync.Mutex
+	store map[string]*model.LlmProvider
+}{store: make(map[string]*model.LlmProvider)}
+
+func (s *SQLiteStore) SaveLlmProvider(ctx context.Context, p *model.LlmProvider) error {
+	sqliteLlmProviders.mu.Lock()
+	defer sqliteLlmProviders.mu.Unlock()
+	p.UpdatedAt = time.Now()
+	sqliteLlmProviders.store[p.ID] = p
+	return nil
+}
+func (s *SQLiteStore) GetLlmProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
+	sqliteLlmProviders.mu.Lock()
+	defer sqliteLlmProviders.mu.Unlock()
+	return sqliteLlmProviders.store[id], nil
+}
+func (s *SQLiteStore) ListLlmProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
+	sqliteLlmProviders.mu.Lock()
+	defer sqliteLlmProviders.mu.Unlock()
+	var out []model.LlmProvider
+	for _, p := range sqliteLlmProviders.store {
+		if tenantID == "" || p.TenantID == tenantID {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
+func (s *SQLiteStore) DeleteLlmProvider(ctx context.Context, id string) error {
+	sqliteLlmProviders.mu.Lock()
+	defer sqliteLlmProviders.mu.Unlock()
+	delete(sqliteLlmProviders.store, id)
+	return nil
+}
+
 func (s *SQLiteStore) GetAgent(ctx context.Context, name string) (*model.AgentDef, error) {
 	return nil, fmt.Errorf("not implemented")
 }
