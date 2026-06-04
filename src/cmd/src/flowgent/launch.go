@@ -282,7 +282,7 @@ func startServer(mode string) {
 	}
 
 	// ── LLM Client ─────────────────────────────────────
-	llmClient := llm.New(&serviceCfg.LLM)
+	llmClient := llm.NewLlmProviderManager(&serviceCfg.LLM, storeImpl)
 
 	// ── Scheduler (owns TaskManager internally) ─────────
 	loadedAgents, err := config.LoadAgents(serviceCfg, cfgPath)
@@ -945,7 +945,7 @@ func startJobManager() error {
 		}
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider: engine.ProviderStandalone, PoolSize: 10, Store: storeImpl,
-			Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llm.New(&svcCfg.LLM),
+			Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llm.NewLlmProviderManager(&svcCfg.LLM, storeImpl),
 			Logger: logger, Queue: q,
 		})
 	}
