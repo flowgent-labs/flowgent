@@ -2,24 +2,43 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"sync"
-	"time"
+	"log"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"log"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/flowgent-labs/flowgent/common/src/tracing"
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
 var pgTracer = tracing.Tracer("flowgent/postgres")
+
+// NewPostgresPool creates a pgxpool from DSN.
+func NewPostgresPool(ctx context.Context, dsn, schema string) *pgxpool.Pool {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil { panic(fmt.Sprintf("pg config: %v", err)) }
+	cfg.MaxConns, cfg.MinConns = 20, 2
+	if schema == "" { schema = "public" }
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, "SET search_path TO "+schema)
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil { panic(fmt.Sprintf("pg connect: %v", err)) }
+	if err := pool.Ping(ctx); err != nil { panic(fmt.Sprintf("pg ping: %v", err)) }
+	return pool
+}
+
+// pgStore implements IStore backed by a shared pgxpool.
+type pgStore struct{ PostgresStore }
+
+func newPgStore(pool *pgxpool.Pool) *pgStore {
+	return &pgStore{PostgresStore: PostgresStore{Pool: pool}}
+}
 
 type PostgresStore struct {
 	Pool   *pgxpool.Pool
@@ -57,503 +76,6 @@ func (s *PostgresStore) Close() error {
 	return nil
 }
 
-// ─── Helpers ────────────────────────────────────────────────
-
-func toJSON(v any) []byte {
-	if v == nil {
-		return []byte("null")
-	}
-	b, _ := json.Marshal(v)
-	return b
-}
-
-// ─── AgentFlow definitions ─────────────────────────────────
-
-func (s *PostgresStore) SaveAgentFlow(ctx context.Context, def *model.AgentFlowVersion) error {
-	_, err := s.Pool.Exec(ctx,
-		`INSERT INTO agentflow_definitions (agentflow_id, version, definition, created_by, comment)
-		 VALUES ($1,$2,$3,$4,$5) ON CONFLICT (agentflow_id, version) DO NOTHING`,
-		def.AgentFlowID, def.Version, def.Definition, def.CreatedBy, def.Comment)
-	return err
-}
-
-func (s *PostgresStore) GetAgentFlow(ctx context.Context, agentFlowID string) (*model.AgentFlowVersion, error) {
-	row := s.Pool.QueryRow(ctx,
-		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
-		 FROM public.agentflow_definitions WHERE agentflow_id=$1 ORDER BY version DESC LIMIT 1`, agentFlowID)
-	return scanAgentFlowVersion(row)
-}
-
-func (s *PostgresStore) GetAgentFlowVersion(ctx context.Context, agentFlowID string, version int64) (*model.AgentFlowVersion, error) {
-	row := s.Pool.QueryRow(ctx,
-		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
-		 FROM public.agentflow_definitions WHERE agentflow_id=$1 AND version=$2`, agentFlowID, version)
-	return scanAgentFlowVersion(row)
-}
-
-func (s *PostgresStore) ListAgentFlows(ctx context.Context) ([]model.AgentFlowVersion, error) {
-	rows, err := s.Pool.Query(ctx,
-		`SELECT agentflow_id, version, definition, COALESCE(created_by, '') as created_by, COALESCE(comment, '') as comment, created_at
-		 FROM public.agentflow_definitions ORDER BY created_at DESC`)
-	log.Printf("[pg] ListAgentFlows ERROR: %v", err)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	log.Printf("[pg] ListAgentFlows: starting query")
-	var defs []model.AgentFlowVersion
-	for rows.Next() {
-		d, err := scanAgentFlowVersionRow(rows)
-		if err != nil {
-			log.Printf("[pg] scanAgentFlowVersionRow error: %v", err)
-			continue
-		}
-		defs = append(defs, *d)
-	}
-	// Verify: log which PG server we are connected to
-	var pgHost string
-	if err := s.Pool.QueryRow(ctx, "SELECT 1 AS connectivity_test").Scan(&pgHost); err == nil {
-		log.Printf("[pg] PG connectivity: OK (SELECT 1 = %s)", pgHost)
-	}
-	if err := s.Pool.QueryRow(ctx, "SELECT 1").Scan(&pgHost); err != nil {
-		log.Printf("[pg] WARN: SELECT 1 failed: %v", err)
-	} else {
-		log.Printf("[pg] PG pool working, SELECT 1 = %s", pgHost)
-	}
-	// Debug: what tables can we see?
-	rows2, _ := s.Pool.Query(ctx, "SELECT schemaname, tablename FROM pg_tables WHERE tablename LIKE '%agentflow%'")
-	if rows2 != nil {
-		defer rows2.Close()
-		for rows2.Next() {
-			var sn, tn string
-			if err := rows2.Scan(&sn, &tn); err == nil {
-				log.Printf("[pg] visible table: %s.%s", sn, tn)
-			}
-		}
-	}
-	var dbName string
-	if err := s.Pool.QueryRow(ctx, "SELECT current_database()").Scan(&dbName); err == nil {
-		log.Printf("[pg] current database: %s", dbName)
-	}
-	var searchPath string
-	if err := s.Pool.QueryRow(ctx, "SHOW search_path").Scan(&searchPath); err == nil {
-		log.Printf("[pg] search_path: %s", searchPath)
-	}
-	log.Printf("[pg] ListAgentFlows: returning %d rows", len(defs))
-	return defs, nil
-}
-
-func (s *PostgresStore) DeleteAgentFlow(ctx context.Context, id string) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM agentflow_definitions WHERE agentflow_id=$1`, id)
-	return err
-}
-
-func (s *PostgresStore) SaveAgentFlowSpec(ctx context.Context, spec *model.AgentFlowSpec, createdBy, comment string) error {
-	defJSON, err := json.Marshal(spec)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	var nextVer int64
-	_ = s.Pool.QueryRow(ctx,
-		`SELECT COALESCE(MAX(version),0)+1 FROM agentflow_definitions WHERE agentflow_id=$1`, spec.ID).Scan(&nextVer)
-	if nextVer == 0 {
-		nextVer = 1
-	}
-	_, err = s.Pool.Exec(ctx,
-		`INSERT INTO agentflow_definitions (agentflow_id,version,definition,created_by,comment,priority,tenant_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (agentflow_id,version) DO NOTHING`,
-		spec.ID, nextVer, defJSON, createdBy, comment, string(spec.Priority), spec.TenantID)
-	return err
-}
-
-func (s *PostgresStore) GetAgentFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
-	ver, err := s.GetAgentFlow(ctx, agentFlowID)
-	if err != nil {
-		return nil, err
-	}
-	var spec model.AgentFlowSpec
-	if err := json.Unmarshal(ver.Definition, &spec); err != nil {
-		return nil, err
-	}
-	return &spec, nil
-}
-
-// ─── Agent definitions ─────────────────────────────────────
-
-func (s *PostgresStore) SaveAgent(ctx context.Context, agent *model.AgentDef) error {
-	b, _ := json.Marshal(agent)
-	_, err := s.Pool.Exec(ctx,
-		`INSERT INTO agents (name, definition) VALUES ($1,$2) ON CONFLICT (name) DO UPDATE SET definition=$2`,
-		agent.Name, b)
-	return err
-}
-
-func (s *PostgresStore) GetAgent(ctx context.Context, name string) (*model.AgentDef, error) {
-	row := s.Pool.QueryRow(ctx, `SELECT definition FROM agents WHERE name=$1`, name)
-	var b []byte
-	if err := row.Scan(&b); err != nil {
-		return nil, err
-	}
-	var a model.AgentDef
-	if err := json.Unmarshal(b, &a); err != nil {
-		return nil, err
-	}
-	return &a, nil
-}
-
-func (s *PostgresStore) ListAgents(ctx context.Context, tenantID string) ([]model.AgentDef, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT definition FROM agents`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var agents []model.AgentDef
-	for rows.Next() {
-		var b []byte
-		if err := rows.Scan(&b); err != nil {
-			continue
-		}
-		var a model.AgentDef
-		if err := json.Unmarshal(b, &a); err != nil {
-			continue
-		}
-		agents = append(agents, a)
-	}
-	return agents, nil
-}
-
-func (s *PostgresStore) DeleteAgent(ctx context.Context, name string) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM agents WHERE name=$1`, name)
-	return err
-}
-
-// ─── AgentFlow runs ────────────────────────────────────────
-
-func (s *PostgresStore) CreateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
-	ctx, span := pgTracer.Start(ctx, "CreateFlowRun",
-		trace.WithAttributes(
-			attribute.String("agentflow_id", run.AgentFlowID),
-			attribute.String("run_id", run.ID),
-		))
-	defer span.End()
-
-	run.ID = newUUID()
-	run.CreatedAt = time.Now()
-	run.UpdatedAt = run.CreatedAt
-	tp, _ := json.Marshal(run.Trigger.Payload)
-	_, err := s.Pool.Exec(ctx,
-		`INSERT INTO agentflow_runs (id,agentflow_id,version,status,vars,trigger_type,trigger_source,trigger_payload,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		run.ID, run.AgentFlowID, run.Version, run.Status, toJSON(run.Vars), run.Trigger.Type, run.Trigger.Source, tp, run.CreatedAt, run.UpdatedAt)
-	if err != nil {
-		span.RecordError(err)
-		span.SetAttributes(attribute.String("error", err.Error()))
-	}
-	return err
-}
-
-func (s *PostgresStore) UpdateFlowRun(ctx context.Context, run *model.AgentFlowRun) error {
-	run.UpdatedAt = time.Now()
-	_, err := s.Pool.Exec(ctx,
-		`UPDATE agentflow_runs SET status=$1,vars=$2,output=$3,error=$4,updated_at=$5,started_at=$6,finished_at=$7 WHERE id=$8`,
-		run.Status, toJSON(run.Vars), toJSON(run.Output), run.Error, run.UpdatedAt, run.StartedAt, run.FinishedAt, run.ID)
-	return err
-}
-
-func (s *PostgresStore) GetFlowRun(ctx context.Context, id string) (*model.AgentFlowRun, error) {
-	row := s.Pool.QueryRow(ctx, `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,tenant_id,namespace,priority,started_at,finished_at FROM agentflow_runs WHERE id=$1`, id)
-	return scanAgentFlowRun(row)
-}
-
-func (s *PostgresStore) ListFlowRuns(ctx context.Context, agentFlowID string, limit int) ([]model.AgentFlowRun, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	var rows pgxRows
-	var err error
-	if agentFlowID == "" {
-		rows, err = s.Pool.Query(ctx, runSelectSQL+" ORDER BY created_at DESC LIMIT $1", limit)
-	} else {
-		rows, err = s.Pool.Query(ctx, runSelectSQL+" WHERE agentflow_id=$1 ORDER BY created_at DESC LIMIT $2", agentFlowID, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectRunRows(rows)
-}
-
-const runSelectSQL = `SELECT id,agentflow_id,version,status,vars,output,error,trigger_type,trigger_source,trigger_payload,created_at,updated_at,tenant_id,namespace,priority,started_at,finished_at FROM agentflow_runs`
-
-func (s *PostgresStore) ListActiveRuns(ctx context.Context) ([]model.AgentFlowRun, error) {
-	rows, err := s.Pool.Query(ctx, runSelectSQL+" WHERE status IN ('RUNNING','PAUSED') ORDER BY created_at DESC")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectRunRows(rows)
-}
-
-func (s *PostgresStore) DeleteFlowRun(ctx context.Context, id string) error {
-	_, err := s.Pool.Exec(ctx, `DELETE FROM agentflow_runs WHERE id=$1`, id)
-	return err
-}
-
-func (s *PostgresStore) CancelFlowRun(ctx context.Context, id string) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE agentflow_runs SET status='CANCELLED' WHERE id=$1`, id)
-	return err
-}
-
-// ─── Task runs ─────────────────────────────────────────────
-
-func (s *PostgresStore) CreateTaskRun(ctx context.Context, task *model.TaskRun) error {
-	task.ID = newUUID()
-	task.CreatedAt = time.Now()
-	task.UpdatedAt = task.CreatedAt
-	_, err := s.Pool.Exec(ctx,
-		`INSERT INTO task_runs (id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-		task.ID, task.AgentFlowRunID, task.NodeID, task.Status, toJSON(task.Input), toJSON(task.Output), task.Error,
-		task.RetryCount, task.MaxRetries, task.ExecID, task.ParentTaskRunID, task.Sequence, task.CreatedAt, task.UpdatedAt)
-	return err
-}
-
-func (s *PostgresStore) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {
-	task.UpdatedAt = time.Now()
-	_, err := s.Pool.Exec(ctx,
-		`UPDATE task_runs SET status=$1,input=$2,output=$3,error=$4,retry_count=$5,max_retries=$6,exec_id=$7,parent_task_run_id=$8,sequence=$9,updated_at=$10,started_at=$11,finished_at=$12 WHERE id=$13`,
-		task.Status, toJSON(task.Input), toJSON(task.Output), task.Error, task.RetryCount, task.MaxRetries, task.ExecID, task.ParentTaskRunID, task.Sequence, task.UpdatedAt, task.StartedAt, task.FinishedAt, task.ID)
-	return err
-}
-
-func (s *PostgresStore) GetTaskRun(ctx context.Context, id string) (*model.TaskRun, error) {
-	row := s.Pool.QueryRow(ctx, `SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at FROM task_runs WHERE id=$1`, id)
-	return scanTaskRun(row)
-}
-
-func (s *PostgresStore) ListTaskRunsByFlow(ctx context.Context, runID string) ([]model.TaskRun, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at FROM task_runs WHERE agentflow_run_id=$1 ORDER BY created_at`, runID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var tasks []model.TaskRun
-	for rows.Next() {
-		t, err := scanTaskRunRow(rows)
-		if err != nil {
-			continue
-		}
-		tasks = append(tasks, *t)
-	}
-	return tasks, nil
-}
-
-func (s *PostgresStore) GetTaskRunByExecID(ctx context.Context, execID string) (*model.TaskRun, error) {
-	row := s.Pool.QueryRow(ctx, `SELECT id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,parent_task_run_id,sequence,created_at,updated_at,started_at,finished_at FROM task_runs WHERE exec_id=$1`, execID)
-	return scanTaskRun(row)
-}
-
-// ─── Human approvals ───────────────────────────────────────
-
-func (s *PostgresStore) CreateApproval(ctx context.Context, approval *model.HumanApproval) error {
-	approval.Token = newUUID()
-	approval.CreatedAt = time.Now()
-	approval.UpdatedAt = approval.CreatedAt
-	if approval.Timeout > 0 {
-		exp := approval.CreatedAt.Add(approval.Timeout)
-		approval.ExpiresAt = &exp
-	}
-	_, err := s.Pool.Exec(ctx,
-		`INSERT INTO human_approvals (task_run_id,token,status,timeout_seconds,created_at,updated_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		approval.TaskRunID, approval.Token, approval.Status, int(approval.Timeout.Seconds()), approval.CreatedAt, approval.UpdatedAt, approval.ExpiresAt)
-	return err
-}
-
-func (s *PostgresStore) GetApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
-	row := s.Pool.QueryRow(ctx, `SELECT task_run_id,token,status,(approved_at IS NOT NULL) as approved,comment,EXTRACT(EPOCH FROM GREATEST(timeout_at - NOW(), '0s'::interval))::int as timeout_seconds,created_at,updated_at,timeout_at as expires_at,approved_at as resolved_at FROM human_approvals WHERE token=$1`, token)
-	return scanHumanApproval(row)
-}
-
-func (s *PostgresStore) UpdateApproval(ctx context.Context, approval *model.HumanApproval) error {
-	now := time.Now()
-	approval.UpdatedAt = now
-	if approval.Approved != nil {
-		approval.ResolvedAt = &now
-	}
-	_, err := s.Pool.Exec(ctx, `UPDATE human_approvals SET status=$1,approved_at=CASE WHEN $2::boolean THEN NOW() ELSE approved_at END,rejected_at=CASE WHEN $2::boolean IS NOT NULL AND NOT $2::boolean THEN NOW() ELSE rejected_at END,comment=$3,updated_at=$4 WHERE token=$5`,
-		approval.Status, approval.Approved, approval.Comment, approval.UpdatedAt, approval.Token)
-	return err
-}
-
-func (s *PostgresStore) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT task_run_id,token,status,(approved_at IS NOT NULL) as approved,comment,EXTRACT(EPOCH FROM GREATEST(timeout_at - NOW(), '0s'::interval))::int as timeout_seconds,created_at,updated_at,timeout_at as expires_at,approved_at as resolved_at FROM human_approvals WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > NOW())`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var approvals []model.HumanApproval
-	for rows.Next() {
-		a, err := scanHumanApprovalRow(rows)
-		if err != nil {
-			continue
-		}
-		approvals = append(approvals, *a)
-	}
-	return approvals, nil
-}
-
-// ─── Supervisor log ────────────────────────────────────────
-
-func (s *PostgresStore) LogSupervisor(ctx context.Context, agentFlowRunID, taskRunID string, input, decision map[string]any) error {
-	_, err := s.Pool.Exec(ctx, `INSERT INTO supervisor_log (agentflow_run_id,task_run_id,input_snapshot,decision) VALUES ($1,$2,$3,$4)`,
-		agentFlowRunID, taskRunID, toJSON(input), toJSON(decision))
-	return err
-}
-
-// ─── Notifier channels ─────────────────────────────────────
-
-func (s *PostgresStore) SaveChannel(ctx context.Context, ch *model.NotifierChannel) error {
-	return nil
-}
-func (s *PostgresStore) GetChannel(ctx context.Context, id string) (*model.NotifierChannel, error) {
-	return nil, nil
-}
-func (s *PostgresStore) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
-	return nil, nil
-}
-func (s *PostgresStore) DeleteChannel(ctx context.Context, id string) error { return nil }
-
-// ─── LLM providers (in-memory, DB migration pending) ────
-
-var pgLlmProviders = struct {
-	mu    sync.Mutex
-	store map[string]*model.LlmProvider
-}{store: make(map[string]*model.LlmProvider)}
-
-func (s *PostgresStore) SaveProvider(ctx context.Context, p *model.LlmProvider) error {
-	pgLlmProviders.mu.Lock()
-	defer pgLlmProviders.mu.Unlock()
-	p.UpdatedAt = time.Now()
-	pgLlmProviders.store[p.ID] = p
-	return nil
-}
-func (s *PostgresStore) GetProvider(ctx context.Context, id string) (*model.LlmProvider, error) {
-	pgLlmProviders.mu.Lock()
-	defer pgLlmProviders.mu.Unlock()
-	return pgLlmProviders.store[id], nil
-}
-func (s *PostgresStore) ListProviders(ctx context.Context, tenantID string) ([]model.LlmProvider, error) {
-	pgLlmProviders.mu.Lock()
-	defer pgLlmProviders.mu.Unlock()
-	var out []model.LlmProvider
-	for _, p := range pgLlmProviders.store {
-		if tenantID == "" || p.TenantID == tenantID {
-			out = append(out, *p)
-		}
-	}
-	return out, nil
-}
-func (s *PostgresStore) DeleteProvider(ctx context.Context, id string) error {
-	pgLlmProviders.mu.Lock()
-	defer pgLlmProviders.mu.Unlock()
-	delete(pgLlmProviders.store, id)
-	return nil
-}
-
-// ─── Subscription routes ───────────────────────────────────
-
-func (s *PostgresStore) SaveRoute(ctx context.Context, r *model.SubscriptionRoute) error {
-	return nil
-}
-func (s *PostgresStore) GetRoutesByFlow(ctx context.Context, id string) ([]model.SubscriptionRoute, error) {
-	return nil, nil
-}
-func (s *PostgresStore) DeleteRoute(ctx context.Context, id string) error { return nil }
-func (s *PostgresStore) DeleteRoutesByPod(ctx context.Context, podID string) error {
-	return nil
-}
-func (s *PostgresStore) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) {
-	return 0, nil
-}
-
-// ─── ExecutionPlan persistence ─────────────────────────────
-
-func (s *PostgresStore) SavePlan(ctx context.Context, plan *model.ExecutionPlan) error {
-	now := time.Now()
-	if plan.CreatedAt.IsZero() {
-		plan.CreatedAt = now
-	}
-	output := map[string]any{}
-	errStr := ""
-	if plan.Result != nil {
-		output = plan.Result.Output
-		errStr = plan.Result.Error
-	}
-	_, err := s.Pool.Exec(ctx,
-		`INSERT INTO task_runs (id,agentflow_run_id,node_id,status,input,output,error,retry_count,max_retries,exec_id,created_at,updated_at,started_at,finished_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-		 ON CONFLICT (id) DO UPDATE SET status=$4,input=$5,output=$6,error=$7,retry_count=$8,updated_at=$12,started_at=$13,finished_at=$14`,
-		plan.TaskID, plan.AgentFlowRunID, plan.NodeID, string(plan.State), toJSON(plan.Input), toJSON(output), errStr,
-		plan.RetryCount, plan.MaxRetries, plan.PlanID, plan.CreatedAt, now, plan.StartedAt, plan.FinishedAt)
-	return err
-}
-
-func (s *PostgresStore) LoadPlan(ctx context.Context, id string) (*model.ExecutionPlan, error) {
-	task, err := s.GetTaskRun(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return &model.ExecutionPlan{
-		PlanID:         task.ExecID,
-		AgentFlowRunID: task.AgentFlowRunID,
-		TaskID:         task.ID,
-		NodeID:         task.NodeID,
-		State:          task.Status,
-		RetryCount:     task.RetryCount,
-		MaxRetries:     task.MaxRetries,
-		Input:          task.Input,
-		Result:         &model.TaskResult{Output: task.Output, Error: task.Error},
-		CreatedAt:      task.CreatedAt,
-		StartedAt:      task.StartedAt,
-		FinishedAt:     task.FinishedAt,
-	}, nil
-}
-
-func (s *PostgresStore) ListPlans(ctx context.Context, runID string) ([]*model.ExecutionPlan, error) {
-	tasks, err := s.ListTaskRunsByFlow(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	plans := make([]*model.ExecutionPlan, len(tasks))
-	for i, t := range tasks {
-		plans[i] = &model.ExecutionPlan{
-			PlanID:         t.ExecID,
-			AgentFlowRunID: t.AgentFlowRunID,
-			TaskID:         t.ID,
-			NodeID:         t.NodeID,
-			State:          t.Status,
-			RetryCount:     t.RetryCount,
-			MaxRetries:     t.MaxRetries,
-			Input:          t.Input,
-			Result:         &model.TaskResult{Output: t.Output, Error: t.Error},
-			CreatedAt:      t.CreatedAt,
-			StartedAt:      t.StartedAt,
-			FinishedAt:     t.FinishedAt,
-		}
-	}
-	return plans, nil
-}
-func (s *PostgresStore) SaveCheckpoint(ctx context.Context, planID string, cp *model.TaskCheckpoint) error {
-	return nil
-}
-func (s *PostgresStore) LoadCheckpoint(ctx context.Context, planID string) (*model.TaskCheckpoint, error) {
-	return nil, nil
-}
-func (s *PostgresStore) ClaimLease(ctx context.Context, planID, tmID string, dur time.Duration) error {
-	return nil
-}
-func (s *PostgresStore) ReleaseLease(ctx context.Context, planID string) error { return nil }
-
 // ─── Row helpers ──────────────────────────────────────────
 
 type pgxRows interface {
@@ -568,21 +90,12 @@ func collectRunRows(rows pgxRows) ([]model.AgentFlowRun, error) {
 	for rows.Next() {
 		r, err := scanAgentFlowRunRow(rows)
 		if err != nil {
-					log.Printf("[pg] scanAgentFlowRun error: %v", err)
+			log.Printf("[pg] scanAgentFlowRun error: %v", err)
 			continue
 		}
 		runs = append(runs, *r)
 	}
 	return runs, rows.Err()
-}
-
-// ─── UUID ──────────────────────────────────────────────────
-
-func newUUID() string {
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		time.Now().UnixNano()&0xFFFFFFFF, (time.Now().UnixNano()>>32)&0xFFFF,
-		(time.Now().UnixNano()>>48)&0xFFFF, (time.Now().UnixNano()>>48)&0xFFFF|0x4000,
-		time.Now().UnixNano()&0xFFFFFFFFFFFF)
 }
 
 // ═══════════════════════════════════════════════════════════════
