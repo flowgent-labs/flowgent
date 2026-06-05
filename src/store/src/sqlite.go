@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -16,40 +14,16 @@ import (
 )
 
 type SQLiteStore struct {
-	Conn *sql.DB
-	Dir  string
+	BaseSQLiteStore
 }
 
 func NewSQLiteStore(dir string) *SQLiteStore {
-	return &SQLiteStore{Dir: dir}
+	return &SQLiteStore{BaseSQLiteStore: BaseSQLiteStore{Dir: dir}}
 }
 
-func (s *SQLiteStore) DB() any { return s.Conn }
-
-func (s *SQLiteStore) Init(ctx context.Context) error {
-	if err := os.MkdirAll(s.Dir, 0755); err != nil {
-		return fmt.Errorf("create sqlite dir: %w", err)
-	}
-	dbPath := filepath.Join(s.Dir, "flowgent.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_busy_timeout=5000")
-	if err != nil {
-		return fmt.Errorf("open sqlite: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	s.Conn = db
-	if err := RunMigrations(db, "sqlite"); err != nil {
-		return fmt.Errorf("sqlite migrations: %w", err)
-	}
-	return nil
-}
-
-func (s *SQLiteStore) Close() error {
-	if s.Conn != nil {
-		s.Conn.Close()
-	}
-	return nil
-}
+func (s *SQLiteStore) DB() any   { return s.Conn }
+func (s *SQLiteStore) Init(ctx context.Context) error  { return s.InitDB(ctx) }
+func (s *SQLiteStore) Close() error { s.CloseDB(); return nil }
 
 // --- AgentFlow definitions ---
 

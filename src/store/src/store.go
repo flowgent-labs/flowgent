@@ -9,24 +9,6 @@ import (
 	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
-// IBaseStore provides DB access.
-type IBaseStore interface {
-	DB() any
-}
-
-// IStore composes all entity store interfaces (JPA SessionFactory pattern).
-// Implementations: PostgresStore, SQLiteStore.
-type IStore interface {
-	IBaseStore
-	IAgentFlowStore
-	IFlowRunStore
-	ITaskPlanStore
-	IAgentStore
-	IApprovalStore
-	INotifierStore
-	ILlmProviderStore
-}
-
 // StoreManager is the unified entry point for store implementations.
 // It embeds IStore so all persistence operations are directly available.
 type StoreManager struct {
