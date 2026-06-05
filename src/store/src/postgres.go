@@ -36,19 +36,53 @@ type PostgresGenericStore[T any] struct {
 }
 
 func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error) {
+	cols := s.columns()
 	rows, err := s.Pool.Query(ctx,
-		fmt.Sprintf("SELECT * FROM %s WHERE %s=$1 LIMIT 1", s.Table, s.IDCol), id)
+		fmt.Sprintf("SELECT %s FROM %s WHERE %s=$1 LIMIT 1", cols, s.Table, s.IDCol), id)
 	if err != nil { return nil, err }
 	defer rows.Close()
-	return pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[T])
+	if !rows.Next() { return nil, fmt.Errorf("%s not found: %s=%s", s.Table, s.IDCol, id) }
+	var entity T
+	if err := scanTaggedStruct(rows, &entity); err != nil { return nil, err }
+	return &entity, nil
 }
 
 func (s *PostgresGenericStore[T]) Select(ctx context.Context, offset, limit int) ([]*T, error) {
+	cols := s.columns()
 	rows, err := s.Pool.Query(ctx,
-		fmt.Sprintf("SELECT * FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2", s.Table), limit, offset)
+		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2", cols, s.Table), limit, offset)
 	if err != nil { return nil, err }
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[T])
+	var out []*T
+	for rows.Next() {
+		entity := new(T)
+		if err := scanTaggedStruct(rows, entity); err != nil { continue }
+		out = append(out, entity)
+	}
+	return out, nil
+}
+
+func (s *PostgresGenericStore[T]) columns() string {
+	var entity T
+	cols, _ := structFields(&entity)
+	return strings.Join(cols, ",")
+}
+
+// scanTaggedStruct scans a row into a struct using db or json tags for column mapping.
+func scanTaggedStruct(row pgx.Row, dest any) error {
+	v := reflect.ValueOf(dest)
+	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("dest must be *struct")
+	}
+	ev := v.Elem()
+	t := ev.Type()
+	ptrs := make([]any, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).IsExported() {
+			ptrs[i] = ev.Field(i).Addr().Interface()
+		}
+	}
+	return row.Scan(ptrs...)
 }
 
 func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {

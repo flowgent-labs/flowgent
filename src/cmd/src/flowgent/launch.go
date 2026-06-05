@@ -1037,13 +1037,15 @@ type notifierStoreAdapter struct {
 func newNotifierStoreAdapter(s store.IStore) *notifierStoreAdapter {
 	var apStore approval.IApprovalStore
 	var ntStore storenf.INotifierStore
-	switch db := s.DB().(type) {
-	case *pgxpool.Pool:
-		apStore = approval.NewApprovalPostgresStore(db)
-		ntStore = storenf.NewNotifierPostgresStore(db)
-	case *sql.DB:
-		apStore = approval.NewApprovalSQLiteStore(db)
-		ntStore = storenf.NewNotifierSQLiteStore(db)
+	if s != nil {
+		switch db := s.DB().(type) {
+		case *pgxpool.Pool:
+			apStore = approval.NewApprovalPostgresStore(db)
+			ntStore = storenf.NewNotifierPostgresStore(db)
+		case *sql.DB:
+			apStore = approval.NewApprovalSQLiteStore(db)
+			ntStore = storenf.NewNotifierSQLiteStore(db)
+		}
 	}
 	return &notifierStoreAdapter{
 		apStore: apStore,
