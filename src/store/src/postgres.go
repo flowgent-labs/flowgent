@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"reflect"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -581,4 +583,101 @@ func newUUID() string {
 		time.Now().UnixNano()&0xFFFFFFFF, (time.Now().UnixNano()>>32)&0xFFFF,
 		(time.Now().UnixNano()>>48)&0xFFFF, (time.Now().UnixNano()>>48)&0xFFFF|0x4000,
 		time.Now().UnixNano()&0xFFFFFFFFFFFF)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Generic Entity Store — PostgresStore[T] (Rust PostgresRepository<T> pattern)
+// ═══════════════════════════════════════════════════════════════
+
+// EntityStore is a typed generic store for one entity table.
+// Entity-specific stores wrap this with their concrete type and add custom queries.
+type EntityStore[T any] struct {
+	Pool  *pgxpool.Pool
+	Table string
+	IDCol string
+}
+
+func (s *EntityStore[T]) Get(ctx context.Context, id string) (*T, error) {
+	rows, err := s.Pool.Query(ctx,
+		fmt.Sprintf("SELECT * FROM %s WHERE %s=$1 LIMIT 1", s.Table, s.IDCol), id)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	return pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[T])
+}
+
+func (s *EntityStore[T]) Select(ctx context.Context, offset, limit int) ([]*T, error) {
+	rows, err := s.Pool.Query(ctx,
+		fmt.Sprintf("SELECT * FROM %s WHERE del_flag=false ORDER BY created_at DESC LIMIT $1 OFFSET $2", s.Table), limit, offset)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[T])
+}
+
+func (s *EntityStore[T]) Save(ctx context.Context, entity *T) error {
+	cols, args := structFields(entity)
+	holders := make([]string, len(cols))
+	updates := make([]string, len(cols))
+	for i, c := range cols {
+		holders[i] = fmt.Sprintf("$%d", i+1)
+		updates[i] = fmt.Sprintf("%s=EXCLUDED.%s", c, c)
+	}
+	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+		s.Table, strings.Join(cols, ","), strings.Join(holders, ","), s.IDCol, strings.Join(updates, ","))
+	_, err := s.Pool.Exec(ctx, sql, args...)
+	return err
+}
+
+func (s *EntityStore[T]) Delete(ctx context.Context, id string) error {
+	_, err := s.Pool.Exec(ctx,
+		fmt.Sprintf("UPDATE %s SET del_flag=true, status='DELETED', updated_at=$1 WHERE %s=$2", s.Table, s.IDCol),
+		time.Now(), id)
+	return err
+}
+
+func (s *EntityStore[T]) Execute(ctx context.Context, sql string, params ...any) ([]*T, error) {
+	rows, err := s.Pool.Query(ctx, sql, params...)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[T])
+}
+
+func (s *EntityStore[T]) Exec(ctx context.Context, sql string, params ...any) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, sql, params...)
+	if err != nil { return 0, err }
+	return tag.RowsAffected(), nil
+}
+
+// ─── Reflection ──────────────────────────────────────────
+
+func structFields(entity any) (cols []string, args []any) {
+	v := reflect.ValueOf(entity)
+	if v.Kind() == reflect.Ptr { v = v.Elem() }
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() { continue }
+		col := colName(f)
+		if col == "" || col == "-" { continue }
+		cols = append(cols, col)
+		args = append(args, v.Field(i).Interface())
+	}
+	return
+}
+
+func colName(f reflect.StructField) string {
+	if tag := f.Tag.Get("db"); tag != "" { return strings.Split(tag, ",")[0] }
+	if tag := f.Tag.Get("json"); tag != "" {
+		n := strings.Split(tag, ",")[0]
+		if n != "" && n != "-" { return n }
+	}
+	return toSnake(f.Name)
+}
+
+func toSnake(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' { b.WriteByte('_') }
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
 }
