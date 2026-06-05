@@ -36,10 +36,7 @@ func (s *SQLiteStore) Init(ctx context.Context) error {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s.Conn = db
-	if err := RunMigrations(db, "sqlite"); err != nil {
-		return fmt.Errorf("sqlite migrations: %w", err)
-	}
-	return nil
+	return RunMigrations(db, "sqlite")
 }
 
 func (s *SQLiteStore) Close() error {

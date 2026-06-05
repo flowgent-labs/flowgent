@@ -29,17 +29,14 @@ func NewPostgresStore(dsn string) *PostgresStore {
 	return &PostgresStore{DSN: dsn}
 }
 
-func (s *PostgresStore) DB() any { return s.Pool }
-
+func (s *PostgresStore) DB() any  { return s.Pool }
 func (s *PostgresStore) SetPoolConfig(_, _ int) {}
-
 func (s *PostgresStore) SetSchema(schema string) { s.Schema = schema }
 
 func (s *PostgresStore) Init(ctx context.Context) error {
 	cfg, err := pgxpool.ParseConfig(s.DSN)
 	if err != nil { return fmt.Errorf("parse pg config: %w", err) }
-	cfg.MaxConns = 20
-	cfg.MinConns = 2
+	cfg.MaxConns, cfg.MinConns = 20, 2
 	schema := s.Schema
 	if schema == "" { schema = "public" }
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
