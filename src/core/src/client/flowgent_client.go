@@ -162,16 +162,22 @@ func (c *FlowgentClient) updateTask(ctx context.Context, taskID string, status s
 	return nil
 }
 
-// APIStoreWrapper delegates UpdateTaskRun and SavePlan to apiserver API,
-// while passing all other Store methods through to the underlying store.
-// This allows TM to use the apiserver for state writes while keeping read compatibility.
+// APIStoreWrapper delegates UpdateTaskRun and SavePlan to apiserver API.
 type APIStoreWrapper struct {
-	store.IStore       // embeds all read methods
 	api *FlowgentClient
 }
 
 func NewAPIStoreWrapper(inner store.IStore, api *FlowgentClient) store.IStore {
-	return &APIStoreWrapper{IStore: inner, api: api}
+	_ = inner
+	return &APIStoreWrapper{api: api}
+}
+
+func (w *APIStoreWrapper) DB() any {
+	return nil
+}
+
+func (w *APIStoreWrapper) Close() error {
+	return nil
 }
 
 func (w *APIStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {

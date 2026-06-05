@@ -2,6 +2,7 @@ package jobmanager
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"github.com/flowgent-labs/flowgent/core/src/engine/resourcemanager"
 	"sync"
@@ -11,6 +12,9 @@ import (
 	"github.com/flowgent-labs/flowgent/common/src/utils"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/flowrun"
+	"github.com/flowgent-labs/flowgent/store/src/taskplan"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -27,6 +31,8 @@ type EdgeCondition struct {
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
 	store     store.IStore
+	runStore  flowrun.IFlowRunStore
+	planStore taskplan.ITaskPlanStore
 	rm        resourcemanager.ResourceManager
 	logger    *utils.Logger
 	tracer    trace.Tracer
@@ -57,8 +63,19 @@ func NewJobMaster(store store.IStore, rm resourcemanager.ResourceManager, logger
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
+
+	var runStore flowrun.IFlowRunStore
+	var planStore taskplan.ITaskPlanStore
+	switch db := store.DB().(type) {
+	case *pgxpool.Pool:
+		runStore = flowrun.NewFlowRunPostgresStore(db)
+		planStore = taskplan.NewTaskPlanPostgresStore(db)
+	case *sql.DB:
+		runStore = flowrun.NewFlowRunSQLiteStore(db)
+		planStore = taskplan.NewTaskPlanSQLiteStore(db)
+	}
 	return &JobMaster{
-		store: store, rm: rm, logger: logger,
+		store: store, runStore: runStore, planStore: planStore, rm: rm, logger: logger,
 		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
 		nodeOutputs: make(map[string]map[string]any),
 	}
@@ -279,7 +296,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 	run.Status = model.RunRunning
 	now := time.Now()
 	run.StartedAt = &now
-	_ = jm.store.UpdateFlowRun(ctx, run)
+	_ = jm.runStore.Update(ctx, run)
 
 	if jm.timeout > 0 {
 		var cancel context.CancelFunc
@@ -298,13 +315,13 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 			run.Error = jm.collectFirstError()
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Error, "failed")
-			return jm.store.UpdateFlowRun(ctx, run)
+			return jm.runStore.Update(ctx, run)
 		}
 		if jm.IsComplete() {
 			run.Status = model.RunCompleted
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Ok, "done")
-			return jm.store.UpdateFlowRun(ctx, run)
+			return jm.runStore.Update(ctx, run)
 		}
 
 		ready := jm.Ready()
@@ -318,7 +335,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 				continue
 			}
 			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
-			_ = jm.store.SavePlan(ctx, plan)
+			_ = jm.planStore.Save(ctx, taskplan.PlanToTaskRun(plan))
 
 			result, err := jm.rm.Schedule(ctx, plan)
 			if err != nil {

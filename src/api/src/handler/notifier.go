@@ -1,30 +1,36 @@
 package handler
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"context"
 	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/notifier"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NotifierStore is the subset of store.IStore needed by NotifierHandler.
-type NotifierStore interface {
-	ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
-}
-
 type NotifierHandler struct {
-	store  NotifierStore
+	store  notifier.INotifierStore
 	logger *utils.Logger
 }
 
-func NewNotifierHandler(s NotifierStore, logger *utils.Logger) *NotifierHandler {
-	return &NotifierHandler{store: s, logger: logger}
+func NewNotifierHandler(s store.IStore, logger *utils.Logger) *NotifierHandler {
+	var nStore notifier.INotifierStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		nStore = notifier.NewNotifierPostgresStore(db)
+	case *sql.DB:
+		nStore = notifier.NewNotifierSQLiteStore(db)
+	}
+	return &NotifierHandler{store: nStore, logger: logger}
 }
 
 func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := h.store.ListChannels(r.Context(), r.PathValue("tenant"))
+	channels, err := h.store.Select(r.Context(), 0, 1000)
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(channels)

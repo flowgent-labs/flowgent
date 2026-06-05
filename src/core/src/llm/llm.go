@@ -2,12 +2,15 @@ package llm
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 
 	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/llmprovider"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ILlmProvider is the interface each LLM provider implementation must satisfy.
@@ -40,13 +43,22 @@ func NewLlmProviderManager(cfg *config.LLMConfig, store store.IStore) *LlmProvid
 
 	// Load DB-backed providers (standard mode)
 	if cfg.Providers.Standard.Enabled && store != nil {
-		dbProviders, err := store.ListProviders(context.Background(), "")
-		if err == nil {
-			for _, dbp := range dbProviders {
-				if !dbp.Enabled || dbp.ID == "" {
-					continue
+		var lpStore llmprovider.ILlmProviderStore
+		switch db := store.DB().(type) {
+		case *pgxpool.Pool:
+			lpStore = llmprovider.NewLlmProviderPostgresStore(db)
+		case *sql.DB:
+			lpStore = llmprovider.NewLlmProviderSQLiteStore(db)
+		}
+		if lpStore != nil {
+			dbProviders, err := lpStore.Select(context.Background(), 0, 1000)
+			if err == nil {
+				for _, dbp := range dbProviders {
+					if !dbp.Enabled || dbp.ID == "" {
+						continue
+					}
+					m.registerDB(*dbp)
 				}
-				m.registerDB(dbp)
 			}
 		}
 	}

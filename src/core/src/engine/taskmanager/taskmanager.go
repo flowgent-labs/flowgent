@@ -2,6 +2,7 @@ package taskmanager
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/flowgent-labs/flowgent/model/src"
 	messager "github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/taskplan"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -43,6 +46,7 @@ type TaskManager struct {
 	router      *executor.TaskExecutorRouter
 	queue       messager.IMessager
 	store       store.IStore
+	planStore   taskplan.ITaskPlanStore
 	metrics     *TaskManagerMetrics
 	logger      *utils.Logger
 	mu          sync.Mutex
@@ -62,7 +66,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	router.Register(executor.NewAgentExecutor(cfg.LLMClient, cfg.Agents))
 	router.Register(&executor.ConditionExecutor{})
 	router.Register(executor.NewToolExecutor(cfg.MCPClients))
-	router.Register(executor.NewSupervisorExecutor(cfg.LLMClient, cfg.Agents, cfg.Store))
+	router.Register(executor.NewSupervisorExecutor(cfg.LLMClient, cfg.Agents))
 	router.Register(&executor.TribunalExecutor{})
 	router.Register(&executor.MapExecutor{})
 	router.Register(&executor.JoinExecutor{})
@@ -74,14 +78,23 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 
 	metrics := NewTaskManagerMetrics()
 
+	var planStore taskplan.ITaskPlanStore
+	switch db := cfg.Store.DB().(type) {
+	case *pgxpool.Pool:
+		planStore = taskplan.NewTaskPlanPostgresStore(db)
+	case *sql.DB:
+		planStore = taskplan.NewTaskPlanSQLiteStore(db)
+	}
+
 	tm := &TaskManager{
-		ID:      cfg.ID,
-		router:  router,
-		queue:   cfg.Queue,
-		store:   cfg.Store,
-		metrics: metrics,
-		logger:  cfg.Logger,
-		stopCh:  make(chan struct{}),
+		ID:        cfg.ID,
+		router:    router,
+		queue:     cfg.Queue,
+		store:     cfg.Store,
+		planStore: planStore,
+		metrics:   metrics,
+		logger:    cfg.Logger,
+		stopCh:    make(chan struct{}),
 	}
 
 	for i := 0; i < cfg.SlotCount; i++ {
@@ -125,7 +138,7 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *model.ExecutionPla
 	now := time.Now()
 	task.FinishedAt = &now
 	plan.FinishedAt = &now
-	_ = tm.store.UpdateTaskRun(ctx, task)
+	_ = tm.planStore.UpdateTaskRun(ctx, task)
 	return result, nil
 }
 

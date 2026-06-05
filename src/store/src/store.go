@@ -2,20 +2,16 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
+// IStore is the minimal top-level store interface.
 type IStore interface {
-	IAgentFlowStore
-	IFlowRunStore
-	ITaskPlanStore
-	IAgentStore
-	IApprovalStore
-	INotifierStore
-	ILlmProviderStore
 	DB() any
 	Close() error
 }
@@ -25,13 +21,11 @@ type StoreManager struct {
 }
 
 func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
-	var s IStore
-	dsn := os.Getenv("FLOWGENT_DATABASE_URL")
-	if dsn != "" {
+	if dsn := os.Getenv("FLOWGENT_DATABASE_URL"); dsn != "" {
 		pool := NewPostgresPool(context.Background(), dsn, "public")
-		s = newPgStore(pool)
-		return &StoreManager{IStore: s}
+		return &StoreManager{IStore: &pgStore{Pool: pool}}
 	}
+
 	if cfg.Storage.Type == "POSTGRE" {
 		pg := cfg.Storage.Postgres
 		ssl := "disable"
@@ -39,17 +33,24 @@ func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, ssl)
 		pool := NewPostgresPool(context.Background(), dsn, "public")
-		s = newPgStore(pool)
-		return &StoreManager{IStore: s}
+		return &StoreManager{IStore: &pgStore{Pool: pool}}
 	}
+
 	dir := cfg.Storage.SQLite.Dir
 	if dir == "" { dir = "~/.flowgent/sqlite" }
 	conn := NewSQLiteConn(context.Background(), dir)
-	s = newSqStore(conn)
-	return &StoreManager{IStore: s}
+	return &StoreManager{IStore: &sqStore{Conn: conn}}
 }
 
 func StoreDSNFromEnv() string {
 	if u := os.Getenv("FLOWGENT_DATABASE_URL"); u != "" { return u }
 	return ""
 }
+
+type pgStore struct{ Pool *pgxpool.Pool }
+func (s *pgStore) DB() any      { return s.Pool }
+func (s *pgStore) Close() error { s.Pool.Close(); return nil }
+
+type sqStore struct{ Conn *sql.DB }
+func (s *sqStore) DB() any      { return s.Conn }
+func (s *sqStore) Close() error { return s.Conn.Close() }

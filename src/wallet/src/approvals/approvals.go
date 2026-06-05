@@ -12,18 +12,19 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/store/src/approval"
 	"github.com/flowgent-labs/flowgent/wallet/src"
 )
 
 // PaymentApprover implements pwf.ApprovalHandler using Flowgent's existing
 // human approval infrastructure (model.HumanApprovalStore). No second approval subsystem.
 type PaymentApprover struct {
-	store   model.HumanApprovalStore
+	store   approval.IApprovalStore
 	timeout time.Duration
 }
 
 // New creates a payment approver that reuses the existing human approval store.
-func New(store model.HumanApprovalStore, timeout time.Duration) *PaymentApprover {
+func New(store approval.IApprovalStore, timeout time.Duration) *PaymentApprover {
 	if timeout <= 0 {
 		timeout = 24 * time.Hour
 	}

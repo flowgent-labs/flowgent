@@ -2,20 +2,30 @@ package executor
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/approval"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
 )
 
 // ─── Human Executor ────────────────────────────────────
 
 type HumanExecutor struct {
-	store store.IStore
+	apStore approval.IApprovalStore
 }
 
-func NewHumanExecutor(store store.IStore) *HumanExecutor {
-	return &HumanExecutor{store: store}
+func NewHumanExecutor(s store.IStore) *HumanExecutor {
+	var apStore approval.IApprovalStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		apStore = approval.NewApprovalPostgresStore(db)
+	case *sql.DB:
+		apStore = approval.NewApprovalSQLiteStore(db)
+	}
+	return &HumanExecutor{apStore: apStore}
 }
 
 func (e *HumanExecutor) TaskType() model.TaskType { return model.TaskHuman }
@@ -31,7 +41,7 @@ func (e *HumanExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		Timeout:   timeout,
 		Status:    "PENDING",
 	}
-	if err := e.store.CreateApproval(ctx, approval); err != nil {
+	if err := e.apStore.CreateApproval(ctx, approval); err != nil {
 		return nil, fmt.Errorf("create human approval: %w", err)
 	}
 

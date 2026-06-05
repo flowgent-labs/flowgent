@@ -2,6 +2,7 @@ package taskmanager
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/taskplan"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go.opentelemetry.io/otel/metric"
 )
@@ -19,22 +22,29 @@ import (
 // Each SlotWorker subscribes to TopicExec and executes ExecutionPlans via a
 // TaskExecutorRouter, then publishes downstream-ready plans back to the queue.
 type SlotWorker struct {
-	id      string
-	tmID    string
-	q       messager.IMessager
-	router  *executor.TaskExecutorRouter
-	store   store.IStore
-	metrics *TaskManagerMetrics
+	id        string
+	tmID      string
+	q         messager.IMessager
+	router    *executor.TaskExecutorRouter
+	planStore taskplan.ITaskPlanStore
+	metrics   *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskExecutorRouter, store store.IStore, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskExecutorRouter, s store.IStore, metrics *TaskManagerMetrics) *SlotWorker {
+	var planStore taskplan.ITaskPlanStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		planStore = taskplan.NewTaskPlanPostgresStore(db)
+	case *sql.DB:
+		planStore = taskplan.NewTaskPlanSQLiteStore(db)
+	}
 	return &SlotWorker{
-		id:      id,
-		tmID:    tmID,
-		q:       q,
-		router:  router,
-		store:   store,
-		metrics: metrics,
+		id:        id,
+		tmID:      tmID,
+		q:         q,
+		router:    router,
+		planStore: planStore,
+		metrics:   metrics,
 	}
 }
 
@@ -79,7 +89,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			sw.metrics.TasksExecuted.Add(ctx, 1, metric.WithAttributes(taskTypeAttr(plan.TaskType)))
 		}
 
-		_ = sw.store.SavePlan(ctx, &plan)
+		_ = sw.planStore.Save(ctx, taskplan.PlanToTaskRun(&plan))
 
 		if plan.Result != nil && plan.Result.Output != nil {
 			sw.emitDownstream(ctx, &plan)

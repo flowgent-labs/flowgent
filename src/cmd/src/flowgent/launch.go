@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -37,6 +38,11 @@ import (
 	"github.com/flowgent-labs/flowgent/notifier/src"
 	messager "github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/agentflow"
+	"github.com/flowgent-labs/flowgent/store/src/agentdef"
+	storenf "github.com/flowgent-labs/flowgent/store/src/notifier"
+	"github.com/flowgent-labs/flowgent/store/src/approval"
+	"github.com/flowgent-labs/flowgent/store/src/flowrun"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -231,6 +237,15 @@ func startServer(mode string) {
 	storeImpl := initStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
+	// ── Entity Stores ──────────────────────────────────────
+	var localFrStore flowrun.IFlowRunStore
+	switch db := storeImpl.DB().(type) {
+	case *pgxpool.Pool:
+		localFrStore = flowrun.NewFlowRunPostgresStore(db)
+	case *sql.DB:
+		localFrStore = flowrun.NewFlowRunSQLiteStore(db)
+	}
+
 	// ── OTEL ────────────────────────────────────────────
 	if serviceCfg.Mgmt.OTEL.Enabled {
 		endpoint := serviceCfg.Mgmt.OTEL.Endpoint
@@ -298,12 +313,23 @@ func startServer(mode string) {
 	// YAML manifests loaded from disk.
 	// Both use the same model.AgentFlowSpec struct (dual-tagged json: + yaml:).
 	if serviceCfg.Orchestration.Agents.Standard.Enabled {
-		dbAgents, dberr := storeImpl.ListAgents(context.Background(), "")
-		if dberr != nil {
-			slog.Warn("Failed to load agents from DB", "error", dberr)
-		} else {
-			loadedAgents = append(loadedAgents, dbAgents...)
-			slog.Info("Agents loaded from DB (standard mode)", "count", len(dbAgents))
+		var agStore agentdef.IAgentStore
+		switch db := storeImpl.DB().(type) {
+		case *pgxpool.Pool:
+			agStore = agentdef.NewAgentPostgresStore(db)
+		case *sql.DB:
+			agStore = agentdef.NewAgentSQLiteStore(db)
+		}
+		if agStore != nil {
+			dbAgents, dberr := agStore.Select(context.Background(), 0, 1000)
+			if dberr != nil {
+				slog.Warn("Failed to load agents from DB", "error", dberr)
+			} else {
+				for _, a := range dbAgents {
+					loadedAgents = append(loadedAgents, *a)
+				}
+				slog.Info("Agents loaded from DB (standard mode)", "count", len(dbAgents))
+			}
 		}
 	}
 	if serviceCfg.Orchestration.AgentFlows.Standard.Enabled {
@@ -347,7 +373,7 @@ func startServer(mode string) {
 	triggerFunc := func(ctx context.Context, id string) {
 		run := &model.AgentFlowRun{AgentFlowID: id, Version: 1, Status: model.RunPending,
 			Trigger: model.TriggerInfo{Type: "schedule", Source: "cron"}}
-		if err := storeImpl.CreateFlowRun(ctx, run); err != nil {
+		if err := localFrStore.Create(ctx, run); err != nil {
 			slog.Error("schedule trigger failed", "error", err)
 		}
 	}
@@ -468,7 +494,7 @@ func startServer(mode string) {
 				Status: model.RunPending, Vars: req.Vars,
 				Trigger: model.TriggerInfo{Type: "api", Source: "a2a"},
 			}
-			if err := storeImpl.CreateFlowRun(r.Context(), run); err != nil {
+			if err := localFrStore.Create(r.Context(), run); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -478,7 +504,7 @@ func startServer(mode string) {
 			})
 		})
 		a2aMux.HandleFunc("GET /a2a/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
-			run, err := storeImpl.GetFlowRun(r.Context(), r.PathValue("id"))
+			run, err := localFrStore.Get(r.Context(), r.PathValue("id"))
 			if err != nil || run == nil {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
@@ -550,54 +576,8 @@ func startServer(mode string) {
 
 // initStore creates the Store implementation based on config.
 func initStore(cfg *config.FlowgentConfig) store.IStore {
-	var s store.IStore
-	// Fallback: use FLOWGENT_DATABASE_URL env var if config is empty (external PG)
-	pgCfg := cfg.Storage.Postgres
-	if pgCfg.Host == "" {
-		if u := os.Getenv("FLOWGENT_DATABASE_URL"); u != "" {
-			// Parse URL to extract host/port/db/user/password
-			// Quick approach: use URL directly as DSN
-			pool, err := pgxpool.New(context.Background(), u)
-			if err == nil {
-				pool.Close()
-				log.Printf("initStore: using external PG from FLOWGENT_DATABASE_URL")
-				return store.NewPostgresStore(u)
-			}
-		}
-	}
-	log.Printf("initStore: storage.type=%q host=%q port=%d db=%q user=%q",
-		cfg.Storage.Type, pgCfg.Host, pgCfg.Port, pgCfg.Database, pgCfg.Username)
-	switch cfg.Storage.Type {
-	case "POSTGRE":
-		pgCfg := cfg.Storage.Postgres
-		sslMode := "disable"
-		if pgCfg.UseSSL {
-			sslMode = "require"
-		}
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			pgCfg.Host, pgCfg.Port, pgCfg.Username, pgCfg.Password, pgCfg.Database, sslMode)
-		log.Printf("initStore: PG DSN = %s", dsn)
-		pgStore := store.NewPostgresStore(dsn)
-		pgStore.SetPoolConfig(pgCfg.MinConnections, pgCfg.MaxConnections)
-		if pgCfg.Schema != "" {
-			pgStore.SetSchema(pgCfg.Schema)
-		}
-		if err := pgStore.Init(context.Background()); err != nil {
-			log.Fatalf("Failed to init Postgres: %v", err)
-		}
-		s = pgStore
-	default:
-		sqliteDir := cfg.Storage.SQLite.Dir
-		if sqliteDir == "" {
-			sqliteDir = "~/.flowgent/sqlite"
-		}
-		sqliteStore := store.NewSQLiteStore(sqliteDir)
-		if err := sqliteStore.Init(context.Background()); err != nil {
-			log.Fatalf("Failed to init SQLite: %v", err)
-		}
-		s = sqliteStore
-	}
-	return s
+	log.Printf("initStore: storage.type=%q", cfg.Storage.Type)
+	return store.NewStoreManager(cfg)
 }
 
 // logConfig prints key configuration details (masks sensitive fields).
@@ -677,13 +657,21 @@ func loadAgentFlowsFromDB(ctx context.Context, s engine.Store) ([]model.AgentFlo
 	var flows []model.AgentFlowSpec
 	subFlows := make(map[string]model.AgentFlowSpec)
 
-	versions, err := s.ListAgentFlows(ctx)
+	var afStore agentflow.IAgentFlowStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		afStore = agentflow.NewAgentFlowPostgresStore(db)
+	case *sql.DB:
+		afStore = agentflow.NewAgentFlowSQLiteStore(db)
+	}
+
+	versions, err := afStore.Select(ctx, 0, 1000)
 	if err != nil {
 		return flows, subFlows, fmt.Errorf("list agentflow definitions: %w", err)
 	}
 
 	// Deduplicate: only take the latest version per agentflow_id.
-	// ListAgentFlows returns (agentflow_id, version DESC) ordered.
+	// Select returns (agentflow_id, version DESC) ordered.
 	seen := make(map[string]bool)
 	for _, v := range versions {
 		if seen[v.AgentFlowID] {
@@ -723,6 +711,17 @@ func loadAgentFlowsFromDB(ctx context.Context, s engine.Store) ([]model.AgentFlo
 // Namespace filtering is a safety net to prevent cross-contamination.
 func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManager,
 	flows map[string]*model.AgentFlowSpec, namespace, agentFlowID string) {
+	var frStore flowrun.IFlowRunStore
+	var afStore agentflow.IAgentFlowStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		frStore = flowrun.NewFlowRunPostgresStore(db)
+		afStore = agentflow.NewAgentFlowPostgresStore(db)
+	case *sql.DB:
+		frStore = flowrun.NewFlowRunSQLiteStore(db)
+		afStore = agentflow.NewAgentFlowSQLiteStore(db)
+	}
+
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -732,7 +731,7 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 		case <-ticker.C:
 			// Session: agentFlowID="" → DB returns ALL runs (tenant-wide scan)
 			// Application: agentFlowID="<flow>" → DB returns only that flow's runs
-			runs, _ := s.ListFlowRuns(ctx, agentFlowID, 50)
+			runs, _ := frStore.Select(ctx, 0, 50)
 			for _, run := range runs {
 				if run.Status != model.RunPending {
 					continue
@@ -747,7 +746,7 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 				spec := flows[run.AgentFlowID]
 				if spec == nil {
 					// Fallback: load from store for flows created via API
-					if dbSpec, err := s.GetAgentFlowSpec(ctx, run.AgentFlowID); err == nil && dbSpec != nil {
+					if dbSpec, err := afStore.GetSpec(ctx, run.AgentFlowID); err == nil && dbSpec != nil {
 						spec = dbSpec
 						log.Printf("[poller] loaded flow spec from DB: %s (nodes=%d)", run.AgentFlowID, len(spec.Nodes))
 					}
@@ -756,8 +755,8 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 					continue
 				}
 				log.Printf("[poller] dispatch run=%s flow=%s priority=%s", run.ID[:8], run.AgentFlowID, run.Priority)
-				go func(r model.AgentFlowRun, sp *model.AgentFlowSpec) {
-					_ = jm.Submit(ctx, &r, sp)
+				go func(r *model.AgentFlowRun, sp *model.AgentFlowSpec) {
+					_ = jm.Submit(ctx, r, sp)
 				}(run, spec)
 			}
 		}
@@ -815,20 +814,7 @@ func startTaskManager() error {
 	q := newQueueFromConfig(svcCfg, tmID)
 	defer q.Close()
 
-	var dbStore engine.Store
-	if dbURL := envOr("FLOWGENT_DATABASE_URL", ""); dbURL != "" {
-		dbStore = store.NewPostgresStore(dbURL)
-	} else {
-		sqliteDir := "/tmp/flowgent/sqlite"
-		if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" {
-			sqliteDir = svcCfg.Storage.SQLite.Dir
-		}
-		s := store.NewSQLiteStore(sqliteDir)
-		if err := s.Init(context.Background()); err != nil {
-			return fmt.Errorf("init store: %w", err)
-		}
-		dbStore = s
-	}
+	dbStore := store.NewStoreManager(svcCfg)
 
 	var agentPtrs []*config.AgentDef
 	if svcCfg != nil {
@@ -890,24 +876,7 @@ func startJobManager() error {
 	q := newQueueFromConfig(svcCfg, jmID)
 	defer q.Close()
 
-	var storeImpl engine.Store
-	if dbURL := envOr("FLOWGENT_DATABASE_URL", ""); dbURL != "" {
-		pg := store.NewPostgresStore(dbURL)
-		if err := pg.Init(context.Background()); err != nil {
-			return fmt.Errorf("init postgres: %w", err)
-		}
-		storeImpl = pg
-	} else {
-		sqliteDir := "/tmp/flowgent/sqlite"
-		if svcCfg != nil && svcCfg.Storage.SQLite.Dir != "" {
-			sqliteDir = svcCfg.Storage.SQLite.Dir
-		}
-		dbStore := store.NewSQLiteStore(sqliteDir)
-		if err := dbStore.Init(context.Background()); err != nil {
-			return fmt.Errorf("init store: %w", err)
-		}
-		storeImpl = dbStore
-	}
+	storeImpl := store.NewStoreManager(svcCfg)
 
 	var rm resourcemanager.ResourceManager
 	jmNamespace := envOr("FLOWGENT_NAMESPACE", "")
@@ -1057,12 +1026,107 @@ func (a *notifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (
 
 func (a *notifToWSAdapter) PodID() string { return a.svc.PodID() }
 
+// notifierStoreAdapter combines entity stores to satisfy notifier.Store.
+type notifierStoreAdapter struct {
+	apStore  approval.IApprovalStore
+	ntStore  storenf.INotifierStore
+	routesMu sync.Mutex
+	routes   map[string]*model.SubscriptionRoute
+}
+
+func newNotifierStoreAdapter(s store.IStore) *notifierStoreAdapter {
+	var apStore approval.IApprovalStore
+	var ntStore storenf.INotifierStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		apStore = approval.NewApprovalPostgresStore(db)
+		ntStore = storenf.NewNotifierPostgresStore(db)
+	case *sql.DB:
+		apStore = approval.NewApprovalSQLiteStore(db)
+		ntStore = storenf.NewNotifierSQLiteStore(db)
+	}
+	return &notifierStoreAdapter{
+		apStore: apStore,
+		ntStore: ntStore,
+		routes:  make(map[string]*model.SubscriptionRoute),
+	}
+}
+
+func (a *notifierStoreAdapter) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
+	items, err := a.apStore.ListPending(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.HumanApproval, len(items))
+	for i, item := range items {
+		if item != nil {
+			result[i] = *item
+		}
+	}
+	return result, nil
+}
+
+func (a *notifierStoreAdapter) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
+	items, err := a.ntStore.Select(ctx, 0, 1000)
+	if err != nil {
+		return nil, err
+	}
+	_ = tenantID
+	result := make([]model.NotifierChannel, len(items))
+	for i, item := range items {
+		if item != nil {
+			result[i] = *item
+		}
+	}
+	return result, nil
+}
+
+func (a *notifierStoreAdapter) SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	a.routes[route.ID] = route
+	return nil
+}
+
+func (a *notifierStoreAdapter) GetRoutesByFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error) {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	var result []model.SubscriptionRoute
+	for _, route := range a.routes {
+		if route.AgentFlowID == agentFlowID {
+			result = append(result, *route)
+		}
+	}
+	return result, nil
+}
+
+func (a *notifierStoreAdapter) DeleteRoute(ctx context.Context, id string) error {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	delete(a.routes, id)
+	return nil
+}
+
+func (a *notifierStoreAdapter) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	var deleted int64
+	for id, route := range a.routes {
+		if route.PodID == podID && time.Since(route.CreatedAt) > maxAge {
+			delete(a.routes, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // createNotifierService builds a notifier.Service from config, or nil if disabled.
 func createNotifierService(s store.IStore, cfg *config.FlowgentConfig) *notifier.Service {
 	if !cfg.Notifier.Enabled {
 		return nil
 	}
-	svc := notifier.NewService(s, nil) // MQTT client wired when available
+	adapter := newNotifierStoreAdapter(s)
+	svc := notifier.NewService(adapter, nil) // MQTT client wired when available
 	for _, chCfg := range cfg.Notifier.Channels {
 		if !chCfg.Enabled {
 			continue
@@ -1108,11 +1172,13 @@ func isTerminalStatus(s model.RunStatus) bool {
 //	→ Create dedicated K8s Namespace + JM Deployment + TM Deployment
 //	→ Flow runs in isolated cluster (like Flink Application Mode)
 type Controller struct {
-	store   store.IStore
-	rm      resourcemanager.ResourceManager
-	logger  *utils.Logger
-	cfg     *config.FlowgentConfig
-	cfgPath string
+	store    store.IStore
+	frStore  flowrun.IFlowRunStore
+	afStore  agentflow.IAgentFlowStore
+	rm       resourcemanager.ResourceManager
+	logger   *utils.Logger
+	cfg      *config.FlowgentConfig
+	cfgPath  string
 
 	// discovery: pluggable service discovery (K8s or static env-based)
 	discovery    discovery.IDiscoveryClient
@@ -1125,8 +1191,20 @@ type Controller struct {
 // NewController creates a Controller instance.
 func NewController(s store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger,
 	cfg *config.FlowgentConfig, cfgPath string, disc discovery.IDiscoveryClient) *Controller {
+	var frStore flowrun.IFlowRunStore
+	var afStore agentflow.IAgentFlowStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		frStore = flowrun.NewFlowRunPostgresStore(db)
+		afStore = agentflow.NewAgentFlowPostgresStore(db)
+	case *sql.DB:
+		frStore = flowrun.NewFlowRunSQLiteStore(db)
+		afStore = agentflow.NewAgentFlowSQLiteStore(db)
+	}
 	return &Controller{
 		store:        s,
+		frStore:      frStore,
+		afStore:      afStore,
 		rm:           rm,
 		logger:       logger,
 		cfg:          cfg,
@@ -1216,7 +1294,7 @@ func (c *Controller) Run(ctx context.Context) error {
 
 // reconcile polls PG for agentflow definitions and dispatches newly discovered flows.
 func (c *Controller) reconcile(ctx context.Context) {
-	versions, err := c.store.ListAgentFlows(ctx)
+	versions, err := c.afStore.Select(ctx, 0, 1000)
 	if err != nil {
 		c.logger.Error("Failed to list agentflow definitions", "error", err)
 		return
@@ -1304,7 +1382,7 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
 
-	if err := c.store.CreateFlowRun(ctx, run); err != nil {
+	if err := c.frStore.Create(ctx, run); err != nil {
 		c.logger.Error("Failed to create session run", "flow_id", spec.ID, "error", err)
 		return
 	}
@@ -1319,7 +1397,7 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r, err := c.store.GetFlowRun(ctx, run.ID)
+			r, err := c.frStore.Get(ctx, run.ID)
 			if err != nil || r == nil {
 				continue
 			}
@@ -1411,7 +1489,7 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *model.Ag
 		Vars:        spec.Vars,
 		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
-	if err := c.store.CreateFlowRun(ctx, run); err != nil {
+	if err := c.frStore.Create(ctx, run); err != nil {
 		c.logger.Error("Failed to create application run", "flow_id", spec.ID, "error", err)
 	}
 }
@@ -1505,29 +1583,9 @@ func startController() error {
 	logger := utils.NewLogger(logMode, logLevel)
 
 	// Init store (requires PG for distributed mode)
-	var storeImpl store.IStore
-	if dbURL := os.Getenv("FLOWGENT_DATABASE_URL"); dbURL != "" {
-		pg := store.NewPostgresStore(dbURL)
-		if err := pg.Init(context.Background()); err != nil {
-			return fmt.Errorf("init postgres: %w", err)
-		}
-		storeImpl = pg
-	} else if svcCfg != nil && svcCfg.Storage.Type == "POSTGRE" {
-		pgCfg := svcCfg.Storage.Postgres
-		sslMode := "disable"
-		if pgCfg.UseSSL {
-			sslMode = "require"
-		}
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			pgCfg.Host, pgCfg.Port, pgCfg.Username, pgCfg.Password, pgCfg.Database, sslMode)
-		pg := store.NewPostgresStore(dsn)
-		pg.SetPoolConfig(pgCfg.MinConnections, pgCfg.MaxConnections)
-		if err := pg.Init(context.Background()); err != nil {
-			return fmt.Errorf("init postgres: %w", err)
-		}
-		storeImpl = pg
-	} else {
-		// Controller requires PG for distributed coordination
+	storeImpl := store.NewStoreManager(svcCfg)
+	// Controller requires PG for distributed coordination
+	if _, ok := storeImpl.DB().(*pgxpool.Pool); !ok {
 		return fmt.Errorf("controller requires PostgreSQL storage (set FLOWGENT_DATABASE_URL or configure storage.type=POSTGRE)")
 	}
 

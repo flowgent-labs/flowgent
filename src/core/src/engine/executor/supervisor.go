@@ -9,7 +9,6 @@ import (
 	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/core/src/engine"
 	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/store/src"
 )
 
 // ─── Supervisor Executor ───────────────────────────────
@@ -17,15 +16,14 @@ import (
 type SupervisorExecutor struct {
 	llmClient engine.LLMClient
 	agents    map[string]*config.AgentDef
-	store     store.IStore
 }
 
-func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef, store store.IStore) *SupervisorExecutor {
+func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef) *SupervisorExecutor {
 	m := make(map[string]*config.AgentDef)
 	for _, a := range agents {
 		m[a.Name] = a
 	}
-	return &SupervisorExecutor{llmClient: llm, agents: m, store: store}
+	return &SupervisorExecutor{llmClient: llm, agents: m}
 }
 
 func (e *SupervisorExecutor) TaskType() model.TaskType { return model.TaskSupervisor }
@@ -48,9 +46,7 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *model.ExecutionP
 		return nil, fmt.Errorf("supervisor output invalid JSON: %w (raw: %s)", err, resp[:min(len(resp), 200)])
 	}
 
-	_ = e.store.LogSupervisor(ctx, plan.AgentFlowRunID, plan.TaskID, plan.Input, decision)
-
-	action, _ := decision["action"].(string)
+action, _ := decision["action"].(string)
 	// Default to "continue" if action is missing or empty (defensive)
 	if action == "" {
 		action = "continue"

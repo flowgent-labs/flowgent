@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,10 @@ import (
 
 	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/agentflow"
+	"github.com/flowgent-labs/flowgent/store/src/flowrun"
+	"github.com/flowgent-labs/flowgent/store/src/taskplan"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func startConsole() {
@@ -120,7 +125,14 @@ func startConsole() {
 }
 
 func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
-	defs, err := s.ListAgentFlows(ctx)
+	var afStore agentflow.IAgentFlowStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		afStore = agentflow.NewAgentFlowPostgresStore(db)
+	case *sql.DB:
+		afStore = agentflow.NewAgentFlowSQLiteStore(db)
+	}
+	defs, err := afStore.Select(ctx, 0, 1000)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -138,11 +150,19 @@ func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
 }
 
 func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
-	runs, err := s.ListFlowRuns(ctx, agentFlowID, 50)
+	var frStore flowrun.IFlowRunStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		frStore = flowrun.NewFlowRunPostgresStore(db)
+	case *sql.DB:
+		frStore = flowrun.NewFlowRunSQLiteStore(db)
+	}
+	runs, err := frStore.Select(ctx, 0, 50)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
+	_ = agentFlowID
 	if len(runs) == 0 {
 		fmt.Println("No runs found.")
 		return
@@ -156,7 +176,14 @@ func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
 }
 
 func showRunCmd(ctx context.Context, s store.IStore, id string) {
-	run, err := s.GetFlowRun(ctx, id)
+	var frStore flowrun.IFlowRunStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		frStore = flowrun.NewFlowRunPostgresStore(db)
+	case *sql.DB:
+		frStore = flowrun.NewFlowRunSQLiteStore(db)
+	}
+	run, err := frStore.Get(ctx, id)
 	if err != nil || run == nil {
 		fmt.Printf("Run not found: %s\n", id)
 		return
@@ -165,7 +192,14 @@ func showRunCmd(ctx context.Context, s store.IStore, id string) {
 }
 
 func showTaskCmd(ctx context.Context, s store.IStore, id string) {
-	task, err := s.GetTaskRun(ctx, id)
+	var tpStore taskplan.ITaskPlanStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		tpStore = taskplan.NewTaskPlanPostgresStore(db)
+	case *sql.DB:
+		tpStore = taskplan.NewTaskPlanSQLiteStore(db)
+	}
+	task, err := tpStore.Get(ctx, id)
 	if err != nil || task == nil {
 		fmt.Printf("Task not found: %s\n", id)
 		return
@@ -175,7 +209,14 @@ func showTaskCmd(ctx context.Context, s store.IStore, id string) {
 }
 
 func tasksCmd(ctx context.Context, s store.IStore, runID string) {
-	tasks, err := s.ListTaskRunsByFlow(ctx, runID)
+	var tpStore taskplan.ITaskPlanStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		tpStore = taskplan.NewTaskPlanPostgresStore(db)
+	case *sql.DB:
+		tpStore = taskplan.NewTaskPlanSQLiteStore(db)
+	}
+	tasks, err := tpStore.ListByFlowRun(ctx, runID)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

@@ -1,41 +1,44 @@
 package handler
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/common/src/utils"
 	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/agentdef"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AgentDefHandler manages dynamic agent CRUD via REST API.
 type AgentDefHandler struct {
-	store  AgentStore
+	store  agentdef.IAgentStore
 	logger *utils.Logger
 }
 
-// AgentStore is the subset of store.IStore needed by AgentDefHandler.
-type AgentStore interface {
-	SaveAgent(ctx context.Context, agent *model.AgentDef) error
-	GetAgent(ctx context.Context, name string) (*model.AgentDef, error)
-	ListAgents(ctx context.Context, tenantID string) ([]model.AgentDef, error)
-	DeleteAgent(ctx context.Context, name string) error
-}
-
-// NewAgentHandler creates an agent CRUD handler.
-func NewAgentDefHandler(s AgentStore, logger *utils.Logger) *AgentDefHandler {
-	return &AgentDefHandler{store: s, logger: logger}
+// NewAgentDefHandler creates an agent CRUD handler.
+func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
+	var agStore agentdef.IAgentStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		agStore = agentdef.NewAgentPostgresStore(db)
+	case *sql.DB:
+		agStore = agentdef.NewAgentSQLiteStore(db)
+	}
+	return &AgentDefHandler{store: agStore, logger: logger}
 }
 
 // List returns all agent definitions for the given tenant.
 func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	agents, err := h.store.ListAgents(r.Context(), tenant)
+	agents, err := h.store.Select(r.Context(), 0, 1000)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	_ = tenant
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agents)
 }
@@ -53,7 +56,7 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agent.TenantID = tenant
-	if err := h.store.SaveAgent(r.Context(), &agent); err != nil {
+	if err := h.store.Save(r.Context(), &agent); err != nil {
 		h.logger.Error("save agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -66,7 +69,7 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get returns a single agent definition by name.
 func (h *AgentDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	agent, err := h.store.GetAgent(r.Context(), name)
+	agent, err := h.store.Get(r.Context(), name)
 	if err != nil || agent == nil {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
@@ -86,7 +89,7 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	agent.Name = name
 	agent.TenantID = tenant
-	if err := h.store.SaveAgent(r.Context(), &agent); err != nil {
+	if err := h.store.Save(r.Context(), &agent); err != nil {
 		h.logger.Error("update agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -98,7 +101,7 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes an agent definition.
 func (h *AgentDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.store.DeleteAgent(r.Context(), name); err != nil {
+	if err := h.store.Delete(r.Context(), name); err != nil {
 		h.logger.Error("delete agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

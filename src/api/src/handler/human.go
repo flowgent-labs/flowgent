@@ -1,28 +1,38 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/src/approval"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // HumanHandler manages human approval endpoints.
 type HumanHandler struct {
-	store  model.HumanApprovalStore
+	store  approval.IApprovalStore
 	logger *utils.Logger
 }
 
 // NewHumanHandler creates a human approval HTTP handler.
-func NewHumanHandler(s model.HumanApprovalStore, logger *utils.Logger) *HumanHandler {
-	return &HumanHandler{store: s, logger: logger}
+func NewHumanHandler(s store.IStore, logger *utils.Logger) *HumanHandler {
+	var apStore approval.IApprovalStore
+	switch db := s.DB().(type) {
+	case *pgxpool.Pool:
+		apStore = approval.NewApprovalPostgresStore(db)
+	case *sql.DB:
+		apStore = approval.NewApprovalSQLiteStore(db)
+	}
+	return &HumanHandler{store: apStore, logger: logger}
 }
 
 // Approve approves a human task by token.
 func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	approval, err := h.store.GetApproval(r.Context(), token)
+	approval, err := h.store.Get(r.Context(), token)
 	if err != nil || approval == nil {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
@@ -41,7 +51,7 @@ func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
 // Reject rejects a human task by token.
 func (h *HumanHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	approval, err := h.store.GetApproval(r.Context(), token)
+	approval, err := h.store.Get(r.Context(), token)
 	if err != nil || approval == nil {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
