@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -18,22 +20,43 @@ import (
 var pgTracer = tracing.Tracer("flowgent/postgres")
 
 type PostgresStore struct {
-	BasePostgresStore
+	Pool   *pgxpool.Pool
+	DSN    string
+	Schema string
 }
 
 func NewPostgresStore(dsn string) *PostgresStore {
-	return &PostgresStore{BasePostgresStore: BasePostgresStore{DSN: dsn}}
+	return &PostgresStore{DSN: dsn}
 }
 
 func (s *PostgresStore) DB() any { return s.Pool }
 
-func (s *PostgresStore) SetPoolConfig(_, _ int) {} // pgxpool config set in Init
+func (s *PostgresStore) SetPoolConfig(_, _ int) {}
 
 func (s *PostgresStore) SetSchema(schema string) { s.Schema = schema }
 
-func (s *PostgresStore) Init(ctx context.Context) error { return s.InitPool(ctx) }
+func (s *PostgresStore) Init(ctx context.Context) error {
+	cfg, err := pgxpool.ParseConfig(s.DSN)
+	if err != nil { return fmt.Errorf("parse pg config: %w", err) }
+	cfg.MaxConns = 20
+	cfg.MinConns = 2
+	schema := s.Schema
+	if schema == "" { schema = "public" }
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, fmt.Sprintf("SET search_path TO %s", schema))
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil { return fmt.Errorf("connect postgres: %w", err) }
+	if err := pool.Ping(ctx); err != nil { return fmt.Errorf("ping postgres: %w", err) }
+	s.Pool = pool
+	return nil
+}
 
-func (s *PostgresStore) Close() error { s.ClosePool(); return nil }
+func (s *PostgresStore) Close() error {
+	if s.Pool != nil { s.Pool.Close() }
+	return nil
+}
 
 // ─── Helpers ────────────────────────────────────────────────
 
