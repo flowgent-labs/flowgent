@@ -61,7 +61,7 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, offset, limit int)
 	var out []*T
 	for rows.Next() {
 		entity := new(T)
-		if err := scanTaggedStruct(rows, entity); err != nil { continue }
+		if err := scanTaggedStruct(rows, entity); err != nil { return nil, fmt.Errorf("scan: %w", err) }
 		out = append(out, entity)
 	}
 	return out, nil
@@ -74,6 +74,8 @@ func (s *PostgresGenericStore[T]) columns() string {
 }
 
 // scanTaggedStruct scans a row into a struct, handling JSON/complex types automatically.
+// Important: uses the same field filtering as columns()/structFields() — only scans
+// fields that have a valid column name (db/json tag, not "-").
 func scanTaggedStruct(row pgx.Row, dest any) error {
 	v := reflect.ValueOf(dest)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
@@ -81,35 +83,50 @@ func scanTaggedStruct(row pgx.Row, dest any) error {
 	}
 	ev := v.Elem()
 	t := ev.Type()
-	ptrs := make([]any, t.NumField())
-	jsonFields := make(map[int]bool)
+
+	var ptrs []any
+	jsonIdxs := make(map[int]int) // ptrsIndex → fieldIndex
 	for i := 0; i < t.NumField(); i++ {
-		if !t.Field(i).IsExported() { continue }
+		f := t.Field(i)
+		if !f.IsExported() { continue }
+		if colName(f) == "" || colName(f) == "-" { continue }
 		fv := ev.Field(i)
 		ft := fv.Type()
 		if isJSONType(ft) {
-			jsonFields[i] = true
-			ptrs[i] = reflect.New(reflect.TypeOf([]byte{})).Interface()
+			jsonIdxs[len(ptrs)] = i
+			ptrs = append(ptrs, reflect.New(reflect.TypeOf([]byte{})).Interface())
 		} else {
-			ptrs[i] = fv.Addr().Interface()
+			ptrs = append(ptrs, fv.Addr().Interface())
 		}
 	}
 	if err := row.Scan(ptrs...); err != nil { return err }
-	for fi := range jsonFields {
-		b := ptrs[fi].(*[]byte)
+	for pi, fi := range jsonIdxs {
+		b := ptrs[pi].(*[]byte)
 		if b == nil || len(*b) == 0 { continue }
-		if err := json.Unmarshal(*b, ev.Field(fi).Addr().Interface()); err != nil {
-			continue
-		}
+		json.Unmarshal(*b, ev.Field(fi).Addr().Interface())
 	}
 	return nil
 }
 
+func scanRowCount(t reflect.Type) int {
+	n := 0
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() { continue }
+		if colName(f) == "" || colName(f) == "-" { continue }
+		n++
+	}
+	return n
+}
+
 func isJSONType(ft reflect.Type) bool {
-	if ft == reflect.TypeOf(json.RawMessage{}) { return true }
+	if ft == reflect.TypeOf(json.RawMessage{}) { return false } // raw bytes, scan directly
+	if ft == reflect.TypeOf([]byte{}) { return false }
 	switch ft.Kind() {
-	case reflect.Map, reflect.Slice:
+	case reflect.Map:
 		return true
+	case reflect.Slice:
+		return ft.Elem().Kind() != reflect.Uint8 // exclude []byte
 	case reflect.Struct:
 		return ft != reflect.TypeOf(time.Time{})
 	case reflect.Ptr:
