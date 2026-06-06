@@ -6,7 +6,6 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // LlmProviderSQLiteStore wraps store.SQLiteGenericStore[model.LlmProvider].
@@ -25,7 +24,7 @@ func NewLlmProviderSQLiteStore(conn *sql.DB) *LlmProviderSQLiteStore {
 func (s *LlmProviderSQLiteStore) Get(ctx context.Context, id string) (*model.LlmProvider, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *LlmProviderSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.LlmProvider], error) {
+func (s *LlmProviderSQLiteStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.LlmProvider], error) {
 	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *LlmProviderSQLiteStore) Save(ctx context.Context, e *model.LlmProvider) error {

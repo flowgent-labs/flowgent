@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // TaskPlanSQLiteStore wraps store.SQLiteGenericStore[model.TaskRun].
@@ -26,7 +25,7 @@ func NewTaskPlanSQLiteStore(conn *sql.DB) *TaskPlanSQLiteStore {
 }
 
 func (s *TaskPlanSQLiteStore) Get(ctx context.Context, id string) (*model.TaskRun, error) { return s.inner.Get(ctx, id) }
-func (s *TaskPlanSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.TaskRun], error) { return s.inner.Select(ctx, page, pageSize) }
+func (s *TaskPlanSQLiteStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.TaskRun], error) { return s.inner.Select(ctx, page, pageSize) }
 func (s *TaskPlanSQLiteStore) Save(ctx context.Context, e *model.TaskRun) error { return s.inner.Save(ctx, e) }
 func (s *TaskPlanSQLiteStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
 

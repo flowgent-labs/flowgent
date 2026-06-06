@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // ApprovalSQLiteStore wraps store.SQLiteGenericStore[model.HumanApproval].
@@ -25,7 +24,7 @@ func NewApprovalSQLiteStore(conn *sql.DB) *ApprovalSQLiteStore {
 }
 
 func (s *ApprovalSQLiteStore) Get(ctx context.Context, token string) (*model.HumanApproval, error) { return s.inner.Get(ctx, token) }
-func (s *ApprovalSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.HumanApproval], error) { return s.inner.Select(ctx, page, pageSize) }
+func (s *ApprovalSQLiteStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.HumanApproval], error) { return s.inner.Select(ctx, page, pageSize) }
 func (s *ApprovalSQLiteStore) Save(ctx context.Context, e *model.HumanApproval) error { return s.inner.Save(ctx, e) }
 func (s *ApprovalSQLiteStore) Delete(ctx context.Context, token string) error { return s.inner.Delete(ctx, token) }
 

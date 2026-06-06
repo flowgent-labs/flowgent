@@ -6,7 +6,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // LlmProviderPostgresStore wraps store.PostgresGenericStore[model.LlmProvider].
@@ -25,7 +24,7 @@ func NewLlmProviderPostgresStore(pool *pgxpool.Pool) *LlmProviderPostgresStore {
 func (s *LlmProviderPostgresStore) Get(ctx context.Context, id string) (*model.LlmProvider, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *LlmProviderPostgresStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.LlmProvider], error) {
+func (s *LlmProviderPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.LlmProvider], error) {
 	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *LlmProviderPostgresStore) Save(ctx context.Context, e *model.LlmProvider) error {

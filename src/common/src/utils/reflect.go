@@ -117,23 +117,3 @@ func Columns[T any]() string {
 	return strings.Join(cols, ",")
 }
 
-// ─── Page ───────────────────────────────────────────────
-
-// Page represents a paginated result set.
-type Page[T any] struct {
-	Items      []*T  `json:"items"`
-	TotalCount int64 `json:"total_count"`
-	Page       int   `json:"page"`
-	PageSize   int   `json:"page_size"`
-	TotalPages int   `json:"total_pages"`
-}
-
-// NewPage creates a Page from results and total count.
-func NewPage[T any](items []*T, totalCount int64, page, pageSize int) *Page[T] {
-	totalPages := int(totalCount / int64(pageSize))
-	if totalCount%int64(pageSize) != 0 { totalPages++ }
-	return &Page[T]{
-		Items: items, TotalCount: totalCount,
-		Page: page, PageSize: pageSize, TotalPages: totalPages,
-	}
-}

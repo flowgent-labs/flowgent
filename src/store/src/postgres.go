@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/common/src/utils"
+	"github.com/flowgent-labs/flowgent/model/src"
 )
 
 func NewPostgresPool(ctx context.Context, dsn, schema string) *pgxpool.Pool {
@@ -44,7 +45,7 @@ func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error
 	return &entity, nil
 }
 
-func (s *PostgresGenericStore[T]) Select(ctx context.Context, page, pageSize int) (*utils.Page[T], error) {
+func (s *PostgresGenericStore[T]) Select(ctx context.Context, page, pageSize int) (*model.Page[T], error) {
 	if err := utils.ValidateIdent(s.Table); err != nil { return nil, err }
 	cols := utils.Columns[T]()
 
@@ -66,7 +67,7 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, page, pageSize int
 		if err := utils.ScanStruct(rows, entity); err != nil { return nil, fmt.Errorf("scan: %w", err) }
 		items = append(items, entity)
 	}
-	return utils.NewPage(items, total, page, pageSize), nil
+	return model.NewPage(items, total, page, pageSize), nil
 }
 
 func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {

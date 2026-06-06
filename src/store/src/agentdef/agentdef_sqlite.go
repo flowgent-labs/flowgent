@@ -6,7 +6,6 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // AgentDefSQLiteStore wraps store.SQLiteGenericStore[model.AgentDef].
@@ -25,7 +24,7 @@ func NewAgentDefSQLiteStore(conn *sql.DB) *AgentDefSQLiteStore {
 func (s *AgentDefSQLiteStore) Get(ctx context.Context, name string) (*model.AgentDef, error) {
 	return s.inner.Get(ctx, name)
 }
-func (s *AgentDefSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.AgentDef], error) {
+func (s *AgentDefSQLiteStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.AgentDef], error) {
 	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *AgentDefSQLiteStore) Save(ctx context.Context, e *model.AgentDef) error {

@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // ApprovalPostgresStore wraps store.PostgresGenericStore[model.HumanApproval].
@@ -28,7 +27,7 @@ func NewApprovalPostgresStore(pool *pgxpool.Pool) *ApprovalPostgresStore {
 func (s *ApprovalPostgresStore) Get(ctx context.Context, token string) (*model.HumanApproval, error) {
 	return s.inner.Get(ctx, token)
 }
-func (s *ApprovalPostgresStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.HumanApproval], error) {
+func (s *ApprovalPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.HumanApproval], error) {
 	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *ApprovalPostgresStore) Save(ctx context.Context, e *model.HumanApproval) error {

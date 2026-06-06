@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // FlowRunPostgresStore wraps store.PostgresGenericStore[model.AgentFlowRun].
@@ -27,7 +26,7 @@ func NewFlowRunPostgresStore(pool *pgxpool.Pool) *FlowRunPostgresStore {
 func (s *FlowRunPostgresStore) Get(ctx context.Context, id string) (*model.AgentFlowRun, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *FlowRunPostgresStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.AgentFlowRun], error) {
+func (s *FlowRunPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.AgentFlowRun], error) {
 	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *FlowRunPostgresStore) Save(ctx context.Context, e *model.AgentFlowRun) error {

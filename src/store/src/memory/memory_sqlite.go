@@ -8,7 +8,6 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // MemorySQLiteStore wraps store.SQLiteGenericStore[model.NodeMemory].
@@ -27,7 +26,7 @@ func NewMemorySQLiteStore(conn *sql.DB) *MemorySQLiteStore {
 func (s *MemorySQLiteStore) Get(ctx context.Context, id string) (*model.NodeMemory, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *MemorySQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.NodeMemory], error) {
+func (s *MemorySQLiteStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.NodeMemory], error) {
 	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *MemorySQLiteStore) Save(ctx context.Context, e *model.NodeMemory) error {

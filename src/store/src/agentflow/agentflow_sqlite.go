@@ -7,7 +7,6 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 type AgentFlowSQLiteStore struct {
@@ -22,7 +21,7 @@ func NewAgentFlowSQLiteStore(conn *sql.DB) *AgentFlowSQLiteStore {
 	}
 }
 func (s *AgentFlowSQLiteStore) Get(ctx context.Context, id string) (*model.AgentFlowVersion, error) { return s.inner.Get(ctx, id) }
-func (s *AgentFlowSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.AgentFlowVersion], error) { return s.inner.Select(ctx, page, pageSize) }
+func (s *AgentFlowSQLiteStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.AgentFlowVersion], error) { return s.inner.Select(ctx, page, pageSize) }
 func (s *AgentFlowSQLiteStore) Save(ctx context.Context, e *model.AgentFlowVersion) error { return s.inner.Save(ctx, e) }
 func (s *AgentFlowSQLiteStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
 func (s *AgentFlowSQLiteStore) GetVersion(ctx context.Context, id string, ver int64) (*model.AgentFlowVersion, error) {
