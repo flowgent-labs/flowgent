@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,6 +40,7 @@ type PostgresGenericStore[T any] struct {
 
 func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error) {
 	cols := s.columns()
+	if err := validateIdent(s.Table, s.IDCol); err != nil { return nil, err }
 	rows, err := s.Pool.Query(ctx,
 		fmt.Sprintf("SELECT %s FROM %s WHERE %s=$1 LIMIT 1", cols, s.Table, s.IDCol), id)
 	if err != nil { return nil, err }
@@ -49,6 +53,7 @@ func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error
 
 func (s *PostgresGenericStore[T]) Select(ctx context.Context, offset, limit int) ([]*T, error) {
 	cols := s.columns()
+	if err := validateIdent(s.Table); err != nil { return nil, err }
 	rows, err := s.Pool.Query(ctx,
 		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2", cols, s.Table), limit, offset)
 	if err != nil { return nil, err }
@@ -68,7 +73,7 @@ func (s *PostgresGenericStore[T]) columns() string {
 	return strings.Join(cols, ",")
 }
 
-// scanTaggedStruct scans a row into a struct using db or json tags for column mapping.
+// scanTaggedStruct scans a row into a struct, handling JSON/complex types automatically.
 func scanTaggedStruct(row pgx.Row, dest any) error {
 	v := reflect.ValueOf(dest)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
@@ -77,13 +82,42 @@ func scanTaggedStruct(row pgx.Row, dest any) error {
 	ev := v.Elem()
 	t := ev.Type()
 	ptrs := make([]any, t.NumField())
+	jsonFields := make(map[int]bool)
 	for i := 0; i < t.NumField(); i++ {
-		if t.Field(i).IsExported() {
-			ptrs[i] = ev.Field(i).Addr().Interface()
+		if !t.Field(i).IsExported() { continue }
+		fv := ev.Field(i)
+		ft := fv.Type()
+		if isJSONType(ft) {
+			jsonFields[i] = true
+			ptrs[i] = reflect.New(reflect.TypeOf([]byte{})).Interface()
+		} else {
+			ptrs[i] = fv.Addr().Interface()
 		}
 	}
-	return row.Scan(ptrs...)
+	if err := row.Scan(ptrs...); err != nil { return err }
+	for fi := range jsonFields {
+		b := ptrs[fi].(*[]byte)
+		if b == nil || len(*b) == 0 { continue }
+		if err := json.Unmarshal(*b, ev.Field(fi).Addr().Interface()); err != nil {
+			continue
+		}
+	}
+	return nil
 }
+
+func isJSONType(ft reflect.Type) bool {
+	if ft == reflect.TypeOf(json.RawMessage{}) { return true }
+	switch ft.Kind() {
+	case reflect.Map, reflect.Slice:
+		return true
+	case reflect.Struct:
+		return ft != reflect.TypeOf(time.Time{})
+	case reflect.Ptr:
+		if ft.Elem().Kind() == reflect.Struct && ft.Elem() != reflect.TypeOf(time.Time{}) { return true }
+	}
+	return false
+}
+
 
 func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {
 	cols, args := structFields(entity)
@@ -137,6 +171,18 @@ func colName(f reflect.StructField) string {
 	}
 	return toSnake(f.Name)
 }
+
+var identRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+func validateIdent(names ...string) error {
+	for _, n := range names {
+		if !identRe.MatchString(n) {
+			return fmt.Errorf("invalid SQL identifier: %q", n)
+		}
+	}
+	return nil
+}
+
 
 func toSnake(s string) string {
 	var b strings.Builder

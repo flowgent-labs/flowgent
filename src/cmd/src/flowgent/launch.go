@@ -313,12 +313,12 @@ func startServer(mode string) {
 	// YAML manifests loaded from disk.
 	// Both use the same model.AgentFlowSpec struct (dual-tagged json: + yaml:).
 	if serviceCfg.Orchestration.Agents.Standard.Enabled {
-		var agStore agentdef.IAgentStore
+		var agStore agentdef.IAgentDefStore
 		switch db := storeImpl.DB().(type) {
 		case *pgxpool.Pool:
-			agStore = agentdef.NewAgentPostgresStore(db)
+			agStore = agentdef.NewAgentDefPostgresStore(db)
 		case *sql.DB:
-			agStore = agentdef.NewAgentSQLiteStore(db)
+			agStore = agentdef.NewAgentDefSQLiteStore(db)
 		}
 		if agStore != nil {
 			dbAgents, dberr := agStore.Select(context.Background(), 0, 1000)

@@ -14,18 +14,18 @@ import (
 
 // AgentDefHandler manages dynamic agent CRUD via REST API.
 type AgentDefHandler struct {
-	store  agentdef.IAgentStore
+	store  agentdef.IAgentDefStore
 	logger *utils.Logger
 }
 
 // NewAgentDefHandler creates an agent CRUD handler.
 func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
-	var agStore agentdef.IAgentStore
+	var agStore agentdef.IAgentDefStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
-		agStore = agentdef.NewAgentPostgresStore(db)
+		agStore = agentdef.NewAgentDefPostgresStore(db)
 	case *sql.DB:
-		agStore = agentdef.NewAgentSQLiteStore(db)
+		agStore = agentdef.NewAgentDefSQLiteStore(db)
 	}
 	return &AgentDefHandler{store: agStore, logger: logger}
 }

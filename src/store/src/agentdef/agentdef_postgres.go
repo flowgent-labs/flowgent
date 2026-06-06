@@ -8,28 +8,28 @@ import (
 	"github.com/flowgent-labs/flowgent/store/src"
 )
 
-// AgentPostgresStore wraps store.PostgresGenericStore[model.AgentDef].
-type AgentPostgresStore struct {
+// AgentDefPostgresStore wraps store.PostgresGenericStore[model.AgentDef].
+type AgentDefPostgresStore struct {
 	inner *store.PostgresGenericStore[model.AgentDef]
 }
 
-func NewAgentPostgresStore(pool *pgxpool.Pool) *AgentPostgresStore {
-	return &AgentPostgresStore{
+func NewAgentDefPostgresStore(pool *pgxpool.Pool) *AgentDefPostgresStore {
+	return &AgentDefPostgresStore{
 		inner: &store.PostgresGenericStore[model.AgentDef]{
 			Pool: pool, Table: "agents", IDCol: "name",
 		},
 	}
 }
 
-func (s *AgentPostgresStore) Get(ctx context.Context, name string) (*model.AgentDef, error) {
+func (s *AgentDefPostgresStore) Get(ctx context.Context, name string) (*model.AgentDef, error) {
 	return s.inner.Get(ctx, name)
 }
-func (s *AgentPostgresStore) Select(ctx context.Context, offset, limit int) ([]*model.AgentDef, error) {
+func (s *AgentDefPostgresStore) Select(ctx context.Context, offset, limit int) ([]*model.AgentDef, error) {
 	return s.inner.Select(ctx, offset, limit)
 }
-func (s *AgentPostgresStore) Save(ctx context.Context, e *model.AgentDef) error {
+func (s *AgentDefPostgresStore) Save(ctx context.Context, e *model.AgentDef) error {
 	return s.inner.Save(ctx, e)
 }
-func (s *AgentPostgresStore) Delete(ctx context.Context, name string) error {
+func (s *AgentDefPostgresStore) Delete(ctx context.Context, name string) error {
 	return s.inner.Delete(ctx, name)
 }

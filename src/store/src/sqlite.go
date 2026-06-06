@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,9 +88,24 @@ func scanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 	}
 	ev := v.Elem()
 	t := ev.Type()
-	ptrs := make([]any, 0, t.NumField())
+	var ptrs []any
+	ptrsToField := make(map[int]int)
 	for i := 0; i < t.NumField(); i++ {
-		if t.Field(i).IsExported() { ptrs = append(ptrs, ev.Field(i).Addr().Interface()) }
+		if !t.Field(i).IsExported() { continue }
+		fv := ev.Field(i)
+		ft := fv.Type()
+		if isJSONType(ft) {
+			ptrsToField[len(ptrs)] = i
+			ptrs = append(ptrs, reflect.New(reflect.TypeOf([]byte{})).Interface())
+		} else {
+			ptrs = append(ptrs, fv.Addr().Interface())
+		}
 	}
-	return scanner.Scan(ptrs...)
+	if err := scanner.Scan(ptrs...); err != nil { return err }
+	for pi, fi := range ptrsToField {
+		b := ptrs[pi].(*[]byte)
+		if b == nil || len(*b) == 0 { continue }
+		json.Unmarshal(*b, ev.Field(fi).Addr().Interface())
+	}
+	return nil
 }
