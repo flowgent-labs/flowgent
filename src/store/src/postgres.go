@@ -2,18 +2,14 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"reflect"
-	"regexp"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
-// NewPostgresPool creates a shared pgxpool.
 func NewPostgresPool(ctx context.Context, dsn, schema string) *pgxpool.Pool {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil { panic(fmt.Sprintf("pg: %v", err)) }
@@ -29,9 +25,6 @@ func NewPostgresPool(ctx context.Context, dsn, schema string) *pgxpool.Pool {
 	return pool
 }
 
-// PostgresGenericStore provides reflection-based generic CRUD for entity type T.
-// SQL is built from struct tags (db > json > snake_case) with parameterized placeholders ($1, $2...).
-// Save uses INSERT ON CONFLICT for idempotent upsert.
 type PostgresGenericStore[T any] struct {
 	Pool  *pgxpool.Pool
 	Table string
@@ -39,21 +32,21 @@ type PostgresGenericStore[T any] struct {
 }
 
 func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error) {
-	cols := s.columns()
-	if err := validateIdent(s.Table, s.IDCol); err != nil { return nil, err }
+	if err := utils.ValidateIdent(s.Table, s.IDCol); err != nil { return nil, err }
+	cols := utils.Columns[T]()
 	rows, err := s.Pool.Query(ctx,
 		fmt.Sprintf("SELECT %s FROM %s WHERE %s=$1 LIMIT 1", cols, s.Table, s.IDCol), id)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	if !rows.Next() { return nil, fmt.Errorf("%s not found: %s=%s", s.Table, s.IDCol, id) }
 	var entity T
-	if err := scanTaggedStruct(rows, &entity); err != nil { return nil, err }
+	if err := utils.ScanStruct(rows, &entity); err != nil { return nil, err }
 	return &entity, nil
 }
 
 func (s *PostgresGenericStore[T]) Select(ctx context.Context, offset, limit int) ([]*T, error) {
-	cols := s.columns()
-	if err := validateIdent(s.Table); err != nil { return nil, err }
+	if err := utils.ValidateIdent(s.Table); err != nil { return nil, err }
+	cols := utils.Columns[T]()
 	rows, err := s.Pool.Query(ctx,
 		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2", cols, s.Table), limit, offset)
 	if err != nil { return nil, err }
@@ -61,83 +54,15 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, offset, limit int)
 	var out []*T
 	for rows.Next() {
 		entity := new(T)
-		if err := scanTaggedStruct(rows, entity); err != nil { return nil, fmt.Errorf("scan: %w", err) }
+		if err := utils.ScanStruct(rows, entity); err != nil { return nil, fmt.Errorf("scan: %w", err) }
 		out = append(out, entity)
 	}
 	return out, nil
 }
 
-func (s *PostgresGenericStore[T]) columns() string {
-	var entity T
-	cols, _ := structFields(&entity)
-	return strings.Join(cols, ",")
-}
-
-// scanTaggedStruct scans a row into a struct, handling JSON/complex types automatically.
-// Important: uses the same field filtering as columns()/structFields() — only scans
-// fields that have a valid column name (db/json tag, not "-").
-func scanTaggedStruct(row pgx.Row, dest any) error {
-	v := reflect.ValueOf(dest)
-	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("dest must be *struct")
-	}
-	ev := v.Elem()
-	t := ev.Type()
-
-	var ptrs []any
-	jsonIdxs := make(map[int]int) // ptrsIndex → fieldIndex
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() { continue }
-		if colName(f) == "" || colName(f) == "-" { continue }
-		fv := ev.Field(i)
-		ft := fv.Type()
-		if isJSONType(ft) {
-			jsonIdxs[len(ptrs)] = i
-			ptrs = append(ptrs, reflect.New(reflect.TypeOf([]byte{})).Interface())
-		} else {
-			ptrs = append(ptrs, fv.Addr().Interface())
-		}
-	}
-	if err := row.Scan(ptrs...); err != nil { return err }
-	for pi, fi := range jsonIdxs {
-		b := ptrs[pi].(*[]byte)
-		if b == nil || len(*b) == 0 { continue }
-		json.Unmarshal(*b, ev.Field(fi).Addr().Interface())
-	}
-	return nil
-}
-
-func scanRowCount(t reflect.Type) int {
-	n := 0
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() { continue }
-		if colName(f) == "" || colName(f) == "-" { continue }
-		n++
-	}
-	return n
-}
-
-func isJSONType(ft reflect.Type) bool {
-	if ft == reflect.TypeOf(json.RawMessage{}) { return false } // raw bytes, scan directly
-	if ft == reflect.TypeOf([]byte{}) { return false }
-	switch ft.Kind() {
-	case reflect.Map:
-		return true
-	case reflect.Slice:
-		return ft.Elem().Kind() != reflect.Uint8 // exclude []byte
-	case reflect.Struct:
-		return ft != reflect.TypeOf(time.Time{})
-	case reflect.Ptr:
-		if ft.Elem().Kind() == reflect.Struct && ft.Elem() != reflect.TypeOf(time.Time{}) { return true }
-	}
-	return false
-}
-
-
 func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {
-	cols, args := structFields(entity)
+	if err := utils.ValidateIdent(s.Table, s.IDCol); err != nil { return err }
+	cols, args := utils.StructFields(entity)
 	if len(cols) == 0 { return fmt.Errorf("no fields on %T", entity) }
 	holders := make([]string, len(cols))
 	updates := make([]string, len(cols))
@@ -152,6 +77,7 @@ func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {
 }
 
 func (s *PostgresGenericStore[T]) Delete(ctx context.Context, id string) error {
+	if err := utils.ValidateIdent(s.Table, s.IDCol); err != nil { return err }
 	_, err := s.Pool.Exec(ctx,
 		fmt.Sprintf("UPDATE %s SET del_flag=true, status='DELETED', updated_at=NOW() WHERE %s=$1", s.Table, s.IDCol), id)
 	return err
@@ -161,51 +87,4 @@ func (s *PostgresGenericStore[T]) Exec(ctx context.Context, sql string, params .
 	tag, err := s.Pool.Exec(ctx, sql, params...)
 	if err != nil { return 0, err }
 	return tag.RowsAffected(), nil
-}
-
-func StructFields(entity any) ([]string, []any) { return structFields(entity) }
-
-func structFields(entity any) (cols []string, args []any) {
-	v := reflect.ValueOf(entity)
-	if v.Kind() == reflect.Ptr { v = v.Elem() }
-	t := v.Type()
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() { continue }
-		col := colName(f)
-		if col == "" || col == "-" { continue }
-		cols = append(cols, col)
-		args = append(args, v.Field(i).Interface())
-	}
-	return
-}
-
-func colName(f reflect.StructField) string {
-	if tag := f.Tag.Get("db"); tag != "" { return strings.Split(tag, ",")[0] }
-	if tag := f.Tag.Get("json"); tag != "" {
-		n := strings.Split(tag, ",")[0]
-		if n != "" && n != "-" { return n }
-	}
-	return toSnake(f.Name)
-}
-
-var identRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
-
-func validateIdent(names ...string) error {
-	for _, n := range names {
-		if !identRe.MatchString(n) {
-			return fmt.Errorf("invalid SQL identifier: %q", n)
-		}
-	}
-	return nil
-}
-
-
-func toSnake(s string) string {
-	var b strings.Builder
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' { b.WriteByte('_') }
-		b.WriteRune(r)
-	}
-	return strings.ToLower(b.String())
 }
