@@ -9,7 +9,7 @@ import (
 // IMemoryStore is the node memory entity store interface.
 type IMemoryStore interface {
 	Get(ctx context.Context, id string) (*model.NodeMemory, error)
-	Select(ctx context.Context, page, size int) (*model.Page[model.NodeMemory], error)
+	Select(ctx context.Context, req model.PageRequest) (*model.Page[model.NodeMemory], error)
 	Save(ctx context.Context, entity *model.NodeMemory) error
 	Delete(ctx context.Context, id string) error
 	UpsertMemory(ctx context.Context, mem *model.NodeMemory) error

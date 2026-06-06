@@ -90,7 +90,7 @@ func (h *FlowDefHandler) Reload(flows []model.AgentFlowSpec, subFlows map[string
 }
 
 func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
-	defs, err := h.afStore.Select(r.Context(), 0, 1000)
+	defs, err := h.afStore.Select(r.Context(), model.PageRequest{Page:1, Size:1000})
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(defs)

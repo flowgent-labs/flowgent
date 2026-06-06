@@ -51,7 +51,7 @@ func NewLlmProviderManager(cfg *config.LLMConfig, store store.IStore) *LlmProvid
 			lpStore = llmprovider.NewLlmProviderSQLiteStore(db)
 		}
 		if lpStore != nil {
-			page, err := lpStore.Select(context.Background(), 1, 1000)
+			page, err := lpStore.Select(context.Background(), model.PageRequest{Page:1, Size:1000})
 			if err == nil {
 				dbProviders := page.Items
 				for _, dbp := range dbProviders {

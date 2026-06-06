@@ -9,7 +9,7 @@ import (
 // IAgentFlowStore is the agentflow entity store interface.
 type IAgentFlowStore interface {
 	Get(ctx context.Context, id string) (*model.AgentFlowVersion, error)
-	Select(ctx context.Context, page, size int) (*model.Page[model.AgentFlowVersion], error)
+	Select(ctx context.Context, req model.PageRequest) (*model.Page[model.AgentFlowVersion], error)
 	Save(ctx context.Context, entity *model.AgentFlowVersion) error
 	Delete(ctx context.Context, id string) error
 	GetVersion(ctx context.Context, id string, version int64) (*model.AgentFlowVersion, error)

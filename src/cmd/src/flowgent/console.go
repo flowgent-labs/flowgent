@@ -13,6 +13,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/src/config"
 	"github.com/flowgent-labs/flowgent/store/src"
 	"github.com/flowgent-labs/flowgent/store/src/agentflow"
+	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src/flowrun"
 	"github.com/flowgent-labs/flowgent/store/src/taskplan"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -132,7 +133,7 @@ func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
 	case *sql.DB:
 		afStore = agentflow.NewAgentFlowSQLiteStore(db)
 	}
-	page, err := afStore.Select(ctx, 1, 1000); defs := page.Items
+	page, err := afStore.Select(ctx, model.PageRequest{Page:1, Size:1000}); defs := page.Items
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -157,7 +158,7 @@ func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
 	case *sql.DB:
 		frStore = flowrun.NewFlowRunSQLiteStore(db)
 	}
-	page2, err := frStore.Select(ctx, 1, 50); runs := page2.Items
+	page2, err := frStore.Select(ctx, model.PageRequest{Page:1, Size:50}); runs := page2.Items
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

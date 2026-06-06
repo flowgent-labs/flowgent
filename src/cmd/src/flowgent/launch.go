@@ -321,7 +321,7 @@ func startServer(mode string) {
 			agStore = agentdef.NewAgentDefSQLiteStore(db)
 		}
 		if agStore != nil {
-			agentPage, dberr := agStore.Select(context.Background(), 1, 1000)
+			agentPage, dberr := agStore.Select(context.Background(), model.PageRequest{Page:1, Size:1000})
 			if dberr != nil {
 				slog.Warn("Failed to load agents from DB", "error", dberr)
 			} else {
@@ -665,7 +665,7 @@ func loadAgentFlowsFromDB(ctx context.Context, s engine.Store) ([]model.AgentFlo
 		afStore = agentflow.NewAgentFlowSQLiteStore(db)
 	}
 
-	page, err := afStore.Select(ctx, 1, 1000)
+	page, err := afStore.Select(ctx, model.PageRequest{Page:1, Size:1000})
 	versions := page.Items
 	if err != nil {
 		return flows, subFlows, fmt.Errorf("list agentflow definitions: %w", err)
@@ -732,7 +732,7 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 		case <-ticker.C:
 			// Session: agentFlowID="" → DB returns ALL runs (tenant-wide scan)
 			// Application: agentFlowID="<flow>" → DB returns only that flow's runs
-			page, _ := frStore.Select(ctx, 1, 50)
+			page, _ := frStore.Select(ctx, model.PageRequest{Page:1, Size:50})
 	runs := page.Items
 			for _, run := range runs {
 				if run.Status != model.RunPending {
@@ -1071,7 +1071,7 @@ func (a *notifierStoreAdapter) ListPendingApprovals(ctx context.Context) ([]mode
 }
 
 func (a *notifierStoreAdapter) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
-	page, err := a.ntStore.Select(ctx, 1, 1000)
+	page, err := a.ntStore.Select(ctx, model.PageRequest{Page:1, Size:1000})
 	items := page.Items
 	if err != nil {
 		return nil, err
@@ -1299,7 +1299,7 @@ func (c *Controller) Run(ctx context.Context) error {
 
 // reconcile polls PG for agentflow definitions and dispatches newly discovered flows.
 func (c *Controller) reconcile(ctx context.Context) {
-	page, err := c.afStore.Select(ctx, 1, 1000)
+	page, err := c.afStore.Select(ctx, model.PageRequest{Page:1, Size:1000})
 	versions := page.Items
 	if err != nil {
 		c.logger.Error("Failed to list agentflow definitions", "error", err)

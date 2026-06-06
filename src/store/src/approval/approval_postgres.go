@@ -27,8 +27,8 @@ func NewApprovalPostgresStore(pool *pgxpool.Pool) *ApprovalPostgresStore {
 func (s *ApprovalPostgresStore) Get(ctx context.Context, token string) (*model.HumanApproval, error) {
 	return s.inner.Get(ctx, token)
 }
-func (s *ApprovalPostgresStore) Select(ctx context.Context, page, size int) (*model.Page[model.HumanApproval], error) {
-	return s.inner.Select(ctx, page, size)
+func (s *ApprovalPostgresStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.HumanApproval], error) {
+	return s.inner.Select(ctx, req)
 }
 func (s *ApprovalPostgresStore) Save(ctx context.Context, e *model.HumanApproval) error {
 	return s.inner.Save(ctx, e)

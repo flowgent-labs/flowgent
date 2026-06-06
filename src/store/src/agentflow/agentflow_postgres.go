@@ -29,8 +29,8 @@ func (s *AgentFlowPostgresStore) Get(ctx context.Context, id string) (*model.Age
 	if err != nil { return nil, err }
 	return ver, nil
 }
-func (s *AgentFlowPostgresStore) Select(ctx context.Context, page, size int) (*model.Page[model.AgentFlowVersion], error) {
-	return s.inner.Select(ctx, page, size)
+func (s *AgentFlowPostgresStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.AgentFlowVersion], error) {
+	return s.inner.Select(ctx, req)
 }
 func (s *AgentFlowPostgresStore) Save(ctx context.Context, e *model.AgentFlowVersion) error {
 	return s.inner.Save(ctx, e)

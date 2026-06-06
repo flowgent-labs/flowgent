@@ -21,7 +21,7 @@ func NewAgentFlowSQLiteStore(conn *sql.DB) *AgentFlowSQLiteStore {
 	}
 }
 func (s *AgentFlowSQLiteStore) Get(ctx context.Context, id string) (*model.AgentFlowVersion, error) { return s.inner.Get(ctx, id) }
-func (s *AgentFlowSQLiteStore) Select(ctx context.Context, page, size int) (*model.Page[model.AgentFlowVersion], error) { return s.inner.Select(ctx, page, size) }
+func (s *AgentFlowSQLiteStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.AgentFlowVersion], error) { return s.inner.Select(ctx, req) }
 func (s *AgentFlowSQLiteStore) Save(ctx context.Context, e *model.AgentFlowVersion) error { return s.inner.Save(ctx, e) }
 func (s *AgentFlowSQLiteStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
 func (s *AgentFlowSQLiteStore) GetVersion(ctx context.Context, id string, ver int64) (*model.AgentFlowVersion, error) {

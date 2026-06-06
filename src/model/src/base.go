@@ -39,21 +39,26 @@ func (b *BaseEntity) MarkDeleted(by string) {
 	b.MarkUpdated(by)
 }
 
+// PageRequest is the input for paginated queries.
+type PageRequest struct {
+	Page int `json:"page"`
+	Size int `json:"size"`
+}
+
 // Page represents a paginated result set for UI display.
 type Page[T any] struct {
-	Items      []*T  `json:"items"`
-	TotalCount int64 `json:"total_count"`
-	Page       int   `json:"page"`
-	PageSize   int   `json:"page_size"`
-	TotalPages int   `json:"total_pages"`
+	Items      []*T        `json:"items"`
+	TotalCount int64       `json:"total_count"`
+	Request    PageRequest `json:"request"`
+	TotalPages int         `json:"total_pages"`
 }
 
 // NewPage creates a Page from results and total count.
-func NewPage[T any](items []*T, totalCount int64, page, size int) *Page[T] {
-	totalPages := int(totalCount / int64(size))
-	if totalCount%int64(size) != 0 { totalPages++ }
+func NewPage[T any](items []*T, totalCount int64, req PageRequest) *Page[T] {
+	totalPages := int(totalCount / int64(req.Size))
+	if totalCount%int64(req.Size) != 0 { totalPages++ }
 	return &Page[T]{
 		Items: items, TotalCount: totalCount,
-		Page: page, PageSize: size, TotalPages: totalPages,
+		Request: req, TotalPages: totalPages,
 	}
 }

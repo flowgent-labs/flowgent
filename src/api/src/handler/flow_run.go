@@ -34,7 +34,7 @@ func NewFlowRunHandler(s store.IStore, logger *utils.Logger) *FlowRunHandler {
 }
 
 func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
-	runs, err := h.runStore.Select(r.Context(), 0, 50)
+	runs, err := h.runStore.Select(r.Context(), model.PageRequest{Page:1, Size:50})
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(runs)

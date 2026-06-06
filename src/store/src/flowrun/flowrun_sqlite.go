@@ -23,7 +23,7 @@ func NewFlowRunSQLiteStore(conn *sql.DB) *FlowRunSQLiteStore {
 	}
 }
 func (s *FlowRunSQLiteStore) Get(ctx context.Context, id string) (*model.AgentFlowRun, error) { return s.inner.Get(ctx, id) }
-func (s *FlowRunSQLiteStore) Select(ctx context.Context, page, size int) (*model.Page[model.AgentFlowRun], error) { return s.inner.Select(ctx, page, size) }
+func (s *FlowRunSQLiteStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.AgentFlowRun], error) { return s.inner.Select(ctx, req) }
 func (s *FlowRunSQLiteStore) Save(ctx context.Context, e *model.AgentFlowRun) error { return s.inner.Save(ctx, e) }
 func (s *FlowRunSQLiteStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
 

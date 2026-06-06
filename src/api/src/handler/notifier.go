@@ -30,7 +30,7 @@ func NewNotifierHandler(s store.IStore, logger *utils.Logger) *NotifierHandler {
 }
 
 func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := h.store.Select(r.Context(), 0, 1000)
+	channels, err := h.store.Select(r.Context(), model.PageRequest{Page:1, Size:1000})
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(channels)

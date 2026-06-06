@@ -24,8 +24,8 @@ func NewAgentDefSQLiteStore(conn *sql.DB) *AgentDefSQLiteStore {
 func (s *AgentDefSQLiteStore) Get(ctx context.Context, name string) (*model.AgentDef, error) {
 	return s.inner.Get(ctx, name)
 }
-func (s *AgentDefSQLiteStore) Select(ctx context.Context, page, size int) (*model.Page[model.AgentDef], error) {
-	return s.inner.Select(ctx, page, size)
+func (s *AgentDefSQLiteStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.AgentDef], error) {
+	return s.inner.Select(ctx, req)
 }
 func (s *AgentDefSQLiteStore) Save(ctx context.Context, e *model.AgentDef) error {
 	return s.inner.Save(ctx, e)
