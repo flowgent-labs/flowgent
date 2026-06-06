@@ -321,14 +321,14 @@ func startServer(mode string) {
 			agStore = agentdef.NewAgentDefSQLiteStore(db)
 		}
 		if agStore != nil {
-			dbAgents, dberr := agStore.Select(context.Background(), 0, 1000)
+			agentPage, dberr := agStore.Select(context.Background(), 1, 1000)
 			if dberr != nil {
 				slog.Warn("Failed to load agents from DB", "error", dberr)
 			} else {
-				for _, a := range dbAgents {
+				for _, a := range agentPage.Items {
 					loadedAgents = append(loadedAgents, *a)
 				}
-				slog.Info("Agents loaded from DB (standard mode)", "count", len(dbAgents))
+				slog.Info("Agents loaded from DB (standard mode)", "count", len(agentPage.Items))
 			}
 		}
 	}
@@ -665,7 +665,8 @@ func loadAgentFlowsFromDB(ctx context.Context, s engine.Store) ([]model.AgentFlo
 		afStore = agentflow.NewAgentFlowSQLiteStore(db)
 	}
 
-	versions, err := afStore.Select(ctx, 0, 1000)
+	page, err := afStore.Select(ctx, 1, 1000)
+	versions := page.Items
 	if err != nil {
 		return flows, subFlows, fmt.Errorf("list agentflow definitions: %w", err)
 	}
@@ -731,7 +732,8 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 		case <-ticker.C:
 			// Session: agentFlowID="" → DB returns ALL runs (tenant-wide scan)
 			// Application: agentFlowID="<flow>" → DB returns only that flow's runs
-			runs, _ := frStore.Select(ctx, 0, 50)
+			page, _ := frStore.Select(ctx, 1, 50)
+	runs := page.Items
 			for _, run := range runs {
 				if run.Status != model.RunPending {
 					continue
@@ -1069,7 +1071,8 @@ func (a *notifierStoreAdapter) ListPendingApprovals(ctx context.Context) ([]mode
 }
 
 func (a *notifierStoreAdapter) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
-	items, err := a.ntStore.Select(ctx, 0, 1000)
+	page, err := a.ntStore.Select(ctx, 1, 1000)
+	items := page.Items
 	if err != nil {
 		return nil, err
 	}
@@ -1296,7 +1299,8 @@ func (c *Controller) Run(ctx context.Context) error {
 
 // reconcile polls PG for agentflow definitions and dispatches newly discovered flows.
 func (c *Controller) reconcile(ctx context.Context) {
-	versions, err := c.afStore.Select(ctx, 0, 1000)
+	page, err := c.afStore.Select(ctx, 1, 1000)
+	versions := page.Items
 	if err != nil {
 		c.logger.Error("Failed to list agentflow definitions", "error", err)
 		return

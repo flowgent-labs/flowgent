@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // AgentFlowPostgresStore inherits store.PostgresGenericStore[model.AgentFlowVersion].
@@ -29,8 +30,8 @@ func (s *AgentFlowPostgresStore) Get(ctx context.Context, id string) (*model.Age
 	if err != nil { return nil, err }
 	return ver, nil
 }
-func (s *AgentFlowPostgresStore) Select(ctx context.Context, offset, limit int) ([]*model.AgentFlowVersion, error) {
-	return s.inner.Select(ctx, offset, limit)
+func (s *AgentFlowPostgresStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.AgentFlowVersion], error) {
+	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *AgentFlowPostgresStore) Save(ctx context.Context, e *model.AgentFlowVersion) error {
 	return s.inner.Save(ctx, e)

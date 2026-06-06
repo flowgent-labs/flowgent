@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // FlowRunSQLiteStore wraps store.SQLiteGenericStore[model.AgentFlowRun].
@@ -23,7 +24,7 @@ func NewFlowRunSQLiteStore(conn *sql.DB) *FlowRunSQLiteStore {
 	}
 }
 func (s *FlowRunSQLiteStore) Get(ctx context.Context, id string) (*model.AgentFlowRun, error) { return s.inner.Get(ctx, id) }
-func (s *FlowRunSQLiteStore) Select(ctx context.Context, offset, limit int) ([]*model.AgentFlowRun, error) { return s.inner.Select(ctx, offset, limit) }
+func (s *FlowRunSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.AgentFlowRun], error) { return s.inner.Select(ctx, page, pageSize) }
 func (s *FlowRunSQLiteStore) Save(ctx context.Context, e *model.AgentFlowRun) error { return s.inner.Save(ctx, e) }
 func (s *FlowRunSQLiteStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
 

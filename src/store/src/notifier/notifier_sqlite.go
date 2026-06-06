@@ -6,6 +6,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // NotifierSQLiteStore wraps store.SQLiteGenericStore[model.NotifierChannel].
@@ -24,8 +25,8 @@ func NewNotifierSQLiteStore(conn *sql.DB) *NotifierSQLiteStore {
 func (s *NotifierSQLiteStore) Get(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *NotifierSQLiteStore) Select(ctx context.Context, offset, limit int) ([]*model.NotifierChannel, error) {
-	return s.inner.Select(ctx, offset, limit)
+func (s *NotifierSQLiteStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.NotifierChannel], error) {
+	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *NotifierSQLiteStore) Save(ctx context.Context, e *model.NotifierChannel) error {
 	return s.inner.Save(ctx, e)

@@ -3,13 +3,14 @@ package memory
 import (
 	"context"
 
+	"github.com/flowgent-labs/flowgent/common/src/utils"
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
 // IMemoryStore is the node memory entity store interface.
 type IMemoryStore interface {
 	Get(ctx context.Context, id string) (*model.NodeMemory, error)
-	Select(ctx context.Context, offset, limit int) ([]*model.NodeMemory, error)
+	Select(ctx context.Context, page, pageSize int) (*utils.Page[model.NodeMemory], error)
 	Save(ctx context.Context, entity *model.NodeMemory) error
 	Delete(ctx context.Context, id string) error
 	UpsertMemory(ctx context.Context, mem *model.NodeMemory) error

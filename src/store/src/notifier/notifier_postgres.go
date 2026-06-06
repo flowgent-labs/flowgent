@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/common/src/utils"
 )
 
 // NotifierPostgresStore wraps store.PostgresGenericStore[model.NotifierChannel].
@@ -24,8 +25,8 @@ func NewNotifierPostgresStore(pool *pgxpool.Pool) *NotifierPostgresStore {
 func (s *NotifierPostgresStore) Get(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *NotifierPostgresStore) Select(ctx context.Context, offset, limit int) ([]*model.NotifierChannel, error) {
-	return s.inner.Select(ctx, offset, limit)
+func (s *NotifierPostgresStore) Select(ctx context.Context, page, pageSize int) (*utils.Page[model.NotifierChannel], error) {
+	return s.inner.Select(ctx, page, pageSize)
 }
 func (s *NotifierPostgresStore) Save(ctx context.Context, e *model.NotifierChannel) error {
 	return s.inner.Save(ctx, e)

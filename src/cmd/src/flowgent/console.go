@@ -132,7 +132,7 @@ func listAgentFlowsCmd(ctx context.Context, s store.IStore) {
 	case *sql.DB:
 		afStore = agentflow.NewAgentFlowSQLiteStore(db)
 	}
-	defs, err := afStore.Select(ctx, 0, 1000)
+	page, err := afStore.Select(ctx, 1, 1000); defs := page.Items
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -157,7 +157,7 @@ func listRunsCmd(ctx context.Context, s store.IStore, agentFlowID string) {
 	case *sql.DB:
 		frStore = flowrun.NewFlowRunSQLiteStore(db)
 	}
-	runs, err := frStore.Select(ctx, 0, 50)
+	page2, err := frStore.Select(ctx, 1, 50); runs := page2.Items
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
