@@ -24,8 +24,8 @@ func NewLlmProviderPostgresStore(pool *pgxpool.Pool) *LlmProviderPostgresStore {
 func (s *LlmProviderPostgresStore) Get(ctx context.Context, id string) (*model.LlmProvider, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *LlmProviderPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.LlmProvider], error) {
-	return s.inner.Select(ctx, page, pageSize)
+func (s *LlmProviderPostgresStore) Select(ctx context.Context, page, size int) (*model.Page[model.LlmProvider], error) {
+	return s.inner.Select(ctx, page, size)
 }
 func (s *LlmProviderPostgresStore) Save(ctx context.Context, e *model.LlmProvider) error {
 	return s.inner.Save(ctx, e)

@@ -24,8 +24,8 @@ func NewNotifierPostgresStore(pool *pgxpool.Pool) *NotifierPostgresStore {
 func (s *NotifierPostgresStore) Get(ctx context.Context, id string) (*model.NotifierChannel, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *NotifierPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.NotifierChannel], error) {
-	return s.inner.Select(ctx, page, pageSize)
+func (s *NotifierPostgresStore) Select(ctx context.Context, page, size int) (*model.Page[model.NotifierChannel], error) {
+	return s.inner.Select(ctx, page, size)
 }
 func (s *NotifierPostgresStore) Save(ctx context.Context, e *model.NotifierChannel) error {
 	return s.inner.Save(ctx, e)

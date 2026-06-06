@@ -49,11 +49,11 @@ type Page[T any] struct {
 }
 
 // NewPage creates a Page from results and total count.
-func NewPage[T any](items []*T, totalCount int64, page, pageSize int) *Page[T] {
-	totalPages := int(totalCount / int64(pageSize))
-	if totalCount%int64(pageSize) != 0 { totalPages++ }
+func NewPage[T any](items []*T, totalCount int64, page, size int) *Page[T] {
+	totalPages := int(totalCount / int64(size))
+	if totalCount%int64(size) != 0 { totalPages++ }
 	return &Page[T]{
 		Items: items, TotalCount: totalCount,
-		Page: page, PageSize: pageSize, TotalPages: totalPages,
+		Page: page, PageSize: size, TotalPages: totalPages,
 	}
 }

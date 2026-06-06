@@ -27,8 +27,8 @@ func NewMemoryPostgresStore(pool *pgxpool.Pool) *MemoryPostgresStore {
 func (s *MemoryPostgresStore) Get(ctx context.Context, id string) (*model.NodeMemory, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *MemoryPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.NodeMemory], error) {
-	return s.inner.Select(ctx, page, pageSize)
+func (s *MemoryPostgresStore) Select(ctx context.Context, page, size int) (*model.Page[model.NodeMemory], error) {
+	return s.inner.Select(ctx, page, size)
 }
 func (s *MemoryPostgresStore) Save(ctx context.Context, e *model.NodeMemory) error {
 	return s.inner.Save(ctx, e)

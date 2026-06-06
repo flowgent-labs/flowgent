@@ -47,7 +47,7 @@ func (s *SQLiteGenericStore[T]) Get(ctx context.Context, id string) (*T, error) 
 	return &entity, nil
 }
 
-func (s *SQLiteGenericStore[T]) Select(ctx context.Context, page, pageSize int) (*model.Page[T], error) {
+func (s *SQLiteGenericStore[T]) Select(ctx context.Context, page, size int) (*model.Page[T], error) {
 	if err := utils.ValidateIdent(s.Table); err != nil { return nil, err }
 	cols := utils.Columns[T]()
 
@@ -56,11 +56,11 @@ func (s *SQLiteGenericStore[T]) Select(ctx context.Context, page, pageSize int) 
 		fmt.Sprintf("SELECT COUNT(1) FROM %s", s.Table)).Scan(&total); err != nil {
 		return nil, err
 	}
-	offset := (page - 1) * pageSize
+	offset := (page - 1) * size
 	if offset < 0 { offset = 0 }
 
 	rows, err := s.Conn.QueryContext(ctx,
-		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT ?1 OFFSET ?2", cols, s.Table), pageSize, offset)
+		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT ?1 OFFSET ?2", cols, s.Table), size, offset)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	var items []*T
@@ -69,7 +69,7 @@ func (s *SQLiteGenericStore[T]) Select(ctx context.Context, page, pageSize int) 
 		if err := utils.ScanStruct(rows, e); err != nil { return nil, fmt.Errorf("scan: %w", err) }
 		items = append(items, e)
 	}
-	return model.NewPage(items, total, page, pageSize), nil
+	return model.NewPage(items, total, page, size), nil
 }
 
 func (s *SQLiteGenericStore[T]) Save(ctx context.Context, entity *T) error {

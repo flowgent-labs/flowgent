@@ -25,7 +25,7 @@ func NewTaskPlanPostgresStore(pool *pgxpool.Pool) *TaskPlanPostgresStore {
 }
 
 func (s *TaskPlanPostgresStore) Get(ctx context.Context, id string) (*model.TaskRun, error) { return s.inner.Get(ctx, id) }
-func (s *TaskPlanPostgresStore) Select(ctx context.Context, page, pageSize int) (*model.Page[model.TaskRun], error) { return s.inner.Select(ctx, page, pageSize) }
+func (s *TaskPlanPostgresStore) Select(ctx context.Context, page, size int) (*model.Page[model.TaskRun], error) { return s.inner.Select(ctx, page, size) }
 func (s *TaskPlanPostgresStore) Save(ctx context.Context, e *model.TaskRun) error { return s.inner.Save(ctx, e) }
 func (s *TaskPlanPostgresStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
 

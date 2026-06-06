@@ -43,7 +43,7 @@ func PlanToTaskRun(plan *model.ExecutionPlan) *model.TaskRun {
 // ITaskPlanStore is the task run entity store interface.
 type ITaskPlanStore interface {
 	Get(ctx context.Context, id string) (*model.TaskRun, error)
-	Select(ctx context.Context, page, pageSize int) (*model.Page[model.TaskRun], error)
+	Select(ctx context.Context, page, size int) (*model.Page[model.TaskRun], error)
 	Save(ctx context.Context, entity *model.TaskRun) error
 	Delete(ctx context.Context, id string) error
 	GetByExecID(ctx context.Context, execID string) (*model.TaskRun, error)
