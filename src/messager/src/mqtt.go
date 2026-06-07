@@ -46,7 +46,7 @@ func NewMQTTMessager(cfg *MQTTConfig) (*MQTTMessager, error) {
 	return &MQTTMessager{client: client, subs: make(map[string]struct{})}, nil
 }
 
-func (q *MQTTMessager) Publish(ctx context.Context, topic string, msg *Message) error {
+func (q *MQTTMessager) Publish(ctx context.Context, topic string, msg *InterMessage) error {
 	data, _ := json.Marshal(msg)
 	token := q.client.Publish(topic, 1, false, data)
 	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
@@ -64,7 +64,7 @@ func (q *MQTTMessager) Subscribe(ctx context.Context, topic string, handler SubH
 	q.subs[topic] = struct{}{}
 	q.mu.Unlock()
 	token := q.client.Subscribe(topic, 1, func(c mqtt.Client, m mqtt.Message) {
-		var msg Message
+		var msg InterMessage
 		if json.Unmarshal(m.Payload(), &msg) == nil {
 			handler(topic, msg.Payload)
 		}

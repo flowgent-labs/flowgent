@@ -15,15 +15,23 @@ import (
 	"github.com/flowgent-labs/flowgent/messager/src"
 )
 
-// SandboxExecutor dispatches scripts to sandbox workers via a shared workspace
-// volume + queue trigger. The workspace is a persistent volume mounted to both
-// TM and Sandbox, organized as:
+// SandboxExecutor dispatches scripts to sandbox runner pods via MQTT + shared
+// workspace volume. The workspace is a persistent volume mounted to both TM and
+// sandbox pods, organized as:
 //
 //	{workspace}/{tenant}/{agentflow_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
 //	  ├── script.{py,sh,js}
 //	  ├── result.json
 //	  ├── status
 //	  └── original/   (pre-modification snapshot for undo)
+//
+// In distributed mode (sandbox as independent pods), triggers go to:
+//
+//	flowgent/v1/sandbox/trigger/{flowId}/{runId}  ($share/sandbox-pool)
+//
+// Results come back on:
+//
+//	flowgent/v1/sandbox/result/{flowId}/{runId}   (point-to-point)
 type SandboxExecutor struct {
 	queue     messager.IMessager
 	policy    *model.SandboxPolicy
@@ -55,7 +63,9 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		}
 	}
 
-	trigger := &sandboxTrigger{
+	trigger := &model.SandboxTrigger{
+		FlowID:        plan.AgentFlowDefinitionID,
+		RunID:         plan.AgentFlowRunID,
 		PlanID:        plan.PlanID,
 		ScriptPath:    scriptPath,
 		Runtime:       plan.NodeSpec.Runtime,
@@ -70,9 +80,12 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		return nil, fmt.Errorf("sandbox marshal trigger: %w", err)
 	}
 
-	resultCh := make(chan *model.TaskResult, 1)
-	resultTopic := messager.TopicSandboxRes + "/" + plan.PlanID
+	triggerTopic := messager.SandboxTriggerTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
+	resultTopic := messager.SandboxResultTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 
+	resultCh := make(chan *model.TaskResult, 1)
+
+	// Subscribe BEFORE publishing to avoid race (result arrives before subscriber is ready).
 	if err := e.queue.Subscribe(ctx, resultTopic, func(topic string, payload []byte) {
 		var result model.TaskResult
 		if err := json.Unmarshal(payload, &result); err != nil {
@@ -86,7 +99,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		return nil, fmt.Errorf("sandbox subscribe: %w", err)
 	}
 
-	if err := e.queue.Publish(ctx, messager.TopicSandboxTrig, &messager.Message{
+	if err := e.queue.Publish(ctx, triggerTopic, &messager.InterMessage{
 		ID: plan.PlanID, Payload: payload,
 	}); err != nil {
 		return nil, fmt.Errorf("sandbox publish: %w", err)
@@ -155,17 +168,6 @@ func (e *SandboxExecutor) readResultFile(scriptPath string) (*model.TaskResult, 
 		return nil, err
 	}
 	return &result, nil
-}
-
-type sandboxTrigger struct {
-	PlanID        string                  `json:"plan_id"`
-	ScriptPath    string                  `json:"script_path"`
-	Runtime       string                  `json:"runtime"`
-	Timeout       string                  `json:"timeout"`
-	Resources     *model.SandboxResources `json:"resources,omitempty"`
-	NetworkPolicy *model.NetworkPolicy    `json:"network_policy,omitempty"`
-	Workspace     string                  `json:"workspace,omitempty"`
-	SpanID        string                  `json:"span_id"`
 }
 
 func newSpanID() string {

@@ -1,0 +1,86 @@
+{{- if eq .Values.global.mode "session" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-sandbox
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox
+spec:
+  replicas: {{ .Values.sandbox.replicas | default 2 }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sandbox
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sandbox
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sandbox
+          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["sandbox", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          env:
+            - name: FLOWGENT_MQTT_BROKER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "flowgent.mqttSecretName" . }}
+                  key: broker
+                  optional: true
+            - name: FLOWGENT_SANDBOX_WORKSPACE
+              value: {{ .Values.sandbox.workspace | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # ── Credential injection for sandbox scripts ──
+            - name: NEXUS3_URL
+              value: {{ .Values.sandbox.credentials.nexus3.url | default "http://nexus3:8081" | quote }}
+            - name: NEXUS3_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
+                  key: username
+                  optional: true
+            - name: NEXUS3_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
+                  key: password
+                  optional: true
+            - name: SONATYPEIQ_URL
+              value: {{ .Values.sandbox.credentials.sonatypeiq.url | default "http://sonatypeiq:8070" | quote }}
+            - name: SONATYPEIQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
+                  key: username
+                  optional: true
+            - name: SONATYPEIQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
+                  key: password
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+            - name: sandbox-workspace
+              mountPath: {{ .Values.sandbox.workspace }}
+          resources:
+            {{- toYaml .Values.sandbox.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+        - name: sandbox-workspace
+          persistentVolumeClaim:
+            claimName: {{ include "flowgent.fullname" . }}-sandbox-workspace
+{{- end }}

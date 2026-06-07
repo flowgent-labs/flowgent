@@ -1,7 +1,7 @@
 // Package sandbox implements the secure script execution worker.
 //
 // The SandboxRunner consumes trigger messages via Subscribe, reads scripts from
-// a workspace volume (mounted alongside TaskManager pods), executes them in
+// a workspace volume (mounted alongside TM and sandbox pods), executes them in
 // isolated environments, writes results back, and publishes completion via Publish.
 //
 // Workspace path convention:
@@ -14,6 +14,14 @@
 // Security is enforced via SandboxPolicy at three levels:
 //
 //	global (flowgent.yaml) → flow (AgentFlowSpec.sandbox_policy) → node (Node.network_policy)
+//
+// In distributed mode (sandbox as independent pods), the runner subscribes to:
+//
+//	$share/sandbox-pool/flowgent/v1/+/flows/+/runs/+/sandbox/trigger   (shared, load-balanced)
+//
+// and publishes results to:
+//
+//	flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result     (point-to-point)
 package sandbox
 
 import (
@@ -25,32 +33,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messager/src"
+	messager "github.com/flowgent-labs/flowgent/messager/src"
+	model "github.com/flowgent-labs/flowgent/model/src"
 )
-
-// ─── Trigger message ─────────────────────────────────────────
-
-type sandboxTrigger struct {
-	PlanID        string                  `json:"plan_id"`
-	ScriptPath    string                  `json:"script_path"`
-	Runtime       string                  `json:"runtime"`
-	Timeout       string                  `json:"timeout"`
-	Resources     *model.SandboxResources `json:"resources,omitempty"`
-	NetworkPolicy *model.NetworkPolicy    `json:"network_policy,omitempty"`
-	Workspace     string                  `json:"workspace,omitempty"`
-	SpanID        string                  `json:"span_id"`
-}
-
-// ─── SandboxRunner ───────────────────────────────────────────
 
 // SandboxRunner consumes and executes sandbox triggers.
 type SandboxRunner struct {
-	ID        string
-	queue     messager.IMessager
-	policy    *model.SandboxPolicy
-	image     string
-	workspace string
+	ID          string
+	queue       messager.IMessager
+	policy      *model.SandboxPolicy
+	image       string
+	workspace   string
+	distributed bool // true = $share subscription + hierarchical topics
 
 	stopCh chan struct{}
 }
@@ -70,21 +64,33 @@ func NewSandboxRunner(id string, q messager.IMessager, image, workspace string, 
 		workspace = os.TempDir()
 	}
 	return &SandboxRunner{
-		ID:        id,
-		queue:     q,
-		policy:    policy,
-		image:     image,
-		workspace: workspace,
-		stopCh:    make(chan struct{}),
+		ID:          id,
+		queue:       q,
+		policy:      policy,
+		image:       image,
+		workspace:   workspace,
+		distributed: false,
+		stopCh:      make(chan struct{}),
 	}
 }
 
 func (w *SandboxRunner) GetID() string { return w.ID }
 
+// SetDistributed enables distributed mode (shared subscription + hierarchical topics).
+func (w *SandboxRunner) SetDistributed(v bool) { w.distributed = v }
+
 // Start subscribes to sandbox triggers and blocks until ctx is done.
 func (w *SandboxRunner) Start(ctx context.Context) error {
-	w.queue.Subscribe(ctx, messager.TopicSandboxTrig, func(topic string, payload []byte) {
-		var trigger sandboxTrigger
+	// In distributed mode: shared subscription with wildcards for load-balanced consumption.
+	// In standalone mode: use a single flat wildcard topic (backward compat for all-in-one).
+	subTopic := "$share/sandbox-pool/" + messager.TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
+	if !w.distributed {
+		// Legacy standalone: subscribe to wildcard trigger topic
+		subTopic = messager.TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
+	}
+
+	w.queue.Subscribe(ctx, subTopic, func(topic string, payload []byte) {
+		var trigger model.SandboxTrigger
 		if err := json.Unmarshal(payload, &trigger); err != nil {
 			slog.Error("invalid sandbox trigger", "error", err)
 			return
@@ -92,14 +98,14 @@ func (w *SandboxRunner) Start(ctx context.Context) error {
 
 		script, err := w.readScriptFromVolume(&trigger)
 		if err != nil {
-			w.publishError(trigger.PlanID, "read script: "+err.Error())
+			w.publishError(&trigger, "read script: "+err.Error())
 			return
 		}
 
 		os.WriteFile(filepath.Join(trigger.ScriptPath, "status"), []byte("RUNNING"), 0644)
 
 		result := w.execute(ctx, &trigger, script)
-		w.publishResult(trigger.PlanID, &trigger, result)
+		w.publishResult(&trigger, result)
 	})
 
 	select {
@@ -120,7 +126,7 @@ func (w *SandboxRunner) Stop() {
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-func (w *SandboxRunner) readScriptFromVolume(trigger *sandboxTrigger) (string, error) {
+func (w *SandboxRunner) readScriptFromVolume(trigger *model.SandboxTrigger) (string, error) {
 	data, err := os.ReadFile(filepath.Join(trigger.ScriptPath, "script."+extForRuntime(trigger.Runtime)))
 	if err != nil {
 		return "", err
@@ -150,16 +156,18 @@ func (w *SandboxRunner) checkBanned(script string) string {
 	return ""
 }
 
-func (w *SandboxRunner) publishResult(msgID string, trigger *sandboxTrigger, result *model.TaskResult) {
+func (w *SandboxRunner) publishResult(trigger *model.SandboxTrigger, result *model.TaskResult) {
 	payload, _ := json.Marshal(result)
-	_ = w.queue.Publish(context.Background(), messager.TopicSandboxRes+"/"+trigger.PlanID, &messager.Message{
-		ID:      msgID,
+	resultTopic := messager.SandboxResultTopic(trigger.FlowID, trigger.FlowID, trigger.RunID)
+
+	_ = w.queue.Publish(context.Background(), resultTopic, &messager.InterMessage{
+		ID:      trigger.PlanID,
 		Payload: payload,
 	})
 }
 
-func (w *SandboxRunner) publishError(msgID, errStr string) {
-	w.publishResult(msgID, &sandboxTrigger{PlanID: msgID}, &model.TaskResult{Error: errStr})
+func (w *SandboxRunner) publishError(trigger *model.SandboxTrigger, errStr string) {
+	w.publishResult(trigger, &model.TaskResult{Error: errStr})
 }
 
 // ─── Utilities ───────────────────────────────────────────────

@@ -56,10 +56,11 @@ jaeger:
     requests: { cpu: "100m", memory: "256Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
 
-# Queue config
-queue:
-  type: mqtt
-  topicPrefix: "flowgent/exec"
+# ── Inter-component Messaging (MQTT) ─────────────────────────
+messaging:
+  type: mqtt                     # mqtt | memory
+  mqtt:
+    broker: ""                   # set via FLOWGENT_MQTT_BROKER env or external secret
 
 # ═══════════════════════════════════════════════════════════════
 # API Server — [always] Multi-tenant REST Gateway
@@ -130,36 +131,46 @@ jobmanager:
 
 # ═══════════════════════════════════════════════════════════════
 # TaskManager — [session] Elastic Worker Pool
-#   Sandbox is inline in TM pods (not separate deployment).
-#   Workspace, policy, and credentials are all under taskmanager.
 # ═══════════════════════════════════════════════════════════════
 taskmanager:
   replicas: 2
   image: ""
   slots: 4
-  # ── Inline sandbox (runs inside TM pod, not separate deployment) ──
-  sandbox:
-    workspace: "/var/flowgent/workspace"
-    workspaceSize: "10Gi"
-    credentials:
-      nexus3:
-        url: "http://nexus3:8081"
-        secret: "nexus3-creds"
-      sonatypeiq:
-        url: "http://sonatypeiq:8070"
-        secret: "iq-creds"
-    policy:
-      network:
-        mode: "none"
-        allowed: []
-        denied: []
-      allowedRuntimes: [python3, bash, node]
-      bannedCommands: []
-      defaultTimeout: "120s"
-      maxTimeout: "600s"
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2", memory: "2Gi" }
+
+# ═══════════════════════════════════════════════════════════════
+# Sandbox — [session] Secure Script Execution Worker (independent Deployment)
+#   Runs as separate K8s pods (NOT inline in TM). JM's K8sRM manages
+#   both TM and sandbox Deployments with independent scaling.
+#   Shares workspace PVC with TM for script I/O.
+# ═══════════════════════════════════════════════════════════════
+sandbox:
+  replicas: 2
+  slots: 4              # concurrent script executions per pod
+  image: ""
+  workspace: "/var/flowgent/workspace"
+  workspaceSize: "10Gi"
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "2", memory: "2Gi" }
+  credentials:
+    nexus3:
+      url: "http://nexus3:8081"
+      secret: "nexus3-creds"
+    sonatypeiq:
+      url: "http://sonatypeiq:8070"
+      secret: "iq-creds"
+  policy:
+    network:
+      mode: "none"
+      allowed: []
+      denied: []
+    allowedRuntimes: [python3, bash, node]
+    bannedCommands: []
+    defaultTimeout: "120s"
+    maxTimeout: "600s"
 
 # ═══════════════════════════════════════════════════════════════
 # Wallet — [optional] x402 Key Management & Payment Signing

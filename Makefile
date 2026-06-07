@@ -37,7 +37,7 @@ build-image-all:
 
 build-host:
 	@mkdir -p $(BIN_DIR)
-	cd src/cmd && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent ./src/flowgent
+	cd src/cmd && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent ./src/
 
 build-host-all: build-host
 	@echo "build-host-all: done (MCP examples removed — see git history)"

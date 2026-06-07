@@ -19,6 +19,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -26,22 +27,31 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// RMTMState is the persisted state of TM scaling for JM failover.
-type RMTMState struct {
-	CurrentTMs   int32     `json:"current_tms"`
-	SlotsPerTM   int       `json:"slots_per_tm"`
-	MinTMs       int       `json:"min_tms"`
-	MaxTMs       int       `json:"max_tms"`
-	PendingPlans int64     `json:"pending_plans"`
-	LastActivity time.Time `json:"last_activity"`
+// RMState is the persisted state of TM and sandbox scaling for JM failover.
+type RMState struct {
+	CurrentTMs             int32     `json:"current_tms"`
+	SlotsPerTM             int       `json:"slots_per_tm"`
+	MinTMs                 int       `json:"min_tms"`
+	MaxTMs                 int       `json:"max_tms"`
+	PendingPlans           int64     `json:"pending_plans"`
+	LastActivity           time.Time `json:"last_activity"`
+	SandboxReplicas        int32     `json:"sandbox_replicas,omitempty"`
+	SandboxPendingTriggers int64     `json:"sandbox_pending_triggers,omitempty"`
 }
+
+// RMTMState is the legacy alias kept for backward compatibility.
+// Deprecated: use RMState.
+type RMTMState = RMState
 
 // KubernetesResourceManager dispatches plans to TM pods via MQTT with elastic
 // scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
 // is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
 //
+// When SandboxEnabled=true, the K8sRM also manages a separate sandbox Deployment
+// with its own scaling loop. Both TM and sandbox pods share the same workspace PVC.
+//
 // State is persisted to cache so that on JM failover the new JM can restoreFromCache
-// the current TM replica count and slot allocation without querying K8s.
+// the current TM/sandbox replica counts and slot allocation without querying K8s.
 type KubernetesResourceManager struct {
 	q           messager.IMessager
 	cache       cache.ICache
@@ -59,6 +69,18 @@ type KubernetesResourceManager struct {
 	mu           sync.Mutex
 	pendingPlans int64
 	lastActivity time.Time
+
+	// Sandbox deployment fields
+	sandboxEnabled          bool
+	sandboxDeployName       string
+	sandboxImage            string
+	sandboxSlotsPerPod      int
+	sandboxMinReplicas      int
+	sandboxMaxReplicas      int
+	sandboxCurrentReplicas  int32
+	sandboxWorkspace        string
+	sandboxPolicy           *model.SandboxPolicy
+	sandboxPendingTriggers  int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -86,6 +108,18 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	if cfg.K8sDeploymentName == "" {
 		cfg.K8sDeploymentName = "flowgent-taskmanager"
 	}
+	if cfg.SandboxDeploymentName == "" {
+		cfg.SandboxDeploymentName = "flowgent-sandbox"
+	}
+	if cfg.SandboxMinReplicas <= 0 {
+		cfg.SandboxMinReplicas = 2
+	}
+	if cfg.SandboxMaxReplicas <= 0 {
+		cfg.SandboxMaxReplicas = 10
+	}
+	if cfg.SandboxSlotsPerPod <= 0 {
+		cfg.SandboxSlotsPerPod = 4
+	}
 
 	restCfg, err := buildRESTConfig(cfg.K8sKubeConfigPath)
 	if err != nil {
@@ -110,27 +144,49 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		currentTMs:  int32(cfg.MinTMs),
 		idleTimeout: cfg.IdleTimeout,
 		planTimeout: cfg.PlanTimeout,
-		ctx:         ctx,
-		cancel:      cancel,
+
+		sandboxEnabled:         cfg.SandboxEnabled,
+		sandboxDeployName:      cfg.SandboxDeploymentName,
+		sandboxImage:           cfg.SandboxImage,
+		sandboxSlotsPerPod:     cfg.SandboxSlotsPerPod,
+		sandboxMinReplicas:     cfg.SandboxMinReplicas,
+		sandboxMaxReplicas:     cfg.SandboxMaxReplicas,
+		sandboxCurrentReplicas: int32(cfg.SandboxMinReplicas),
+		sandboxWorkspace:       cfg.SandboxWorkspace,
+		sandboxPolicy:          cfg.SandboxPolicy,
+
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
-	// Restore TM state from cache (JM failover recovery).
+	// Restore state from cache (JM failover recovery).
 	if cfg.Cache != nil {
 		rm.restore(ctx)
 	}
 
+	// Ensure TM deployment exists.
 	if err := rm.ensureDeployment(ctx); err != nil {
-		slog.Warn("kubernetes rm: deployment check failed (will retry in loop)", "err", err)
+		slog.Warn("kubernetes rm: tm deployment check failed (will retry in loop)", "err", err)
 	}
-
-	slog.Info("kubernetes rm: scaling deployment to min replicas",
+	slog.Info("kubernetes rm: scaling tm deployment to min replicas",
 		"deployment", rm.deployName, "namespace", rm.namespace, "replicas", rm.minTMs)
 	if err := rm.scaleDeployment(ctx, int32(rm.minTMs)); err != nil {
-		slog.Warn("kubernetes rm: initial scale failed", "err", err)
-	} else {
-		rm.persist(ctx)
+		slog.Warn("kubernetes rm: initial tm scale failed", "err", err)
 	}
 
+	// Ensure sandbox deployment exists (if enabled).
+	if rm.sandboxEnabled {
+		if err := rm.ensureSandboxDeployment(ctx); err != nil {
+			slog.Warn("kubernetes rm: sandbox deployment check failed (will retry in loop)", "err", err)
+		}
+		slog.Info("kubernetes rm: scaling sandbox deployment to min replicas",
+			"deployment", rm.sandboxDeployName, "namespace", rm.namespace, "replicas", rm.sandboxMinReplicas)
+		if err := rm.scaleSandboxDeployment(ctx, int32(rm.sandboxMinReplicas)); err != nil {
+			slog.Warn("kubernetes rm: initial sandbox scale failed", "err", err)
+		}
+	}
+
+	rm.persist(ctx)
 	return rm, nil
 }
 
@@ -167,7 +223,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.Ex
 	defer cancel()
 
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.TopicExec, &messager.Message{
+	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID), &messager.InterMessage{
 		ID: plan.PlanID,
 		Headers: map[string]string{
 			"task_run_id": plan.AgentFlowRunID,
@@ -204,6 +260,13 @@ func (s *KubernetesResourceManager) scalingLoop(ctx context.Context) {
 }
 
 func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
+	s.reconcileTM(ctx)
+	if s.sandboxEnabled {
+		s.reconcileSandbox(ctx)
+	}
+}
+
+func (s *KubernetesResourceManager) reconcileTM(ctx context.Context) {
 	if !s.autoScale {
 		return
 	}
@@ -221,10 +284,10 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 			neededTMs = s.maxTMs
 		}
 		if neededTMs > currentTMs {
-			slog.Info("kubernetes rm scale up",
+			slog.Info("kubernetes rm tm scale up",
 				"pending", pending, "current_tms", currentTMs, "target_tms", neededTMs)
 			if err := s.scaleDeployment(ctx, int32(neededTMs)); err != nil {
-				slog.Error("kubernetes rm scale up failed", "err", err)
+				slog.Error("kubernetes rm tm scale up failed", "err", err)
 				return
 			}
 			atomic.StoreInt32(&s.currentTMs, int32(neededTMs))
@@ -238,13 +301,61 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 		if targetTMs < s.minTMs {
 			targetTMs = s.minTMs
 		}
-		slog.Info("kubernetes rm scale down",
+		slog.Info("kubernetes rm tm scale down",
 			"idle", idleDuration.Round(time.Second), "current_tms", currentTMs, "target_tms", targetTMs)
 		if err := s.scaleDeployment(ctx, int32(targetTMs)); err != nil {
-			slog.Error("kubernetes rm scale down failed", "err", err)
+			slog.Error("kubernetes rm tm scale down failed", "err", err)
 			return
 		}
 		atomic.StoreInt32(&s.currentTMs, int32(targetTMs))
+		s.persist(ctx)
+	}
+}
+
+// reconcileSandbox scales sandbox pods based on pending trigger count.
+func (s *KubernetesResourceManager) reconcileSandbox(ctx context.Context) {
+	if !s.autoScale {
+		return
+	}
+	pending := atomic.LoadInt64(&s.sandboxPendingTriggers)
+	currentReplicas := int(atomic.LoadInt32(&s.sandboxCurrentReplicas))
+	currentSlots := currentReplicas * s.sandboxSlotsPerPod
+
+	if pending > int64(currentSlots) {
+		needed := int((pending + int64(s.sandboxSlotsPerPod) - 1) / int64(s.sandboxSlotsPerPod))
+		if needed > s.sandboxMaxReplicas {
+			needed = s.sandboxMaxReplicas
+		}
+		if needed > currentReplicas {
+			slog.Info("kubernetes rm sandbox scale up",
+				"pending", pending, "current_replicas", currentReplicas, "target_replicas", needed)
+			if err := s.scaleSandboxDeployment(ctx, int32(needed)); err != nil {
+				slog.Error("kubernetes rm sandbox scale up failed", "err", err)
+				return
+			}
+			atomic.StoreInt32(&s.sandboxCurrentReplicas, int32(needed))
+			s.persist(ctx)
+		}
+		return
+	}
+
+	// Scale down sandbox if idle (same idle timeout as TM).
+	s.mu.Lock()
+	idleDuration := time.Since(s.lastActivity)
+	s.mu.Unlock()
+
+	if idleDuration > s.idleTimeout && currentReplicas > s.sandboxMinReplicas {
+		target := currentReplicas - 1
+		if target < s.sandboxMinReplicas {
+			target = s.sandboxMinReplicas
+		}
+		slog.Info("kubernetes rm sandbox scale down",
+			"idle", idleDuration.Round(time.Second), "current_replicas", currentReplicas, "target_replicas", target)
+		if err := s.scaleSandboxDeployment(ctx, int32(target)); err != nil {
+			slog.Error("kubernetes rm sandbox scale down failed", "err", err)
+			return
+		}
+		atomic.StoreInt32(&s.sandboxCurrentReplicas, int32(target))
 		s.persist(ctx)
 	}
 }
@@ -265,6 +376,39 @@ func (s *KubernetesResourceManager) scaleDeployment(ctx context.Context, replica
 		return fmt.Errorf("scale deployment %s/%s to %d: %w", s.namespace, s.deployName, replicas, err)
 	}
 	return nil
+}
+
+func (s *KubernetesResourceManager) scaleSandboxDeployment(ctx context.Context, replicas int32) error {
+	scale := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      s.sandboxDeployName,
+			Namespace: s.namespace,
+		},
+		Spec: autoscalingv1.ScaleSpec{
+			Replicas: replicas,
+		},
+	}
+	_, err := s.kubeClient.AppsV1().Deployments(s.namespace).
+		UpdateScale(ctx, s.sandboxDeployName, scale, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("scale sandbox deployment %s/%s to %d: %w", s.namespace, s.sandboxDeployName, replicas, err)
+	}
+	return nil
+}
+
+// TrackSandboxTrigger increments the pending sandbox trigger counter.
+// Called by SandboxExecutor before publishing a trigger.
+func (s *KubernetesResourceManager) TrackSandboxTrigger() {
+	atomic.AddInt64(&s.sandboxPendingTriggers, 1)
+	s.mu.Lock()
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+}
+
+// CompleteSandboxTrigger decrements the pending sandbox trigger counter.
+// Called by SandboxExecutor after receiving a result.
+func (s *KubernetesResourceManager) CompleteSandboxTrigger() {
+	atomic.AddInt64(&s.sandboxPendingTriggers, -1)
 }
 
 func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error {
@@ -310,6 +454,93 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 	return nil
 }
 
+func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context) error {
+	_, err := s.kubeClient.AppsV1().Deployments(s.namespace).
+		Get(ctx, s.sandboxDeployName, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	replicas := int32(s.sandboxMinReplicas)
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: s.sandboxDeployName, Namespace: s.namespace,
+			Labels: map[string]string{"app.kubernetes.io/component": "sandbox", "flowgent/role": "sandbox-worker"},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"flowgent/role": "sandbox-worker"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"flowgent/role": "sandbox-worker"}},
+				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []corev1.Container{{
+						Name:            "sandbox",
+						Image:           s.sandboxImage,
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Env: []corev1.EnvVar{
+							{Name: "FLOWGENT_MQTT_BROKER", Value: getEnvOrDefault("FLOWGENT_MQTT_BROKER", "tcp://127.0.0.1:1883")},
+							{Name: "FLOWGENT_SANDBOX_WORKSPACE", Value: s.sandboxWorkspace},
+						},
+						Command: []string{"/app/flowgent", "sandbox", "start"},
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: "config", MountPath: "/etc/flowgent"},
+							{Name: "sandbox-workspace", MountPath: s.sandboxWorkspace},
+						},
+						Resources: s.buildSandboxResourceRequirements(),
+					}},
+					Volumes: []corev1.Volume{
+						{Name: "config", VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{Name: s.deployName + "-config"},
+							},
+						}},
+						{Name: "sandbox-workspace", VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: s.deployName + "-sandbox-workspace",
+							},
+						}},
+					},
+				},
+			},
+		},
+	}
+	_, err = s.kubeClient.AppsV1().Deployments(s.namespace).Create(ctx, deploy, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create sandbox deployment: %w", err)
+	}
+	slog.Info("kubernetes rm: created sandbox deployment", "name", s.sandboxDeployName, "replicas", replicas)
+	return nil
+}
+
+func (s *KubernetesResourceManager) buildSandboxResourceRequirements() corev1.ResourceRequirements {
+	reqs := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{},
+		Limits:   corev1.ResourceList{},
+	}
+	if s.sandboxPolicy != nil && s.sandboxPolicy.DefaultResources != nil {
+		if cpu := s.sandboxPolicy.DefaultResources.CPU; cpu != "" {
+			reqs.Limits[corev1.ResourceCPU] = resource.MustParse(cpu)
+		}
+		if mem := s.sandboxPolicy.DefaultResources.Memory; mem != "" {
+			reqs.Limits[corev1.ResourceMemory] = resource.MustParse(mem)
+		}
+	}
+	if len(reqs.Limits) == 0 {
+		reqs.Limits[corev1.ResourceCPU] = resource.MustParse("2000m")
+		reqs.Limits[corev1.ResourceMemory] = resource.MustParse("2Gi")
+		reqs.Requests[corev1.ResourceCPU] = resource.MustParse("200m")
+		reqs.Requests[corev1.ResourceMemory] = resource.MustParse("256Mi")
+	}
+	return reqs
+}
+
 // ─── K8s Config ─────────────────────────────────────────
 
 func buildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
@@ -331,10 +562,16 @@ func buildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 }
 
 func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
-	slog.Info("kubernetes rm shutdown, scaling to min", "replicas", s.minTMs)
+	slog.Info("kubernetes rm shutdown, scaling to min",
+		"tm_replicas", s.minTMs, "sandbox_replicas", s.sandboxMinReplicas)
 	s.cancel()
 	if err := s.scaleDeployment(ctx, int32(s.minTMs)); err != nil {
-		slog.Warn("kubernetes rm shutdown scale failed", "err", err)
+		slog.Warn("kubernetes rm tm shutdown scale failed", "err", err)
+	}
+	if s.sandboxEnabled {
+		if err := s.scaleSandboxDeployment(ctx, int32(s.sandboxMinReplicas)); err != nil {
+			slog.Warn("kubernetes rm sandbox shutdown scale failed", "err", err)
+		}
 	}
 	return nil
 }
@@ -356,12 +593,14 @@ func (s *KubernetesResourceManager) persist(ctx context.Context) {
 	if s.cache == nil {
 		return
 	}
-	state := RMTMState{
-		CurrentTMs:   atomic.LoadInt32(&s.currentTMs),
-		SlotsPerTM:   s.slotsPerTM,
-		MinTMs:       s.minTMs,
-		MaxTMs:       s.maxTMs,
-		PendingPlans: atomic.LoadInt64(&s.pendingPlans),
+	state := RMState{
+		CurrentTMs:             atomic.LoadInt32(&s.currentTMs),
+		SlotsPerTM:             s.slotsPerTM,
+		MinTMs:                 s.minTMs,
+		MaxTMs:                 s.maxTMs,
+		PendingPlans:           atomic.LoadInt64(&s.pendingPlans),
+		SandboxReplicas:        atomic.LoadInt32(&s.sandboxCurrentReplicas),
+		SandboxPendingTriggers: atomic.LoadInt64(&s.sandboxPendingTriggers),
 	}
 	s.mu.Lock()
 	state.LastActivity = s.lastActivity
@@ -382,20 +621,22 @@ func (s *KubernetesResourceManager) restore(ctx context.Context) {
 	if err != nil || data == nil {
 		return
 	}
-	var state RMTMState
+	var state RMState
 	if err := json.Unmarshal(data, &state); err != nil {
 		slog.Warn("kubernetes rm: unmarshal cached state", "err", err)
 		return
 	}
 	atomic.StoreInt32(&s.currentTMs, state.CurrentTMs)
+	atomic.StoreInt32(&s.sandboxCurrentReplicas, state.SandboxReplicas)
+	atomic.StoreInt64(&s.sandboxPendingTriggers, state.SandboxPendingTriggers)
 	s.mu.Lock()
 	if !state.LastActivity.IsZero() {
 		s.lastActivity = state.LastActivity
 	}
 	s.mu.Unlock()
 	atomic.StoreInt64(&s.pendingPlans, state.PendingPlans)
-	slog.Info("kubernetes rm: restoreFromCached state from cache",
-		"current_tms", state.CurrentTMs, "last_activity", state.LastActivity)
+	slog.Info("kubernetes rm: restored state from cache",
+		"current_tms", state.CurrentTMs, "sandbox_replicas", state.SandboxReplicas, "last_activity", state.LastActivity)
 }
 
 // ─── Exported helpers for integration tests ──────────────

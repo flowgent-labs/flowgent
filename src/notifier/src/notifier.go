@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	messager "github.com/flowgent-labs/flowgent/messager/src"
 	"github.com/flowgent-labs/flowgent/model/src"
 )
 
@@ -101,7 +102,7 @@ func (s *Service) PodID() string { return s.podID }
 func (s *Service) Start(ctx context.Context) error {
 	if s.mqtt != nil {
 		// 1. Pod-level WS routing: messages addressed to this pod's WS clients
-		topicWS := fmt.Sprintf("/flowgent/notify/pod/%s/ws/+", s.podID)
+		topicWS := messager.NotifyPodWSWildcard(s.podID)
 		if err := s.mqtt.Subscribe(ctx, topicWS, s.onMQTTMessage); err != nil {
 			s.logger.Warn("mqtt WS subscribe failed", "topic", topicWS, "error", err)
 		} else {
@@ -112,7 +113,7 @@ func (s *Service) Start(ctx context.Context) error {
 		//    Each notification pod subscribes to /flowgent/notify/queue/+/+
 		//    MQTT shared subscriptions ensure load-balanced consumption across pods.
 		//    Topic pattern: /flowgent/notify/queue/{tenantID}/{agentflowID}
-		topicQueue := "/flowgent/notify/queue/+/+"
+		topicQueue := messager.NotifyQueueWildcard()
 		if err := s.mqtt.Subscribe(ctx, topicQueue, s.onQueueMessage); err != nil {
 			s.logger.Warn("mqtt queue subscribe failed", "topic", topicQueue, "error", err)
 		} else {
@@ -141,7 +142,7 @@ func (s *Service) onQueueMessage(topic string, payload []byte) {
 	// Parse tenantID and agentflowID from topic
 	// /flowgent/notify/queue/{tenantID}/{agentflowID}
 	var tenantID, flowID string
-	if n, _ := fmt.Sscanf(topic, "/flowgent/notify/queue/%s/%s", &tenantID, &flowID); n < 2 {
+	if n, _ := fmt.Sscanf(topic, messager.TopicPrefix+"/%s/flows/%s/runs/", &tenantID, &flowID); n < 2 {
 		s.logger.Warn("invalid queue topic format", "topic", topic)
 		return
 	}
@@ -181,7 +182,7 @@ func (s *Service) PublishNotification(ctx context.Context, tenantID, agentflowID
 		return fmt.Errorf("marshal notification: %w", err)
 	}
 
-	topic := fmt.Sprintf("/flowgent/notify/queue/%s/%s", tenantID, agentflowID)
+	topic := messager.NotifyEventTopic(tenantID, agentflowID, "")
 	return s.mqtt.Publish(ctx, topic, payload)
 }
 
@@ -309,7 +310,7 @@ func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg
 
 	b, _ := json.Marshal(msg)
 	for _, route := range routes {
-		topic := fmt.Sprintf("/flowgent/notify/pod/%s/ws/%s", route.PodID, route.WSID)
+		topic := messager.NotifyPodWSTopic(route.PodID, route.WSID)
 		if err := s.mqtt.Publish(ctx, topic, b); err != nil {
 			s.logger.Warn("mqtt publish", "topic", topic, "error", err)
 		}

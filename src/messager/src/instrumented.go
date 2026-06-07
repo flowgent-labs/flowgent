@@ -33,7 +33,7 @@ func NewInstrumentedMessager(inner IMessager) *InstrumentedMessager {
 	return m
 }
 
-func (m *InstrumentedMessager) Publish(ctx context.Context, topic string, msg *Message) error {
+func (m *InstrumentedMessager) Publish(ctx context.Context, topic string, msg *InterMessage) error {
 	err := m.inner.Publish(ctx, topic, msg)
 	if err == nil {
 		m.publishTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))

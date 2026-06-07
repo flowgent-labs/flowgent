@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/src"
 	messager "github.com/flowgent-labs/flowgent/messager/src"
+	sandbox "github.com/flowgent-labs/flowgent/cmd/src/sandbox"
 	"github.com/flowgent-labs/flowgent/store/src"
 	"github.com/flowgent-labs/flowgent/store/src/taskplan"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +37,9 @@ type TaskManagerConfig struct {
 	SandboxQueue      messager.IMessager
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
+	// SandboxDeploymentEnabled is true when sandbox runs as independent K8s pods.
+	// When false (standalone/all-in-one), the TM starts an embedded SandboxRunner goroutine.
+	SandboxDeploymentEnabled bool
 }
 
 // TaskManager is a persistent worker that consumes ExecutionPlans from
@@ -102,6 +107,21 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 		sw := NewSlotWorker(slotID, cfg.ID, cfg.Queue, router, cfg.Store, metrics)
 		tm.slotWorkers = append(tm.slotWorkers, sw)
 	}
+
+	// In standalone/all-in-one mode, start an embedded SandboxRunner goroutine
+	// so sandbox triggers have a local consumer. In distributed mode, sandbox
+	// runs as independent pods managed by the JM's K8sRM.
+	if !cfg.SandboxDeploymentEnabled && cfg.SandboxQueue != nil {
+		embeddedRunner := sandbox.NewSandboxRunner(
+			cfg.ID+"-sb", cfg.SandboxQueue, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
+		go func() {
+			slog.Info("embedded sandbox runner started", "id", embeddedRunner.GetID())
+			if err := embeddedRunner.Start(context.Background()); err != nil {
+				slog.Error("embedded sandbox runner stopped", "error", err)
+			}
+		}()
+	}
+
 	return tm, nil
 }
 

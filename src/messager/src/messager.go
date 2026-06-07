@@ -1,7 +1,27 @@
+// Package messager defines the inter-component messaging contract for Flowgent.
+//
+// All inter-component communication uses MQTT topics under the flowgent/v1/ prefix
+// with a hierarchical tenant/flow/run structure for observability and multi-tenancy.
+//
+// Topic hierarchy:
+//
+//	flowgent/v1/{tenantId}/flows/{flowId}/runs/{runId}/
+//	  ├── exec/plans          ← JM→TM: dispatch ExecutionPlans  ($share/tm-pool)
+//	  ├── exec/results        ← TM→JM: execution results         (point-to-point)
+//	  ├── sandbox/trigger     ← TM→Sandbox: script trigger       ($share/sandbox-pool)
+//	  ├── sandbox/result      ← Sandbox→TM: execution result     (point-to-point)
+//	  ├── notify/event        ← Publisher→Notifier              ($share/notify-pool)
+//	  └── notify/result       ← Notifier→Publisher               (point-to-point)
+//
+//	flowgent/v1/{tenantId}/flows/{flowId}/
+//	  └── ctrl/jm/create      ← Controller→JM leader
+//
+//	flowgent/v1/heartbeat/{tmId}  ← TM→JM: liveness signals
 package messager
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -9,30 +29,110 @@ import (
 	"github.com/flowgent-labs/flowgent/config/src/config"
 )
 
-// ─── Topic Constants ───────────────────────────────────────────
+// ─── Topic Prefix ──────────────────────────────────────────────
+
 const (
-	TopicPrefix       = "flowgent/v1"
-	TopicExec         = TopicPrefix + "/exec"
-	TopicExecResult   = TopicPrefix + "/exec/result"
-	TopicSandboxTrig  = TopicPrefix + "/sandbox/trigger"
-	TopicSandboxRes   = TopicPrefix + "/sandbox/result"
-	TopicHeartbeat    = TopicPrefix + "/heartbeat"
-	TopicCtrlJMCreate = TopicPrefix + "/ctrl/jm/create"
-	TopicNotifyEvent  = TopicPrefix + "/notify/event"
-	TopicNotifyResult = TopicPrefix + "/notify/result"
-	TopicNotifyPodWS  = TopicPrefix + "/notify/pod"
-	TopicNotifyQueue  = TopicPrefix + "/notify/queue"
+	// TopicPrefix is the root namespace for all Flowgent MQTT topics.
+	TopicPrefix = "flowgent/v1"
 )
 
+// ─── Topic Builders ────────────────────────────────────────────
+//
+// Each function builds a fully-qualified topic string from routing keys.
+// Shared-subscription variants prepend $share/{group}/ for load-balanced
+// consumption across multiple pods.
 
-// Message is a message with routing metadata.
-type Message struct {
+// ExecPlansTopic builds the topic for JM→TM execution plan dispatch.
+// TMs subscribe with SharedExecPlans() for load-balanced consumption.
+func ExecPlansTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SharedExecPlans is the $share subscription for TM slot workers.
+func SharedExecPlans() string {
+	return "$share/tm-pool/" + TopicPrefix + "/+/flows/+/runs/+/exec/plans"
+}
+
+// ExecResultsTopic builds the topic for TM→JM execution result callback.
+func ExecResultsTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/results", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SandboxTriggerTopic builds the topic for TM→Sandbox script trigger dispatch.
+// Sandbox pods subscribe with SharedSandboxTrigger() for load-balanced consumption.
+func SandboxTriggerTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SharedSandboxTrigger is the $share subscription for sandbox runner pods.
+func SharedSandboxTrigger() string {
+	return "$share/sandbox-pool/" + TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
+}
+
+// SandboxResultTopic builds the topic for Sandbox→TM result callback.
+func SandboxResultTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/result", TopicPrefix, tenantID, flowID, runID)
+}
+
+// HeartbeatTopic builds the topic for TM→JM liveness heartbeat.
+func HeartbeatTopic(tmID string) string {
+	return TopicPrefix + "/heartbeat/" + tmID
+}
+
+// HeartbeatWildcard is the wildcard subscription for JM to monitor all TMs.
+func HeartbeatWildcard() string {
+	return TopicPrefix + "/heartbeat/+"
+}
+
+// CtrlJMCreateTopic builds the topic for Controller→JM dedicated JM creation.
+func CtrlJMCreateTopic(tenantID, flowID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/ctrl/jm/create", TopicPrefix, tenantID, flowID)
+}
+
+// NotifyEventTopic builds the topic for publisher→Notifier event dispatch.
+// Notifier pods subscribe with SharedNotifyEvent() for load-balanced consumption.
+func NotifyEventTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/event", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SharedNotifyEvent is the $share subscription for notifier pods.
+func SharedNotifyEvent() string {
+	return "$share/notify-pool/" + TopicPrefix + "/+/flows/+/runs/+/notify/event"
+}
+
+// NotifyResultTopic builds the topic for Notifier→Publisher delivery confirmation.
+func NotifyResultTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/result", TopicPrefix, tenantID, flowID, runID)
+}
+
+// NotifyPodWSTopic builds the topic for cross-pod WebSocket message routing.
+func NotifyPodWSTopic(podID, wsID string) string {
+	return fmt.Sprintf("%s/notify/pod/%s/ws/%s", TopicPrefix, podID, wsID)
+}
+
+// NotifyPodWSWildcard builds the per-pod WS wildcard subscription.
+func NotifyPodWSWildcard(podID string) string {
+	return fmt.Sprintf("%s/notify/pod/%s/ws/+", TopicPrefix, podID)
+}
+
+// NotifyQueueWildcard builds the wildcard subscription for notifier queue consumers.
+func NotifyQueueWildcard() string {
+	return "$share/notify-pool/" + TopicPrefix + "/+/flows/+/runs/+/notify/event"
+}
+
+// ─── InterMessage ──────────────────────────────────────────────
+
+// InterMessage is the standard envelope for all inter-component MQTT messages.
+type InterMessage struct {
 	ID      string            `json:"id"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Payload []byte            `json:"payload,omitempty"`
 }
 
-// Heartbeat is a TM liveness signal.
+
+// ─── Heartbeat ─────────────────────────────────────────────────
+
+// Heartbeat is a TM liveness signal published periodically.
 type Heartbeat struct {
 	TMID      string    `json:"tm_id"`
 	Timestamp time.Time `json:"timestamp"`
@@ -40,13 +140,25 @@ type Heartbeat struct {
 	Capacity  int       `json:"capacity"`
 }
 
+// SandboxHeartbeat is a sandbox pod liveness signal.
+type SandboxHeartbeat struct {
+	PodID     string    `json:"pod_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Load      int       `json:"load"`
+	Capacity  int       `json:"capacity"`
+}
+
+// ─── SubHandler ────────────────────────────────────────────────
+
 // SubHandler receives messages from a subscribed topic.
 type SubHandler func(topic string, payload []byte)
 
-// Messager is the unified message queue interface.
+// ─── IMessager Interface ───────────────────────────────────────
+
+// IMessager is the unified message queue interface for inter-component communication.
 type IMessager interface {
 	// Publish sends msg to the given topic.
-	Publish(ctx context.Context, topic string, msg *Message) error
+	Publish(ctx context.Context, topic string, msg *InterMessage) error
 
 	// Subscribe registers handler for the given topic. Non-blocking.
 	Subscribe(ctx context.Context, topic string, handler SubHandler) error
@@ -61,8 +173,7 @@ type IMessager interface {
 	Close() error
 }
 
-
-
+// ─── MessagerManager ───────────────────────────────────────────
 
 // MessagerManager is the unified entry point for messaging implementations.
 // It embeds IMessager so all messaging operations are directly available.

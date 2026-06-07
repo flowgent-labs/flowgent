@@ -13,6 +13,14 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	a2apkg "github.com/flowgent-labs/flowgent/cmd/src/a2a"
+	apiserverpkg "github.com/flowgent-labs/flowgent/cmd/src/apiserver"
+	controllerpkg "github.com/flowgent-labs/flowgent/cmd/src/controller"
+	jmpkg "github.com/flowgent-labs/flowgent/cmd/src/jobmanager"
+	notifierpkg "github.com/flowgent-labs/flowgent/cmd/src/notifier"
+	sandboxpkg "github.com/flowgent-labs/flowgent/cmd/src/sandbox"
+	tmpkg "github.com/flowgent-labs/flowgent/cmd/src/taskmanager"
 )
 
 var (
@@ -80,7 +88,7 @@ var allInOneStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start all-in-one mode",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAllInOne("start", pidAllInOne)
+		return apiserverpkg.StartAllInOne(cfgPath, pidAllInOne)
 	},
 }
 
@@ -88,7 +96,7 @@ var allInOneStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop all-in-one mode",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAllInOne("stop", pidAllInOne)
+		return apiserverpkg.StopAllInOne(pidAllInOne)
 	},
 }
 
@@ -96,7 +104,7 @@ var allInOneRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart all-in-one mode",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAllInOne("restart", pidAllInOne)
+		return apiserverpkg.RestartAllInOne(cfgPath, pidAllInOne)
 	},
 }
 
@@ -114,7 +122,7 @@ var apiserverStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAPIServer("start", pidAPIServer)
+		return apiserverpkg.Start(cfgPath, pidAPIServer)
 	},
 }
 
@@ -122,7 +130,7 @@ var apiserverStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAPIServer("stop", pidAPIServer)
+		return apiserverpkg.Stop(pidAPIServer)
 	},
 }
 
@@ -130,7 +138,7 @@ var apiserverRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runAPIServer("restart", pidAPIServer)
+		return apiserverpkg.Restart(cfgPath, pidAPIServer)
 	},
 }
 
@@ -148,7 +156,7 @@ var a2aStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the A2A server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runA2AServer("start", pidA2A)
+		return a2apkg.Start(cfgPath, pidA2A)
 	},
 }
 
@@ -156,7 +164,7 @@ var a2aStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the A2A server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runA2AServer("stop", pidA2A)
+		return a2apkg.Stop(pidA2A)
 	},
 }
 
@@ -164,7 +172,7 @@ var a2aRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the A2A server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runA2AServer("restart", pidA2A)
+		return a2apkg.Restart(cfgPath, pidA2A)
 	},
 }
 
@@ -186,7 +194,7 @@ var controllerStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Controller",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runController("start", pidController)
+		return controllerpkg.Start(cfgPath, pidController)
 	},
 }
 
@@ -194,7 +202,7 @@ var controllerStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the Controller",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runController("stop", pidController)
+		return controllerpkg.Stop(pidController)
 	},
 }
 
@@ -202,7 +210,7 @@ var controllerRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the Controller",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runController("restart", pidController)
+		return controllerpkg.Restart(cfgPath, pidController)
 	},
 }
 
@@ -220,12 +228,10 @@ var jobmanagerStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the JobManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// --flow-id sets the dedicated flow for application mode.
-		// When set, the JM skips tenant-wide scanning and only handles this flow.
 		if jmFlowID != "" {
 			os.Setenv("FLOWGENT_AGENTFLOW_ID", jmFlowID)
 		}
-		return runJobManager("start", pidJobManager)
+		return jmpkg.Start(cfgPath, pidJobManager)
 	},
 }
 
@@ -233,7 +239,7 @@ var jobmanagerStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the JobManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runJobManager("stop", pidJobManager)
+		return jmpkg.Stop(pidJobManager)
 	},
 }
 
@@ -241,7 +247,7 @@ var jobmanagerRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the JobManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runJobManager("restart", pidJobManager)
+		return jmpkg.Restart(cfgPath, pidJobManager)
 	},
 }
 
@@ -259,7 +265,7 @@ var taskmanagerStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the TaskManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runTaskManager("start", pidTaskManager)
+		return tmpkg.Start(cfgPath, pidTaskManager)
 	},
 }
 
@@ -267,7 +273,7 @@ var taskmanagerStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the TaskManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runTaskManager("stop", pidTaskManager)
+		return tmpkg.Stop(pidTaskManager)
 	},
 }
 
@@ -275,7 +281,7 @@ var taskmanagerRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the TaskManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runTaskManager("restart", pidTaskManager)
+		return tmpkg.Restart(cfgPath, pidTaskManager)
 	},
 }
 
@@ -293,7 +299,7 @@ var sandboxStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the sandbox worker",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSandbox("start", pidSandbox)
+		return sandboxpkg.Start(pidSandbox)
 	},
 }
 
@@ -301,7 +307,7 @@ var sandboxStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the sandbox worker",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSandbox("stop", pidSandbox)
+		return sandboxpkg.Stop(pidSandbox)
 	},
 }
 
@@ -309,12 +315,11 @@ var sandboxRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the sandbox worker",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSandbox("restart", pidSandbox)
+		return sandboxpkg.Restart(pidSandbox)
 	},
 }
 
 // ═══════════════════════════════════════════════════════════════
-
 // 8. notifier — multi-channel push (WebSocket + Slack/Telegram/...)
 // ═══════════════════════════════════════════════════════════════
 
@@ -328,7 +333,7 @@ var notifierStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the notifier service",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runNotifier("start", pidNotifier)
+		return notifierpkg.Start(cfgPath, pidNotifier)
 	},
 }
 
@@ -336,7 +341,7 @@ var notifierStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the notifier service",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runNotifier("stop", pidNotifier)
+		return notifierpkg.Stop(pidNotifier)
 	},
 }
 
@@ -344,7 +349,7 @@ var notifierRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the notifier service",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runNotifier("restart", pidNotifier)
+		return notifierpkg.Restart(cfgPath, pidNotifier)
 	},
 }
 
@@ -493,7 +498,6 @@ func main() {
 	sandboxCmd.AddCommand(sandboxStartCmd)
 	sandboxCmd.AddCommand(sandboxStopCmd)
 	sandboxCmd.AddCommand(sandboxRestartCmd)
-
 
 	// 8. notifier
 	rootCmd.AddCommand(notifierCmd)

@@ -10,7 +10,7 @@ spec:
   accessModes: [ReadWriteMany]
   resources:
     requests:
-      storage: {{ .Values.taskmanager.sandbox.workspaceSize | default "10Gi" }}
+      storage: {{ .Values.sandbox.workspaceSize | default "10Gi" }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -52,45 +52,16 @@ spec:
             - name: FLOWGENT_TM_SLOTS
               value: {{ .Values.taskmanager.slots | quote }}
             - name: FLOWGENT_SANDBOX_WORKSPACE
-              value: {{ .Values.taskmanager.sandbox.workspace | quote }}
+              value: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # ── Credential injection for inline sandbox scripts ──
-            - name: NEXUS3_URL
-              value: {{ .Values.taskmanager.sandbox.credentials.nexus3.url | default "http://nexus3:8081" | quote }}
-            - name: NEXUS3_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.taskmanager.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
-                  key: username
-                  optional: true
-            - name: NEXUS3_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.taskmanager.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
-                  key: password
-                  optional: true
-            - name: SONATYPEIQ_URL
-              value: {{ .Values.taskmanager.sandbox.credentials.sonatypeiq.url | default "http://sonatypeiq:8070" | quote }}
-            - name: SONATYPEIQ_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.taskmanager.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
-                  key: username
-                  optional: true
-            - name: SONATYPEIQ_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.taskmanager.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
-                  key: password
-                  optional: true
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
             - name: sandbox-workspace
-              mountPath: {{ .Values.taskmanager.sandbox.workspace }}
+              mountPath: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" }}
           resources:
             {{- toYaml .Values.taskmanager.resources | nindent 12 }}
       volumes:

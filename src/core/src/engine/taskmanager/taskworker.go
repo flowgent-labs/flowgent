@@ -53,7 +53,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 	slog.Info("slot worker started", "tm_id", sw.tmID, "slot_id", sw.id)
 	defer slog.Info("slot worker stopped", "tm_id", sw.tmID, "slot_id", sw.id)
 
-	sw.q.Subscribe(ctx, messager.TopicExec, func(topic string, payload []byte) {
+	sw.q.Subscribe(ctx, messager.SharedExecPlans(), func(topic string, payload []byte) {
 		var plan model.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
 			slog.Error("slot worker cannot unmarshal execution plan", "error", err)
@@ -108,7 +108,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *model.ExecutionP
 		"node_id":          plan.NodeID,
 		"state":            string(plan.State),
 	})
-	_ = sw.q.Publish(ctx, messager.TopicExecResult, &messager.Message{
+	_ = sw.q.Publish(ctx, messager.ExecResultsTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID), &messager.InterMessage{
 		ID:      fmt.Sprintf("status-%s-%s", plan.AgentFlowRunID, plan.NodeID),
 		Headers: map[string]string{"task_run_id": plan.AgentFlowRunID, "node_id": plan.NodeID},
 		Payload: b,

@@ -27,7 +27,7 @@ func startHeartbeat(tmID string, q messager.IMessager, interval time.Duration) {
 		for range ticker.C {
 			hb := &messager.Heartbeat{TMID: tmID, Timestamp: time.Now()}
 			data, _ := json.Marshal(hb)
-			_ = q.Publish(context.Background(), messager.TopicHeartbeat, &messager.Message{
+			_ = q.Publish(context.Background(), messager.HeartbeatTopic(tmID), &messager.InterMessage{
 				ID:      fmt.Sprintf("hb-%s-%d", tmID, time.Now().UnixNano()),
 				Payload: data,
 			})
@@ -78,7 +78,7 @@ func (hm *HeartbeatMonitor) ActiveTMs() []TMState {
 }
 
 func (hm *HeartbeatMonitor) Start(ctx context.Context) {
-	hm.q.Subscribe(ctx, messager.TopicHeartbeat, func(topic string, payload []byte) {
+	hm.q.Subscribe(ctx, messager.HeartbeatWildcard(), func(topic string, payload []byte) {
 		var hb messager.Heartbeat
 		if err := json.Unmarshal(payload, &hb); err != nil {
 			return

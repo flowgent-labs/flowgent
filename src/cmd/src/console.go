@@ -10,13 +10,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/flowgent-labs/flowgent/cmd/src/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/src/config"
+	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src"
 	"github.com/flowgent-labs/flowgent/store/src/agentflow"
-	"github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/store/src/flowrun"
 	"github.com/flowgent-labs/flowgent/store/src/taskplan"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func startConsole() {
@@ -35,10 +37,10 @@ func startConsole() {
 	}
 
 	if verbose {
-		logConfig(serviceCfg)
+		cmdutil.LogConfig(serviceCfg)
 	}
 
-	storeImpl := initStore(serviceCfg)
+	storeImpl := cmdutil.InitStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
 	ctx := context.Background()

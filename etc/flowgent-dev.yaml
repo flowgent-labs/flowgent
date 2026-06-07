@@ -125,7 +125,6 @@ messaging:
   mqtt:
     broker: "tcp://127.0.0.1:1883"
     client_id: "flowgent"
-    topic_prefix: "flowgent/exec"
     username: ""
     password: ""
 
@@ -279,9 +278,10 @@ orchestration:
     standard:
       enabled: false                # DB-backed agentflows (future Flowgent UI)
 
-# ── Sandbox (inline in TaskManager) ────────────────────────────────────────────
-#    Secure script execution runs inside TM pods — no separate deployment.
-#    Resource limits come from the TM pod spec, not from sandbox policy.
+# ── Sandbox — Secure Script Execution Worker ─────────────────────────────────
+#    In standalone/all-in-one mode (deployment.enabled=false), sandbox runs inline
+#    in the TM process. In distributed mode (deployment.enabled=true), sandbox runs
+#    as independent K8s pods managed by JM's K8sRM.
 sandbox:
   workspace: "/var/flowgent/workspace"   # shared PVC, per-{tenant}/{flow_id} subdirs
   policy:
@@ -293,6 +293,14 @@ sandbox:
     banned_commands: []            # e.g. ["curl", "wget"]
     default_timeout: 120s
     max_timeout: 600s
+  deployment:
+    enabled: false                 # false = inline in TM (standalone), true = independent K8s pods
+    min_replicas: 2
+    max_replicas: 10
+    resources:
+      cpu: "500m"
+      memory: "512Mi"
+    slots_per_pod: 4
 
 # ── Notifier Service ─────────────────────────────────────────────────────
 notifier:

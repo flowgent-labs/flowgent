@@ -55,6 +55,17 @@ type ResourceManagerConfig struct {
 	AutoScale         bool // true=application mode (JM auto-scales TMs), false=session (admin-managed)
 	TMImage           string
 	PlanTimeout       time.Duration
+
+	// Sandbox deployment settings (for K8sRM in distributed mode)
+	SandboxEnabled        bool
+	SandboxImage          string
+	SandboxDeploymentName string
+	SandboxMinReplicas    int
+	SandboxMaxReplicas    int
+	SandboxSlotsPerPod    int
+	SandboxResources      *model.SandboxResources
+	SandboxWorkspace      string
+	SandboxPolicy         *model.SandboxPolicy
 }
 
 // ─── Factory ──────────────────────────────────────────────────

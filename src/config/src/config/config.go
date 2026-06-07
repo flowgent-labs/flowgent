@@ -208,10 +208,14 @@ type OrchestrationConfig struct {
 	MaxNodeRetries       int         `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
-// SandboxConfig configures the inline sandbox execution environment (runs inside TM pods).
+// SandboxConfig configures the sandbox execution environment.
+// In standalone/all-in-one mode (Deployment.Enabled=false), sandbox runs inline in TM.
+// In distributed mode (Deployment.Enabled=true), sandbox runs as independent K8s pods
+// managed by the JM's K8sRM with its own Deployment, scaling, and resource limits.
 type SandboxConfig struct {
-	Workspace string               `json:"workspace" yaml:"workspace"`
-	Policy    *model.SandboxPolicy `json:"policy" yaml:"policy"`
+	Workspace  string                       `json:"workspace" yaml:"workspace"`
+	Policy     *model.SandboxPolicy         `json:"policy" yaml:"policy"`
+	Deployment model.SandboxDeploymentConfig `json:"deployment" yaml:"deployment"`
 }
 
 // MessagingConfig configures the message queue for inter-component communication.
@@ -222,11 +226,10 @@ type MessagingConfig struct {
 
 // MQTTConfig is the MQTT broker connection settings.
 type MQTTConfig struct {
-	Broker      string `json:"broker" yaml:"broker"`
-	ClientID    string `json:"client_id" yaml:"client_id"`
-	TopicPrefix string `json:"topic_prefix" yaml:"topic_prefix"`
-	Username    string `json:"username" yaml:"username"`
-	Password    string `json:"password" yaml:"password"`
+	Broker   string `json:"broker" yaml:"broker"`
+	ClientID string `json:"client_id" yaml:"client_id"`
+	Username string `json:"username" yaml:"username"`
+	Password string `json:"password" yaml:"password"`
 }
 
 // LockConfig configures the distributed lock provider.

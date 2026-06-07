@@ -76,10 +76,10 @@ data:
         static: { enabled: false }
         standard: { enabled: true }
     messaging:
-      type: {{ .Values.queue.type | quote }}
+      type: {{ .Values.messaging.type | quote }}
       mqtt:
         broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
-        topic_prefix: {{ .Values.queue.topicPrefix | quote }}
+        client_id: "flowgent"
     lock:
       provider: postgres
     notifier:
@@ -91,11 +91,19 @@ data:
     credential-paths:
       base-path: {{ .Values.global.credentialPaths.basePath | default "/var/secret/flowgent" | quote }}
     sandbox:
-      workspace: {{ .Values.taskmanager.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
+      workspace: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
       policy:
         network:
-          mode: {{ .Values.taskmanager.sandbox.policy.network.mode | default "none" | quote }}
-        allowed_runtimes: {{ .Values.taskmanager.sandbox.policy.allowedRuntimes | toJson }}
-        banned_commands: {{ .Values.taskmanager.sandbox.policy.bannedCommands | toJson }}
-        default_timeout: {{ .Values.taskmanager.sandbox.policy.defaultTimeout | default "120s" | quote }}
-        max_timeout: {{ .Values.taskmanager.sandbox.policy.maxTimeout | default "600s" | quote }}
+          mode: {{ .Values.sandbox.policy.network.mode | default "none" | quote }}
+        allowed_runtimes: {{ .Values.sandbox.policy.allowedRuntimes | toJson }}
+        banned_commands: {{ .Values.sandbox.policy.bannedCommands | toJson }}
+        default_timeout: {{ .Values.sandbox.policy.defaultTimeout | default "120s" | quote }}
+        max_timeout: {{ .Values.sandbox.policy.maxTimeout | default "600s" | quote }}
+      deployment:
+        enabled: true
+        min_replicas: {{ .Values.sandbox.replicas | default 2 }}
+        max_replicas: {{ add (.Values.sandbox.replicas | default 2) 5 }}
+        resources:
+          cpu: {{ .Values.sandbox.resources.limits.cpu | default "2" | quote }}
+          memory: {{ .Values.sandbox.resources.limits.memory | default "2Gi" | quote }}
+        slots_per_pod: {{ .Values.sandbox.slots | default 4 }}

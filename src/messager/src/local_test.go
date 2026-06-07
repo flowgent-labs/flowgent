@@ -22,7 +22,7 @@ func TestLocalMessager_PublishSubscribe(t *testing.T) {
 		close(done)
 	})
 
-	q.Publish(ctx, "test/topic", &Message{ID: "msg-1", Payload: []byte("hello")})
+	q.Publish(ctx, "test/topic", &InterMessage{ID: "msg-1", Payload: []byte("hello")})
 
 	select {
 	case <-done:
@@ -56,7 +56,7 @@ func TestLocalMessager_MultipleSubscribers(t *testing.T) {
 		mu.Unlock()
 	})
 
-	q.Publish(ctx, "topic/a", &Message{ID: "fanout-1", Payload: []byte("x")})
+	q.Publish(ctx, "topic/a", &InterMessage{ID: "fanout-1", Payload: []byte("x")})
 
 	time.Sleep(100 * time.Millisecond)
 	mu.Lock()
@@ -76,7 +76,7 @@ func TestLocalMessager_TopicIsolation(t *testing.T) {
 		called = true
 	})
 
-	q.Publish(ctx, "topic/b", &Message{ID: "other", Payload: []byte("x")})
+	q.Publish(ctx, "topic/b", &InterMessage{ID: "other", Payload: []byte("x")})
 
 	time.Sleep(50 * time.Millisecond)
 	if called {

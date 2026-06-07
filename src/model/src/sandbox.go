@@ -2,15 +2,47 @@
 //
 // File: sandbox.go — Sandbox security policy and resources consumed by sandbox worker.
 //
-//	SandboxPolicy, NetworkPolicy, SandboxPolicyOverride, SandboxResources.
+//	SandboxPolicy, NetworkPolicy, SandboxPolicyOverride, SandboxResources,
+//	SandboxTrigger, SandboxDeploymentConfig.
 package model
 
 // ─── Sandbox resources ───────────────────────────────────────
 
-// SandboxResources defines CPU/memory limits for a sandbox node.
+// SandboxResources defines CPU/memory limits for a sandbox execution or pod.
 type SandboxResources struct {
 	CPU    string `json:"cpu,omitempty" yaml:"cpu,omitempty"`       // e.g. "500m"
 	Memory string `json:"memory,omitempty" yaml:"memory,omitempty"` // e.g. "256Mi"
+}
+
+// ─── Sandbox trigger (TM → Sandbox) ──────────────────────────
+
+// SandboxTrigger is the message published from SandboxExecutor (TM side) to
+// SandboxRunner pods via MQTT. Defined in model so both sides share the contract.
+type SandboxTrigger struct {
+	FlowID        string            `json:"flow_id"`
+	RunID         string            `json:"run_id"`
+	PlanID        string            `json:"plan_id"`
+	ScriptPath    string            `json:"script_path"`
+	Runtime       string            `json:"runtime"`
+	Timeout       string            `json:"timeout"`
+	Resources     *SandboxResources `json:"resources,omitempty"`
+	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty"`
+	Workspace     string            `json:"workspace,omitempty"`
+	SpanID        string            `json:"span_id"`
+}
+
+// ─── Sandbox deployment config ───────────────────────────────
+
+// SandboxDeploymentConfig defines K8s deployment settings for sandbox pods.
+// When Enabled=false (default), sandbox runs inline in TM (standalone/all-in-one).
+// When Enabled=true, JM's K8sRM manages a separate sandbox Deployment.
+type SandboxDeploymentConfig struct {
+	Enabled      bool              `json:"enabled" yaml:"enabled"`
+	Image        string            `json:"image,omitempty" yaml:"image,omitempty"`
+	MinReplicas  int               `json:"min_replicas,omitempty" yaml:"min_replicas,omitempty"`
+	MaxReplicas  int               `json:"max_replicas,omitempty" yaml:"max_replicas,omitempty"`
+	Resources    *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+	SlotsPerPod  int               `json:"slots_per_pod,omitempty" yaml:"slots_per_pod,omitempty"`
 }
 
 // ─── Sandbox security policy ─────────────────────────────────

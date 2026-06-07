@@ -26,7 +26,7 @@ func TestMQTTMessager_PublishSubscribe(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond) // let subscription settle
 
-	if err := q.Publish(ctx, "flowgent/ut/test", &Message{ID: "m1", Payload: []byte("hello-mqtt")}); err != nil {
+	if err := q.Publish(ctx, "flowgent/ut/test", &InterMessage{ID: "m1", Payload: []byte("hello-mqtt")}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 

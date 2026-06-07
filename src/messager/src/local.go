@@ -19,7 +19,7 @@ func NewLocalMessager(size int) *LocalMessager {
 	}
 }
 
-func (q *LocalMessager) Publish(ctx context.Context, topic string, msg *Message) error {
+func (q *LocalMessager) Publish(ctx context.Context, topic string, msg *InterMessage) error {
 	q.mu.Lock()
 	handlers := q.subs[topic]
 	q.mu.Unlock()

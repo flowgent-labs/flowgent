@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	model "github.com/flowgent-labs/flowgent/model/src"
 	"github.com/flowgent-labs/flowgent/sandbox/src/seccomp"
 )
 
 // execute validates policy and dispatches to process or Docker executor.
-func (w *SandboxRunner) execute(ctx context.Context, trigger *sandboxTrigger, script string) *model.TaskResult {
+func (w *SandboxRunner) execute(ctx context.Context, trigger *model.SandboxTrigger, script string) *model.TaskResult {
 	runtime := trigger.Runtime
 	if runtime == "" {
 		runtime = "bash"

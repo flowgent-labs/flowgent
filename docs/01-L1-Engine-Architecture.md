@@ -1,7 +1,7 @@
 # Flowgent Distributed Orchestration Engine Architecture
 
-**Date:** 2026-05-27
-**Status:** Implemented — Go multi-module (core + sandbox-exec), seccomp-bpf sandbox isolation, three-phase architecture (Design→Schedule→Execute), E2E verified on k3s
+**Date:** 2026-06-06
+**Status:** Implemented — Go multi-module (core + sandbox), seccomp-bpf sandbox isolation + K8s pod-level isolation, three-phase architecture (Design→Schedule→Execute), sandbox as independent pods managed by JM via K8sRM, E2E verified on k3s
 
 ---
 
@@ -60,16 +60,16 @@ PHASE 3 — Execution (Async)                       │
   TaskManager (N pods × M slots)                   │
   • $share/tm-pool: consume ExecutionPlans         │
   • ExecutorRouter: 12 node types                  │
-  • Skill/sandbox nodes → sandbox(seccomp) inline  │
+  • Skill/sandbox nodes → dispatch via MQTT to SB   │
   • MQTT: exec.result.{runID}.{planID} ────────────┤  → status to JM
   • PUT /runs/{id}/tasks/{tid} (apiserver)          │
        │                                           │
        ▼                                           │
-  [Sandbox(seccomp)] — inline in TM slot           │
-  • NOT a separate pod                             │
-  • Reads scripts from workspace volume            │
-  • seccomp-bpf network isolation per execution    │
-  • Result returned directly to TM slot            │
+  Sandbox (N pods, independent Deployment)         │
+  • $share/sandbox-pool: consume triggers from TM  │
+  • Separate K8s pods — pod-level + seccomp-bpf    │
+  • Shares workspace PVC with TM pods              │
+  • MQTT: sandbox.result.{flowId}.{runId} → TM     │
                                                    │
   Notifier                                         │
   • $share/notify-pool: consume events             │
@@ -87,7 +87,7 @@ PHASE 3 — Execution (Async)                       │
 |------------|--------|
 | **Only apiserver connects to DB** | Single PG/SQLite client with flow cache |
 | **All other components: MQTT or apiserver REST** | controller, JM, TM, sandbox, notifier — no direct DB |
-| **Management chain** | controller → JM → TM (sandbox is inline in TM, not separate) |
+| **Management chain** | controller → JM → TM + Sandbox (JM manages both via K8sRM) |
 | **State writes via apiserver** | POST/PUT REST API for run/task status updates |
 | **Real-time dispatch via MQTT** | ExecutionPlan distribution, sandbox triggers, notifier events |
 | **Internal communication: MQTT only** | No SSE/WS between components; WS is notifier→UI only |
@@ -119,7 +119,7 @@ mode: session         # "session" or "application"
 | controller | — | **Helm** | Only in application mode — polls PG, creates dynamic JMs |
 | jobmanager | **Helm** | **Controller (dynamic)** | Session: shared pool. App: `buildJMDeployment()` per-flow |
 | taskmanager | **Helm** | **JM auto-scale** | Session: admin-managed replicas. App: JM's K8s RM scales |
-| sandbox | **In-TM (inline)** | **In-TM (inline)** | NOT a separate pod. TM slots fork+exec sandbox(seccomp) wrapper inline per skill node. seccomp-bpf filter installed/destroyed per execution at syscall level. Equivalent to Flink's operator-chain concept — no extra pod scheduling. |
+| sandbox | **Separate pods** | **Separate pods** | Independent K8s Deployment managed by JM's K8sRM alongside TM Deployment. Pod-level seccomp profile (RuntimeDefault) + per-execution seccomp-bpf filtering = defense-in-depth. JM's scaling goroutine manages both TM and sandbox replicas. Shares workspace PVC with TM. |
 | notifier | Helm | Helm | Both modes. Session: shared workspace vol. App: dedicated vol. |
 | a2a | optional | optional | `--set a2a.enabled=true` |
 | wallet | optional | optional | `--set wallet.enabled=true` |
@@ -129,7 +129,7 @@ mode: session         # "session" or "application"
 ```graph
 apiserver + jobmanager + taskmanager + notifier
 ```
-Note: sandbox is NOT a separate pod — TM slots call sandbox(seccomp) inline.
+Note: sandbox runs as independent pods managed by JM's K8sRM, sharing workspace PVC with TM.
 
 API Server handles triggers directly → creates PENDING runs → JM poller executes.
 
@@ -139,7 +139,7 @@ API Server handles triggers directly → creates PENDING runs → JM poller exec
 apiserver + controller + notifier
 ```
 
-Controller watches apiserver → creates dedicated jobmanager for grade-priority flows. TM pods auto-scale via K8sRM. Sandbox runs inline in TM slots (no separate pods).
+Controller watches apiserver → creates dedicated jobmanager for grade-priority flows. JM's K8sRM auto-scales both TM and sandbox pods.
 
 | | Session | Application |
 |---|---|---|
@@ -259,7 +259,7 @@ flowgent.io/mode:         "session" | "application"
 | **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
 | **JM unification: same binary, same DAG engine for both modes** | Session: `jobmanager start` → apiserver GET runs. Application: `jobmanager start --flow-id <id>` → apiserver GET runs for that flow. |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
-| **Sandbox inline in TM, not a separate pod (Flink-aligned)** | Flink's boundary stops at TM pod — operators execute in-process, not in separate pods. Making sandbox a separate pod would require TM to embed a "sandbox-RM" (analogous to JM's K8sRM) just to manage sandbox pods — an unnecessary layer. Scripts are agent-generated at runtime (unpredictable count/lifetime), making pod pre-allocation impossible. Inline fork+exec via seccomp-bpf wrapper delivers ms-level startup vs seconds for pod creation. 95% of use cases are covered by inline isolation; a future "hard isolation" mode (firecracker/gVisor microVM) can be added as an escape hatch for untrusted third-party code. |
+| **Sandbox as independent pods managed by JM (defense-in-depth)** | Sandbox runs as separate K8s pods managed by JM's K8sRM (same goroutine pattern as TM scaling). The JM — as the job/flow-level orchestrator — is the natural owner for both TM and sandbox lifecycle. Two-layer isolation: pod-level (K8s NetworkPolicy + seccomp RuntimeDefault profile) blocks broad egress at the CNI/container runtime layer; process-level (seccomp-bpf + userspace notifier) enforces per-flow per-node dynamic allowlists. Independent CPU/mem/volume limits prevent noisy-neighbor resource contention between TM and sandbox. TM and sandbox share a ReadWriteMany PVC organized by flowId directory — TM writes scripts, sandbox executes them, TM reads results from the same volume. |
 | **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-flow per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See §15 for full design. |
 
 ---
@@ -537,49 +537,57 @@ All inter-component communication flows through MQTT topics under a unified
 namespace. The hierarchy isolates tenants and supports both session and
 application deployment modes.
 
-### 7.1 Topic Hierarchy (New Architecture)
+### 7.1 Topic Hierarchy
 
-All inter-component real-time communication via MQTT. Only apiserver touches DB.
+All inter-component communication uses MQTT topics under `flowgent/v1/` with
+a hierarchical `{tenantId}/flows/{flowId}/runs/{runId}` structure for
+observability and multi-tenant isolation. Only apiserver touches DB.
 
 ```
-# ── Controller → JM ───────────────────────────────────────────
-flowgent/v1/ctrl/jm/create/{tenant}/{flowId}
+# ── Execution Plan Dispatch: JM → TM ──────────────────────────
+flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/plans
+  JM publishes: serialized ExecutionPlan JSON
+  TM subscribes via $share/tm-pool/.../exec/plans (load-balanced)
+  → All routing info visible in topic for debugging
+
+# ── Execution Result: TM → JM ─────────────────────────────────
+flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results
+  TM publishes: TaskResult JSON (status, output, error)
+  JM subscribes per-run: JM polls results for active runs
+
+# ── Sandbox Trigger: TM → Sandbox ─────────────────────────────
+flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/trigger
+  TM publishes: model.SandboxTrigger (flowId, runId, scriptPath, ...)
+  Sandbox subscribes via $share/sandbox-pool/.../sandbox/trigger (load-balanced)
+
+# ── Sandbox Result: Sandbox → TM ──────────────────────────────
+flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result
+  Sandbox publishes: TaskResult JSON (stdout, stderr, exit_code)
+  TM (originating slot only) subscribes: continues DAG execution
+
+# ── Controller → JM (dedicated JM creation) ───────────────────
+flowgent/v1/{tenant}/flows/{flowId}/ctrl/jm/create
   Controller publishes: "create dedicated JM for this flow"
   JM (leader-elected) subscribes: creates K8s JM Deployment
 
-# ── JM → TM (ExecutionPlan dispatch) ──────────────────────────
-flowgent/v1/exec/{runId}/{planId}
-  JM publishes: serialized ExecutionPlan JSON
-  TM $share/tm-pool competing consumers: dequeue & execute
+# ── Notifier Events: Publisher → Notifier ─────────────────────
+flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/notify/event
+  JM/Controller/TM publishes: notification event
+  Notifier subscribes via $share/notify-pool/.../notify/event (load-balanced)
 
-# ── TM → JM (ExecutionPlan result) ────────────────────────────
-flowgent/v1/exec/result/{runId}/{planId}
-  TM publishes: TaskResult JSON (status, output, error)
-  JM subscribes: per-run consumer goroutine, calls apiserver PUT
-
-# ── TM → Sandbox ─────────────────────────────────────────────
-flowgent/v1/sandbox/trigger/{runId}/{planId}
-  TM publishes: lightweight trigger (script path, runtime, timeout)
-  Sandbox $share/sandbox-pool: dequeue & execute
-
-# ── Sandbox → TM ─────────────────────────────────────────────
-flowgent/v1/sandbox/result/{runId}/{planId}
-  Sandbox publishes: result JSON
-  TM subscribes: calls apiserver PUT task status, continues DAG
-
-# ── Notifier ──────────────────────────────────────────────────
-flowgent/v1/notify/event/{tenant}/{flowId}
-  JM/Controller publishes: notification event
-  Notifier $share/notify: dequeue, call external IM, publish result
-
-flowgent/v1/notify/result/{tenant}/{flowId}
+# ── Notifier Results: Notifier → Publisher ────────────────────
+flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/notify/result
   Notifier publishes: delivery confirmation
-  TM slot that triggered subscribes: continues execution
+  Publisher subscribes per-run
 
-# ── TM Heartbeat ──────────────────────────────────────────────
+# ── TM Heartbeat: TM → JM ─────────────────────────────────────
 flowgent/v1/heartbeat/{tmId}
-  TM publishes: periodic heartbeat (every 15s)
-  JM subscribes heartbeat/+: detects dead TMs, triggers failover
+  TM publishes: periodic heartbeat (every 5s)
+  JM subscribes flowgent/v1/heartbeat/+: detects dead TMs, triggers failover
+
+# ── WebSocket Routing (notifier-internal) ─────────────────────
+flowgent/v1/notify/pod/{podId}/ws/{wsId}
+  Cross-pod WS message delivery for human approval push
 
 # ── State Write (via apiserver, NOT MQTT) ─────────────────────
 POST /api/v1/{tenant}/runs/{id}/tasks/{tid}
@@ -609,8 +617,8 @@ POST /api/v1/{tenant}/runs/{id}/tasks/{tid}
 |-----------|-------|----------|-----------|
 | K8sRM.Schedule | `tasks/plans` | SlotWorker.Loop | `$share/tm-pool` competing consumers |
 | SlotWorker (result) | `tasks/results/{runId}/{nodeId}` | JobMaster | Point-to-point via {runId}/{nodeId} |
-| SandboxExecutor | `sandbox/triggers/{runId}/{nodeId}` | SandboxRunner | `$share/sandbox-pool` competing consumers |
-| SandboxRunner | `sandbox/results/{runId}/{nodeId}` | SandboxExecutor | Point-to-point via {runId}/{nodeId} |
+| SandboxExecutor (TM) | `sandbox/trigger/{flowId}/{runId}` | SandboxRunner (sandbox pod) | `$share/sandbox-pool` competing consumers |
+| SandboxRunner (sandbox pod) | `sandbox/result/{flowId}/{runId}` | SandboxExecutor (TM) | Point-to-point via {flowId}/{runId} |
 | Notifier.Publish | `notify/{runId}/{nodeId}` | Notifier consumer | Shared subscription per tenant |
 | TM heartbeat | `heartbeat/{tmId}` | HeartbeatMonitor | Wildcard `heartbeat/+` for all TMs |
 
@@ -630,23 +638,25 @@ by the tmID prefix — no need for separate topic branches.
 
 ```yaml
 # flowgent.yaml
-queue:
+messaging:
   type: mqtt
   mqtt:
     broker: "tcp://<host>:1883"
-    topic_prefix: "flowgent/v1/{tenant}/{flowId}"
 ```
+The topic prefix `flowgent/v1/` is a hardcoded constant in the messager package.
+Topic builders like `messager.ExecPlansTopic(tenant, flow, run)` construct the
+full hierarchical path from routing keys.
 
 ### 7.4 Fail-Fast in Distributed Mode
 
 In distributed mode (`deployment.mode: session` or `application`), MQTT is mandatory:
 
-1. Config file `queue.mqtt.broker` → try MQTT → failure = fatal
+1. Config file `messaging.mqtt.broker` → try MQTT → failure = fatal
 2. `FLOWGENT_MQTT_BROKER` env var → try MQTT → failure = fatal
 3. Neither configured → fatal: `"MQTT broker not configured"`
 
 In standalone dev / all-in-one mode, the queue silently falls back to in-memory
-(`MemoryQueue`, buffer=1000) with a warning log.
+(`LocalMessager`, buffer=1000) with a warning log.
 
 ---
 
@@ -940,7 +950,49 @@ Histogram boundaries (from sample config):
 | Supervisor actions constrained | redirect/retry/inject/abort only |
 | Human node must persist + timeout | DB-backed, resume via API |
 | Map must support nesting | Multi-level fan-out |
-| Sandbox network isolation must be per-execution, not per-pod | Network policy is defined per-flow per-node. The same sandbox pod executes scripts for different flows concurrently. Pod-level mechanisms (iptables, Istio sidecar, K8s NetworkPolicy) cannot enforce per-execution allowlists. seccomp-bpf + userspace notifier gives dynamic per-thread filtering — see §15. |
+### 15.5 Execution Model (Independent Pods + Shared Volume)
+
+The sandbox subsystem spans two Go modules communicating via MQTT and a shared PVC:
+
+```
+TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
+─────────────────────────               ─────────────────────────
+  → Build workspace path                  → $share/sandbox-pool subscribe
+  → Write script to shared PVC            → Dequeue trigger via MQTT
+  → Snapshot originals                    → Read script from shared PVC
+  → Publish trigger ───MQTT──→           → BuildFilter(network_policy)
+    topic: sandbox/trigger/               → Install seccomp (TSYNC)
+    {flowId}/{runId}                      → Start notifier goroutine
+  → Subscribe result ←──MQTT──           → Execute: bash/python3/node
+    topic: sandbox/result/                → Wait for child process exit
+    {flowId}/{runId}                      → Notifier auto-exits
+  → Read result.json from PVC            → Write result.json + status to PVC
+                                           → Publish result ───MQTT──→
+```
+
+In distributed mode, sandbox pods use `$share/sandbox-pool` shared subscription for
+load-balanced trigger consumption. The trigger topic contains `{flowId}/{runId}` so
+multiple runs don't interfere. Results use point-to-point routing via the same
+`{flowId}/{runId}` suffix — only the originating TM slot subscribes.
+
+The `SandboxTrigger` struct is defined in `model` so both sides share the contract
+without Go import coupling. The sandbox pod's K8s Deployment is created and scaled
+by JM's K8sRM — the same goroutine pattern used for TM pods.
+
+```
+Sandbox Worker (per-execution lifecycle, running in sandbox pod):
+  → $share/sandbox-pool dequeue trigger
+  → Read script from shared workspace PVC
+  → Pre-resolve allowlist hosts → IPs
+  → Build seccomp-bpf filter from resolved IPs + port list
+  → Install filter (SECCOMP_FILTER_FLAG_TSYNC)
+  → Start notifier goroutine (reads seccomp notify fd)
+  → Execute: bash/python3/node script.sh
+  → Wait for child process exit
+  → Notifier auto-exits (filter dies with child)
+  → Write result.json + status to shared PVC
+  → Push result to MQTT: sandbox/result/{flowId}/{runId}
+```
 
 ---
 
@@ -1329,32 +1381,39 @@ defense-in-depth.
 **Process mode (no Docker):** seccomp filter is the primary and only enforcement
 mechanism. Installed on the child process via `exec.Cmd.SysProcAttr`.
 
-### 15.5 Execution Model (Multi-Module)
+### 15.5 Execution Model (Independent Pods + Shared Volume)
 
-The sandbox subsystem spans two Go modules:
+The sandbox subsystem spans two Go modules communicating via MQTT and a shared PVC:
 
 ```
-src/core/ (engine)                       src/sandbox-exec/ (executor)
+TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
 ─────────────────────────               ─────────────────────────
-SandboxExecutor (TM side)               SandboxRunner (worker side)
-  → Build workspace path                  → Dequeue trigger
-  → Write script + snapshot               → Read script from path
-  → Push trigger to queue ───MQTT──→      → BuildFilter(network_policy)
-  → Pop result ←────────────MQTT──        → Install seccomp (TSYNC)
-                                           → Start notifier goroutine
-                                           → Execute script
-                                           → Write result.json
-                                           → Push result to queue
+  → Build workspace path                  → $share/sandbox-pool subscribe
+  → Write script to shared PVC            → Dequeue trigger via MQTT
+  → Snapshot originals                    → Read script from shared PVC
+  → Publish trigger ───MQTT──→           → BuildFilter(network_policy)
+    topic: sandbox/trigger/               → Install seccomp (TSYNC)
+    {flowId}/{runId}                      → Start notifier goroutine
+  → Subscribe result ←──MQTT──           → Execute: bash/python3/node
+    topic: sandbox/result/                → Wait for child process exit
+    {flowId}/{runId}                      → Notifier auto-exits
+  → Read result.json from PVC            → Write result.json + status to PVC
+                                           → Publish result ───MQTT──→
 ```
 
-Communication between modules is via queue messages only — no Go import dependency.
-The `SandboxExecutor` in core and `SandboxRunner` in sandbox-exec share the trigger
-message format (defined in core's `model.SandboxTrigger`) and the workspace volume.
+In distributed mode, sandbox pods use `$share/sandbox-pool` shared subscription for
+load-balanced trigger consumption. The trigger topic contains `{flowId}/{runId}` so
+multiple runs don't interfere. Results use point-to-point routing via the same
+`{flowId}/{runId}` suffix — only the originating TM slot subscribes.
+
+The `SandboxTrigger` struct is defined in `model` so both sides share the contract
+without Go import coupling. The sandbox pod's K8s Deployment is created and scaled
+by JM's K8sRM — the same goroutine pattern used for TM pods.
 
 ```
-Sandbox Worker (per-execution lifecycle):
-  → Dequeue trigger
-  → Read script from workspace path
+Sandbox Worker (per-execution lifecycle, running in sandbox pod):
+  → $share/sandbox-pool dequeue trigger
+  → Read script from shared workspace PVC
   → Pre-resolve allowlist hosts → IPs
   → Build seccomp-bpf filter from resolved IPs + port list
   → Install filter (SECCOMP_FILTER_FLAG_TSYNC)
@@ -1362,8 +1421,8 @@ Sandbox Worker (per-execution lifecycle):
   → Execute: bash/python3/node script.sh
   → Wait for child process exit
   → Notifier auto-exits (filter dies with child)
-  → Write result.json + status to workspace path
-  → Push result to queue
+  → Write result.json + status to shared PVC
+  → Push result to MQTT: sandbox/result/{flowId}/{runId}
 ```
 
 
@@ -1430,7 +1489,11 @@ Secrets never appear in flow YAML or workspace files.
 ### 15.8 CLI
 
 ```bash
-./bin/flowgent sandbox start
+# Start sandbox as standalone pod (distributed mode)
+./bin/flowgent sandbox start -c etc/flowgent.yaml
+
+# Or as part of all-in-one (embedded runner, no separate process)
+./bin/flowgent all-in-one start -c etc/flowgent.yaml
 ```
 
 ---
