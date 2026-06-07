@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	a2apkg "github.com/flowgent-labs/flowgent/cmd/pkg/a2a"
+	allinonepkg "github.com/flowgent-labs/flowgent/cmd/pkg/allinone"
 	apiserverpkg "github.com/flowgent-labs/flowgent/cmd/pkg/apiserver"
 	controllerpkg "github.com/flowgent-labs/flowgent/cmd/pkg/controller"
 	jmpkg "github.com/flowgent-labs/flowgent/cmd/pkg/jobmanager"
@@ -88,7 +89,7 @@ var allInOneStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start all-in-one mode",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return apiserverpkg.StartAllInOne(cfgPath, pidAllInOne)
+		return allinonepkg.Start(cfgPath, pidAllInOne)
 	},
 }
 
@@ -96,7 +97,7 @@ var allInOneStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop all-in-one mode",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return apiserverpkg.StopAllInOne(pidAllInOne)
+		return allinonepkg.Stop(pidAllInOne)
 	},
 }
 
@@ -104,7 +105,7 @@ var allInOneRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart all-in-one mode",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return apiserverpkg.RestartAllInOne(cfgPath, pidAllInOne)
+		return allinonepkg.Restart(cfgPath, pidAllInOne)
 	},
 }
 

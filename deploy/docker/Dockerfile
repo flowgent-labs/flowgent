@@ -7,7 +7,7 @@ ENV GOPROXY=https://goproxy.cn,direct
 ARG BUILD_TS=0
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=.,target=/build \
-    cd /build/src/cmd && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent ./src/flowgent/
+    cd /build/pkg/cmd && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent ./pkg/
 
 # ─── Stage 2: Export (used by `make build`) ─────────────────
 FROM scratch AS export

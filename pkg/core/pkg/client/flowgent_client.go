@@ -10,12 +10,12 @@ import (
 	"net/http"
 	"os"
 
-	store "github.com/flowgent-labs/flowgent/store/pkg"
 	model "github.com/flowgent-labs/flowgent/model/pkg"
+	store "github.com/flowgent-labs/flowgent/store/pkg"
 )
 
-// apiserverClient provides HTTP access to the API Server.
-// Used by non-DB components (controller, JM, TM, sandbox, notifier)
+// FlowgentClient provides HTTP access to the API Server.
+// Used by non-DB components (controller, JM, TM, sandbox, notifier, a2a)
 // instead of direct PG connections.
 type FlowgentClient struct {
 	BaseURL string
@@ -30,13 +30,15 @@ func NewFlowgentClient() *FlowgentClient {
 	return &FlowgentClient{BaseURL: baseURL}
 }
 
-// listFlows calls GET /api/v1/{tenant}/agentflows
-func (c *FlowgentClient) listFlows(ctx context.Context, tenant string) ([]model.AgentFlowVersion, error) {
+// ─── AgentFlow CRUD ───────────────────────────────────────────
+
+// ListFlows returns all agentflow definitions.
+func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]model.AgentFlowVersion, error) {
 	url := fmt.Sprintf("%s/api/v1/%s/agentflows", c.BaseURL, tenant)
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("apiserver listFlows: %w", err)
+		return nil, fmt.Errorf("apiserver ListFlows: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -47,17 +49,199 @@ func (c *FlowgentClient) listFlows(ctx context.Context, tenant string) ([]model.
 	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
 		return nil, fmt.Errorf("decode flows: %w", err)
 	}
-	log.Printf("[api-client] listFlows: %d flows", len(versions))
 	return versions, nil
 }
 
-// watchFlows calls GET /api/v1/{tenant}/agentflows/watch?since=N (long-poll)
-func (c *FlowgentClient) watchFlows(ctx context.Context, tenant string, since int64) ([]model.AgentFlowVersion, int64, error) {
+// GetFlow returns a single agentflow spec by ID.
+func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*model.AgentFlowSpec, error) {
+	url := fmt.Sprintf("%s/api/v1/%s/agentflows/%s", c.BaseURL, tenant, flowID)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("apiserver GetFlow: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("apiserver returned %d", resp.StatusCode)
+	}
+	var spec model.AgentFlowSpec
+	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
+		return nil, err
+	}
+	return &spec, nil
+}
+
+// CreateFlow creates a new agentflow definition.
+func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *model.AgentFlowSpec) error {
+	url := fmt.Sprintf("%s/api/v1/%s/agentflows", c.BaseURL, tenant)
+	b, _ := json.Marshal(spec)
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("apiserver CreateFlow: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver CreateFlow %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
+// UpdateFlow updates an existing agentflow definition.
+func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, spec *model.AgentFlowSpec) error {
+	url := fmt.Sprintf("%s/api/v1/%s/agentflows/%s", c.BaseURL, tenant, flowID)
+	b, _ := json.Marshal(spec)
+	req, _ := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("apiserver UpdateFlow: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver UpdateFlow %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
+// DeleteFlow deletes an agentflow definition.
+func (c *FlowgentClient) DeleteFlow(ctx context.Context, tenant, flowID string) error {
+	url := fmt.Sprintf("%s/api/v1/%s/agentflows/%s", c.BaseURL, tenant, flowID)
+	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("apiserver DeleteFlow: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver DeleteFlow %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
+// ─── FlowRun Control ──────────────────────────────────────────
+
+// TriggerRun creates a PENDING run for the given agentflow.
+func (c *FlowgentClient) TriggerRun(ctx context.Context, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) error {
+	url := fmt.Sprintf("%s/api/v1/default/agentflows/trigger", c.BaseURL)
+	payload := map[string]interface{}{
+		"agentflow_id": agentFlowID,
+		"vars":         vars,
+		"trigger":      trigger,
+	}
+	b, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("apiserver TriggerRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver TriggerRun %d: %s", resp.StatusCode, string(errBody))
+	}
+	log.Printf("[api-client] TriggerRun: %s → PENDING", agentFlowID)
+	return nil
+}
+
+// GetRun returns a run by ID.
+func (c *FlowgentClient) GetRun(ctx context.Context, runID string) (*model.AgentFlowRun, error) {
+	url := fmt.Sprintf("%s/api/v1/default/runs/%s", c.BaseURL, runID)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("apiserver GetRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("apiserver returned %d", resp.StatusCode)
+	}
+	var run model.AgentFlowRun
+	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+// ListRuns returns recent runs, optionally filtered by flow ID.
+func (c *FlowgentClient) ListRuns(ctx context.Context, flowID string) ([]model.AgentFlowRun, error) {
+	url := fmt.Sprintf("%s/api/v1/default/runs?flow_id=%s", c.BaseURL, flowID)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("apiserver ListRuns: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("apiserver returned %d: %s", resp.StatusCode, string(body))
+	}
+	var runs []model.AgentFlowRun
+	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+// CancelRun cancels a running flow.
+func (c *FlowgentClient) CancelRun(ctx context.Context, runID string) error {
+	url := fmt.Sprintf("%s/api/v1/default/runs/%s/cancel", c.BaseURL, runID)
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("apiserver CancelRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver CancelRun %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
+// ─── Task Update ──────────────────────────────────────────────
+
+// UpdateTask updates a task run status via the apiserver.
+func (c *FlowgentClient) UpdateTask(ctx context.Context, taskID string, status string, output map[string]any, errStr string) error {
+	url := fmt.Sprintf("%s/api/v1/default/runs/_/tasks/%s", c.BaseURL, taskID)
+	payload := map[string]interface{}{
+		"id": taskID, "status": status, "output": output, "error": errStr,
+	}
+	b, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("apiserver UpdateTask: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver UpdateTask %d: %s", resp.StatusCode, string(errBody))
+	}
+	return nil
+}
+
+// ─── Watch (long-poll for Controller) ─────────────────────────
+
+// WatchFlows calls GET /api/v1/{tenant}/agentflows/watch?since=N (long-poll).
+func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since int64) ([]model.AgentFlowVersion, int64, error) {
 	url := fmt.Sprintf("%s/api/v1/%s/agentflows/watch?since=%d", c.BaseURL, tenant, since)
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("apiserver watchFlows: %w", err)
+		return nil, 0, fmt.Errorf("apiserver WatchFlows: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -79,88 +263,7 @@ func (c *FlowgentClient) watchFlows(ctx context.Context, tenant string, since in
 	return wrapper.Flows, since, nil
 }
 
-// createRun calls POST /api/v1/{tenant}/agentflows/trigger
-func (c *FlowgentClient) CreateRun(ctx context.Context, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) error {
-	url := fmt.Sprintf("%s/api/v1/default/agentflows/trigger", c.BaseURL)
-	payload := map[string]interface{}{
-		"agentflow_id": agentFlowID,
-		"vars":         vars,
-		"trigger":      trigger,
-	}
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("apiserver createRun: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver createRun %d: %s", resp.StatusCode, string(errBody))
-	}
-	log.Printf("[api-client] createRun: %s → PENDING", agentFlowID)
-	return nil
-}
-
-// getFlowSpec calls GET /api/v1/{tenant}/agentflows/{id}
-func (c *FlowgentClient) getFlowSpec(ctx context.Context, agentFlowID string) (*model.AgentFlowSpec, error) {
-	url := fmt.Sprintf("%s/api/v1/default/agentflows/%s", c.BaseURL, agentFlowID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("apiserver getFlowSpec: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 404 {
-		return nil, nil
-	}
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("apiserver returned %d", resp.StatusCode)
-	}
-	var spec model.AgentFlowSpec
-	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
-		return nil, fmt.Errorf("decode spec: %w", err)
-	}
-	return &spec, nil
-}
-
-// getRun calls GET /api/v1/{tenant}/runs/{id}
-func (c *FlowgentClient) getRun(ctx context.Context, runID string) (*model.AgentFlowRun, error) {
-	url := fmt.Sprintf("%s/api/v1/default/runs/%s", c.BaseURL, runID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil { return nil, fmt.Errorf("apiserver getRun: %w", err) }
-	defer resp.Body.Close()
-	if resp.StatusCode == 404 { return nil, nil }
-	if resp.StatusCode >= 300 { return nil, fmt.Errorf("apiserver returned %d", resp.StatusCode) }
-	var run model.AgentFlowRun
-	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil { return nil, err }
-	return &run, nil
-}
-
-// updateTask calls PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}
-func (c *FlowgentClient) updateTask(ctx context.Context, taskID string, status string, output map[string]any, errStr string) error {
-	url := fmt.Sprintf("%s/api/v1/default/runs/_/tasks/%s", c.BaseURL, taskID)
-	payload := map[string]interface{}{
-		"id":     taskID,
-		"status": status,
-		"output": output,
-		"error":  errStr,
-	}
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil { return fmt.Errorf("apiserver updateTask: %w", err) }
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver updateTask %d: %s", resp.StatusCode, string(errBody))
-	}
-	log.Printf("[api-client] updateTask: %s → %s", taskID[:8], status)
-	return nil
-}
+// ─── APIStoreWrapper ──────────────────────────────────────────
 
 // APIStoreWrapper delegates UpdateTaskRun and SavePlan to apiserver API.
 type APIStoreWrapper struct {
@@ -172,20 +275,13 @@ func NewAPIStoreWrapper(inner store.IStore, api *FlowgentClient) store.IStore {
 	return &APIStoreWrapper{api: api}
 }
 
-func (w *APIStoreWrapper) DB() any {
-	return nil
-}
-
-func (w *APIStoreWrapper) Close() error {
-	return nil
-}
+func (w *APIStoreWrapper) DB() any  { return nil }
+func (w *APIStoreWrapper) Close() error { return nil }
 
 func (w *APIStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {
-	return w.api.updateTask(ctx, task.ID, string(task.Status), task.Output, task.Error)
+	return w.api.UpdateTask(ctx, task.ID, string(task.Status), task.Output, task.Error)
 }
 
 func (w *APIStoreWrapper) SavePlan(ctx context.Context, plan *model.ExecutionPlan) error {
-	// ExecutionPlans are dispatched via MQTT — persistence can go through apiserver
-	log.Printf("[api-store] SavePlan: %s → apiserver", plan.PlanID[:8])
-	return nil // plan already dispatched via MQTT, apiserver creates task_runs
+	return nil
 }
