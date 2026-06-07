@@ -15,11 +15,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/x402-foundation/x402/go/types"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
-	"github.com/flowgent-labs/flowgent/wallet/src/facilitator"
-	"github.com/flowgent-labs/flowgent/wallet/src/policy"
-	"github.com/flowgent-labs/flowgent/wallet/src/wallet"
-	"github.com/flowgent-labs/flowgent/wallet/src/x402"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/facilitator"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/policy"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/wallet"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/x402"
 )
 
 // Runtime is the payable web fetch runtime. It wraps an HTTP client with

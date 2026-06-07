@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/cmd/src/cmdutil"
-	"github.com/flowgent-labs/flowgent/config/src/config"
+	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
 // Start launches the Notifier daemon.

@@ -23,16 +23,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/flowgent-labs/flowgent/cmd/src/cmdutil"
-	"github.com/flowgent-labs/flowgent/config/src/config"
-	"github.com/flowgent-labs/flowgent/core/src/engine"
-	"github.com/flowgent-labs/flowgent/core/src/engine/discovery"
-	"github.com/flowgent-labs/flowgent/core/src/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/store/src/agentflow"
-	"github.com/flowgent-labs/flowgent/store/src/flowrun"
+	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/discovery"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
 // ─── CLI entry points ──────────────────────────────────────────

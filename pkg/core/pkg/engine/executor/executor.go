@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // TaskExecutor executes a single ExecutionPlan. Each task type has its

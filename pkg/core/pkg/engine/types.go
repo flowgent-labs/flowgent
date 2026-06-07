@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // Provider identifies the resource management backend.

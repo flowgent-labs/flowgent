@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/cache/src"
-	"github.com/flowgent-labs/flowgent/core/src/engine"
-	"github.com/flowgent-labs/flowgent/model/src"
-	messager "github.com/flowgent-labs/flowgent/messager/src"
+	"github.com/flowgent-labs/flowgent/cache/pkg"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"

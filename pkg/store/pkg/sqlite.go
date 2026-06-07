@@ -10,8 +10,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 func NewSQLiteConn(ctx context.Context, dir string) *sql.DB {

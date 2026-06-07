@@ -20,17 +20,17 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/flowgent-labs/flowgent/config/src/config"
-	"github.com/flowgent-labs/flowgent/core/src/engine"
-	"github.com/flowgent-labs/flowgent/core/src/mcp"
-	messager "github.com/flowgent-labs/flowgent/messager/src"
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/notifier/src"
-	handler "github.com/flowgent-labs/flowgent/api/src/handler"
-	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/store/src/agentflow"
-	"github.com/flowgent-labs/flowgent/store/src/approval"
-	storenf "github.com/flowgent-labs/flowgent/store/src/notifier"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/notifier/pkg"
+	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
+	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/store/pkg/approval"
+	storenf "github.com/flowgent-labs/flowgent/store/pkg/notifier"
 )
 
 // ─── PID & Process helpers ─────────────────────────────────────

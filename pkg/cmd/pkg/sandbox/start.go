@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/config/src/config"
-	messager "github.com/flowgent-labs/flowgent/messager/src"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
 // Start launches the sandbox worker daemon.

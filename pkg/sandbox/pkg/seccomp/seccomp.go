@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 	"golang.org/x/sys/unix"
 )
 

@@ -13,11 +13,11 @@ import (
 
 	x402sdk "github.com/x402-foundation/x402/go"
 
-	"github.com/flowgent-labs/flowgent/src/payments"
-	"github.com/flowgent-labs/flowgent/src/payments/facilitator"
-	"github.com/flowgent-labs/flowgent/src/payments/policy"
-	"github.com/flowgent-labs/flowgent/src/payments/pwf"
-	"github.com/flowgent-labs/flowgent/src/payments/wallet"
+	"github.com/flowgent-labs/flowgent/pkg/payments"
+	"github.com/flowgent-labs/flowgent/pkg/payments/facilitator"
+	"github.com/flowgent-labs/flowgent/pkg/payments/policy"
+	"github.com/flowgent-labs/flowgent/pkg/payments/pwf"
+	"github.com/flowgent-labs/flowgent/pkg/payments/wallet"
 )
 
 // ─── Mock Wallet ────────────────────────────────────────

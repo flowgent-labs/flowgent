@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/engine"
-	"github.com/flowgent-labs/flowgent/src/model"
-	"github.com/flowgent-labs/flowgent/src/queue"
+	"github.com/flowgent-labs/flowgent/pkg/engine"
+	"github.com/flowgent-labs/flowgent/pkg/model"
+	"github.com/flowgent-labs/flowgent/pkg/queue"
 )
 
 // ─── MockStore ─────────────────────────────────────────

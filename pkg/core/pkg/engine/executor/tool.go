@@ -3,8 +3,8 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/flowgent-labs/flowgent/core/src/engine"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // ─── Tool Executor ─────────────────────────────────────

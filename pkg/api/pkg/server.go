@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/flowgent-labs/flowgent/api/src/handler"
+	"github.com/flowgent-labs/flowgent/api/pkg/handler"
 )
 
 // RegisterRESTRoutes returns a ServeMux with all REST API routes.

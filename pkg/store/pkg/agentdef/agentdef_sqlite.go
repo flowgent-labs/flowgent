@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // AgentDefSQLiteStore wraps store.SQLiteGenericStore[model.AgentDef].

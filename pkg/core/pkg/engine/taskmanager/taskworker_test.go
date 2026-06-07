@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
-	"github.com/flowgent-labs/flowgent/model/src"
-	messager "github.com/flowgent-labs/flowgent/messager/src"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
 func TestSlotWorker_Execute(t *testing.T) {

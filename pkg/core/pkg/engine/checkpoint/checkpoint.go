@@ -2,11 +2,11 @@ package checkpoint
 
 import (
 	"context"
-	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/common/src/tracing"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"

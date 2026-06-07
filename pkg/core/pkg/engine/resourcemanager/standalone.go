@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/flowgent-labs/flowgent/core/src/engine"
-	"github.com/flowgent-labs/flowgent/core/src/engine/taskmanager"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // StandaloneResourceManager executes plans in-process via a goroutine pool.

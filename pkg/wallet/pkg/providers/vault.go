@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // VaultSecretStoreProvider implements SecretStoreProvider backed by Hashicorp Vault.

@@ -12,13 +12,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/flowgent-labs/flowgent/cmd/src/cmdutil"
-	"github.com/flowgent-labs/flowgent/config/src/config"
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/store/src/agentflow"
-	"github.com/flowgent-labs/flowgent/store/src/flowrun"
-	"github.com/flowgent-labs/flowgent/store/src/taskplan"
+	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
 )
 
 func startConsole() {

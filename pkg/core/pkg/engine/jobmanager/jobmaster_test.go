@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/config/src/config"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"time"
 )
 

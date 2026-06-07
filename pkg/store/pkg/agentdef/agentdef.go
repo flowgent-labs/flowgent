@@ -3,7 +3,7 @@ package agentdef
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // IAgentDefStore is the agent definition entity store interface.

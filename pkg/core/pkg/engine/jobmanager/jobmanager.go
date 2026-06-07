@@ -3,10 +3,10 @@ package jobmanager
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/core/src/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 	"time"
 )
 

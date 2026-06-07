@@ -3,7 +3,7 @@ package llmprovider
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // ILlmProviderStore is the LLM provider entity store interface.

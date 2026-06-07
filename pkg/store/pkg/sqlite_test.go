@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 func TestSQLiteStore_Init(t *testing.T) {

@@ -21,8 +21,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
-	"github.com/flowgent-labs/flowgent/wallet/src/providers"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/providers"
 )
 
 // runWallet handles wallet start/stop/restart.

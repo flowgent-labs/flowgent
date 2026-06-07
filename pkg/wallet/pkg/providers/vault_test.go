@@ -3,7 +3,7 @@ package providers
 import (
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 func TestVaultProvider_New(t *testing.T) {

@@ -3,7 +3,7 @@ package agentflow
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // IAgentFlowStore is the agentflow entity store interface.

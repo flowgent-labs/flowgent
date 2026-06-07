@@ -3,7 +3,7 @@ package approval
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // IApprovalStore is the human approval entity store interface.

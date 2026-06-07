@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 func TestAppConfig_Helpers(t *testing.T) {

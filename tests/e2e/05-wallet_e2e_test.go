@@ -16,9 +16,9 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/flowgent-labs/flowgent/src/payments"
-	"github.com/flowgent-labs/flowgent/src/payments/providers"
-	"github.com/flowgent-labs/flowgent/src/payments/wallet"
+	"github.com/flowgent-labs/flowgent/pkg/payments"
+	"github.com/flowgent-labs/flowgent/pkg/payments/providers"
+	"github.com/flowgent-labs/flowgent/pkg/payments/wallet"
 )
 
 // ─── E2E: Key Generation + Secret Store + Signing ─────────────

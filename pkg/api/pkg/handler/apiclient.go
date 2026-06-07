@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 
-	store "github.com/flowgent-labs/flowgent/store/src"
-	model "github.com/flowgent-labs/flowgent/model/src"
+	store "github.com/flowgent-labs/flowgent/store/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // apiserverClient provides HTTP access to the API Server.

@@ -11,10 +11,10 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/x402-foundation/x402/go/types"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
-	"github.com/flowgent-labs/flowgent/wallet/src/facilitator"
-	"github.com/flowgent-labs/flowgent/wallet/src/policy"
-	"github.com/flowgent-labs/flowgent/wallet/src/wallet"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/facilitator"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/policy"
+	"github.com/flowgent-labs/flowgent/wallet/pkg/wallet"
 )
 
 type testWallet struct{}

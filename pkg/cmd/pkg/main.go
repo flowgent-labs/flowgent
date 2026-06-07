@@ -14,13 +14,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	a2apkg "github.com/flowgent-labs/flowgent/cmd/src/a2a"
-	apiserverpkg "github.com/flowgent-labs/flowgent/cmd/src/apiserver"
-	controllerpkg "github.com/flowgent-labs/flowgent/cmd/src/controller"
-	jmpkg "github.com/flowgent-labs/flowgent/cmd/src/jobmanager"
-	notifierpkg "github.com/flowgent-labs/flowgent/cmd/src/notifier"
-	sandboxpkg "github.com/flowgent-labs/flowgent/cmd/src/sandbox"
-	tmpkg "github.com/flowgent-labs/flowgent/cmd/src/taskmanager"
+	a2apkg "github.com/flowgent-labs/flowgent/cmd/pkg/a2a"
+	apiserverpkg "github.com/flowgent-labs/flowgent/cmd/pkg/apiserver"
+	controllerpkg "github.com/flowgent-labs/flowgent/cmd/pkg/controller"
+	jmpkg "github.com/flowgent-labs/flowgent/cmd/pkg/jobmanager"
+	notifierpkg "github.com/flowgent-labs/flowgent/cmd/pkg/notifier"
+	sandboxpkg "github.com/flowgent-labs/flowgent/cmd/pkg/sandbox"
+	tmpkg "github.com/flowgent-labs/flowgent/cmd/pkg/taskmanager"
 )
 
 var (

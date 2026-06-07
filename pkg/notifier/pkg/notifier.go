@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	messager "github.com/flowgent-labs/flowgent/messager/src"
-	"github.com/flowgent-labs/flowgent/model/src"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // Store is the subset of store.IStore needed by the notification service.

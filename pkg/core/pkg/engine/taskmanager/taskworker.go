@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/core/src/engine/executor"
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/messager/src"
-	"github.com/flowgent-labs/flowgent/store/src"
-	"github.com/flowgent-labs/flowgent/store/src/taskplan"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go.opentelemetry.io/otel/metric"

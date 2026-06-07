@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
-	model "github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/sandbox/src/seccomp"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/sandbox/pkg/seccomp"
 )
 
 // execute validates policy and dispatches to process or Docker executor.

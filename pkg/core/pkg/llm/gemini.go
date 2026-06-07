@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/flowgent-labs/flowgent/config/src/config"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
 // GeminiProvider implements ILlmProvider for Google Gemini API (stub).

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // PlanToTaskRun converts an ExecutionPlan to a TaskRun for persistence.

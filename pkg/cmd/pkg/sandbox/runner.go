@@ -33,8 +33,8 @@ import (
 	"strings"
 	"time"
 
-	messager "github.com/flowgent-labs/flowgent/messager/src"
-	model "github.com/flowgent-labs/flowgent/model/src"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // SandboxRunner consumes and executes sandbox triggers.

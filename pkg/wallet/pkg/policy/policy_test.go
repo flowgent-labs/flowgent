@@ -6,7 +6,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 func testCfg() *payments.PoliciesConfig {

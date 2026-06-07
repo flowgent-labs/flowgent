@@ -3,7 +3,7 @@ package taskmanager
 import (
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/common/src/utils"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 

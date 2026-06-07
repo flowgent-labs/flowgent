@@ -2,7 +2,7 @@ package executor
 
 import (
 	"encoding/json"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // ─── Helpers ───────────────────────────────────────────

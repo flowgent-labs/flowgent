@@ -10,7 +10,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // Wallet is the core wallet interface for signing payment authorizations.

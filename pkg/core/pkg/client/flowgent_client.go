@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 
-	store "github.com/flowgent-labs/flowgent/store/src"
-	model "github.com/flowgent-labs/flowgent/model/src"
+	store "github.com/flowgent-labs/flowgent/store/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // apiserverClient provides HTTP access to the API Server.
@@ -80,7 +80,7 @@ func (c *FlowgentClient) watchFlows(ctx context.Context, tenant string, since in
 }
 
 // createRun calls POST /api/v1/{tenant}/agentflows/trigger
-func (c *FlowgentClient) createRun(ctx context.Context, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) error {
+func (c *FlowgentClient) CreateRun(ctx context.Context, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) error {
 	url := fmt.Sprintf("%s/api/v1/default/agentflows/trigger", c.BaseURL)
 	payload := map[string]interface{}{
 		"agentflow_id": agentFlowID,

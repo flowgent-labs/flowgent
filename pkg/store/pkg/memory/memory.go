@@ -3,7 +3,7 @@ package memory
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // IMemoryStore is the node memory entity store interface.

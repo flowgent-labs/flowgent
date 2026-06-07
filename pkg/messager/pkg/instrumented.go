@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/common/src/tracing"
+	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )

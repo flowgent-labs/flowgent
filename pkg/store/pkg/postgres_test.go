@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 func testPGDSN() string {

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	messager "github.com/flowgent-labs/flowgent/messager/src"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
 const (

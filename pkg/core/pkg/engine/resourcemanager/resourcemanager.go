@@ -6,13 +6,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/cache/src"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/config/src/config"
-	"github.com/flowgent-labs/flowgent/core/src/engine"
-	"github.com/flowgent-labs/flowgent/model/src"
-	messager "github.com/flowgent-labs/flowgent/messager/src"
-	"github.com/flowgent-labs/flowgent/store/src"
+	"github.com/flowgent-labs/flowgent/cache/pkg"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // ─── ResourceManager interface ─────────────────────────────────

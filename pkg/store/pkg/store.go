@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/flowgent-labs/flowgent/config/src/config"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
 // IStore is the minimal top-level store interface.

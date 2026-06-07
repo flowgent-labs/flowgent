@@ -2,8 +2,8 @@ package executor
 
 import (
 	"context"
-	"github.com/flowgent-labs/flowgent/common/src/utils"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // ─── Condition Executor ────────────────────────────────

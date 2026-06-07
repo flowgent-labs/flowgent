@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	messager "github.com/flowgent-labs/flowgent/messager/src"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 

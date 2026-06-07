@@ -7,7 +7,7 @@ import (
 
 	"github.com/x402-foundation/x402/go/types"
 
-	"github.com/flowgent-labs/flowgent/src/payments/facilitator"
+	"github.com/flowgent-labs/flowgent/pkg/payments/facilitator"
 )
 
 const (

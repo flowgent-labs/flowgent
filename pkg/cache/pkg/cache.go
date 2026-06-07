@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/config/src/config"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
 // ICache is the unified caching interface for flowgent.

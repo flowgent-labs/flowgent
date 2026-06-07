@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/flowgent-labs/flowgent/model/src"
-	"github.com/flowgent-labs/flowgent/store/src/approval"
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/approval"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // PaymentApprover implements pwf.ApprovalHandler using Flowgent's existing

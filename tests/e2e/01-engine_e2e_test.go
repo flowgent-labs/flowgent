@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/src/config"
-	"github.com/flowgent-labs/flowgent/src/engine"
-	"github.com/flowgent-labs/flowgent/src/engine/jobmanager"
-	"github.com/flowgent-labs/flowgent/src/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/src/model"
-	"github.com/flowgent-labs/flowgent/src/common/utils"
+	"github.com/flowgent-labs/flowgent/pkg/config"
+	"github.com/flowgent-labs/flowgent/pkg/engine"
+	"github.com/flowgent-labs/flowgent/pkg/engine/jobmanager"
+	"github.com/flowgent-labs/flowgent/pkg/engine/resourcemanager"
+	"github.com/flowgent-labs/flowgent/pkg/model"
+	"github.com/flowgent-labs/flowgent/pkg/common/utils"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 

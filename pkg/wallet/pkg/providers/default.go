@@ -13,7 +13,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // DefaultSecretStoreProvider stores encrypted secrets in SQLite or Postgres.

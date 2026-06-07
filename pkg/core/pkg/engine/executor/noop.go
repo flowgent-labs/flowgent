@@ -2,7 +2,7 @@ package executor
 
 import (
 	"context"
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // ─── Noop Executor ─────────────────────────────────────

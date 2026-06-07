@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/core/src/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"

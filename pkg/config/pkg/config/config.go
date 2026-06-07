@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 
-	model "github.com/flowgent-labs/flowgent/model/src"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // ─── Top-level config ────────────────────────────────────────

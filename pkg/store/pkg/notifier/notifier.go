@@ -3,7 +3,7 @@ package notifier
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // INotifierStore is the notification channel entity store interface.

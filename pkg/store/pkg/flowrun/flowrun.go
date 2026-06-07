@@ -3,7 +3,7 @@ package flowrun
 import (
 	"context"
 
-	"github.com/flowgent-labs/flowgent/model/src"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // IFlowRunStore is the agentflow run entity store interface.

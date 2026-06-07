@@ -21,7 +21,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/types"
 
-	"github.com/flowgent-labs/flowgent/wallet/src"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // Client is the x402 facilitator HTTP client.
