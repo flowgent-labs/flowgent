@@ -250,7 +250,7 @@ flowgent.io/mode:         "session" | "application"
 
 ---
 
-## 1.4 Key Design Decisions (KDD)
+### 1.4 Key Design Decisions (KDD)
 
 | Decision | Rationale |
 |----------|-----------|
@@ -942,49 +942,6 @@ Histogram boundaries (from sample config):
 | Supervisor actions constrained | redirect/retry/inject/abort only |
 | Human node must persist + timeout | DB-backed, resume via API |
 | Map must support nesting | Multi-level fan-out |
-### Sandbox Execution Model (Independent Pods + Shared Volume)
-
-The sandbox subsystem spans two Go modules communicating via MQTT and a shared PVC:
-
-```
-TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
-─────────────────────────               ─────────────────────────
-  → Build workspace path                  → $share/sandbox-pool subscribe
-  → Write script to shared PVC            → Dequeue trigger via MQTT
-  → Snapshot originals                    → Read script from shared PVC
-  → Publish trigger ───MQTT──→           → BuildFilter(network_policy)
-    topic: sandbox/trigger/               → Install seccomp (TSYNC)
-    {flowId}/{runId}                      → Start notifier goroutine
-  → Subscribe result ←──MQTT──           → Execute: bash/python3/node
-    topic: sandbox/result/                → Wait for child process exit
-    {flowId}/{runId}                      → Notifier auto-exits
-  → Read result.json from PVC            → Write result.json + status to PVC
-                                           → Publish result ───MQTT──→
-```
-
-In distributed mode, sandbox pods use `$share/sandbox-pool` shared subscription for
-load-balanced trigger consumption. The trigger topic contains `{flowId}/{runId}` so
-multiple runs don't interfere. Results use point-to-point routing via the same
-`{flowId}/{runId}` suffix — only the originating TM slot subscribes.
-
-The `SandboxTrigger` struct is defined in `model` so both sides share the contract
-without Go import coupling. The sandbox pod's K8s Deployment is created and scaled
-by JM's K8sRM — the same goroutine pattern used for TM pods.
-
-```
-Sandbox Worker (per-execution lifecycle, running in sandbox pod):
-  → $share/sandbox-pool dequeue trigger
-  → Read script from shared workspace PVC
-  → Pre-resolve allowlist hosts → IPs
-  → Build seccomp-bpf filter from resolved IPs + port list
-  → Install filter (SECCOMP_FILTER_FLAG_TSYNC)
-  → Start notifier goroutine (reads seccomp notify fd)
-  → Execute: bash/python3/node script.sh
-  → Wait for child process exit
-  → Notifier auto-exits (filter dies with child)
-  → Write result.json + status to shared PVC
-  → Push result to MQTT: sandbox/result/{flowId}/{runId}
-```
 
 ---
 
@@ -1407,19 +1364,19 @@ TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
   → Write script to shared PVC            → Dequeue trigger via MQTT
   → Snapshot originals                    → Read script from shared PVC
   → Publish trigger ───MQTT──→           → BuildFilter(network_policy)
-    topic: sandbox/trigger/               → Install seccomp (TSYNC)
-    {flowId}/{runId}                      → Start notifier goroutine
+    topic: .../sandbox/trigger            → Install seccomp (TSYNC)
+    {tenant}/{flowId}/{runId}             → Start notifier goroutine
   → Subscribe result ←──MQTT──           → Execute: bash/python3/node
-    topic: sandbox/result/                → Wait for child process exit
-    {flowId}/{runId}                      → Notifier auto-exits
+    topic: .../sandbox/result             → Wait for child process exit
+    {tenant}/{flowId}/{runId}             → Notifier auto-exits
   → Read result.json from PVC            → Write result.json + status to PVC
                                            → Publish result ───MQTT──→
 ```
 
 In distributed mode, sandbox pods use `$share/sandbox-pool` shared subscription for
-load-balanced trigger consumption. The trigger topic contains `{flowId}/{runId}` so
-multiple runs don't interfere. Results use point-to-point routing via the same
-`{flowId}/{runId}` suffix — only the originating TM slot subscribes.
+load-balanced trigger consumption. The trigger topic contains `{tenant}/{flowId}/{runId}`
+so multiple runs don't interfere. Results use point-to-point routing via the same
+`{tenant}/{flowId}/{runId}` suffix — only the originating TM slot subscribes.
 
 The `SandboxTrigger` struct is defined in `model` so both sides share the contract
 without Go import coupling. The sandbox pod's K8s Deployment is created and scaled
@@ -1437,7 +1394,7 @@ Sandbox Worker (per-execution lifecycle, running in sandbox pod):
   → Wait for child process exit
   → Notifier auto-exits (filter dies with child)
   → Write result.json + status to shared PVC
-  → Push result to MQTT: sandbox/result/{flowId}/{runId}
+  → Push result to MQTT: flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result
 ```
 
 

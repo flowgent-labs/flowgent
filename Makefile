@@ -1,7 +1,7 @@
 .PHONY: help build build-all build-host build-host-all build-image build-image-all clean test fmt
 
 BIN_DIR  ?= bin
-GO       ?= go
+GO       ?= $(GOROOT)/bin/go
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 help:
