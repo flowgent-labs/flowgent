@@ -648,7 +648,7 @@ In distributed mode (`deployment.mode: session` or `application`), MQTT is manda
 3. Neither configured → fatal: `"MQTT broker not configured"`
 
 In standalone dev / all-in-one mode, the queue silently falls back to in-memory
-(`LocalMessager`, buffer=1000) with a warning log.
+(`StandaloneMessager`, buffer=1000) with a warning log.
 
 ---
 

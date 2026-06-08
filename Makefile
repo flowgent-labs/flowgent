@@ -1,7 +1,7 @@
 .PHONY: help build build-all build-host build-host-all build-image build-image-all clean test fmt
 
 BIN_DIR  ?= bin
-GO       ?= /usr/local/go1.26.1.linux-amd64/bin/go
+GO       ?= go
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 help:
@@ -23,17 +23,17 @@ help:
 
 build:
 	@mkdir -p $(BIN_DIR)
-	DOCKER_BUILDKIT=1 sudo docker build -f deploy/docker/Dockerfile --target export --output type=local,dest=$(BIN_DIR) .
+	DOCKER_BUILDKIT=1 docker build -f deploy/docker/Dockerfile --target export --output type=local,dest=$(BIN_DIR) .
 
 build-all:
 	@mkdir -p $(BIN_DIR)
-	DOCKER_BUILDKIT=1 sudo docker build -f deploy/docker/Dockerfile.all-in-one --target export --output type=local,dest=$(BIN_DIR) .
+	DOCKER_BUILDKIT=1 docker build -f deploy/docker/Dockerfile.all-in-one --target export --output type=local,dest=$(BIN_DIR) .
 
 build-image:
-	DOCKER_BUILDKIT=1 sudo docker build -t flowgent:latest -f deploy/docker/Dockerfile .
+	DOCKER_BUILDKIT=1 docker build -t flowgent:latest -f deploy/docker/Dockerfile .
 
 build-image-all:
-	DOCKER_BUILDKIT=1 sudo docker build -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
+	DOCKER_BUILDKIT=1 docker build -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
 
 build-host:
 	@mkdir -p $(BIN_DIR)
