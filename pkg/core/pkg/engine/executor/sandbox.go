@@ -64,6 +64,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 	}
 
 	trigger := &model.SandboxTrigger{
+		TenantID:      plan.TenantID,
 		FlowID:        plan.AgentFlowDefinitionID,
 		RunID:         plan.AgentFlowRunID,
 		PlanID:        plan.PlanID,

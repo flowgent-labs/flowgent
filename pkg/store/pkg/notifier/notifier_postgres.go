@@ -3,9 +3,9 @@ package notifier
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // NotifierPostgresStore wraps store.PostgresGenericStore[model.NotifierChannel].

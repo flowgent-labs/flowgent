@@ -30,15 +30,21 @@ func NewNotifierHandler(s store.IStore, logger *utils.Logger) *NotifierHandler {
 }
 
 func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := h.store.Select(r.Context(), model.PageRequest{Page:1, Size:1000})
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	channels, err := h.store.Select(r.Context(), model.PageRequest{Page: 1, Size: 1000})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(channels)
 }
 
 func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	var ch model.NotifierChannel
-	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil { http.Error(w, "invalid body", 400); return }
+	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
+		http.Error(w, "invalid body", 400)
+		return
+	}
 	w.WriteHeader(201)
 }
 
@@ -49,7 +55,7 @@ func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 
 func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }
 func (h *NotifierHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }
-func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }
+func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request)   { w.WriteHeader(200) }
 
 // NotifierWSBridge bridges WebSocket connections to the notifier service.
 type NotifierWSBridge struct {

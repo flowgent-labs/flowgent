@@ -78,6 +78,6 @@ func (q *MQTTMessager) Subscribe(ctx context.Context, topic string, handler SubH
 	return nil
 }
 
-func (q *MQTTMessager) Ack(ctx context.Context, msgID string) error   { return nil }
-func (q *MQTTMessager) Nack(ctx context.Context, msgID string) error  { return nil }
-func (q *MQTTMessager) Close() error { q.client.Disconnect(250); return nil }
+func (q *MQTTMessager) Ack(ctx context.Context, msgID string) error  { return nil }
+func (q *MQTTMessager) Nack(ctx context.Context, msgID string) error { return nil }
+func (q *MQTTMessager) Close() error                                 { q.client.Disconnect(250); return nil }

@@ -12,8 +12,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // Engine evaluates payment intents against configured spending policies.

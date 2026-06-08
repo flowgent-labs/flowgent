@@ -2,24 +2,27 @@ package jobmanager
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"sync"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
-	"github.com/jackc/pgx/v5/pgxpool"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// RunStateStore is the narrow state interface JobMaster needs for persistence.
+// Implementations call the apiserver REST API (never direct DB).
+type RunStateStore interface {
+	UpdateRun(ctx context.Context, run *model.AgentFlowRun) error
+	SaveTask(ctx context.Context, task *model.TaskRun) error
+}
 
 type EdgeCondition struct {
 	From, To  string
@@ -30,13 +33,11 @@ type EdgeCondition struct {
 // from an AgentFlowSpec and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
-	store     store.IStore
-	runStore  flowrun.IFlowRunStore
-	planStore taskplan.ITaskPlanStore
-	rm        resourcemanager.ResourceManager
-	logger    *utils.Logger
-	tracer    trace.Tracer
-	timeout   time.Duration
+	state   RunStateStore
+	rm      resourcemanager.ResourceManager
+	logger  *utils.Logger
+	tracer  trace.Tracer
+	timeout time.Duration
 	nodeLimit int
 	maxNodes  int
 
@@ -49,7 +50,7 @@ type JobMaster struct {
 	completed      map[string]bool
 	skipped        map[string]bool
 	failed         map[string]bool
-	nodeErrors     map[string]string // nodeID → error message
+	nodeErrors     map[string]string
 	pending        map[string]bool
 	conditions     map[string]bool
 
@@ -58,24 +59,14 @@ type JobMaster struct {
 }
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
-func NewJobMaster(store store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
+func NewJobMaster(state RunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
 	timeout := cfg.FlowExecutionTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
 
-	var runStore flowrun.IFlowRunStore
-	var planStore taskplan.ITaskPlanStore
-	switch db := store.DB().(type) {
-	case *pgxpool.Pool:
-		runStore = flowrun.NewFlowRunPostgresStore(db)
-		planStore = taskplan.NewTaskPlanPostgresStore(db)
-	case *sql.DB:
-		runStore = flowrun.NewFlowRunSQLiteStore(db)
-		planStore = taskplan.NewTaskPlanSQLiteStore(db)
-	}
 	return &JobMaster{
-		store: store, runStore: runStore, planStore: planStore, rm: rm, logger: logger,
+		state: state, rm: rm, logger: logger,
 		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
 		nodeOutputs: make(map[string]map[string]any),
 	}
@@ -227,7 +218,6 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
 
-	// DAG state
 	jm.nodes = nodeIDs
 	jm.edges = edges
 	jm.deps = make(map[string][]string)
@@ -258,7 +248,6 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 		jm.edgeConditions[ec.From+"->"+ec.To] = ec.Condition
 	}
 
-	// ExecutionPlans — one per node, created in same pass
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
 		jm.planMap[n.ID] = &model.ExecutionPlan{
@@ -274,7 +263,7 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 	}
 }
 
-// ─── StartJob ─────────────────────────────────────────────
+// ─── Execute ─────────────────────────────────────────────
 
 func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec) error {
 	if jm.tracer == nil {
@@ -296,7 +285,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 	run.Status = model.RunRunning
 	now := time.Now()
 	run.StartedAt = &now
-	_ = jm.runStore.Update(ctx, run)
+	_ = jm.state.UpdateRun(ctx, run)
 
 	if jm.timeout > 0 {
 		var cancel context.CancelFunc
@@ -315,13 +304,13 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 			run.Error = jm.collectFirstError()
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Error, "failed")
-			return jm.runStore.Update(ctx, run)
+			return jm.state.UpdateRun(ctx, run)
 		}
 		if jm.IsComplete() {
 			run.Status = model.RunCompleted
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Ok, "done")
-			return jm.runStore.Update(ctx, run)
+			return jm.state.UpdateRun(ctx, run)
 		}
 
 		ready := jm.Ready()
@@ -335,7 +324,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 				continue
 			}
 			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
-			_ = jm.planStore.Save(ctx, taskplan.PlanToTaskRun(plan))
+			_ = jm.state.SaveTask(ctx, taskRunFromPlan(plan))
 
 			result, err := jm.rm.Schedule(ctx, plan)
 			if err != nil {
@@ -373,11 +362,9 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 
 func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[string]any {
 	in := make(map[string]any)
-	// Start with YAML-defined input (action, params, etc.)
 	for k, v := range yamlInput {
 		in[k] = v
 	}
-	// Merge upstream node outputs (overrides YAML if same key)
 	for _, dep := range jm.Deps(nodeID) {
 		if o, ok := jm.nodeOutputs[dep]; ok {
 			in[dep] = o
@@ -398,6 +385,17 @@ func (jm *JobMaster) applySupervisorConfig(spec *model.AgentFlowSpec) {
 		if n.Type == model.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
 			jm.maxNodes = n.SupervisorConfig.MaxNodes
 		}
+	}
+}
+
+// taskRunFromPlan converts an ExecutionPlan to a minimal TaskRun for persistence.
+func taskRunFromPlan(plan *model.ExecutionPlan) *model.TaskRun {
+	return &model.TaskRun{
+		ID:             plan.TaskID,
+		AgentFlowRunID: plan.AgentFlowRunID,
+		NodeID:         plan.NodeID,
+		Status:         plan.State,
+		Input:          plan.Input,
 	}
 }
 
@@ -439,7 +437,6 @@ type RetryPolicy struct {
 	Factor   float64
 }
 
-// ModelRetry converts model.RetryPolicy to engine RetryPolicy.
 func ModelRetry(r *model.RetryPolicy) RetryPolicy {
 	if r == nil {
 		return RetryPolicy{Max: 3, Initial: time.Second, MaxDelay: 30 * time.Second, Factor: 2.0}

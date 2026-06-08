@@ -2,38 +2,37 @@ package llm
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sync"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ILlmProvider is the interface each LLM provider implementation must satisfy.
 type ILlmProvider interface {
-	// Generate sends a chat completion and returns the response text.
 	Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error)
 }
 
+// LlmProviderLoader loads DB-backed LLM provider definitions via apiserver.
+type LlmProviderLoader interface {
+	ListProviders(ctx context.Context) ([]*model.LlmProvider, error)
+}
+
 // LlmProviderManager loads and manages LLM provider instances from static
-// config and DB (standard mode), and routes Generate calls to the correct provider.
+// config and a ProviderLoader (standard mode), and routes Generate calls.
 type LlmProviderManager struct {
 	mu        sync.Mutex
-	providers map[string]ILlmProvider // providerID → instance
+	providers map[string]ILlmProvider
 }
 
 // NewLlmProviderManager creates a manager and loads all configured providers.
-func NewLlmProviderManager(cfg *config.LLMConfig, store store.IStore) *LlmProviderManager {
+func NewLlmProviderManager(cfg *config.LLMConfig, loader LlmProviderLoader) *LlmProviderManager {
 	m := &LlmProviderManager{providers: make(map[string]ILlmProvider)}
 	if cfg == nil {
 		return m
 	}
 
-	// Load static providers from YAML config
 	for _, p := range cfg.Providers.Static {
 		if !p.Enabled || p.ID == "" {
 			continue
@@ -41,25 +40,14 @@ func NewLlmProviderManager(cfg *config.LLMConfig, store store.IStore) *LlmProvid
 		m.registerStatic(p)
 	}
 
-	// Load DB-backed providers (standard mode)
-	if cfg.Providers.Standard.Enabled && store != nil {
-		var lpStore llmprovider.ILlmProviderStore
-		switch db := store.DB().(type) {
-		case *pgxpool.Pool:
-			lpStore = llmprovider.NewLlmProviderPostgresStore(db)
-		case *sql.DB:
-			lpStore = llmprovider.NewLlmProviderSQLiteStore(db)
-		}
-		if lpStore != nil {
-			page, err := lpStore.Select(context.Background(), model.PageRequest{Page:1, Size:1000})
-			if err == nil {
-				dbProviders := page.Items
-				for _, dbp := range dbProviders {
-					if !dbp.Enabled || dbp.ID == "" {
-						continue
-					}
-					m.registerDB(*dbp)
+	if cfg.Providers.Standard.Enabled && loader != nil {
+		dbProviders, err := loader.ListProviders(context.Background())
+		if err == nil {
+			for _, dbp := range dbProviders {
+				if !dbp.Enabled || dbp.ID == "" {
+					continue
 				}
+				m.registerDB(*dbp)
 			}
 		}
 	}
@@ -81,19 +69,17 @@ func (m *LlmProviderManager) registerDB(dbP model.LlmProvider) {
 	}
 }
 
-// newProvider creates the correct ILlmProvider from a static config definition.
 func newProvider(p config.LLMProviderDef) ILlmProvider {
 	switch p.Type {
 	case "anthropic":
 		return newAnthropicProvider(p)
 	case "gemini":
 		return newGeminiProvider(p)
-	default: // "openai", "dashscope", "deepseek", "" → OpenAI-compatible
+	default:
 		return newOpenAIProvider(p)
 	}
 }
 
-// newProviderFromModel creates the correct ILlmProvider from a DB model.
 func newProviderFromModel(p model.LlmProvider) ILlmProvider {
 	def := config.LLMProviderDef{
 		ID:          p.ID,

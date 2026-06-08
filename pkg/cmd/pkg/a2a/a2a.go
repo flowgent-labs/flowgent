@@ -236,19 +236,19 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 	// ── FlowRun Control ──
 	case "start_run":
 		trigger := model.TriggerInfo{Type: "a2a", Source: "admin"}
-		if err := h.client.TriggerRun(ctx, req.AgentFlowID, req.Vars, trigger); err != nil {
+		if _, err := h.client.TriggerRun(ctx, req.Tenant, req.AgentFlowID, req.Vars, trigger); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"triggered","agentflow_id":"%s"}`, req.AgentFlowID), nil
 
 	case "cancel_run":
-		if err := h.client.CancelRun(ctx, req.RunID); err != nil {
+		if err := h.client.CancelRun(ctx, req.Tenant, req.RunID); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"cancelled","run_id":"%s"}`, req.RunID), nil
 
 	case "get_run":
-		run, err := h.client.GetRun(ctx, req.RunID)
+		run, err := h.client.GetRun(ctx, req.Tenant, req.RunID)
 		if err != nil {
 			return "", err
 		}
@@ -259,7 +259,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		return string(b), nil
 
 	case "list_runs":
-		runs, err := h.client.ListRuns(ctx, req.AgentFlowID)
+		runs, err := h.client.ListRuns(ctx, req.Tenant, "", "", req.AgentFlowID, 1, 50)
 		if err != nil {
 			return "", err
 		}

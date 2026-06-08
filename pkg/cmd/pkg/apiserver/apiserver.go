@@ -102,13 +102,18 @@ func startServer(cfgPath string) error {
 	}
 	_ = loadedAgents
 
+	// ── MQTT for lifecycle event publishing (optional; nil-safe handlers) ──
+	var mqttPublisher handler.MQTTPublisher
+	log.Printf("[apiserver] MQTT lifecycle publishing not yet wired (nil-safe)")
+
 	// ── REST API Handlers ──
 	healthHandler := &handler.HealthHandler{}
 	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
-	humanHandler := handler.NewHumanHandler(storeImpl, logger)
-	runHandler := handler.NewFlowRunHandler(storeImpl, logger)
+	humanHandler := handler.NewHumanHandler(storeImpl, mqttPublisher, logger)
+	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPublisher, logger)
 	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
+	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
@@ -128,7 +133,7 @@ func startServer(cfgPath string) error {
 
 	// ── REST HTTP Server ──
 	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler)
 	var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
 		restHandler = cmdutil.AuthMiddleware(serviceCfg.Auth, restMux)

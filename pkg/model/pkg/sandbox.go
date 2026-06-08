@@ -19,6 +19,7 @@ type SandboxResources struct {
 // SandboxTrigger is the message published from SandboxExecutor (TM side) to
 // SandboxRunner pods via MQTT. Defined in model so both sides share the contract.
 type SandboxTrigger struct {
+	TenantID      string            `json:"tenant_id,omitempty"`
 	FlowID        string            `json:"flow_id"`
 	RunID         string            `json:"run_id"`
 	PlanID        string            `json:"plan_id"`
@@ -37,12 +38,12 @@ type SandboxTrigger struct {
 // When Enabled=false (default), sandbox runs inline in TM (standalone/all-in-one).
 // When Enabled=true, JM's K8sRM manages a separate sandbox Deployment.
 type SandboxDeploymentConfig struct {
-	Enabled      bool              `json:"enabled" yaml:"enabled"`
-	Image        string            `json:"image,omitempty" yaml:"image,omitempty"`
-	MinReplicas  int               `json:"min_replicas,omitempty" yaml:"min_replicas,omitempty"`
-	MaxReplicas  int               `json:"max_replicas,omitempty" yaml:"max_replicas,omitempty"`
-	Resources    *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
-	SlotsPerPod  int               `json:"slots_per_pod,omitempty" yaml:"slots_per_pod,omitempty"`
+	Enabled     bool              `json:"enabled" yaml:"enabled"`
+	Image       string            `json:"image,omitempty" yaml:"image,omitempty"`
+	MinReplicas int               `json:"min_replicas,omitempty" yaml:"min_replicas,omitempty"`
+	MaxReplicas int               `json:"max_replicas,omitempty" yaml:"max_replicas,omitempty"`
+	Resources   *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+	SlotsPerPod int               `json:"slots_per_pod,omitempty" yaml:"slots_per_pod,omitempty"`
 }
 
 // ─── Sandbox security policy ─────────────────────────────────

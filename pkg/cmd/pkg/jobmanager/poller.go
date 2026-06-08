@@ -2,32 +2,19 @@ package jobmanager
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
-// startRunPoller polls for pending AgentFlowRuns and dispatches them via the JobManager.
-func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManager,
-	flows map[string]*model.AgentFlowSpec, namespace, agentFlowID string) {
-	var frStore flowrun.IFlowRunStore
-	var afStore agentflow.IAgentFlowStore
-	switch db := s.DB().(type) {
-	case *pgxpool.Pool:
-		frStore = flowrun.NewFlowRunPostgresStore(db)
-		afStore = agentflow.NewAgentFlowPostgresStore(db)
-	case *sql.DB:
-		frStore = flowrun.NewFlowRunSQLiteStore(db)
-		afStore = agentflow.NewAgentFlowSQLiteStore(db)
-	}
+// startRunPoller polls for pending AgentFlowRuns via the apiserver API
+// and dispatches them via the JobManager.
+func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant string,
+	jm *jobmanager.JobManager, flows map[string]*model.AgentFlowSpec,
+	namespace, agentFlowID string) {
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -36,9 +23,12 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, _ := frStore.Select(ctx, model.PageRequest{Page: 1, Size: 50})
-			runs := page.Items
-			for _, run := range runs {
+			page, err := api.ListRuns(ctx, tenant, string(model.RunPending), namespace, agentFlowID, 1, 50)
+			if err != nil {
+				log.Printf("[poller] ListRuns error: %v", err)
+				continue
+			}
+			for _, run := range page.Items {
 				if run.Status != model.RunPending {
 					continue
 				}
@@ -50,9 +40,9 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 				}
 				spec := flows[run.AgentFlowID]
 				if spec == nil {
-					if dbSpec, err := afStore.GetSpec(ctx, run.AgentFlowID); err == nil && dbSpec != nil {
-						spec = dbSpec
-						log.Printf("[poller] loaded flow spec from DB: %s (nodes=%d)", run.AgentFlowID, len(spec.Nodes))
+					if apiSpec, err := api.GetFlow(ctx, tenant, run.AgentFlowID); err == nil && apiSpec != nil {
+						spec = apiSpec
+						log.Printf("[poller] loaded flow spec via apiserver: %s (nodes=%d)", run.AgentFlowID, len(spec.Nodes))
 					}
 				}
 				if spec == nil {

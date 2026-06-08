@@ -17,6 +17,7 @@ type ICache interface {
 	Clear(ctx context.Context) error
 	Close() error
 }
+
 // CacheManager is the unified entry point for cache. It embeds ICache
 // so all cache operations are directly available on the manager.
 type CacheManager struct {

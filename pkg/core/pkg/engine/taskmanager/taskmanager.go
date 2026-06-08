@@ -2,7 +2,6 @@ package taskmanager
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -16,19 +15,24 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	sandbox "github.com/flowgent-labs/flowgent/cmd/pkg/sandbox"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
-	"github.com/jackc/pgx/v5/pgxpool"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
+
+// TaskStateStore is the narrow state interface TM workers need for persistence.
+// Implementations call the apiserver REST API (never direct DB).
+type TaskStateStore interface {
+	SaveTask(ctx context.Context, task *model.TaskRun) error
+}
 
 // TaskManagerConfig is the startup configuration for a TaskManager.
 type TaskManagerConfig struct {
 	ID                string
 	SlotCount         int
 	Queue             messager.IMessager
-	Store             store.IStore
+	State             TaskStateStore
+	HumanApproval     executor.HumanApprovalStore
 	Agents            []*config.AgentDef
 	MCPClients        map[string]engine.MCPClient
 	LLMClient         engine.LLMClient
@@ -37,21 +41,17 @@ type TaskManagerConfig struct {
 	SandboxQueue      messager.IMessager
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
-	// SandboxDeploymentEnabled is true when sandbox runs as independent K8s pods.
-	// When false (standalone/all-in-one), the TM starts an embedded SandboxRunner goroutine.
 	SandboxDeploymentEnabled bool
 }
 
 // TaskManager is a persistent worker that consumes ExecutionPlans from
 // a queue (MQTT or local) and executes them via a pool of SlotWorkers.
-// Designed as a long-lived K8s Deployment pod.
 type TaskManager struct {
 	ID          string
 	slotWorkers []*SlotWorker
 	router      *executor.TaskExecutorRouter
 	queue       messager.IMessager
-	store       store.IStore
-	planStore   taskplan.ITaskPlanStore
+	state       TaskStateStore
 	metrics     *TaskManagerMetrics
 	logger      *utils.Logger
 	mu          sync.Mutex
@@ -76,41 +76,29 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	router.Register(&executor.MapExecutor{})
 	router.Register(&executor.JoinExecutor{})
 	router.Register(&executor.SubflowExecutor{})
-	router.Register(executor.NewHumanExecutor(cfg.Store))
+	router.Register(executor.NewHumanExecutor(cfg.HumanApproval))
 	router.Register(&executor.NoopExecutor{})
 	router.Register(&executor.SkillExecutor{})
 	router.Register(executor.NewSandboxExecutor(cfg.SandboxQueue, cfg.SandboxPolicy, cfg.SandboxWorkspace))
 
 	metrics := NewTaskManagerMetrics()
 
-	var planStore taskplan.ITaskPlanStore
-	switch db := cfg.Store.DB().(type) {
-	case *pgxpool.Pool:
-		planStore = taskplan.NewTaskPlanPostgresStore(db)
-	case *sql.DB:
-		planStore = taskplan.NewTaskPlanSQLiteStore(db)
-	}
-
 	tm := &TaskManager{
-		ID:        cfg.ID,
-		router:    router,
-		queue:     cfg.Queue,
-		store:     cfg.Store,
-		planStore: planStore,
-		metrics:   metrics,
-		logger:    cfg.Logger,
-		stopCh:    make(chan struct{}),
+		ID:      cfg.ID,
+		router:  router,
+		queue:   cfg.Queue,
+		state:   cfg.State,
+		metrics: metrics,
+		logger:  cfg.Logger,
+		stopCh:  make(chan struct{}),
 	}
 
 	for i := 0; i < cfg.SlotCount; i++ {
 		slotID := fmt.Sprintf("%s-slot-%d", cfg.ID, i)
-		sw := NewSlotWorker(slotID, cfg.ID, cfg.Queue, router, cfg.Store, metrics)
+		sw := NewSlotWorker(slotID, cfg.ID, cfg.Queue, router, cfg.State, metrics)
 		tm.slotWorkers = append(tm.slotWorkers, sw)
 	}
 
-	// In standalone/all-in-one mode, start an embedded SandboxRunner goroutine
-	// so sandbox triggers have a local consumer. In distributed mode, sandbox
-	// runs as independent pods managed by the JM's K8sRM.
 	if !cfg.SandboxDeploymentEnabled && cfg.SandboxQueue != nil {
 		embeddedRunner := sandbox.NewSandboxRunner(
 			cfg.ID+"-sb", cfg.SandboxQueue, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
@@ -126,9 +114,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 }
 
 func (tm *TaskManager) Start(ctx context.Context) error {
-	// Start heartbeat pump (TM liveness)
 	startHeartbeat(tm.ID, tm.queue, 0)
-	// Start all slot workers
 	for _, sw := range tm.slotWorkers {
 		go sw.Loop(ctx)
 	}
@@ -158,7 +144,7 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *model.ExecutionPla
 	now := time.Now()
 	task.FinishedAt = &now
 	plan.FinishedAt = &now
-	_ = tm.planStore.UpdateTaskRun(ctx, task)
+	_ = tm.state.SaveTask(ctx, task)
 	return result, nil
 }
 

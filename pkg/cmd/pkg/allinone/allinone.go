@@ -26,6 +26,7 @@ import (
 	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
@@ -34,8 +35,6 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
 func Start(cfgPath, pidFile string) error {
@@ -69,19 +68,19 @@ func startAllInOne(cfgPath string) error {
 	}
 	slog.Info("AgentFlows loaded", "count", len(agentFlows)+len(subAgentFlows))
 
-	// ── Database ──
+	// ── Database (apiserver-owned) ──
 	storeImpl := cmdutil.InitStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
-	var localFrStore flowrun.IFlowRunStore
-	switch db := storeImpl.DB().(type) {
-	case *pgxpool.Pool:
-		localFrStore = flowrun.NewFlowRunPostgresStore(db)
-	case *sql.DB:
-		localFrStore = flowrun.NewFlowRunSQLiteStore(db)
-	}
+	// ── FlowgentClient for internal component state access ──
+	apiClient := client.NewFlowgentClient()
+	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
+	stateClient := &client.RunStateClient{Client: apiClient, Tenant: tenant}
+	taskClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
+	humanClient := &client.HumanApprovalClient{Client: apiClient}
+	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: tenant}
 
-	// DB-backed resources
+	// DB-backed resources (apiserver-only path)
 	loadedAgents, _ := config.LoadAgents(serviceCfg, cfgPath)
 	if serviceCfg.Orchestration.Agents.Standard.Enabled {
 		var agStore agentdef.IAgentDefStore
@@ -121,31 +120,37 @@ func startAllInOne(cfgPath string) error {
 			mcpMap[d.Name] = &cmdutil.McpAdapter{Factory: mcpFactory, Name: d.Name}
 		}
 	}
-	llmClient := llm.NewLlmProviderManager(&serviceCfg.LLM, storeImpl)
 
 	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
 	for i := range loadedAgents {
 		agentPtrs[i] = &loadedAgents[i]
 	}
 	rm, _ := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider: engine.ProviderStandalone, PoolSize: serviceCfg.Orchestration.MaxConcurrentFlows,
-		Store: storeImpl, Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llmClient, Logger: logger,
+		Provider:      engine.ProviderStandalone,
+		PoolSize:      serviceCfg.Orchestration.MaxConcurrentFlows,
+		TaskState:     taskClient,
+		HumanApproval: humanClient,
+		Agents:        agentPtrs, MCPClients: mcpMap,
+		LLMClient: llm.NewLlmProviderManager(&serviceCfg.LLM, llmLoader),
+		Logger: logger,
 	})
 
 	// ── API Handlers ──
 	healthHandler := &handler.HealthHandler{}
 	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
-	humanHandler := handler.NewHumanHandler(storeImpl, logger)
-	runHandler := handler.NewFlowRunHandler(storeImpl, logger)
+	var mqttPub handler.MQTTPublisher // nil-safe for all-in-one
+	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
+	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPub, logger)
 	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
+	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 
 	// ── Cron ──
 	cronSched := trigger.NewScheduleTrigger()
 	cronSched.RegisterAgentFlows(append(agentFlows, flattenSubflows(subAgentFlows)...), func(ctx context.Context, id string) {
 		run := &model.AgentFlowRun{AgentFlowID: id, Version: 1, Status: model.RunPending,
 			Trigger: model.TriggerInfo{Type: "schedule", Source: "cron"}}
-		_ = localFrStore.Create(ctx, run)
+		_, _ = apiClient.CreateRun(ctx, tenant, run)
 	})
 	cronSched.Start()
 	defer cronSched.Stop()
@@ -155,7 +160,7 @@ func startAllInOne(cfgPath string) error {
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
-	jm, err := jobmanager.NewJobManager(storeImpl, rm, logger, &jobmanager.JobManagerConfig{
+	jm, err := jobmanager.NewJobManager(stateClient, rm, logger, &jobmanager.JobManagerConfig{
 		FlowExecutionTimeout: timeout,
 		MaxNodeRetries:       serviceCfg.Orchestration.MaxNodeRetries,
 		MaxConcurrentFlows:   serviceCfg.Orchestration.MaxConcurrentFlows,
@@ -163,7 +168,8 @@ func startAllInOne(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("create jobmanager: %w", err)
 	}
-	go startRunPoller(context.Background(), storeImpl, jm, agentFlowHandler.AgentFlows(), "", "")
+	flowMap := agentFlowHandler.AgentFlows()
+	go startRunPoller(context.Background(), apiClient, tenant, jm, flowMap, "", "")
 
 	// ── Hot reload ──
 	if refreshStr := serviceCfg.Orchestration.AgentFlows.Static.Refresh; refreshStr != "" {
@@ -193,7 +199,7 @@ func startAllInOne(cfgPath string) error {
 	}
 
 	// ── Notifier ──
-	notifSvc := cmdutil.CreateNotifierService(storeImpl, serviceCfg)
+	notifSvc := cmdutil.CreateNotifierService(apiClient, serviceCfg)
 	if notifSvc != nil {
 		go func() { _ = notifSvc.Start(context.Background()) }()
 		defer notifSvc.Shutdown()
@@ -205,7 +211,7 @@ func startAllInOne(cfgPath string) error {
 
 	// ── REST API Server ──
 	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge)
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler)
 	var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
 		restHandler = cmdutil.AuthMiddleware(serviceCfg.Auth, restMux)
@@ -247,7 +253,7 @@ func startAllInOne(cfgPath string) error {
 				Status: model.RunPending, Vars: req.Vars,
 				Trigger: model.TriggerInfo{Type: "api", Source: "a2a"},
 			}
-			if err := localFrStore.Create(r.Context(), run); err != nil {
+			if _, err := apiClient.CreateRun(r.Context(), tenant, run); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -303,20 +309,10 @@ func flattenSubflows(m map[string]model.AgentFlowSpec) []model.AgentFlowSpec {
 	return out
 }
 
-// startRunPoller is identical to the one in jobmanager package but needed here
-// since all-in-one embeds JM in-process.
-func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManager,
-	flows map[string]*model.AgentFlowSpec, namespace, agentFlowID string) {
-	var frStore flowrun.IFlowRunStore
-	var afStore agentflow.IAgentFlowStore
-	switch db := s.DB().(type) {
-	case *pgxpool.Pool:
-		frStore = flowrun.NewFlowRunPostgresStore(db)
-		afStore = agentflow.NewAgentFlowPostgresStore(db)
-	case *sql.DB:
-		frStore = flowrun.NewFlowRunSQLiteStore(db)
-		afStore = agentflow.NewAgentFlowSQLiteStore(db)
-	}
+// startRunPoller polls for pending runs via the apiserver client.
+func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant string,
+	jm *jobmanager.JobManager, flows map[string]*model.AgentFlowSpec,
+	namespace, agentFlowID string) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -324,7 +320,10 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, _ := frStore.Select(ctx, model.PageRequest{Page: 1, Size: 50})
+			page, err := api.ListRuns(ctx, tenant, string(model.RunPending), namespace, agentFlowID, 1, 50)
+			if err != nil {
+				continue
+			}
 			for _, run := range page.Items {
 				if run.Status != model.RunPending {
 					continue
@@ -337,8 +336,8 @@ func startRunPoller(ctx context.Context, s engine.Store, jm *jobmanager.JobManag
 				}
 				spec := flows[run.AgentFlowID]
 				if spec == nil {
-					if dbSpec, err := afStore.GetSpec(ctx, run.AgentFlowID); err == nil && dbSpec != nil {
-						spec = dbSpec
+					if apiSpec, err := api.GetFlow(ctx, tenant, run.AgentFlowID); err == nil && apiSpec != nil {
+						spec = apiSpec
 					}
 				}
 				if spec == nil {

@@ -5,6 +5,7 @@ package jobmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
@@ -19,7 +21,6 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // Start launches the JobManager daemon.
@@ -31,9 +32,7 @@ func Start(cfgPath, pidFile string) error {
 }
 
 // Stop stops the JobManager daemon.
-func Stop(pidFile string) error {
-	return cmdutil.StopByPID(pidFile)
-}
+func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
 
 // Restart restarts the JobManager daemon.
 func Restart(cfgPath, pidFile string) error {
@@ -45,7 +44,6 @@ func Restart(cfgPath, pidFile string) error {
 	return startJobManager(cfgPath)
 }
 
-// startJobManager is the actual JobManager startup logic.
 func startJobManager(cfgPath string) error {
 	svcCfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -57,7 +55,12 @@ func startJobManager(cfgPath string) error {
 	q := cmdutil.NewQueueFromConfig(svcCfg, jmID)
 	defer q.Close()
 
-	storeImpl := store.NewStoreManager(svcCfg)
+	apiClient := client.NewFlowgentClient()
+	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
+
+	stateClient := &client.RunStateClient{Client: apiClient, Tenant: tenant}
+	taskClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
+	humanClient := &client.HumanApprovalClient{Client: apiClient}
 
 	var rm resourcemanager.ResourceManager
 	jmNamespace := cmdutil.EnvOr("FLOWGENT_NAMESPACE", "")
@@ -67,12 +70,16 @@ func startJobManager(cfgPath string) error {
 	}
 	appMode := mode == "application"
 
+	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: tenant}
+
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
 			K8sNamespace:      cmdutil.EnvOr("KUBERNETES_NAMESPACE", "default"),
 			K8sDeploymentName: cmdutil.EnvOr("FLOWGENT_TM_DEPLOY", "flowgent-taskmanager"),
-			Store:             storeImpl, Logger: logger, Queue: q,
+			TaskState:         taskClient,
+			HumanApproval:     humanClient,
+			Logger:            logger, Queue: q,
 			AutoScale: appMode,
 		})
 	}
@@ -96,13 +103,16 @@ func startJobManager(cfgPath string) error {
 			}
 		}
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-			Provider: engine.ProviderStandalone, PoolSize: 10, Store: storeImpl,
-			Agents: agentPtrs, MCPClients: mcpMap, LLMClient: llm.NewLlmProviderManager(&svcCfg.LLM, storeImpl),
+			Provider:      engine.ProviderStandalone, PoolSize: 10,
+			TaskState:     taskClient,
+			HumanApproval: humanClient,
+			Agents:        agentPtrs, MCPClients: mcpMap,
+			LLMClient: llm.NewLlmProviderManager(&svcCfg.LLM, llmLoader),
 			Logger: logger, Queue: q,
 		})
 	}
 
-	jm, err := jobmanager.NewJobManager(storeImpl, rm, logger, newJobManagerConfig(svcCfg))
+	jm, err := jobmanager.NewJobManager(stateClient, rm, logger, newJobManagerConfig(svcCfg))
 	if err != nil {
 		return fmt.Errorf("create jobmanager: %w", err)
 	}
@@ -112,15 +122,14 @@ func startJobManager(cfgPath string) error {
 	flows := make(map[string]*model.AgentFlowSpec)
 	if appMode && agentFlowID != "" {
 		if svcCfg != nil && svcCfg.Orchestration.AgentFlows.Standard.Enabled {
-			if dbF, dbSF, err := cmdutil.LoadAgentFlowsFromDB(context.Background(), storeImpl); err == nil {
-				for i := range dbF {
-					if dbF[i].ID == agentFlowID {
-						flows[dbF[i].ID] = &dbF[i]
+			apiFlows, err := apiClient.ListFlows(context.Background(), tenant)
+			if err == nil {
+				for i := range apiFlows {
+					var spec model.AgentFlowSpec
+					if json.Unmarshal(apiFlows[i].Definition, &spec) == nil && spec.ID == agentFlowID {
+						flows[spec.ID] = &spec
 						break
 					}
-				}
-				if sf, ok := dbSF[agentFlowID]; ok {
-					flows[agentFlowID] = &sf
 				}
 			}
 		}
@@ -133,30 +142,18 @@ func startJobManager(cfgPath string) error {
 				flows[k] = &v
 			}
 		}
-		if svcCfg.Orchestration.AgentFlows.Standard.Enabled {
-			if dbF, dbSF, err := cmdutil.LoadAgentFlowsFromDB(context.Background(), storeImpl); err == nil {
-				for i := range dbF {
-					flows[dbF[i].ID] = &dbF[i]
-				}
-				for k, v := range dbSF {
-					flows[k] = &v
-				}
-			}
-		}
 	}
 
 	log.Printf("[jm] loaded %d flows (agentFlowID=%s, appMode=%v)", len(flows), agentFlowID, appMode)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go startRunPoller(ctx, storeImpl, jm, flows, jmNamespace, agentFlowID)
+	go startRunPoller(ctx, apiClient, tenant, jm, flows, jmNamespace, agentFlowID)
 	log.Printf("JobManager started (scheduler=%s, namespace=%s, agentFlow=%s, autoScale=%v)", rm.Provider(), jmNamespace, agentFlowID, appMode)
 	cmdutil.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)
 	return nil
 }
-
-// ─── Helpers ───────────────────────────────────────────────────
 
 func newJobManagerConfig(cfg *config.FlowgentConfig) *jobmanager.JobManagerConfig {
 	timeout, _ := time.ParseDuration(cfg.Orchestration.FlowExecutionTimeout)
@@ -169,5 +166,3 @@ func newJobManagerConfig(cfg *config.FlowgentConfig) *jobmanager.JobManagerConfi
 		MaxConcurrentFlows:   cfg.Orchestration.MaxConcurrentFlows,
 	}
 }
-
-// startRunPoller is defined in poller.go.

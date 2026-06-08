@@ -2,30 +2,25 @@ package executor
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/approval"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
+
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// ─── Human Executor ────────────────────────────────────
-
-type HumanExecutor struct {
-	apStore approval.IApprovalStore
+// HumanApprovalStore is the narrow interface for creating human approval records.
+// Implementations call the apiserver REST API (never direct DB).
+type HumanApprovalStore interface {
+	CreateApproval(ctx context.Context, approval *model.HumanApproval) error
 }
 
-func NewHumanExecutor(s store.IStore) *HumanExecutor {
-	var apStore approval.IApprovalStore
-	switch db := s.DB().(type) {
-	case *pgxpool.Pool:
-		apStore = approval.NewApprovalPostgresStore(db)
-	case *sql.DB:
-		apStore = approval.NewApprovalSQLiteStore(db)
-	}
-	return &HumanExecutor{apStore: apStore}
+// HumanExecutor handles human-in-the-loop approval tasks.
+type HumanExecutor struct {
+	store HumanApprovalStore
+}
+
+func NewHumanExecutor(store HumanApprovalStore) *HumanExecutor {
+	return &HumanExecutor{store: store}
 }
 
 func (e *HumanExecutor) TaskType() model.TaskType { return model.TaskHuman }
@@ -41,7 +36,7 @@ func (e *HumanExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		Timeout:   timeout,
 		Status:    "PENDING",
 	}
-	if err := e.apStore.CreateApproval(ctx, approval); err != nil {
+	if err := e.store.CreateApproval(ctx, approval); err != nil {
 		return nil, fmt.Errorf("create human approval: %w", err)
 	}
 

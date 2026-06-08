@@ -10,9 +10,10 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // ─── ResourceManager interface ─────────────────────────────────
@@ -41,13 +42,14 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue messager.IMessager
-	Cache cache.ICache
-	Store store.IStore
-	Agents     []*config.AgentDef
-	MCPClients map[string]engine.MCPClient
-	LLMClient  engine.LLMClient
-	Logger     *utils.Logger
+	Queue         messager.IMessager
+	Cache         cache.ICache
+	TaskState     taskmanager.TaskStateStore
+	HumanApproval executor.HumanApprovalStore
+	Agents        []*config.AgentDef
+	MCPClients    map[string]engine.MCPClient
+	LLMClient     engine.LLMClient
+	Logger        *utils.Logger
 
 	K8sNamespace      string
 	K8sDeploymentName string
@@ -100,35 +102,13 @@ var _ ResourceManager = (*KubernetesResourceManager)(nil)
 // ─── Validation ───────────────────────────────────────────────
 
 // ValidateComponents checks cross-component compatibility. Returns fatal errors.
-func ValidateComponents(rm ResourceManager, store store.IStore) []error {
+func ValidateComponents(rm ResourceManager) []error {
 	var errs []error
 	if rm == nil {
 		return append(errs, fmt.Errorf("resource manager is nil"))
 	}
-	if store == nil {
-		return append(errs, fmt.Errorf("store is nil"))
-	}
 	if err := rm.Validate(context.Background()); err != nil {
 		errs = append(errs, err)
 	}
-	// Note: store.DB() returns nil for some implementations (e.g., Postgres via pgx).
-	// The actual store connectivity is verified at runtime when queries are executed.
 	return errs
-}
-
-// WarnCompatibility logs warnings for unusual but non-fatal configurations.
-func WarnCompatibility(rm ResourceManager, store store.IStore) {
-	if rm == nil || store == nil {
-		return
-	}
-	switch rm.Provider() {
-	case engine.ProviderStandalone:
-		if store.DB() != nil {
-			slog.Warn("local rm with postgres — consider SQLite for all-in-one mode")
-		}
-	case engine.ProviderKubernetes:
-		if store.DB() == nil {
-			slog.Warn("kubernetes rm with in-memory store — needs postgres for consistency")
-		}
-	}
 }

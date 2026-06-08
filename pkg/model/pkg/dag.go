@@ -5,7 +5,6 @@
 //	Node, Edge, NodeType enum, RetryPolicy, HumanApprovalConfig, SupervisorConfig.
 package model
 
-
 // ─── Node type enum ──────────────────────────────────────────
 
 // NodeType is the type of a DAG node.
@@ -69,17 +68,17 @@ type Edge struct {
 
 // RetryPolicy defines the retry behavior for a node.
 type RetryPolicy struct {
-	Max      int           `json:"max" yaml:"max"`
+	Max      int      `json:"max" yaml:"max"`
 	Initial  Duration `json:"initial" yaml:"initial"`
 	MaxDelay Duration `json:"max_delay" yaml:"max_delay"`
-	Factor   float64       `json:"factor" yaml:"factor"`
+	Factor   float64  `json:"factor" yaml:"factor"`
 }
 
 // HumanApprovalConfig defines the approval gate configuration for human nodes.
 type HumanApprovalConfig struct {
 	Timeout   Duration `json:"timeout" yaml:"timeout"`
-	OnApprove string        `json:"on_approve" yaml:"on_approve"`
-	OnReject  string        `json:"on_reject" yaml:"on_reject"`
+	OnApprove string   `json:"on_approve" yaml:"on_approve"`
+	OnReject  string   `json:"on_reject" yaml:"on_reject"`
 }
 
 // SupervisorConfig defines the constraints for supervisor nodes.

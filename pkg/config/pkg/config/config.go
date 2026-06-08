@@ -3,9 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
-	"reflect"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -194,8 +194,8 @@ type LLMConfig struct {
 }
 
 type LLMProvidersConfig struct {
-	Static   []LLMProviderDef  `json:"static" yaml:"static"`
-	Standard StandardAgentCfg  `json:"standard" yaml:"standard"`
+	Static   []LLMProviderDef `json:"static" yaml:"static"`
+	Standard StandardAgentCfg `json:"standard" yaml:"standard"`
 }
 
 type OrchestrationConfig struct {
@@ -213,8 +213,8 @@ type OrchestrationConfig struct {
 // In distributed mode (Deployment.Enabled=true), sandbox runs as independent K8s pods
 // managed by the JM's K8sRM with its own Deployment, scaling, and resource limits.
 type SandboxConfig struct {
-	Workspace  string                       `json:"workspace" yaml:"workspace"`
-	Policy     *model.SandboxPolicy         `json:"policy" yaml:"policy"`
+	Workspace  string                        `json:"workspace" yaml:"workspace"`
+	Policy     *model.SandboxPolicy          `json:"policy" yaml:"policy"`
 	Deployment model.SandboxDeploymentConfig `json:"deployment" yaml:"deployment"`
 }
 
@@ -350,7 +350,7 @@ type StandardAgentCfg struct {
 // AppConfig is the aggregate application configuration combining service config
 // with loaded agentflow definitions.
 type AppConfig struct {
-	Service  FlowgentConfig                  `json:"service" yaml:"service"`
+	Service  FlowgentConfig                 `json:"service" yaml:"service"`
 	Agents   []AgentDef                     `json:"agents,omitempty" yaml:"agents,omitempty"`
 	Flows    []model.AgentFlowSpec          `json:"flows" yaml:"flows"`
 	SubFlows map[string]model.AgentFlowSpec `json:"sub_flows,omitempty" yaml:"sub_flows,omitempty"`
@@ -593,7 +593,9 @@ type X402Cfg struct {
 // expandEnvVars recursively walks a struct and replaces ${VAR} placeholders
 // in string values with the corresponding environment variable value.
 func expandEnvVars(v reflect.Value) {
-	if v.Kind() == reflect.Ptr { v = v.Elem() }
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
 	switch v.Kind() {
 	case reflect.String:
 		s := v.String()
@@ -607,18 +609,24 @@ func expandEnvVars(v reflect.Value) {
 			}
 		}
 	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ { expandEnvVars(v.Field(i)) }
+		for i := 0; i < v.NumField(); i++ {
+			expandEnvVars(v.Field(i))
+		}
 	case reflect.Map:
 		for _, key := range v.MapKeys() {
 			val := v.MapIndex(key)
-			if val.Kind() == reflect.Interface { val = val.Elem() }
+			if val.Kind() == reflect.Interface {
+				val = val.Elem()
+			}
 			if val.Kind() == reflect.String {
 				newVal := expandString(val.String())
 				v.SetMapIndex(key, reflect.ValueOf(newVal))
 			}
 		}
 	case reflect.Slice:
-		for i := 0; i < v.Len(); i++ { expandEnvVars(v.Index(i)) }
+		for i := 0; i < v.Len(); i++ {
+			expandEnvVars(v.Index(i))
+		}
 	}
 }
 

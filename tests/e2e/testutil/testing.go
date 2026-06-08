@@ -83,6 +83,9 @@ func (s *MockStore) CreateHumanApproval(ctx context.Context, a *model.HumanAppro
 	s.Humans[a.TaskRunID] = a
 	return nil
 }
+func (s *MockStore) CreateApproval(ctx context.Context, a *model.HumanApproval) error {
+	return s.CreateHumanApproval(ctx, a)
+}
 func (s *MockStore) GetHumanApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
 	s.Mu.Lock(); defer s.Mu.Unlock()
 	for _, a := range s.Humans {

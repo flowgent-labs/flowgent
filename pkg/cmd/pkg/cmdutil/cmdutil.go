@@ -1,5 +1,4 @@
 // Package cmdutil provides shared utility functions for Flowgent CLI components.
-// These are pure helpers — no startup logic coupling lives here.
 package cmdutil
 
 import (
@@ -21,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
@@ -29,8 +28,6 @@ import (
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
-	"github.com/flowgent-labs/flowgent/store/pkg/approval"
-	storenf "github.com/flowgent-labs/flowgent/store/pkg/notifier"
 )
 
 // ─── PID & Process helpers ─────────────────────────────────────
@@ -230,63 +227,34 @@ func (a *NotifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (
 
 func (a *NotifToWSAdapter) PodID() string { return a.Svc.PodID() }
 
-// NotifierStoreAdapter combines entity stores to satisfy notifier.Store.
+// NotifierStoreAdapter satisfies notifier.Store using the apiserver client.
+// Subscription routes are kept in-memory (transient, no REST API for them).
 type NotifierStoreAdapter struct {
-	ApStore  approval.IApprovalStore
-	NtStore  storenf.INotifierStore
+	API      *client.FlowgentClient
+	Tenant   string
 	RoutesMu sync.Mutex
 	Routes   map[string]*model.SubscriptionRoute
 }
 
-// NewNotifierStoreAdapter creates a NotifierStoreAdapter from an IStore.
-func NewNotifierStoreAdapter(s store.IStore) *NotifierStoreAdapter {
-	var apStore approval.IApprovalStore
-	var ntStore storenf.INotifierStore
-	if s != nil {
-		switch db := s.DB().(type) {
-		case *pgxpool.Pool:
-			apStore = approval.NewApprovalPostgresStore(db)
-			ntStore = storenf.NewNotifierPostgresStore(db)
-		case *sql.DB:
-			apStore = approval.NewApprovalSQLiteStore(db)
-			ntStore = storenf.NewNotifierSQLiteStore(db)
-		}
-	}
+// NewNotifierStoreAdapter creates a client-backed NotifierStoreAdapter.
+func NewNotifierStoreAdapter(api *client.FlowgentClient, tenant string) *NotifierStoreAdapter {
 	return &NotifierStoreAdapter{
-		ApStore: apStore,
-		NtStore: ntStore,
-		Routes:  make(map[string]*model.SubscriptionRoute),
+		API:    api,
+		Tenant: tenant,
+		Routes: make(map[string]*model.SubscriptionRoute),
 	}
 }
 
 func (a *NotifierStoreAdapter) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
-	items, err := a.ApStore.ListPending(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]model.HumanApproval, len(items))
-	for i, item := range items {
-		if item != nil {
-			result[i] = *item
-		}
-	}
-	return result, nil
+	return a.API.ListPendingApprovals(ctx)
 }
 
 func (a *NotifierStoreAdapter) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
-	page, err := a.NtStore.Select(ctx, model.PageRequest{Page: 1, Size: 1000})
-	items := page.Items
-	if err != nil {
-		return nil, err
+	tid := tenantID
+	if tid == "" {
+		tid = a.Tenant
 	}
-	_ = tenantID
-	result := make([]model.NotifierChannel, len(items))
-	for i, item := range items {
-		if item != nil {
-			result[i] = *item
-		}
-	}
-	return result, nil
+	return a.API.ListChannels(ctx, tid)
 }
 
 func (a *NotifierStoreAdapter) SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error {
@@ -329,11 +297,11 @@ func (a *NotifierStoreAdapter) CleanupOrphanedRoutes(ctx context.Context, podID 
 }
 
 // CreateNotifierService builds a notifier.Service from config, or nil if disabled.
-func CreateNotifierService(s store.IStore, cfg *config.FlowgentConfig) *notifier.Service {
+func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfig) *notifier.Service {
 	if !cfg.Notifier.Enabled {
 		return nil
 	}
-	adapter := NewNotifierStoreAdapter(s)
+	adapter := NewNotifierStoreAdapter(api, EnvOr("FLOWGENT_TENANT", "default"))
 	svc := notifier.NewService(adapter, nil)
 	for _, chCfg := range cfg.Notifier.Channels {
 		if !chCfg.Enabled {
@@ -371,10 +339,11 @@ func MatchGlob(pattern, path string) bool {
 	return false
 }
 
-// ─── DB helpers ────────────────────────────────────────────────
+// ─── DB helpers (apiserver/all-in-one only — these have DB access) ──
 
 // LoadAgentFlowsFromDB reads agentflow definitions from the database (Standard mode).
-func LoadAgentFlowsFromDB(ctx context.Context, s engine.Store) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
+// Only call from apiserver/all-in-one which are allowed direct DB access.
+func LoadAgentFlowsFromDB(ctx context.Context, s store.IStore) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
 	var flows []model.AgentFlowSpec
 	subFlows := make(map[string]model.AgentFlowSpec)
 

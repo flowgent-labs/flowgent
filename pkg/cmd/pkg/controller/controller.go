@@ -1,12 +1,11 @@
 // Package controller provides the distributed sharded flow driver daemon.
-// It polls agentflow definitions from PostgreSQL, shards flows across
-// controller pods via hash-mod partitioning, and dispatches executions
-// in either session mode (shared JM) or application mode (dedicated JM+TM).
+// It discovers flows via apiserver REST API, shards across controller pods via
+// hash-mod partitioning, and dispatches executions in either session mode
+// (shared JM) or application mode (dedicated JM+TM).
 package controller
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,20 +22,17 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/discovery"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
 // ─── CLI entry points ──────────────────────────────────────────
 
-// Start launches the Controller daemon.
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
 		cmdutil.WritePID(pidFile)
@@ -51,12 +46,8 @@ func Start(cfgPath, pidFile string) error {
 	return startController(cfgPath)
 }
 
-// Stop stops the Controller daemon.
-func Stop(pidFile string) error {
-	return cmdutil.StopByPID(pidFile)
-}
+func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
 
-// Restart restarts the Controller daemon.
 func Restart(cfgPath, pidFile string) error {
 	_ = cmdutil.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
@@ -71,13 +62,12 @@ func Restart(cfgPath, pidFile string) error {
 
 // Controller is the distributed flow driver.
 type Controller struct {
-	store    store.IStore
-	frStore  flowrun.IFlowRunStore
-	afStore  agentflow.IAgentFlowStore
-	rm       resourcemanager.ResourceManager
-	logger   *utils.Logger
-	cfg      *config.FlowgentConfig
-	cfgPath  string
+	api    *client.FlowgentClient
+	tenant string
+	rm     resourcemanager.ResourceManager
+	logger *utils.Logger
+	cfg    *config.FlowgentConfig
+	cfgPath string
 
 	discovery    discovery.IDiscoveryClient
 	pollInterval time.Duration
@@ -87,22 +77,12 @@ type Controller struct {
 }
 
 // NewController creates a Controller instance.
-func NewController(s store.IStore, rm resourcemanager.ResourceManager, logger *utils.Logger,
-	cfg *config.FlowgentConfig, cfgPath string, disc discovery.IDiscoveryClient) *Controller {
-	var frStore flowrun.IFlowRunStore
-	var afStore agentflow.IAgentFlowStore
-	switch db := s.DB().(type) {
-	case *pgxpool.Pool:
-		frStore = flowrun.NewFlowRunPostgresStore(db)
-		afStore = agentflow.NewAgentFlowPostgresStore(db)
-	case *sql.DB:
-		frStore = flowrun.NewFlowRunSQLiteStore(db)
-		afStore = agentflow.NewAgentFlowSQLiteStore(db)
-	}
+func NewController(api *client.FlowgentClient, tenant string, rm resourcemanager.ResourceManager,
+	logger *utils.Logger, cfg *config.FlowgentConfig, cfgPath string,
+	disc discovery.IDiscoveryClient) *Controller {
 	return &Controller{
-		store:        s,
-		frStore:      frStore,
-		afStore:      afStore,
+		api:          api,
+		tenant:       tenant,
 		rm:           rm,
 		logger:       logger,
 		cfg:          cfg,
@@ -185,10 +165,9 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 func (c *Controller) reconcile(ctx context.Context) {
-	page, err := c.afStore.Select(ctx, model.PageRequest{Page: 1, Size: 1000})
-	versions := page.Items
+	versions, err := c.api.ListFlows(ctx, c.tenant)
 	if err != nil {
-		c.logger.Error("Failed to list agentflow definitions", "error", err)
+		c.logger.Error("Failed to list agentflow definitions via apiserver", "error", err)
 		return
 	}
 
@@ -254,24 +233,30 @@ func (c *Controller) dispatchFlow(ctx context.Context, spec *model.AgentFlowSpec
 func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentFlowSpec) {
 	c.logger.Info("Session mode dispatch", "flow_id", spec.ID)
 
+	tenant := spec.TenantID
+	if tenant == "" {
+		tenant = c.tenant
+	}
+
 	run := &model.AgentFlowRun{
 		ID:          fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()),
 		AgentFlowID: spec.ID,
 		Version:     1,
 		Status:      model.RunPending,
 		Priority:    spec.Priority,
-		TenantID:    spec.TenantID,
+		TenantID:    tenant,
 		Namespace:   spec.Namespace,
 		Vars:        spec.Vars,
 		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
 
-	if err := c.frStore.Create(ctx, run); err != nil {
-		c.logger.Error("Failed to create session run", "flow_id", spec.ID, "error", err)
+	created, err := c.api.CreateRun(ctx, tenant, run)
+	if err != nil {
+		c.logger.Error("Failed to create session run via apiserver", "flow_id", spec.ID, "error", err)
 		return
 	}
 
-	c.logger.Info("Session run created", "flow_id", spec.ID, "run_id", run.ID)
+	c.logger.Info("Session run created", "flow_id", spec.ID, "run_id", created.ID)
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -280,12 +265,12 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r, err := c.frStore.Get(ctx, run.ID)
+			r, err := c.api.GetRun(ctx, tenant, created.ID)
 			if err != nil || r == nil {
 				continue
 			}
 			if isTerminalStatus(r.Status) {
-				c.logger.Info("Session run completed", "flow_id", spec.ID, "run_id", run.ID, "status", r.Status)
+				c.logger.Info("Session run completed", "flow_id", spec.ID, "run_id", created.ID, "status", r.Status)
 				return
 			}
 		}
@@ -318,7 +303,7 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *model.Ag
 
 	tenantID := spec.TenantID
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = c.tenant
 	}
 	jmName := fmt.Sprintf("flowgent-jobmanager-%s-%s", tenantID, spec.ID)
 	jmDeployment := c.buildJMDeployment(jmName, ns, tenantID, spec)
@@ -340,13 +325,13 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *model.Ag
 		Version:     1,
 		Status:      model.RunPending,
 		Priority:    model.PriorityGrade,
-		TenantID:    spec.TenantID,
+		TenantID:    tenantID,
 		Namespace:   ns,
 		Vars:        spec.Vars,
 		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
-	if err := c.frStore.Create(ctx, run); err != nil {
-		c.logger.Error("Failed to create application run", "flow_id", spec.ID, "error", err)
+	if _, err := c.api.CreateRun(ctx, tenantID, run); err != nil {
+		c.logger.Error("Failed to create application run via apiserver", "flow_id", spec.ID, "error", err)
 	}
 }
 
@@ -409,10 +394,8 @@ func startController(cfgPath string) error {
 	}
 	logger := utils.NewLogger(logMode, logLevel)
 
-	storeImpl := store.NewStoreManager(svcCfg)
-	if _, ok := storeImpl.DB().(*pgxpool.Pool); !ok {
-		return fmt.Errorf("controller requires PostgreSQL storage (set FLOWGENT_DATABASE_URL or configure storage.type=POSTGRE)")
-	}
+	apiClient := client.NewFlowgentClient()
+	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
 
 	loadedAgents, _ := config.LoadAgents(svcCfg, cfgPath)
 	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
@@ -420,13 +403,17 @@ func startController(cfgPath string) error {
 		agentPtrs[i] = &loadedAgents[i]
 	}
 
+	stateClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
+	humanClient := &client.HumanApprovalClient{Client: apiClient}
+
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:   engine.ProviderStandalone,
-		PoolSize:   svcCfg.Orchestration.MaxConcurrentFlows,
-		Store:      storeImpl,
-		Agents:     agentPtrs,
-		MCPClients: make(map[string]engine.MCPClient),
-		Logger:     logger,
+		Provider:      engine.ProviderStandalone,
+		PoolSize:      svcCfg.Orchestration.MaxConcurrentFlows,
+		TaskState:     stateClient,
+		HumanApproval: humanClient,
+		Agents:        agentPtrs,
+		MCPClients:    make(map[string]engine.MCPClient),
+		Logger:        logger,
 	})
 	if err != nil {
 		return fmt.Errorf("create resource manager: %w", err)
@@ -441,7 +428,7 @@ func startController(cfgPath string) error {
 		logger.Info("Controller using static discovery client (env vars)")
 	}
 
-	ctrl := NewController(storeImpl, rm, logger, svcCfg, cfgPath, disc)
+	ctrl := NewController(apiClient, tenant, rm, logger, svcCfg, cfgPath, disc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

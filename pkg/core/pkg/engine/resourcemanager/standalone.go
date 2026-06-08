@@ -25,13 +25,13 @@ func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResour
 	}
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: "tm-local", SlotCount: poolSize,
-		Queue: cfg.Queue, Store: cfg.Store, Agents: cfg.Agents,
-		MCPClients: cfg.MCPClients, LLMClient: cfg.LLMClient,
+		Queue: cfg.Queue, State: cfg.TaskState, HumanApproval: cfg.HumanApproval,
+		Agents: cfg.Agents, MCPClients: cfg.MCPClients, LLMClient: cfg.LLMClient,
 		Logger: cfg.Logger,
 		SandboxQueue:             cfg.Queue,
 		SandboxPolicy:            cfg.SandboxPolicy,
 		SandboxWorkspace:         cfg.SandboxWorkspace,
-		SandboxDeploymentEnabled: false, // standalone mode: embedded runner
+		SandboxDeploymentEnabled: false,
 	})
 	if err != nil {
 		return nil, err

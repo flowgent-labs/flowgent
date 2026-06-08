@@ -16,6 +16,7 @@ func RegisterRESTRoutes(
 	human *handler.HumanHandler,
 	notif *handler.NotifierHandler,
 	ws *handler.NotifierWSBridge,
+	llmProvider *handler.LlmProviderHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -42,15 +43,20 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/{id}/trigger", flowDef.TriggerByID)
 
 	// ── Runs (tenant-scoped) ───────────────────────────────
+	mux.HandleFunc("POST /api/v1/{tenant}/runs", flowRun.Create)
 	mux.HandleFunc("GET /api/v1/{tenant}/runs", flowRun.List)
+	mux.HandleFunc("PUT /api/v1/{tenant}/runs/{id}", flowRun.Update)
 	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}", flowRun.Get)
 	mux.HandleFunc("DELETE /api/v1/{tenant}/runs/{id}", flowRun.Delete)
 	mux.HandleFunc("POST /api/v1/{tenant}/runs/{id}/cancel", flowRun.Cancel)
+	mux.HandleFunc("POST /api/v1/{tenant}/runs/{id}/tasks", flowRun.CreateTask)
 	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks", flowRun.ListTasks)
 	mux.HandleFunc("GET /api/v1/{tenant}/runs/{id}/tasks/{task_id}", flowRun.GetTask)
 	mux.HandleFunc("PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}", flowRun.UpdateTask)
 
-	// ── Human Approvals (global — token is unique) ────────
+	// ── Human Approvals ────────────────────────────────────
+	mux.HandleFunc("POST /api/v1/human/approvals", human.CreateApproval)
+	mux.HandleFunc("GET /api/v1/human/approvals", human.ListPendingApprovals)
 	mux.HandleFunc("POST /api/v1/human/{token}/approve", human.Approve)
 	mux.HandleFunc("POST /api/v1/human/{token}/reject", human.Reject)
 
@@ -65,6 +71,11 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("PUT /api/v1/{tenant}/notifications/channels/{id}", notif.UpdateChannel)
 	mux.HandleFunc("DELETE /api/v1/{tenant}/notifications/channels/{id}", notif.DeleteChannel)
 	mux.HandleFunc("POST /api/v1/{tenant}/notifications/test", notif.TestChannel)
+
+	// ── LLM Providers (tenant-scoped) ──────────────────────
+	if llmProvider != nil {
+		mux.HandleFunc("GET /api/v1/{tenant}/llm/providers", llmProvider.List)
+	}
 
 	// ── WebSocket (tenant-scoped) ──────────────────────────
 	if ws != nil {

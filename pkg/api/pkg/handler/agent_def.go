@@ -33,7 +33,7 @@ func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
 // List returns all agent definitions for the given tenant.
 func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	agents, err := h.store.Select(r.Context(), model.PageRequest{Page:1, Size:1000})
+	agents, err := h.store.Select(r.Context(), model.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

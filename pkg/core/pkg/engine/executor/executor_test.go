@@ -246,11 +246,10 @@ func (c *testLLMClient) Generate(_ context.Context, _, _, _ string, _ float64) (
 }
 
 func TestSupervisorExecutor_ValidAction(t *testing.T) {
-	store := testutil.NewMockStore()
 	llm := &testLLMClient{response: `{"action":"continue","target":"","reason":"ok"}`}
 	e := NewSupervisorExecutor(llm, []*config.AgentDef{
 		{Name: "supervisor", Model: "test/gpt"},
-	}, store)
+	})
 
 	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
 		NodeSpec: &model.NodeSpec{
@@ -269,11 +268,10 @@ func TestSupervisorExecutor_ValidAction(t *testing.T) {
 }
 
 func TestSupervisorExecutor_DisallowedAction(t *testing.T) {
-	store := testutil.NewMockStore()
 	llm := &testLLMClient{response: `{"action":"redirect","target":"x","reason":"test"}`}
 	e := NewSupervisorExecutor(llm, []*config.AgentDef{
 		{Name: "supervisor", Model: "test/gpt"},
-	}, store)
+	})
 
 	_, err := e.Execute(context.Background(), &model.ExecutionPlan{
 		NodeSpec: &model.NodeSpec{
@@ -289,12 +287,11 @@ func TestSupervisorExecutor_DisallowedAction(t *testing.T) {
 }
 
 func TestSupervisorExecutor_DefaultContinue(t *testing.T) {
-	store := testutil.NewMockStore()
 	// LLM returns JSON without action field → should default to "continue"
 	llm := &testLLMClient{response: `{"reason":"testing"}`}
 	e := NewSupervisorExecutor(llm, []*config.AgentDef{
 		{Name: "supervisor", Model: "test/gpt"},
-	}, store)
+	})
 
 	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
 		NodeSpec: &model.NodeSpec{

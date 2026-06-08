@@ -61,12 +61,16 @@ func (s *MemorySQLiteStore) SearchMemory(ctx context.Context, flowID string, emb
 	rows, err := s.inner.Conn.QueryContext(ctx,
 		`SELECT flow_id, node_id, content, embedding, metadata, created_at, updated_at
 		 FROM agent_memories WHERE flow_id=?1 ORDER BY updated_at DESC LIMIT ?2`, flowID, topK)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var out []model.NodeMemory
 	for rows.Next() {
 		m, err := scanNodeMemory(rows)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, m)
 	}
 	return out, rows.Err()

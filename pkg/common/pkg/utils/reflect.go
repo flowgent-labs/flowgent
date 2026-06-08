@@ -13,14 +13,22 @@ import (
 // Column name priority: db tag > json tag > snake_case(field name).
 func StructFields(entity any) (cols []string, args []any) {
 	v := reflect.ValueOf(entity)
-	if v.Kind() == reflect.Ptr { v = v.Elem() }
-	if v.Kind() != reflect.Struct { return }
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return
+	}
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if !f.IsExported() { continue }
+		if !f.IsExported() {
+			continue
+		}
 		col := ColName(f)
-		if col == "" || col == "-" { continue }
+		if col == "" || col == "-" {
+			continue
+		}
 		cols = append(cols, col)
 		args = append(args, v.Field(i).Interface())
 	}
@@ -29,10 +37,14 @@ func StructFields(entity any) (cols []string, args []any) {
 
 // ColName returns the SQL column name for a struct field.
 func ColName(f reflect.StructField) string {
-	if tag := f.Tag.Get("db"); tag != "" { return strings.Split(tag, ",")[0] }
+	if tag := f.Tag.Get("db"); tag != "" {
+		return strings.Split(tag, ",")[0]
+	}
 	if tag := f.Tag.Get("json"); tag != "" {
 		n := strings.Split(tag, ",")[0]
-		if n != "" && n != "-" { return n }
+		if n != "" && n != "-" {
+			return n
+		}
 	}
 	return ToSnakeCase(f.Name)
 }
@@ -41,7 +53,9 @@ func ColName(f reflect.StructField) string {
 func ToSnakeCase(s string) string {
 	var b strings.Builder
 	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' { b.WriteByte('_') }
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteByte('_')
+		}
 		b.WriteRune(r)
 	}
 	return strings.ToLower(b.String())
@@ -49,8 +63,12 @@ func ToSnakeCase(s string) string {
 
 // IsJSONType returns true if the field type should be scanned as JSON ([]byte→Unmarshal).
 func IsJSONType(ft reflect.Type) bool {
-	if ft == reflect.TypeOf(json.RawMessage{}) { return false }
-	if ft == reflect.TypeOf([]byte{}) { return false }
+	if ft == reflect.TypeOf(json.RawMessage{}) {
+		return false
+	}
+	if ft == reflect.TypeOf([]byte{}) {
+		return false
+	}
 	switch ft.Kind() {
 	case reflect.Map:
 		return true
@@ -59,7 +77,9 @@ func IsJSONType(ft reflect.Type) bool {
 	case reflect.Struct:
 		return ft != reflect.TypeOf(time.Time{})
 	case reflect.Ptr:
-		if ft.Elem().Kind() == reflect.Struct && ft.Elem() != reflect.TypeOf(time.Time{}) { return true }
+		if ft.Elem().Kind() == reflect.Struct && ft.Elem() != reflect.TypeOf(time.Time{}) {
+			return true
+		}
 	}
 	return false
 }
@@ -78,8 +98,12 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 	jsonIdxs := make(map[int]int) // ptrsIndex → fieldIndex
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if !f.IsExported() { continue }
-		if ColName(f) == "" || ColName(f) == "-" { continue }
+		if !f.IsExported() {
+			continue
+		}
+		if ColName(f) == "" || ColName(f) == "-" {
+			continue
+		}
 		fv := ev.Field(i)
 		ft := fv.Type()
 		if IsJSONType(ft) {
@@ -89,10 +113,14 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 			ptrs = append(ptrs, fv.Addr().Interface())
 		}
 	}
-	if err := scanner.Scan(ptrs...); err != nil { return err }
+	if err := scanner.Scan(ptrs...); err != nil {
+		return err
+	}
 	for pi, fi := range jsonIdxs {
 		b := ptrs[pi].(*[]byte)
-		if b == nil || len(*b) == 0 { continue }
+		if b == nil || len(*b) == 0 {
+			continue
+		}
 		json.Unmarshal(*b, ev.Field(fi).Addr().Interface())
 	}
 	return nil
@@ -116,4 +144,3 @@ func Columns[T any]() string {
 	cols, _ := StructFields(&entity)
 	return strings.Join(cols, ",")
 }
-

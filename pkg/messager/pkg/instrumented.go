@@ -11,11 +11,11 @@ import (
 
 // InstrumentedMessager wraps a Messager with OTEL metric instrumentation.
 type InstrumentedMessager struct {
-	inner          IMessager
-	publishTotal   metric.Int64Counter
-	ackTotal       metric.Int64Counter
-	nackTotal      metric.Int64Counter
-	handleLatency  metric.Float64Histogram
+	inner         IMessager
+	publishTotal  metric.Int64Counter
+	ackTotal      metric.Int64Counter
+	nackTotal     metric.Int64Counter
+	handleLatency metric.Float64Histogram
 }
 
 func NewInstrumentedMessager(inner IMessager) *InstrumentedMessager {

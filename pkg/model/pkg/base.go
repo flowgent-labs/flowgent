@@ -56,7 +56,9 @@ type Page[T any] struct {
 // NewPage creates a Page from results and total count.
 func NewPage[T any](items []*T, totalCount int64, req PageRequest) *Page[T] {
 	totalPages := int(totalCount / int64(req.Size))
-	if totalCount%int64(req.Size) != 0 { totalPages++ }
+	if totalCount%int64(req.Size) != 0 {
+		totalPages++
+	}
 	return &Page[T]{
 		Items: items, TotalCount: totalCount,
 		Request: req, TotalPages: totalPages,

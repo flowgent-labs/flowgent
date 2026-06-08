@@ -129,6 +129,53 @@ type InterMessage struct {
 	Payload []byte            `json:"payload,omitempty"`
 }
 
+// ─── Controller Lifecycle Topics ───────────────────────────────
+//
+// Apiserver publishes lifecycle events after successful DB writes. Controller
+// subscribes via SharedCtrlEvents() for hash-mod-shard dispatching. Events use
+// InterMessage with a JSON-encoded FlowEvent or RunEvent payload.
+
+// CtrlFlowUpdatedTopic is published by apiserver after flow create/update/reload.
+func CtrlFlowUpdatedTopic(tenantID, flowID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/updated", TopicPrefix, tenantID, flowID)
+}
+
+// CtrlFlowDeletedTopic is published by apiserver after flow deletion.
+func CtrlFlowDeletedTopic(tenantID, flowID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/deleted", TopicPrefix, tenantID, flowID)
+}
+
+// CtrlRunCreatedTopic is published by apiserver after a new PENDING run is created.
+func CtrlRunCreatedTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/created", TopicPrefix, tenantID, flowID, runID)
+}
+
+// CtrlRunStatusTopic is published by apiserver after a run status changes.
+func CtrlRunStatusTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/status", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SharedCtrlEvents is the $share subscription for controller pods.
+func SharedCtrlEvents() string {
+	return "$share/ctrl-pool/" + TopicPrefix + "/+/flows/+/ctrl/#"
+}
+
+// FlowEvent is published by apiserver when a flow definition changes.
+type FlowEvent struct {
+	EventType string `json:"event_type"` // CREATED | UPDATED | DELETED
+	FlowID    string `json:"flow_id"`
+	TenantID  string `json:"tenant_id"`
+	Version   int64  `json:"version,omitempty"`
+}
+
+// RunEvent is published by apiserver when a run lifecycle changes.
+type RunEvent struct {
+	EventType string `json:"event_type"` // CREATED | STATUS_CHANGED
+	RunID     string `json:"run_id"`
+	FlowID    string `json:"flow_id"`
+	TenantID  string `json:"tenant_id"`
+	Status    string `json:"status"`
+}
 
 // ─── Heartbeat ─────────────────────────────────────────────────
 

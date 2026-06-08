@@ -3,9 +3,9 @@ package agentdef
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AgentDefPostgresStore wraps store.PostgresGenericStore[model.AgentDef].

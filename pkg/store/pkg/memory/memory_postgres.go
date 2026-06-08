@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // MemoryPostgresStore wraps store.PostgresGenericStore[model.NodeMemory].
@@ -62,7 +62,9 @@ func (s *MemoryPostgresStore) SearchMemory(ctx context.Context, flowID string, e
 	rows, err := s.inner.Pool.Query(ctx,
 		`SELECT flow_id, node_id, content, embedding, metadata, created_at, updated_at
 		 FROM agent_memories WHERE flow_id=$1 ORDER BY updated_at DESC LIMIT $2`, flowID, topK)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[model.NodeMemory])
 }

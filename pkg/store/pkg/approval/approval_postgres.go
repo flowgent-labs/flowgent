@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // ApprovalPostgresStore wraps store.PostgresGenericStore[model.HumanApproval].
@@ -58,7 +58,9 @@ func (s *ApprovalPostgresStore) UpdateApproval(ctx context.Context, e *model.Hum
 func (s *ApprovalPostgresStore) ListPending(ctx context.Context) ([]*model.HumanApproval, error) {
 	rows, err := s.inner.Pool.Query(ctx,
 		"SELECT * FROM human_approvals WHERE status='PENDING' ORDER BY created_at DESC")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[model.HumanApproval])
 }

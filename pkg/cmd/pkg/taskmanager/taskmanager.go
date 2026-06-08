@@ -11,11 +11,11 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // Start launches the TaskManager daemon.
@@ -65,7 +65,8 @@ func startTaskManager(cfgPath string) error {
 	q := cmdutil.NewQueueFromConfig(svcCfg, tmID)
 	defer q.Close()
 
-	dbStore := store.NewStoreManager(svcCfg)
+	apiClient := client.NewFlowgentClient()
+	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
 
 	var agentPtrs []*config.AgentDef
 	if svcCfg != nil {
@@ -92,7 +93,9 @@ func startTaskManager(cfgPath string) error {
 	}
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
-		ID: tmID, SlotCount: slotCount, Queue: q, Store: dbStore,
+		ID: tmID, SlotCount: slotCount, Queue: q,
+		State:         &client.TaskStateClient{Client: apiClient, Tenant: tenant},
+		HumanApproval: &client.HumanApprovalClient{Client: apiClient},
 		Agents: agentPtrs, MCPClients: mcpMap, Logger: logger,
 		SandboxQueue:     q,
 		SandboxPolicy:    svcCfg.Sandbox.Policy,

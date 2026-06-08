@@ -2,7 +2,6 @@ package taskmanager
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,9 +10,6 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go.opentelemetry.io/otel/metric"
 )
@@ -22,29 +18,22 @@ import (
 // Each SlotWorker subscribes to TopicExec and executes ExecutionPlans via a
 // TaskExecutorRouter, then publishes downstream-ready plans back to the queue.
 type SlotWorker struct {
-	id        string
-	tmID      string
-	q         messager.IMessager
-	router    *executor.TaskExecutorRouter
-	planStore taskplan.ITaskPlanStore
-	metrics   *TaskManagerMetrics
+	id      string
+	tmID    string
+	q       messager.IMessager
+	router  *executor.TaskExecutorRouter
+	state   TaskStateStore
+	metrics *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskExecutorRouter, s store.IStore, metrics *TaskManagerMetrics) *SlotWorker {
-	var planStore taskplan.ITaskPlanStore
-	switch db := s.DB().(type) {
-	case *pgxpool.Pool:
-		planStore = taskplan.NewTaskPlanPostgresStore(db)
-	case *sql.DB:
-		planStore = taskplan.NewTaskPlanSQLiteStore(db)
-	}
+func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
-		id:        id,
-		tmID:      tmID,
-		q:         q,
-		router:    router,
-		planStore: planStore,
-		metrics:   metrics,
+		id:      id,
+		tmID:    tmID,
+		q:       q,
+		router:  router,
+		state:   state,
+		metrics: metrics,
 	}
 }
 
@@ -89,7 +78,14 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			sw.metrics.TasksExecuted.Add(ctx, 1, metric.WithAttributes(taskTypeAttr(plan.TaskType)))
 		}
 
-		_ = sw.planStore.Save(ctx, taskplan.PlanToTaskRun(&plan))
+		_ = sw.state.SaveTask(ctx, &model.TaskRun{
+			ID:             plan.TaskID,
+			AgentFlowRunID: plan.AgentFlowRunID,
+			NodeID:         plan.NodeID,
+			Status:         plan.State,
+			Output:         planResultOutput(plan.Result),
+			Error:          planResultError(plan.Result),
+		})
 
 		if plan.Result != nil && plan.Result.Output != nil {
 			sw.emitDownstream(ctx, &plan)
@@ -97,6 +93,20 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 	})
 
 	<-ctx.Done()
+}
+
+func planResultOutput(r *model.TaskResult) map[string]any {
+	if r == nil {
+		return nil
+	}
+	return r.Output
+}
+
+func planResultError(r *model.TaskResult) string {
+	if r == nil {
+		return ""
+	}
+	return r.Error
 }
 
 // emitDownstream publishes execution status so the JM can detect satisfied

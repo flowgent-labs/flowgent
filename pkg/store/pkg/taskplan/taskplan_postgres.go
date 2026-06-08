@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // TaskPlanPostgresStore wraps store.PostgresGenericStore[model.TaskRun].
@@ -24,14 +24,24 @@ func NewTaskPlanPostgresStore(pool *pgxpool.Pool) *TaskPlanPostgresStore {
 	}
 }
 
-func (s *TaskPlanPostgresStore) Get(ctx context.Context, id string) (*model.TaskRun, error) { return s.inner.Get(ctx, id) }
-func (s *TaskPlanPostgresStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.TaskRun], error) { return s.inner.Select(ctx, req) }
-func (s *TaskPlanPostgresStore) Save(ctx context.Context, e *model.TaskRun) error { return s.inner.Save(ctx, e) }
-func (s *TaskPlanPostgresStore) Delete(ctx context.Context, id string) error { return s.inner.Delete(ctx, id) }
+func (s *TaskPlanPostgresStore) Get(ctx context.Context, id string) (*model.TaskRun, error) {
+	return s.inner.Get(ctx, id)
+}
+func (s *TaskPlanPostgresStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.TaskRun], error) {
+	return s.inner.Select(ctx, req)
+}
+func (s *TaskPlanPostgresStore) Save(ctx context.Context, e *model.TaskRun) error {
+	return s.inner.Save(ctx, e)
+}
+func (s *TaskPlanPostgresStore) Delete(ctx context.Context, id string) error {
+	return s.inner.Delete(ctx, id)
+}
 
 func (s *TaskPlanPostgresStore) GetByExecID(ctx context.Context, execID string) (*model.TaskRun, error) {
 	rows, err := s.inner.Pool.Query(ctx, "SELECT * FROM task_runs WHERE exec_id=$1", execID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[model.TaskRun])
 }
@@ -53,7 +63,9 @@ func (s *TaskPlanPostgresStore) UpdateTaskRun(ctx context.Context, e *model.Task
 
 func (s *TaskPlanPostgresStore) ListByFlowRun(ctx context.Context, flowRunID string) ([]*model.TaskRun, error) {
 	rows, err := s.inner.Pool.Query(ctx, "SELECT * FROM task_runs WHERE agentflow_run_id=$1 ORDER BY sequence ASC", flowRunID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[model.TaskRun])
 }

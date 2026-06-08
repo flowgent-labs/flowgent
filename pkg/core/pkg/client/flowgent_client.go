@@ -8,15 +8,20 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
+	"sync"
+	"time"
 
 	model "github.com/flowgent-labs/flowgent/model/pkg"
-	store "github.com/flowgent-labs/flowgent/store/pkg"
 )
 
-// FlowgentClient provides HTTP access to the API Server.
-// Used by non-DB components (controller, JM, TM, sandbox, notifier, a2a)
-// instead of direct PG connections.
+// FlowgentClient provides HTTP access to the API Server. It is the canonical
+// state client for all non-apiserver components (controller, JM, TM, sandbox,
+// notifier). Every method calls the apiserver REST API; no direct DB or cache
+// access is embedded here.
+
 type FlowgentClient struct {
 	BaseURL string
 }
@@ -30,42 +35,90 @@ func NewFlowgentClient() *FlowgentClient {
 	return &FlowgentClient{BaseURL: baseURL}
 }
 
-// ─── AgentFlow CRUD ───────────────────────────────────────────
+// ─── helpers ─────────────────────────────────────────────────────
 
-// ListFlows returns all agentflow definitions.
-func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]model.AgentFlowVersion, error) {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows", c.BaseURL, tenant)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+func (c *FlowgentClient) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
 	if err != nil {
-		return nil, fmt.Errorf("apiserver ListFlows: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apiserver returned %d: %s", resp.StatusCode, string(body))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	var versions []model.AgentFlowVersion
-	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
-		return nil, fmt.Errorf("decode flows: %w", err)
-	}
-	return versions, nil
+	return http.DefaultClient.Do(req)
 }
 
-// GetFlow returns a single agentflow spec by ID.
-func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*model.AgentFlowSpec, error) {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows/%s", c.BaseURL, tenant, flowID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+func readJSON(resp *http.Response, into any) error {
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("apiserver returned %d: %s", resp.StatusCode, string(b))
+	}
+	return json.NewDecoder(resp.Body).Decode(into)
+}
+
+// ─── Agents ──────────────────────────────────────────────────────
+
+// ListAgents returns all agent definitions for a tenant.
+func (c *FlowgentClient) ListAgents(ctx context.Context, tenant string) ([]*model.AgentDef, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agents", nil)
 	if err != nil {
-		return nil, fmt.Errorf("apiserver GetFlow: %w", err)
+		return nil, fmt.Errorf("ListAgents: %w", err)
+	}
+	var items []*model.AgentDef
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListAgents: %w", err)
+	}
+	return items, nil
+}
+
+// GetAgent returns a single agent definition.
+func (c *FlowgentClient) GetAgent(ctx context.Context, tenant, name string) (*model.AgentDef, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agents/"+name, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GetAgent: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
 		return nil, nil
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("apiserver returned %d", resp.StatusCode)
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetAgent %d: %s", resp.StatusCode, string(b))
+	}
+	var item model.AgentDef
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return nil, fmt.Errorf("GetAgent: %w", err)
+	}
+	return &item, nil
+}
+
+// ─── AgentFlow CRUD ──────────────────────────────────────────────
+
+func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]model.AgentFlowVersion, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agentflows", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListFlows: %w", err)
+	}
+	var items []model.AgentFlowVersion
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListFlows: %w", err)
+	}
+	return items, nil
+}
+
+func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*model.AgentFlowSpec, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agentflows/"+flowID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GetFlow: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetFlow %d: %s", resp.StatusCode, string(b))
 	}
 	var spec model.AgentFlowSpec
 	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
@@ -74,98 +127,92 @@ func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*m
 	return &spec, nil
 }
 
-// CreateFlow creates a new agentflow definition.
 func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *model.AgentFlowSpec) error {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows", c.BaseURL, tenant)
 	b, _ := json.Marshal(spec)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/agentflows", bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("apiserver CreateFlow: %w", err)
+		return fmt.Errorf("CreateFlow: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver CreateFlow %d: %s", resp.StatusCode, string(errBody))
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("CreateFlow %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// UpdateFlow updates an existing agentflow definition.
 func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, spec *model.AgentFlowSpec) error {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows/%s", c.BaseURL, tenant, flowID)
 	b, _ := json.Marshal(spec)
-	req, _ := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/agentflows/"+flowID, bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("apiserver UpdateFlow: %w", err)
+		return fmt.Errorf("UpdateFlow: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver UpdateFlow %d: %s", resp.StatusCode, string(errBody))
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("UpdateFlow %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// DeleteFlow deletes an agentflow definition.
 func (c *FlowgentClient) DeleteFlow(ctx context.Context, tenant, flowID string) error {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows/%s", c.BaseURL, tenant, flowID)
-	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.do(ctx, "DELETE", "/api/v1/"+tenant+"/agentflows/"+flowID, nil)
 	if err != nil {
-		return fmt.Errorf("apiserver DeleteFlow: %w", err)
+		return fmt.Errorf("DeleteFlow: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver DeleteFlow %d: %s", resp.StatusCode, string(errBody))
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DeleteFlow %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// ─── FlowRun Control ──────────────────────────────────────────
+// ─── FlowRun ─────────────────────────────────────────────────────
 
-// TriggerRun creates a PENDING run for the given agentflow.
-func (c *FlowgentClient) TriggerRun(ctx context.Context, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) error {
-	url := fmt.Sprintf("%s/api/v1/default/agentflows/trigger", c.BaseURL)
-	payload := map[string]interface{}{
-		"agentflow_id": agentFlowID,
-		"vars":         vars,
-		"trigger":      trigger,
+// CreateRun creates a run directly with explicit tenant, namespace, and trigger info.
+func (c *FlowgentClient) CreateRun(ctx context.Context, tenant string, run *model.AgentFlowRun) (*model.AgentFlowRun, error) {
+	b, _ := json.Marshal(run)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/runs", bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("CreateRun: %w", err)
 	}
+	var created model.AgentFlowRun
+	if err := readJSON(resp, &created); err != nil {
+		return nil, fmt.Errorf("CreateRun: %w", err)
+	}
+	return &created, nil
+}
+
+// TriggerRun creates a PENDING run via the trigger endpoint.
+func (c *FlowgentClient) TriggerRun(ctx context.Context, tenant, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) (*model.AgentFlowRun, error) {
+	payload := map[string]any{"agentflow_id": agentFlowID, "vars": vars, "trigger": trigger}
 	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/agentflows/trigger", bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("apiserver TriggerRun: %w", err)
+		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver TriggerRun %d: %s", resp.StatusCode, string(errBody))
+	var out model.AgentFlowRun
+	if err := readJSON(resp, &out); err != nil {
+		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	log.Printf("[api-client] TriggerRun: %s → PENDING", agentFlowID)
-	return nil
+	log.Printf("[api-client] TriggerRun: %s/%s", tenant, agentFlowID)
+	return &out, nil
 }
 
-// GetRun returns a run by ID.
-func (c *FlowgentClient) GetRun(ctx context.Context, runID string) (*model.AgentFlowRun, error) {
-	url := fmt.Sprintf("%s/api/v1/default/runs/%s", c.BaseURL, runID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+// GetRun returns a run by tenant and ID.
+func (c *FlowgentClient) GetRun(ctx context.Context, tenant, runID string) (*model.AgentFlowRun, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/runs/"+runID, nil)
 	if err != nil {
-		return nil, fmt.Errorf("apiserver GetRun: %w", err)
+		return nil, fmt.Errorf("GetRun: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
 		return nil, nil
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("apiserver returned %d", resp.StatusCode)
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetRun %d: %s", resp.StatusCode, string(b))
 	}
 	var run model.AgentFlowRun
 	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
@@ -174,74 +221,213 @@ func (c *FlowgentClient) GetRun(ctx context.Context, runID string) (*model.Agent
 	return &run, nil
 }
 
-// ListRuns returns recent runs, optionally filtered by flow ID.
-func (c *FlowgentClient) ListRuns(ctx context.Context, flowID string) ([]model.AgentFlowRun, error) {
-	url := fmt.Sprintf("%s/api/v1/default/runs?flow_id=%s", c.BaseURL, flowID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+// ListRuns returns runs with optional filters. status, namespace, and flowID may be empty.
+func (c *FlowgentClient) ListRuns(ctx context.Context, tenant, status, namespace, flowID string, page, size int) (*model.Page[model.AgentFlowRun], error) {
+	q := url.Values{}
+	if status != "" {
+		q.Set("status", status)
+	}
+	if namespace != "" {
+		q.Set("namespace", namespace)
+	}
+	if flowID != "" {
+		q.Set("agentflow_id", flowID)
+	}
+	if page > 0 {
+		q.Set("page", strconv.Itoa(page))
+	}
+	if size > 0 {
+		q.Set("size", strconv.Itoa(size))
+	}
+	raw := "/api/v1/" + tenant + "/runs?" + q.Encode()
+	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
-		return nil, fmt.Errorf("apiserver ListRuns: %w", err)
+		return nil, fmt.Errorf("ListRuns: %w", err)
+	}
+	var pageResp model.Page[model.AgentFlowRun]
+	if err := readJSON(resp, &pageResp); err != nil {
+		return nil, fmt.Errorf("ListRuns: %w", err)
+	}
+	return &pageResp, nil
+}
+
+// UpdateRunStatus updates the status of a run.
+func (c *FlowgentClient) UpdateRunStatus(ctx context.Context, tenant, runID, status string, errStr string) error {
+	b, _ := json.Marshal(map[string]string{"status": status, "error": errStr})
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/runs/"+runID, bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("UpdateRunStatus: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("apiserver returned %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode >= 300 {
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("UpdateRunStatus %d: %s", resp.StatusCode, string(eb))
 	}
-	var runs []model.AgentFlowRun
-	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+	return nil
+}
+
+// CancelRun cancels a run.
+func (c *FlowgentClient) CancelRun(ctx context.Context, tenant, runID string) error {
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/runs/"+runID+"/cancel", nil)
+	if err != nil {
+		return fmt.Errorf("CancelRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("CancelRun %d: %s", resp.StatusCode, string(eb))
+	}
+	return nil
+}
+
+// ─── TaskRuns ────────────────────────────────────────────────────
+
+// CreateTaskRun persists a new task run.
+func (c *FlowgentClient) CreateTaskRun(ctx context.Context, tenant, runID string, task *model.TaskRun) error {
+	b, _ := json.Marshal(task)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/runs/"+runID+"/tasks", bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("CreateTaskRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("CreateTaskRun %d: %s", resp.StatusCode, string(eb))
+	}
+	return nil
+}
+
+// UpdateTaskRun updates an existing task run (status, output, error).
+func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, tenant, runID, taskID string, task *model.TaskRun) error {
+	b, _ := json.Marshal(task)
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/runs/"+runID+"/tasks/"+taskID, bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("UpdateTaskRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("UpdateTaskRun %d: %s", resp.StatusCode, string(eb))
+	}
+	return nil
+}
+
+// ListTaskRuns returns all tasks for a run.
+func (c *FlowgentClient) ListTaskRuns(ctx context.Context, tenant, runID string) ([]*model.TaskRun, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/runs/"+runID+"/tasks", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListTaskRuns: %w", err)
+	}
+	var items []*model.TaskRun
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListTaskRuns: %w", err)
+	}
+	return items, nil
+}
+
+// GetTaskRun returns a single task run.
+func (c *FlowgentClient) GetTaskRun(ctx context.Context, tenant, runID, taskID string) (*model.TaskRun, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/runs/"+runID+"/tasks/"+taskID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GetTaskRun: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetTaskRun %d: %s", resp.StatusCode, string(b))
+	}
+	var item model.TaskRun
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
 		return nil, err
 	}
-	return runs, nil
+	return &item, nil
 }
 
-// CancelRun cancels a running flow.
-func (c *FlowgentClient) CancelRun(ctx context.Context, runID string) error {
-	url := fmt.Sprintf("%s/api/v1/default/runs/%s/cancel", c.BaseURL, runID)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+// SavePlan creates/updates the execution plan state via apiserver.
+func (c *FlowgentClient) SavePlan(ctx context.Context, tenant, runID string, plan *model.ExecutionPlan) error {
+	// execution plans flow through the tasks endpoint
+	task := &model.TaskRun{
+		ID:             plan.TaskID,
+		AgentFlowRunID: plan.AgentFlowRunID,
+		NodeID:         plan.NodeID,
+		Status:         plan.State,
+		Input:          plan.Input,
+		ExecID:         plan.PlanID,
+	}
+	return c.CreateTaskRun(ctx, tenant, runID, task)
+}
+
+// ─── Human Approvals ─────────────────────────────────────────────
+
+// CreateApproval creates a pending human approval.
+func (c *FlowgentClient) CreateApproval(ctx context.Context, approval *model.HumanApproval) error {
+	b, _ := json.Marshal(approval)
+	resp, err := c.do(ctx, "POST", "/api/v1/human/approvals", bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("apiserver CancelRun: %w", err)
+		return fmt.Errorf("CreateApproval: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver CancelRun %d: %s", resp.StatusCode, string(errBody))
+		eb, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("CreateApproval %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// ─── Task Update ──────────────────────────────────────────────
-
-// UpdateTask updates a task run status via the apiserver.
-func (c *FlowgentClient) UpdateTask(ctx context.Context, taskID string, status string, output map[string]any, errStr string) error {
-	url := fmt.Sprintf("%s/api/v1/default/runs/_/tasks/%s", c.BaseURL, taskID)
-	payload := map[string]interface{}{
-		"id": taskID, "status": status, "output": output, "error": errStr,
-	}
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+// ListPendingApprovals returns all pending human approvals.
+func (c *FlowgentClient) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/human/approvals?status=PENDING", nil)
 	if err != nil {
-		return fmt.Errorf("apiserver UpdateTask: %w", err)
+		return nil, fmt.Errorf("ListPendingApprovals: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("apiserver UpdateTask %d: %s", resp.StatusCode, string(errBody))
+	var items []model.HumanApproval
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListPendingApprovals: %w", err)
 	}
-	return nil
+	return items, nil
 }
 
-// ─── Watch (long-poll for Controller) ─────────────────────────
+// ─── Notifier Channels ───────────────────────────────────────────
+
+// ListChannels returns notification channels for a tenant.
+func (c *FlowgentClient) ListChannels(ctx context.Context, tenant string) ([]model.NotifierChannel, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/notifications/channels", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListChannels: %w", err)
+	}
+	var items []model.NotifierChannel
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListChannels: %w", err)
+	}
+	return items, nil
+}
+
+// ─── LLM Providers ───────────────────────────────────────────────
+
+// ListLLMProviders returns DB-backed LLM provider definitions.
+func (c *FlowgentClient) ListLLMProviders(ctx context.Context, tenant string) ([]*model.LlmProvider, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/llm/providers", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListLLMProviders: %w", err)
+	}
+	var items []*model.LlmProvider
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListLLMProviders: %w", err)
+	}
+	return items, nil
+}
+
+// ─── Watch (long-poll) ───────────────────────────────────────────
 
 // WatchFlows calls GET /api/v1/{tenant}/agentflows/watch?since=N (long-poll).
 func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since int64) ([]model.AgentFlowVersion, int64, error) {
-	url := fmt.Sprintf("%s/api/v1/%s/agentflows/watch?since=%d", c.BaseURL, tenant, since)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	raw := fmt.Sprintf("/api/v1/%s/agentflows/watch?since=%d", tenant, since)
+	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("apiserver WatchFlows: %w", err)
+		return nil, 0, fmt.Errorf("WatchFlows: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -263,25 +449,111 @@ func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since in
 	return wrapper.Flows, since, nil
 }
 
-// ─── APIStoreWrapper ──────────────────────────────────────────
+// ─── Client-backed state adapters ─────────────────────────────────
 
-// APIStoreWrapper delegates UpdateTaskRun and SavePlan to apiserver API.
-type APIStoreWrapper struct {
-	api *FlowgentClient
+// RunStateClient adapts FlowgentClient for JobMaster run/task persistence.
+// Implements the narrow interface expected by the jobmanager engine package.
+type RunStateClient struct {
+	Client *FlowgentClient
+	Tenant string
 }
 
-func NewAPIStoreWrapper(inner store.IStore, api *FlowgentClient) store.IStore {
-	_ = inner
-	return &APIStoreWrapper{api: api}
+func (a *RunStateClient) UpdateRun(ctx context.Context, run *model.AgentFlowRun) error {
+	return a.Client.UpdateRunStatus(ctx, a.Tenant, run.ID, string(run.Status), run.Error)
 }
 
-func (w *APIStoreWrapper) DB() any  { return nil }
-func (w *APIStoreWrapper) Close() error { return nil }
-
-func (w *APIStoreWrapper) UpdateTaskRun(ctx context.Context, task *model.TaskRun) error {
-	return w.api.UpdateTask(ctx, task.ID, string(task.Status), task.Output, task.Error)
+func (a *RunStateClient) SaveTask(ctx context.Context, task *model.TaskRun) error {
+	return a.Client.UpdateTaskRun(ctx, a.Tenant, task.AgentFlowRunID, task.ID, task)
 }
 
-func (w *APIStoreWrapper) SavePlan(ctx context.Context, plan *model.ExecutionPlan) error {
+// TaskStateClient adapts FlowgentClient for TM/SlotWorker task persistence.
+type TaskStateClient struct {
+	Client *FlowgentClient
+	Tenant string
+}
+
+func (a *TaskStateClient) SaveTask(ctx context.Context, task *model.TaskRun) error {
+	return a.Client.UpdateTaskRun(ctx, a.Tenant, task.AgentFlowRunID, task.ID, task)
+}
+
+// HumanApprovalClient adapts FlowgentClient for HumanExecutor approval creation.
+type HumanApprovalClient struct {
+	Client *FlowgentClient
+}
+
+func (a *HumanApprovalClient) CreateApproval(ctx context.Context, approval *model.HumanApproval) error {
+	return a.Client.CreateApproval(ctx, approval)
+}
+
+// NotifierClient adapts FlowgentClient for the notifier.Service Store interface.
+type NotifierClient struct {
+	Client  *FlowgentClient
+	Tenant  string
+	routes  map[string]*model.SubscriptionRoute
+	routesMu sync.Mutex
+}
+
+func NewNotifierClient(c *FlowgentClient, tenant string) *NotifierClient {
+	return &NotifierClient{
+		Client: c,
+		Tenant: tenant,
+		routes: make(map[string]*model.SubscriptionRoute),
+	}
+}
+
+func (a *NotifierClient) ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error) {
+	return a.Client.ListPendingApprovals(ctx)
+}
+
+func (a *NotifierClient) ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error) {
+	return a.Client.ListChannels(ctx, tenantID)
+}
+
+func (a *NotifierClient) SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	a.routes[route.ID] = route
 	return nil
+}
+
+func (a *NotifierClient) GetRoutesByFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error) {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	var result []model.SubscriptionRoute
+	for _, r := range a.routes {
+		if r.AgentFlowID == agentFlowID {
+			result = append(result, *r)
+		}
+	}
+	return result, nil
+}
+
+func (a *NotifierClient) DeleteRoute(ctx context.Context, id string) error {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	delete(a.routes, id)
+	return nil
+}
+
+func (a *NotifierClient) CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error) {
+	a.routesMu.Lock()
+	defer a.routesMu.Unlock()
+	var deleted int64
+	for id, route := range a.routes {
+		if route.PodID == podID && time.Since(route.CreatedAt) > maxAge {
+			delete(a.routes, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// LlmProviderClient adapts FlowgentClient for LLM provider loading.
+type LlmProviderClient struct {
+	Client *FlowgentClient
+	Tenant string
+}
+
+func (a *LlmProviderClient) ListProviders(ctx context.Context) ([]*model.LlmProvider, error) {
+	return a.Client.ListLLMProviders(ctx, a.Tenant)
 }

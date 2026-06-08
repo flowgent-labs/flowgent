@@ -12,6 +12,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 )
 
 // Start launches the Notifier daemon.
@@ -59,7 +60,8 @@ func startService(cfgPath string) error {
 		return nil
 	}
 
-	notifSvc := cmdutil.CreateNotifierService(nil, serviceCfg)
+	apiClient := client.NewFlowgentClient()
+	notifSvc := cmdutil.CreateNotifierService(apiClient, serviceCfg)
 	if notifSvc == nil {
 		log.Println("Notification service is disabled in config")
 		sigCh := make(chan os.Signal, 1)

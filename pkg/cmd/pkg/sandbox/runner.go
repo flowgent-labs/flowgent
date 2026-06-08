@@ -158,7 +158,11 @@ func (w *SandboxRunner) checkBanned(script string) string {
 
 func (w *SandboxRunner) publishResult(trigger *model.SandboxTrigger, result *model.TaskResult) {
 	payload, _ := json.Marshal(result)
-	resultTopic := messager.SandboxResultTopic(trigger.FlowID, trigger.FlowID, trigger.RunID)
+	tenantID := trigger.TenantID
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	resultTopic := messager.SandboxResultTopic(tenantID, trigger.FlowID, trigger.RunID)
 
 	_ = w.queue.Publish(context.Background(), resultTopic, &messager.InterMessage{
 		ID:      trigger.PlanID,
