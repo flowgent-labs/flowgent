@@ -22,10 +22,7 @@ type OpenAIProvider struct {
 }
 
 func newOpenAIProvider(p config.LLMProviderDef) *OpenAIProvider {
-	apiKey := ""
-	if v, ok := p.Credentials["apikey"]; ok {
-		apiKey = v
-	}
+	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {
 		timeout = d

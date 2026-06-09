@@ -60,14 +60,10 @@ spec:
           command: ["/app/flowgent"]
           args: ["controller", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
-            - name: FLOWGENT_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.fullname" . }}-pg
-                  key: url
-            - name: FLOWGENT_CONTROLLER_LABEL
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
+            - name: FLOWGENT__CONTROLLER__LABEL
               value: "app.kubernetes.io/component=controller"
-            - name: FLOWGENT_JM_IMAGE
+            - name: FLOWGENT__JM__IMAGE
               value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
             - name: POD_NAME
               valueFrom:

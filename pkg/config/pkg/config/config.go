@@ -18,24 +18,25 @@ import (
 
 // FlowgentConfig is the top-level runtime configuration for the flowgent engine.
 type FlowgentConfig struct {
-	ServiceName     string                `json:"service-name" yaml:"service-name"`
-	Deployment      DeploymentConfig      `json:"deployment" yaml:"deployment"`
-	Server          ServerConfig          `json:"server" yaml:"server"`
-	A2A             A2AConfig             `json:"a2a" yaml:"a2a"`
-	Mgmt            MgmtConfig            `json:"mgmt" yaml:"mgmt"`
-	Logging         LoggingConfig         `json:"logging" yaml:"logging"`
-	Auth            AuthConfig            `json:"auth" yaml:"auth"`
-	Cache           CacheConfig           `json:"cache" yaml:"cache"`
-	Storage         StorageConfig         `json:"storage" yaml:"storage"`
-	LLM             LLMConfig             `json:"llm" yaml:"llm"`
-	Orchestration   OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
-	Messaging       MessagingConfig       `json:"messaging" yaml:"messaging"`
-	Lock            LockConfig            `json:"lock" yaml:"lock"`
-	Sandbox         SandboxConfig         `json:"sandbox" yaml:"sandbox"`
-	Payments        *PaymentsConfig       `json:"payments" yaml:"payments"`
-	Notifier        NotifierConfig        `json:"notifier" yaml:"notifier"`
-	CredentialPaths CredentialPathsConfig `json:"credential-paths" yaml:"credential-paths"`
-	Tenant          TenantConfig          `json:"tenant" yaml:"tenant"`
+	ServiceName         string                `json:"service-name" yaml:"service-name"`
+	Deployment          DeploymentConfig      `json:"deployment" yaml:"deployment"`
+	Server              ServerConfig          `json:"server" yaml:"server"`
+	A2A                 A2AConfig             `json:"a2a" yaml:"a2a"`
+	Mgmt                MgmtConfig            `json:"mgmt" yaml:"mgmt"`
+	Logging             LoggingConfig         `json:"logging" yaml:"logging"`
+	Auth                AuthConfig            `json:"auth" yaml:"auth"`
+	Cache               CacheConfig           `json:"cache" yaml:"cache"`
+	Storage             StorageConfig         `json:"storage" yaml:"storage"`
+	LLM                 LLMConfig             `json:"llm" yaml:"llm"`
+	Orchestration       OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
+	Messaging           MessagingConfig       `json:"messaging" yaml:"messaging"`
+	Lock                LockConfig            `json:"lock" yaml:"lock"`
+	Sandbox             SandboxConfig         `json:"sandbox" yaml:"sandbox"`
+	Payments            *PaymentsConfig       `json:"payments" yaml:"payments"`
+	Notifier            NotifierConfig        `json:"notifier" yaml:"notifier"`
+	CredentialPaths     CredentialPathsConfig `json:"credential-paths" yaml:"credential-paths"`
+	Tenant              TenantConfig          `json:"tenant" yaml:"tenant"`
+	ResolvedCredentials map[string]string     `json:"-" yaml:"-"`
 }
 
 // DeploymentConfig sets the execution mode: session or application.
@@ -176,6 +177,7 @@ type SQLiteConfig struct {
 }
 
 type PostgresConfig struct {
+	Dsn            string `json:"dsn" yaml:"dsn"`
 	Host           string `json:"host" yaml:"host"`
 	Port           int    `json:"port" yaml:"port"`
 	Database       string `json:"database" yaml:"database"`
@@ -245,15 +247,15 @@ type RedisLockConfig struct {
 }
 
 type LLMProviderDef struct {
-	ID          string            `json:"id" yaml:"id"`
-	Type        string            `json:"type" yaml:"type"`
-	Enabled     bool              `json:"enabled" yaml:"enabled"`
-	Timeout     string            `json:"timeout" yaml:"timeout"`
-	Endpoint    string            `json:"endpoint" yaml:"endpoint"`
-	Credentials map[string]string `json:"credentials" yaml:"credentials"`
-	Proxy       string            `json:"proxy" yaml:"proxy"`
-	RateLimit   int               `json:"rate_limit" yaml:"rate_limit"`
-	Models      []ModelDef        `json:"models" yaml:"models"`
+	ID        string     `json:"id" yaml:"id"`
+	Type      string     `json:"type" yaml:"type"`
+	Enabled   bool       `json:"enabled" yaml:"enabled"`
+	Timeout   string     `json:"timeout" yaml:"timeout"`
+	Endpoint  string     `json:"endpoint" yaml:"endpoint"`
+	ApiKey    string     `json:"apikey" yaml:"apikey"`
+	Proxy     string     `json:"proxy" yaml:"proxy"`
+	RateLimit int        `json:"rate_limit" yaml:"rate_limit"`
+	Models    []ModelDef `json:"models" yaml:"models"`
 }
 
 // ModalitiesConfig supports the nested YAML format:
@@ -405,8 +407,9 @@ func (c *AppConfig) GetModel(provider string) string {
 // ─── Config file I/O ─────────────────────────────────────────
 
 // Load reads the main service config YAML file with env var overrides via viper.
-// Environment variables prefixed with FLOWGENT_ take precedence over YAML values.
-// Naming: FLOWGENT_SERVER_PORT overrides server.port, etc.
+// Environment variables prefixed with FLOWGENT__ (double underscore) use Spring Boot-style
+// relaxed binding: __ maps to ., __N__ maps to [N] for array indices.
+// FLOWGENT__ env vars take precedence over YAML file values.
 func Load(path string) (*FlowgentConfig, error) {
 	v := viper.New()
 
@@ -414,22 +417,176 @@ func Load(path string) (*FlowgentConfig, error) {
 	v.SetConfigFile(path)
 	v.SetConfigType("yaml")
 
-	// NOTE: AutomaticEnv disabled because K3s injects service env vars
-	// (FLOWGENT_A2A_PORT=tcp://...) that collide with config fields.
-	// Env overrides are handled via os.Getenv() in launch.go directly.
-
-	// Read YAML config file
+	// Read YAML config file first
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+
+	// Apply FLOWGENT__ env overrides on top (env > YAML)
+	applyFlowgentOverrides(v)
 
 	var cfg FlowgentConfig
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	// Expand ${ENV_VAR} placeholders in string values (Spring Boot style)
-	expandEnvVars(reflect.ValueOf(&cfg).Elem())
+
+	// Load CSI-mounted credentials (tenant + flow level)
+	creds := loadCSICredentials(cfg.CredentialPaths.BasePath)
+	if len(creds) > 0 {
+		cfg.ResolvedCredentials = creds
+	}
+
+	// Expand ${ENV_VAR} placeholders, falling back to resolved credentials
+	expandEnvVarsWithCreds(reflect.ValueOf(&cfg).Elem(), cfg.ResolvedCredentials)
 	return &cfg, nil
+}
+
+// applyFlowgentOverrides reads FLOWGENT__ env vars and maps them to viper config keys
+// using Spring Boot relaxed binding: __ → . for nesting, __N__ → [N] for array indices.
+// Example: FLOWGENT__LLM__PROVIDERS__STATIC__0__APIKEY → llm.providers.static[0].apikey
+func applyFlowgentOverrides(v *viper.Viper) {
+	const prefix = "FLOWGENT__"
+	for _, e := range os.Environ() {
+		k, val, ok := strings.Cut(e, "=")
+		if !ok || !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		// Strip prefix, lowercase for viper
+		key := strings.ToLower(strings.TrimPrefix(k, prefix))
+		// Convert __ to . for nesting, handling __N__ → [N]
+		parts := strings.Split(key, "__")
+		var out []string
+		for _, p := range parts {
+			if isNumeric(p) {
+				if len(out) > 0 {
+					out[len(out)-1] = out[len(out)-1] + "[" + p + "]"
+				}
+			} else {
+				out = append(out, p)
+			}
+		}
+		v.Set(strings.Join(out, "."), val)
+	}
+}
+
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// loadCSICredentials reads credential files from CSI-mounted paths:
+//
+//	{basePath}/{tenant}/secret/.credentials          (tenant-level)
+//	{basePath}/{tenant}/{flowId}/secret/.credentials  (flow-level)
+//
+// Files are KEY=VALUE format, flow-level overrides tenant-level.
+// If basePath is empty, defaults to /var/flowgent.
+func loadCSICredentials(basePath string) map[string]string {
+	if basePath == "" {
+		basePath = "/var/flowgent"
+	}
+	result := make(map[string]string)
+
+	// Scan for tenant directories
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return result
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		tenant := e.Name()
+		// Tenant-level credentials
+		tenantCredFile := filepath.Join(basePath, tenant, "secret", ".credentials")
+		if m := readEnvFile(tenantCredFile); len(m) > 0 {
+			for k, v := range m {
+				result[k] = v
+			}
+		}
+		// Flow-level credentials (scan subdirs)
+		flowEntries, err := os.ReadDir(filepath.Join(basePath, tenant))
+		if err != nil {
+			continue
+		}
+		for _, fe := range flowEntries {
+			if !fe.IsDir() {
+				continue
+			}
+			flowCredFile := filepath.Join(basePath, tenant, fe.Name(), "secret", ".credentials")
+			if m := readEnvFile(flowCredFile); len(m) > 0 {
+				for k, v := range m {
+					result[k] = v
+				}
+			}
+		}
+	}
+	return result
+}
+
+// expandEnvVarsWithCreds recursively expands ${VAR} in string values, falling back
+// to resolvedCredentials when VAR is not found in OS environment.
+func expandEnvVarsWithCreds(v reflect.Value, resolvedCredentials map[string]string) {
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.String:
+		s := v.String()
+		if len(s) > 3 && s[0] == '$' && s[1] == '{' {
+			end := strings.IndexByte(s, '}')
+			if end > 2 {
+				envKey := s[2:end]
+				if envVal := os.Getenv(envKey); envVal != "" {
+					v.SetString(envVal)
+				} else if envVal, ok := resolvedCredentials[envKey]; ok {
+					v.SetString(envVal)
+				}
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			expandEnvVarsWithCreds(v.Field(i), resolvedCredentials)
+		}
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			val := v.MapIndex(key)
+			if val.Kind() == reflect.Interface {
+				val = val.Elem()
+			}
+			if val.Kind() == reflect.String {
+				newVal := expandStringWithCreds(val.String(), resolvedCredentials)
+				v.SetMapIndex(key, reflect.ValueOf(newVal))
+			}
+		}
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			expandEnvVarsWithCreds(v.Index(i), resolvedCredentials)
+		}
+	}
+}
+
+func expandStringWithCreds(s string, creds map[string]string) string {
+	if len(s) > 3 && s[0] == '$' && s[1] == '{' {
+		end := strings.IndexByte(s, '}')
+		if end > 2 {
+			envKey := s[2:end]
+			if envVal := os.Getenv(envKey); envVal != "" {
+				return envVal
+			}
+			if envVal, ok := creds[envKey]; ok {
+				return envVal
+			}
+		}
+	}
+	return s
 }
 
 // loadResourceDir loads all .yaml files from a directory into a slice of T.
@@ -456,11 +613,19 @@ func loadResourceDir[T any](dir string) ([]T, error) {
 	return result, nil
 }
 
+// resolveDir returns dir as-is if absolute, otherwise resolves relative to cfgPath parent.
+func resolveDir(cfgPath, dir string) string {
+	if filepath.IsAbs(dir) {
+		return dir
+	}
+	return filepath.Join(filepath.Dir(cfgPath), dir)
+}
+
 // LoadAgents loads agent definitions from the static directory.
 func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentDef, error) {
 	var agents []AgentDef
 	if cfg.Orchestration.Agents.Static.Enabled {
-		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.Agents.Static.LoadDir)
+		dir := resolveDir(cfgPath, cfg.Orchestration.Agents.Static.LoadDir)
 		return loadResourceDir[AgentDef](dir)
 	}
 	return agents, nil
@@ -472,7 +637,7 @@ func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec,
 	subFlows := make(map[string]model.AgentFlowSpec)
 
 	if cfg.Orchestration.AgentFlows.Static.Enabled {
-		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.AgentFlows.Static.LoadDir)
+		dir := resolveDir(cfgPath, cfg.Orchestration.AgentFlows.Static.LoadDir)
 		all, err := loadResourceDir[model.AgentFlowSpec](dir)
 		if err != nil {
 			return flows, subFlows, nil
@@ -487,7 +652,7 @@ func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec,
 
 	// Also load skills if configured
 	if cfg.Orchestration.Skills.Static.Enabled {
-		dir := filepath.Join(filepath.Dir(cfgPath), cfg.Orchestration.Skills.Static.LoadDir)
+		dir := resolveDir(cfgPath, cfg.Orchestration.Skills.Static.LoadDir)
 		// Load top-level skill YAML files
 		all, err := loadResourceDir[model.AgentFlowSpec](dir)
 		if err == nil {

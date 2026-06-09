@@ -28,47 +28,16 @@ spec:
           command: ["/app/flowgent"]
           args: ["sandbox", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
-            - name: FLOWGENT_MQTT_BROKER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.mqttSecretName" . }}
-                  key: broker
-                  optional: true
-            - name: FLOWGENT_SANDBOX_WORKSPACE
+            - name: FLOWGENT_CONFIG_FILE
+              value: "/etc/flowgent/flowgent.yaml"
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
+            - name: FLOWGENT__SANDBOX__WORKSPACE
               value: {{ .Values.sandbox.workspace | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # ── Credential injection for sandbox scripts ──
-            - name: NEXUS3_URL
-              value: {{ .Values.sandbox.credentials.nexus3.url | default "http://nexus3:8081" | quote }}
-            - name: NEXUS3_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
-                  key: username
-                  optional: true
-            - name: NEXUS3_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sandbox.credentials.nexus3.secret | default "nexus3-creds" }}
-                  key: password
-                  optional: true
-            - name: SONATYPEIQ_URL
-              value: {{ .Values.sandbox.credentials.sonatypeiq.url | default "http://sonatypeiq:8070" | quote }}
-            - name: SONATYPEIQ_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
-                  key: username
-                  optional: true
-            - name: SONATYPEIQ_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sandbox.credentials.sonatypeiq.secret | default "iq-creds" }}
-                  key: password
-                  optional: true
+            {{- include "flowgent.extraSecretEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
@@ -81,6 +50,5 @@ spec:
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
         - name: sandbox-workspace
-          persistentVolumeClaim:
-            claimName: {{ include "flowgent.fullname" . }}-sandbox-workspace
+          emptyDir: {}
 {{- end }}

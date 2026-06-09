@@ -437,8 +437,8 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 						Image:           "localhost/flowgent/taskmanager:latest",
 						ImagePullPolicy: corev1.PullNever,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT_MQTT_BROKER", Value: getEnvOrDefault("FLOWGENT_MQTT_BROKER", "tcp://127.0.0.1:1883")},
-							{Name: "FLOWGENT_DATABASE_URL", Value: os.Getenv("FLOWGENT_DATABASE_URL")},
+							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: getEnvOrDefault("FLOWGENT__MESSAGER__MQTT__BROKER", "tcp://127.0.0.1:1883")},
+							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: os.Getenv("FLOWGENT__STORAGE__POSTGRES__DSN")},
 						},
 						Command: []string{"/app/flowgent", "taskmanager", "start"},
 					}},
@@ -485,7 +485,7 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 						Image:           s.sandboxImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT_MQTT_BROKER", Value: getEnvOrDefault("FLOWGENT_MQTT_BROKER", "tcp://127.0.0.1:1883")},
+							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: getEnvOrDefault("FLOWGENT__MESSAGER__MQTT__BROKER", "tcp://127.0.0.1:1883")},
 							{Name: "FLOWGENT_SANDBOX_WORKSPACE", Value: s.sandboxWorkspace},
 						},
 						Command: []string{"/app/flowgent", "sandbox", "start"},

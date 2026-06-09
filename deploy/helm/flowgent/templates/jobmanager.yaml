@@ -25,31 +25,22 @@ spec:
           command: ["/app/flowgent"]
           args: ["jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
-            - name: FLOWGENT_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.pgSecretName" . }}
-                  key: url
-            - name: FLOWGENT_MQTT_BROKER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.mqttSecretName" . }}
-                  key: broker
-                  optional: true
-            - name: FLOWGENT_JM_HA_ENABLED
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
+            - name: FLOWGENT__JM__HA__ENABLED
               value: {{ .Values.jobmanager.ha.enabled | quote }}
-            - name: FLOWGENT_JM_HA_LEASE_DURATION
+            - name: FLOWGENT__JM__HA__LEASE_DURATION
               value: {{ .Values.jobmanager.ha.leaseDuration | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: FLOWGENT_TM_DEPLOY
+            - name: FLOWGENT__TM__DEPLOY
               value: {{ include "flowgent.fullname" . }}-taskmanager
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- include "flowgent.extraSecretEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent

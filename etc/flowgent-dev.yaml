@@ -146,8 +146,7 @@ llm:
         timeout: 120s
         endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
         rate_limit: 60
-        credentials:
-          apikey: "${BAILIAN_APIKEY}"
+        apikey: "${BAILIAN_APIKEY}"
         models:
           - name: qwen-plus
             temperature: 0.3
@@ -174,8 +173,7 @@ llm:
         timeout: 120s
         endpoint: https://api.deepseek.com/v1/chat/completions
         rate_limit: 60
-        credentials:
-          apikey: "${DEEPSEEK_APIKEY}"
+        apikey: "${DEEPSEEK_APIKEY}"
         models:
           - name: deepseek-chat
             temperature: 0.3
@@ -185,8 +183,7 @@ llm:
 #        enabled: false
 #        endpoint: https://api.anthropic.com/v1/messages
 #        rate_limit: 30
-#        credentials:
-#          apikey: "<YOUR_ANTHROPIC_API_KEY>"
+#        apikey: "<YOUR_ANTHROPIC_API_KEY>"
 #        models:
 #          - name: claude-sonnet-4-6
 #            temperature: 0.3

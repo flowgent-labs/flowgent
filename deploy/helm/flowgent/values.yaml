@@ -21,7 +21,7 @@ global:
   # Credential file paths mounted in pods (K8s Secrets).
   # Hierarchy: flow-level overrides tenant-level.
   credentialPaths:
-    basePath: "/var/secret/flowgent"
+    basePath: "/var/flowgent"
 
 # ═══════════════════════════════════════════════════════════════
 # Middleware — enabled=true deploys as part of this chart.
@@ -141,6 +141,31 @@ taskmanager:
     limits:   { cpu: "2", memory: "2Gi" }
 
 # ═══════════════════════════════════════════════════════════════
+# Secrets — External K8s Secret references for credentials.
+# extraSecrets injects env vars from K8s Secrets into all engine pods
+# (taskmanager, sandbox, jobmanager). Each mapping extracts a key from
+# the named Secret and exposes it as an env var.
+#
+# For CSI-mounted credentials (GCP Secret Manager, etc.), secrets are
+# mounted at /var/flowgent/{tenant}/secret/.credentials and loaded at
+# startup by the Go config loader — no Helm env injection needed.
+# ═══════════════════════════════════════════════════════════════
+secrets:
+  extraSecrets: []
+  # Example:
+  # extraSecrets:
+  #   - name: "flowgent-llm-deepseek"
+  #     optional: true
+  #     mappings:
+  #       - key: apikey
+  #         env: DEEPSEEK_APIKEY
+  #   - name: "flowgent-github-token"
+  #     optional: true
+  #     mappings:
+  #       - key: token
+  #         env: GITHUB_TOKEN
+
+# ═══════════════════════════════════════════════════════════════
 # Sandbox — [session] Secure Script Execution Worker (independent Deployment)
 #   Runs as separate K8s pods (NOT inline in TM). JM's K8sRM manages
 #   both TM and sandbox Deployments with independent scaling.
@@ -155,13 +180,6 @@ sandbox:
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2", memory: "2Gi" }
-  credentials:
-    nexus3:
-      url: "http://nexus3:8081"
-      secret: "nexus3-creds"
-    sonatypeiq:
-      url: "http://sonatypeiq:8070"
-      secret: "iq-creds"
   policy:
     network:
       mode: "none"
@@ -203,3 +221,37 @@ notifier:
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
+
+# ═══════════════════════════════════════════════════════════════
+# LLM Providers — AI model backends
+# ═══════════════════════════════════════════════════════════════
+llm:
+  requestTimeout: "120s"
+  providers:
+    static: []
+    standard:
+      enabled: false
+
+# ═══════════════════════════════════════════════════════════════
+# Orchestration — MCPs, Agents, Skills, Agentflows
+# ═══════════════════════════════════════════════════════════════
+orchestration:
+  maxConcurrentFlows: 10
+  flowExecutionTimeout: "30m"
+  maxNodeRetries: 3
+  mcps: []
+  agents:
+    static:
+      enabled: false
+    standard:
+      enabled: false
+  skills:
+    static:
+      enabled: false
+    standard:
+      enabled: false
+  agentflows:
+    static:
+      enabled: false
+    standard:
+      enabled: false

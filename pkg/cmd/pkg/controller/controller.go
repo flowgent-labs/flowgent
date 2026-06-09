@@ -96,7 +96,7 @@ func NewController(api *client.FlowgentClient, tenant string, rm resourcemanager
 // ─── Pod Discovery & Sharding ──────────────────────────────────
 
 func (c *Controller) getPeers(ctx context.Context) (peers []discovery.Peer, selfIndex int, err error) {
-	labelSelector := os.Getenv("FLOWGENT_CONTROLLER_LABEL")
+	labelSelector := os.Getenv("FLOWGENT__CONTROLLER__LABEL")
 	if labelSelector == "" {
 		labelSelector = "app.kubernetes.io/component=controller"
 	}
@@ -357,7 +357,7 @@ func (c *Controller) buildJMDeployment(name, namespace, tenantID string, spec *m
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "jobmanager",
-						Image: os.Getenv("FLOWGENT_JM_IMAGE"),
+						Image: os.Getenv("FLOWGENT__JM__IMAGE"),
 						Args:  []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--flow-id", spec.ID},
 						Env: []corev1.EnvVar{
 							{Name: "FLOWGENT_DEPLOYMENT_MODE", Value: "application"},

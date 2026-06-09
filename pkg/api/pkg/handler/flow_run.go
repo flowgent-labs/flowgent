@@ -200,8 +200,8 @@ func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task.ID = r.PathValue("task_id")
-	if err := h.taskStore.UpdateTaskRun(r.Context(), &task); err != nil {
-		h.logger.Error("update task", "error", err)
+	if err := h.taskStore.Save(r.Context(), &task); err != nil {
+		h.logger.Error("save task", "error", err)
 		http.Error(w, "internal", 500)
 		return
 	}

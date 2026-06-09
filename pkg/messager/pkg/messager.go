@@ -246,7 +246,7 @@ func NewMessagerManager(cfg *config.FlowgentConfig, clientID string) *MessagerMa
 		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory", err)
 	}
 
-	if broker := os.Getenv("FLOWGENT_MQTT_BROKER"); broker != "" {
+	if broker := os.Getenv("FLOWGENT__MESSAGER__MQTT__BROKER"); broker != "" {
 		mq, err := NewMQTTMessager(&MQTTConfig{Broker: broker, ClientID: clientID})
 		if err == nil {
 			return &MessagerManager{IMessager: mq}
@@ -258,7 +258,7 @@ func NewMessagerManager(cfg *config.FlowgentConfig, clientID string) *MessagerMa
 	}
 
 	if cfg.Deployment.Mode != "" {
-		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker or FLOWGENT_MQTT_BROKER env var.")
+		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker or FLOWGENT__MESSAGER__MQTT__BROKER env var.")
 	}
 
 	log.Printf("WARNING: Using in-memory queue (local dev mode)")

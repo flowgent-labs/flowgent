@@ -25,17 +25,7 @@ spec:
           command: ["/app/flowgent"]
           args: ["notifier", "start"]
           env:
-            - name: FLOWGENT_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.pgSecretName" . }}
-                  key: url
-            - name: FLOWGENT_MQTT_BROKER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.mqttSecretName" . }}
-                  key: broker
-                  optional: true
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
             - name: FLOWGENT_CONFIG_FILE
               value: /etc/flowgent/flowgent.yaml
             - name: POD_NAME

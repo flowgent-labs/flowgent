@@ -41,6 +41,51 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{/*
+extraSecretEnv iterates over .Values.secrets.extraSecrets and emits env: entries.
+Each entry maps a K8s Secret key to an optional env var name.
+
+Format:
+  secrets:
+    extraSecrets:
+      - name: "my-k8s-secret"
+        optional: true
+        mappings:
+          - key: apikey
+            env: DEEPSEEK_APIKEY   # optional, defaults to key
+*/}}
+{{- define "flowgent.extraSecretEnv" -}}
+{{- range .Values.secrets.extraSecrets }}
+{{- $secretName := .name }}
+{{- $optional := .optional | default false }}
+{{- range .mappings }}
+            - name: {{ .env | default .key | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName | quote }}
+                  key: {{ .key | quote }}
+                  optional: {{ $optional }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+internalEnv emits FLOWGENT__ prefixed env vars for internal connections.
+These use Spring Boot relaxed binding (__ → ., __N__ → [N]) parsed by config.go.
+
+Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier, controller.
+*/}}
+{{- define "flowgent.internalEnv" -}}
+{{- if .Values.postgresql.enabled }}
+            - name: FLOWGENT__STORAGE__POSTGRES__DSN
+              value: {{ include "flowgent.databaseUrl" . | quote }}
+{{- end }}
+{{- if .Values.emqx.enabled }}
+            - name: FLOWGENT__MESSAGER__MQTT__BROKER
+              value: {{ include "flowgent.mqttBroker" . | quote }}
+{{- end }}
+{{- end }}
+
 {{/* Database URL — only used when postgresql.enabled=true (internal) */}}
 {{- define "flowgent.databaseUrl" -}}
 {{- printf "postgres://%s:%s@%s-postgresql:%d/%s?sslmode=disable" "flowgent" "flowgent" (include "flowgent.fullname" .) 5432 "flowgent" }}

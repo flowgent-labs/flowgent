@@ -11,22 +11,21 @@ import (
 
 // LoadCredentials reads credentials files in priority order (flow > tenant).
 // Returns a merged map suitable for setting as environment variables.
-// Logs a warning if no credentials are found at any level.
 //
-// Paths resolved:
+// Paths resolved (CSI-mounted secrets from GCP Secret Manager or similar):
 //
-//	{basePath}/{tenant}/credentials          (tenant-level, lower priority)
-//	{basePath}/{tenant}/{flow}/credentials    (flow-level, highest priority)
+//	{basePath}/{tenant}/secret/.credentials          (tenant-level, lower priority)
+//	{basePath}/{tenant}/{flow}/secret/.credentials   (flow-level, highest priority)
 func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string) map[string]string {
 	if basePath == "" {
-		basePath = "/var/secret/flowgent"
+		basePath = "/var/flowgent"
 	}
 
 	result := make(map[string]string)
 	found := false
 
 	// 1. Tenant-level credentials (lower priority)
-	tenantPath := filepath.Join(basePath, tenant, "credentials")
+	tenantPath := filepath.Join(basePath, tenant, "secret", ".credentials")
 	if m := readEnvFile(tenantPath); len(m) > 0 {
 		for k, v := range m {
 			result[k] = v
@@ -37,7 +36,7 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 
 	// 2. Flow-level credentials (highest priority — overrides tenant)
 	if flow != "" {
-		flowPath := filepath.Join(basePath, tenant, flow, "credentials")
+		flowPath := filepath.Join(basePath, tenant, flow, "secret", ".credentials")
 		if m := readEnvFile(flowPath); len(m) > 0 {
 			for k, v := range m {
 				result[k] = v
@@ -54,7 +53,7 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 	}
 
 	if !found {
-		log.Printf("[credentials] WARNING: no credentials found at %s/{tenant}/credentials or %s/{tenant}/{flow}/credentials — components may fail external calls", basePath, basePath)
+		log.Printf("[credentials] WARNING: no credentials found at %s/{tenant}/secret/.credentials or %s/{tenant}/{flow}/secret/.credentials — components may fail external calls", basePath, basePath)
 	}
 
 	return result
@@ -92,11 +91,11 @@ func readEnvFile(path string) map[string]string {
 // CredentialPathsOrDefault returns the credential paths config, filling defaults.
 func CredentialPathsOrDefault(cfg *FlowgentConfig) CredentialPathsConfig {
 	if cfg == nil {
-		return CredentialPathsConfig{BasePath: "/var/secret/flowgent"}
+		return CredentialPathsConfig{BasePath: "/var/flowgent"}
 	}
 	c := cfg.CredentialPaths
 	if c.BasePath == "" {
-		c.BasePath = "/var/secret/flowgent"
+		c.BasePath = "/var/flowgent"
 	}
 	return c
 }
@@ -105,7 +104,7 @@ func CredentialPathsOrDefault(cfg *FlowgentConfig) CredentialPathsConfig {
 func FormatCredentialPaths(basePath, tenant, flow string) string {
 	return fmt.Sprintf(
 		"tenant: %s | flow: %s",
-		filepath.Join(basePath, tenant, "credentials"),
-		filepath.Join(basePath, tenant, flow, "credentials"),
+		filepath.Join(basePath, tenant, "secret", ".credentials"),
+		filepath.Join(basePath, tenant, flow, "secret", ".credentials"),
 	)
 }

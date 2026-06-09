@@ -81,21 +81,22 @@ func newProvider(p config.LLMProviderDef) ILlmProvider {
 }
 
 func newProviderFromModel(p model.LlmProvider) ILlmProvider {
-	def := config.LLMProviderDef{
-		ID:          p.ID,
-		Type:        p.Type,
-		Enabled:     p.Enabled,
-		Timeout:     p.Timeout,
-		Endpoint:    p.Endpoint,
-		RateLimit:   p.RateLimit,
-		Proxy:       p.Proxy,
-		Models:      nil,
-		Credentials: make(map[string]string),
-	}
-	for k, v := range p.Credentials {
+	apiKey := ""
+	if v, ok := p.Credentials["apikey"]; ok {
 		if vs, ok := v.(string); ok {
-			def.Credentials[k] = vs
+			apiKey = vs
 		}
+	}
+	def := config.LLMProviderDef{
+		ID:        p.ID,
+		Type:      p.Type,
+		Enabled:   p.Enabled,
+		Timeout:   p.Timeout,
+		Endpoint:  p.Endpoint,
+		RateLimit: p.RateLimit,
+		Proxy:     p.Proxy,
+		ApiKey:    apiKey,
+		Models:    nil,
 	}
 	return newProvider(def)
 }

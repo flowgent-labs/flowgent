@@ -1,0 +1,135 @@
+# ═══════════════════════════════════════════════════════════════
+# Flowgent — Security Autonomy Fixer V2 Override Values
+#
+# Usage:
+#   helm upgrade flowgent . -f values.yaml -f values-v2.yaml
+# ═══════════════════════════════════════════════════════════════
+
+global:
+  mode: session
+  image:
+    tag: latest
+
+# Enable in-cluster middleware
+postgresql:
+  enabled: true
+
+emqx:
+  enabled: true
+
+jaeger:
+  enabled: true
+
+# External K8s Secret references for credentials
+secrets:
+  extraSecrets:
+    - name: "flowgent-llm-deepseek"
+      optional: true
+      mappings:
+        - key: apikey
+          env: DEEPSEEK_APIKEY
+    - name: "flowgent-github-token"
+      optional: true
+      mappings:
+        - key: token
+          env: GITHUB_TOKEN
+    - name: "flowgent-sonarqube-token"
+      optional: true
+      mappings:
+        - key: token
+          env: SONARQUBE_TOKEN
+
+# LLM Providers — DeepSeek for AI agent reasoning
+llm:
+  requestTimeout: "120s"
+  providers:
+    static:
+      - id: deepseek
+        type: deepseek
+        enabled: true
+        timeout: 120s
+        endpoint: https://api.deepseek.com/v1/chat/completions
+        rate_limit: 60
+        apikey: "${DEEPSEEK_APIKEY}"
+        models:
+          - name: deepseek-chat
+            temperature: 0.3
+
+# MCP Servers — GitHub + SonarQube tools
+orchestration:
+  maxConcurrentFlows: 10
+  flowExecutionTimeout: "30m"
+  maxNodeRetries: 3
+  mcps:
+    - name: github
+      enabled: true
+      type: local
+      command: ["/usr/local/bin/github-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        GITHUB_TOKEN: "${GITHUB_TOKEN}"
+        ALL_PROXY: ""
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+
+    - name: sonarqube
+      enabled: true
+      type: local
+      command: ["/usr/local/bin/sonarqube-mcp"]
+      args: ["--transport", "stdio", "-v", "10"]
+      env:
+        SONARQUBE_URL: "http://172.29.235.101:9000"
+        SONARQUBE_TOKEN: "${SONARQUBE_TOKEN}"
+        ALL_PROXY: ""
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+
+  # Agents — load from mounted examples directory
+  agents:
+    static:
+      enabled: true
+      loadDir: "/app/examples/security-autonomy-fixer/agents/"
+      refresh: "30s"
+    standard:
+      enabled: false
+
+  # Skills
+  skills:
+    static:
+      enabled: true
+      loadDir: "/app/examples/security-autonomy-fixer/skills/"
+      refresh: "30s"
+    standard:
+      enabled: false
+
+  # AgentFlows — load v2 flow definition
+  agentflows:
+    static:
+      enabled: true
+      loadDir: "/app/examples/security-autonomy-fixer/flows/"
+      refresh: "1m"
+    standard:
+      enabled: false
+
+# Component replica counts for v2
+apiserver:
+  replicas: 2
+
+a2a:
+  enabled: true
+  replicas: 2
+
+jobmanager:
+  replicas: 2
+
+taskmanager:
+  replicas: 2
+  slots: 4
+
+notifier:
+  enabled: true
+  replicas: 2
+
+sandbox:
+  replicas: 2
+  slots: 4

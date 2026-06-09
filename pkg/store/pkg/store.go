@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,13 +20,13 @@ type StoreManager struct {
 }
 
 func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
-	if dsn := os.Getenv("FLOWGENT_DATABASE_URL"); dsn != "" {
-		pool := NewPostgresPool(context.Background(), dsn, "public")
-		return &StoreManager{IStore: &pgStore{Pool: pool}}
-	}
-
 	if cfg.Storage.Type == "POSTGRE" {
 		pg := cfg.Storage.Postgres
+		// Prefer explicit DSN (set via FLOWGENT__STORAGE__POSTGRES__DSN or YAML)
+		if pg.Dsn != "" {
+			pool := NewPostgresPool(context.Background(), pg.Dsn, "public")
+			return &StoreManager{IStore: &pgStore{Pool: pool}}
+		}
 		ssl := "disable"
 		if pg.UseSSL {
 			ssl = "require"
@@ -47,9 +46,6 @@ func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 }
 
 func StoreDSNFromEnv() string {
-	if u := os.Getenv("FLOWGENT_DATABASE_URL"); u != "" {
-		return u
-	}
 	return ""
 }
 

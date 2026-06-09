@@ -59,22 +59,58 @@ data:
         max-connections: 20
     {{- end }}
     llm:
-      request-timeout: "120s"
-      providers: {}
+      request-timeout: {{ .Values.llm.requestTimeout | default "120s" | quote }}
+      providers:
+        {{- if .Values.llm.providers }}
+        {{- toYaml .Values.llm.providers | nindent 8 }}
+        {{- else }}
+        static: []
+        standard:
+          enabled: false
+        {{- end }}
     orchestration:
-      max-concurrent-flows: 10
-      flow-execution-timeout: "30m"
-      max-node-retries: 3
+      max-concurrent-flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
+      flow-execution-timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
+      max-node-retries: {{ .Values.orchestration.maxNodeRetries | default 3 }}
+      {{- if .Values.orchestration.mcps }}
+      mcps:
+        {{- toYaml .Values.orchestration.mcps | nindent 8 }}
+      {{- else }}
       mcps: []
+      {{- end }}
       agents:
-        static: { enabled: false }
-        standard: { enabled: true }
+        static:
+          enabled: {{ .Values.orchestration.agents.static.enabled | default false }}
+          {{- if .Values.orchestration.agents.static.loadDir }}
+          load-dir: {{ .Values.orchestration.agents.static.loadDir | quote }}
+          {{- end }}
+          {{- if .Values.orchestration.agents.static.refresh }}
+          refresh: {{ .Values.orchestration.agents.static.refresh | quote }}
+          {{- end }}
+        standard:
+          enabled: {{ .Values.orchestration.agents.standard.enabled | default false }}
       skills:
-        static: { enabled: false }
-        standard: { enabled: false }
+        static:
+          enabled: {{ .Values.orchestration.skills.static.enabled | default false }}
+          {{- if .Values.orchestration.skills.static.loadDir }}
+          load-dir: {{ .Values.orchestration.skills.static.loadDir | quote }}
+          {{- end }}
+          {{- if .Values.orchestration.skills.static.refresh }}
+          refresh: {{ .Values.orchestration.skills.static.refresh | quote }}
+          {{- end }}
+        standard:
+          enabled: {{ .Values.orchestration.skills.standard.enabled | default false }}
       agentflows:
-        static: { enabled: false }
-        standard: { enabled: true }
+        static:
+          enabled: {{ .Values.orchestration.agentflows.static.enabled | default false }}
+          {{- if .Values.orchestration.agentflows.static.loadDir }}
+          load-dir: {{ .Values.orchestration.agentflows.static.loadDir | quote }}
+          {{- end }}
+          {{- if .Values.orchestration.agentflows.static.refresh }}
+          refresh: {{ .Values.orchestration.agentflows.static.refresh | quote }}
+          {{- end }}
+        standard:
+          enabled: {{ .Values.orchestration.agentflows.standard.enabled | default false }}
     messaging:
       type: {{ .Values.messaging.type | quote }}
       mqtt:
@@ -89,7 +125,7 @@ data:
         {{- toYaml .Values.notifier.channels | nindent 8 }}
       {{- end }}
     credential-paths:
-      base-path: {{ .Values.global.credentialPaths.basePath | default "/var/secret/flowgent" | quote }}
+      base-path: {{ .Values.global.credentialPaths.basePath | default "/var/flowgent" | quote }}
     sandbox:
       workspace: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
       policy:

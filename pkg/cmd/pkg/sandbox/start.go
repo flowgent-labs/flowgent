@@ -71,7 +71,7 @@ func startService() error {
 	queue := messager.NewMessagerManager(svcCfg, podName)
 	defer queue.Close()
 
-	workspace := os.Getenv("FLOWGENT_SANDBOX_WORKSPACE")
+	workspace := os.Getenv("FLOWGENT__SANDBOX__WORKSPACE")
 	if workspace == "" {
 		workspace = svcCfg.Sandbox.Workspace
 	}

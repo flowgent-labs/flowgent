@@ -76,7 +76,7 @@ func startJobManager(cfgPath string) error {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
 			K8sNamespace:      cmdutil.EnvOr("KUBERNETES_NAMESPACE", "default"),
-			K8sDeploymentName: cmdutil.EnvOr("FLOWGENT_TM_DEPLOY", "flowgent-taskmanager"),
+			K8sDeploymentName: cmdutil.EnvOr("FLOWGENT__TM__DEPLOY", "flowgent-taskmanager"),
 			TaskState:         taskClient,
 			HumanApproval:     humanClient,
 			Logger:            logger, Queue: q,

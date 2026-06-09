@@ -30,11 +30,7 @@ spec:
             - name: mgmt
               containerPort: {{ .Values.apiserver.service.mgmtPort }}
           env:
-            - name: FLOWGENT_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.pgSecretName" . }}
-                  key: url
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent

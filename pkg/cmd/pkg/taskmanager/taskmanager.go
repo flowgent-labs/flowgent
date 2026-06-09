@@ -60,7 +60,7 @@ func startTaskManager(cfgPath string) error {
 		defaultTMID = mode + "-" + svcCfg.Tenant.DefaultTenant + "-" + flowID + "-tm-" + cmdutil.Hostname()
 	}
 	tmID := cmdutil.EnvOr("FLOWGENT_TM_ID", defaultTMID)
-	slotCount := cmdutil.EnvIntOr("FLOWGENT_TM_SLOTS", 4)
+	slotCount := cmdutil.EnvIntOr("FLOWGENT__TM__SLOTS", 4)
 
 	q := cmdutil.NewQueueFromConfig(svcCfg, tmID)
 	defer q.Close()

@@ -1,17 +1,4 @@
 {{- if eq .Values.global.mode "session" }}
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ include "flowgent.fullname" . }}-sandbox-workspace
-  labels:
-    {{- include "flowgent.labels" . | nindent 4 }}
-    app.kubernetes.io/component: taskmanager
-spec:
-  accessModes: [ReadWriteMany]
-  resources:
-    requests:
-      storage: {{ .Values.sandbox.workspaceSize | default "10Gi" }}
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,25 +25,16 @@ spec:
           command: ["/app/flowgent"]
           args: ["taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
-            - name: FLOWGENT_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.pgSecretName" . }}
-                  key: url
-            - name: FLOWGENT_MQTT_BROKER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "flowgent.mqttSecretName" . }}
-                  key: broker
-                  optional: true
-            - name: FLOWGENT_TM_SLOTS
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
+            - name: FLOWGENT__TM__SLOTS
               value: {{ .Values.taskmanager.slots | quote }}
-            - name: FLOWGENT_SANDBOX_WORKSPACE
+            - name: FLOWGENT__SANDBOX__WORKSPACE
               value: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- include "flowgent.extraSecretEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
@@ -69,6 +47,5 @@ spec:
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
         - name: sandbox-workspace
-          persistentVolumeClaim:
-            claimName: {{ include "flowgent.fullname" . }}-sandbox-workspace
+          emptyDir: {}
 {{- end }}
