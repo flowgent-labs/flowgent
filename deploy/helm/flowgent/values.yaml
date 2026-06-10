@@ -120,11 +120,6 @@ controller:
 jobmanager:
   replicas: 2
   image: ""
-  ha:
-    enabled: true
-    leaseDuration: "30s"
-    renewDeadline: "15s"
-    retryPeriod: "5s"
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "1", memory: "1Gi" }

@@ -78,9 +78,9 @@ deploy-secret-create:
 	@[ -n "$(PROVIDER)" ] || { echo "Usage: make deploy-secret-create PROVIDER=<openai|deepseek|bailian> KEY_B64=<b64-string>"; exit 1; }
 	@[ -n "$(KEY_B64)" ] || { echo "ERROR: KEY_B64 is required"; exit 1; }
 	@case "$(PROVIDER)" in \
-	  deepseek)   SECRET_NAME=flowgent-llm-deepseek; ENV_KEY=FLOWGENT_LLM_PROVIDERS_DEEPSEEK_CREDENTIALS_APIKEY ;; \
-	  openai)     SECRET_NAME=flowgent-llm-openai;   ENV_KEY=FLOWGENT_LLM_PROVIDERS_OPENAI_CREDENTIALS_APIKEY ;; \
-	  bailian)    SECRET_NAME=flowgent-llm-bailian;  ENV_KEY=FLOWGENT_LLM_PROVIDERS_BAILIAN_CREDENTIALS_APIKEY ;; \
+	  deepseek)   SECRET_NAME=flowgent-llm-deepseek ;; \
+	  openai)     SECRET_NAME=flowgent-llm-openai ;; \
+	  bailian)    SECRET_NAME=flowgent-llm-bailian ;; \
 	  *)          echo "Unknown provider: $(PROVIDER)"; exit 1 ;; \
 	esac; \
 	APIKEY=$$(echo "$(KEY_B64)" | base64 -d 2>/dev/null || echo "$(KEY_B64)"); \

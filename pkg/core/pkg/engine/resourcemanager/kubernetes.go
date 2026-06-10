@@ -82,6 +82,9 @@ type KubernetesResourceManager struct {
 	sandboxPolicy           *model.SandboxPolicy
 	sandboxPendingTriggers  int64
 
+	mqttBroker  string
+	postgresDSN string
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -154,6 +157,8 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		sandboxCurrentReplicas: int32(cfg.SandboxMinReplicas),
 		sandboxWorkspace:       cfg.SandboxWorkspace,
 		sandboxPolicy:          cfg.SandboxPolicy,
+		mqttBroker:             cfg.MQTTBroker,
+		postgresDSN:            cfg.PostgresDSN,
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -437,8 +442,8 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 						Image:           "localhost/flowgent/taskmanager:latest",
 						ImagePullPolicy: corev1.PullNever,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: getEnvOrDefault("FLOWGENT__MESSAGER__MQTT__BROKER", "tcp://127.0.0.1:1883")},
-							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: os.Getenv("FLOWGENT__STORAGE__POSTGRES__DSN")},
+							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
+							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: s.postgresDSN},
 						},
 						Command: []string{"/app/flowgent", "taskmanager", "start"},
 					}},
@@ -485,8 +490,8 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 						Image:           s.sandboxImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: getEnvOrDefault("FLOWGENT__MESSAGER__MQTT__BROKER", "tcp://127.0.0.1:1883")},
-							{Name: "FLOWGENT_SANDBOX_WORKSPACE", Value: s.sandboxWorkspace},
+							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
+							{Name: "FLOWGENT__SANDBOX__WORKSPACE", Value: s.sandboxWorkspace},
 						},
 						Command: []string{"/app/flowgent", "sandbox", "start"},
 						VolumeMounts: []corev1.VolumeMount{
@@ -574,13 +579,6 @@ func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-func getEnvOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 // ─── Cache persistence for JM failover ─────────────────

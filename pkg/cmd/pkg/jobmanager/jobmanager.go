@@ -81,6 +81,8 @@ func startJobManager(cfgPath string) error {
 			HumanApproval:     humanClient,
 			Logger:            logger, Queue: q,
 			AutoScale: appMode,
+				MQTTBroker:  svcCfg.Messaging.MQTT.Broker,
+				PostgresDSN: svcCfg.Storage.Postgres.Dsn,
 		})
 	}
 	if rm == nil {

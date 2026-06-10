@@ -68,6 +68,8 @@ type ResourceManagerConfig struct {
 	SandboxResources      *model.SandboxResources
 	SandboxWorkspace      string
 	SandboxPolicy         *model.SandboxPolicy
+	MQTTBroker            string
+	PostgresDSN           string
 }
 
 // ─── Factory ──────────────────────────────────────────────────
