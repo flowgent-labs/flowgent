@@ -218,14 +218,11 @@ notifier:
     limits:   { cpu: "500m", memory: "512Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# LLM Providers — AI model backends
+# LLM Providers — loaded from database via apiserver (standard mode)
+# Provider definitions (type, endpoint, apikey, models, timeout) are
+# managed through the REST API and stored in PostgreSQL.
 # ═══════════════════════════════════════════════════════════════
-llm:
-  requestTimeout: "120s"
-  providers:
-    static: []
-    standard:
-      enabled: false
+llm: {}
 
 # ═══════════════════════════════════════════════════════════════
 # Orchestration — MCPs, Agents, Skills, Agentflows

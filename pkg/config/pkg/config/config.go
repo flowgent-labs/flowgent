@@ -196,7 +196,6 @@ type LLMConfig struct {
 }
 
 type LLMProvidersConfig struct {
-	Static   []LLMProviderDef `json:"static" yaml:"static"`
 	Standard StandardAgentCfg `json:"standard" yaml:"standard"`
 }
 
@@ -394,15 +393,7 @@ func (c *AppConfig) GetFlow(id string) *model.AgentFlowSpec {
 	return nil
 }
 
-// GetModel returns the first model name for the given provider.
-func (c *AppConfig) GetModel(provider string) string {
-	for _, p := range c.Service.LLM.Providers.Static {
-		if p.ID == provider && len(p.Models) > 0 {
-			return p.Models[0].Name
-		}
-	}
-	return ""
-}
+
 
 // ─── Config file I/O ─────────────────────────────────────────
 
@@ -443,7 +434,7 @@ func Load(path string) (*FlowgentConfig, error) {
 
 // applyFlowgentOverrides reads FLOWGENT__ env vars and maps them to viper config keys
 // using Spring Boot relaxed binding: __ → . for nesting, __N__ → [N] for array indices.
-// Example: FLOWGENT__LLM__PROVIDERS__STATIC__0__APIKEY → llm.providers.static[0].apikey
+// Example: FLOWGENT__ORCHESTRATION__MCPS__0__NAME → orchestration.mcps[0].name
 func applyFlowgentOverrides(v *viper.Viper) {
 	const prefix = "FLOWGENT__"
 	for _, e := range os.Environ() {

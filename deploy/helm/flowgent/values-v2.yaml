@@ -39,21 +39,8 @@ secrets:
         - key: token
           env: SONARQUBE_TOKEN
 
-# LLM Providers — DeepSeek for AI agent reasoning
-llm:
-  requestTimeout: "120s"
-  providers:
-    static:
-      - id: deepseek
-        type: deepseek
-        enabled: true
-        timeout: 120s
-        endpoint: https://api.deepseek.com/v1/chat/completions
-        rate_limit: 60
-        apikey: "${DEEPSEEK_APIKEY}"
-        models:
-          - name: deepseek-chat
-            temperature: 0.3
+# LLM Providers — loaded from database via apiserver (standard mode)
+llm: {}
 
 # MCP Servers — GitHub + SonarQube tools
 orchestration:

@@ -59,15 +59,7 @@ data:
         max-connections: 20
     {{- end }}
     llm:
-      request-timeout: {{ .Values.llm.requestTimeout | default "120s" | quote }}
-      providers:
-        {{- if .Values.llm.providers }}
-        {{- toYaml .Values.llm.providers | nindent 8 }}
-        {{- else }}
-        static: []
-        standard:
-          enabled: false
-        {{- end }}
+      {{- toYaml .Values.llm | nindent 6 }}
     orchestration:
       max-concurrent-flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
       flow-execution-timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}

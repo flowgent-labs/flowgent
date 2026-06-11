@@ -137,51 +137,8 @@ lock:
     password: "bitnami"
 
 # ── LLM Providers ────────────────────────────────────────────────────────────
-llm:
-  providers:
-    static:
-      - id: bailian
-        type: dashscope
-        enabled: true
-        timeout: 120s
-        endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-        rate_limit: 60
-        apikey: "${BAILIAN_APIKEY}"
-        models:
-          - name: qwen-plus
-            temperature: 0.3
-            topk: 5
-            modalities:
-              input: [text]
-              output: [text]
-            thinking:
-              type: enabled
-              budget_tokens: 8192
-          - name: qwen3.5-coder
-            temperature: 0.3
-            topk: 5
-            modalities:
-              input: [text]
-              output: [text]
-            thinking:
-              type: enabled
-              budget_tokens: 8192
-
-      - id: deepseek
-        type: deepseek
-        enabled: true
-        timeout: 120s
-        endpoint: https://api.deepseek.com/v1/chat/completions
-        rate_limit: 60
-        apikey: "${DEEPSEEK_APIKEY}"
-        models:
-          - name: deepseek-chat
-            temperature: 0.3
-
-#      - id: anthropic
-#        type: anthropic
-#        enabled: false
-#        endpoint: https://api.anthropic.com/v1/messages
+# Providers are loaded from DB via apiserver (standard mode).
+llm: {}
 #        rate_limit: 30
 #        apikey: "<YOUR_ANTHROPIC_API_KEY>"
 #        models:

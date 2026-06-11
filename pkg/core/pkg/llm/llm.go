@@ -26,18 +26,12 @@ type LlmProviderManager struct {
 	providers map[string]ILlmProvider
 }
 
-// NewLlmProviderManager creates a manager and loads all configured providers.
+// NewLlmProviderManager creates a manager and loads providers from DB via the
+// standard (apiserver-backed) loader when enabled.
 func NewLlmProviderManager(cfg *config.LLMConfig, loader LlmProviderLoader) *LlmProviderManager {
 	m := &LlmProviderManager{providers: make(map[string]ILlmProvider)}
 	if cfg == nil {
 		return m
-	}
-
-	for _, p := range cfg.Providers.Static {
-		if !p.Enabled || p.ID == "" {
-			continue
-		}
-		m.registerStatic(p)
 	}
 
 	if cfg.Providers.Standard.Enabled && loader != nil {
@@ -53,13 +47,6 @@ func NewLlmProviderManager(cfg *config.LLMConfig, loader LlmProviderLoader) *Llm
 	}
 
 	return m
-}
-
-func (m *LlmProviderManager) registerStatic(p config.LLMProviderDef) {
-	pc := newProvider(p)
-	if pc != nil {
-		m.providers[p.ID] = pc
-	}
 }
 
 func (m *LlmProviderManager) registerDB(dbP model.LlmProvider) {

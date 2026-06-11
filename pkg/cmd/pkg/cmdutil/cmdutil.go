@@ -136,20 +136,7 @@ func LogConfig(cfg *config.FlowgentConfig) {
 	log.Printf("Engine:     max_concurrent=%d timeout=%s max_retries=%d",
 		cfg.Orchestration.MaxConcurrentFlows, cfg.Orchestration.FlowExecutionTimeout, cfg.Orchestration.MaxNodeRetries)
 
-	for _, p := range cfg.LLM.Providers.Static {
-		if !p.Enabled {
-			continue
-		}
-		models := make([]string, len(p.Models))
-		for i, m := range p.Models {
-			models[i] = m.Name
-		}
-		proxy := p.Proxy
-		if proxy == "" {
-			proxy = "(direct)"
-		}
-		log.Printf("LLM:        id=%s type=%s endpoint=%s proxy=%s models=%v", p.ID, p.Type, p.Endpoint, proxy, models)
-	}
+
 
 	for _, mcpd := range cfg.Orchestration.MCPs {
 		if mcpd.Enabled {
