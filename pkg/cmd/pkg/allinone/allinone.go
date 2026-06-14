@@ -23,9 +23,9 @@ import (
 
 	"github.com/flowgent-labs/flowgent/api/pkg"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
@@ -35,21 +35,23 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
+	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/notifier/pkg"
 )
 
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	log.Printf("Flowgent all-in-one starting (pid=%d)", os.Getpid())
 	return startAllInOne(cfgPath)
 }
 
-func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
+func Stop(pidFile string) error { return utils.StopByPID(pidFile) }
 
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	return Start(cfgPath, pidFile)
 }
@@ -59,7 +61,7 @@ func startAllInOne(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	cmdutil.LogConfig(serviceCfg)
+	config.LogConfig(serviceCfg)
 	logger := utils.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
 
 	agentFlows, subAgentFlows, err := config.LoadAgentFlows(serviceCfg, cfgPath)
@@ -69,12 +71,15 @@ func startAllInOne(cfgPath string) error {
 	slog.Info("AgentFlows loaded", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Database (apiserver-owned) ──
-	storeImpl := cmdutil.InitStore(serviceCfg)
+	storeImpl := store.InitStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
 	// ── FlowgentClient for internal component state access ──
-	apiClient := client.NewFlowgentClient()
-	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
+	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
+	tenant := serviceCfg.Tenant.DefaultTenant
+	if tenant == "" {
+		tenant = "default"
+	}
 	stateClient := &client.RunStateClient{Client: apiClient, Tenant: tenant}
 	taskClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
 	humanClient := &client.HumanApprovalClient{Client: apiClient}
@@ -99,7 +104,7 @@ func startAllInOne(cfgPath string) error {
 		}
 	}
 	if serviceCfg.Orchestration.AgentFlows.Standard.Enabled {
-		if dbFlows, dbSubFlows, dberr := cmdutil.LoadAgentFlowsFromDB(context.Background(), storeImpl); dberr == nil {
+		if dbFlows, dbSubFlows, dberr := agentflow.LoadFromDB(context.Background(), storeImpl); dberr == nil {
 			agentFlows = append(agentFlows, dbFlows...)
 			for k, v := range dbSubFlows {
 				subAgentFlows[k] = v
@@ -108,18 +113,10 @@ func startAllInOne(cfgPath string) error {
 	}
 
 	// ── MCP + LLM ──
-	mcpFactory := mcp.NewMcpManager()
-	for _, d := range serviceCfg.Orchestration.MCPs {
-		if d.Enabled {
-			mcpFactory.Register(d.Name, d.Command, d.Args, d.Env)
-		}
-	}
+	_ = mcp.NewMcpManager() // MCPs now DB-backed, loaded at runtime
+
 	mcpMap := make(map[string]engine.MCPClient)
-	for _, d := range serviceCfg.Orchestration.MCPs {
-		if d.Enabled {
-			mcpMap[d.Name] = &cmdutil.McpAdapter{Factory: mcpFactory, Name: d.Name}
-		}
-	}
+
 
 	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
 	for i := range loadedAgents {
@@ -131,7 +128,7 @@ func startAllInOne(cfgPath string) error {
 		TaskState:     taskClient,
 		HumanApproval: humanClient,
 		Agents:        agentPtrs, MCPClients: mcpMap,
-		LLMClient: llm.NewLlmProviderManager(&serviceCfg.LLM, llmLoader),
+		LLMClient: llm.NewLlmProviderManager(llmLoader),
 		Logger: logger,
 	})
 
@@ -172,7 +169,7 @@ func startAllInOne(cfgPath string) error {
 	go startRunPoller(context.Background(), apiClient, tenant, jm, flowMap, "", "")
 
 	// ── Hot reload ──
-	if refreshStr := serviceCfg.Orchestration.AgentFlows.Static.Refresh; refreshStr != "" {
+	if refreshStr := "" /* static reload removed */; refreshStr != "" {
 		if d, err := time.ParseDuration(refreshStr); err == nil && d > 0 {
 			go func() {
 				t := time.NewTicker(d)
@@ -199,14 +196,14 @@ func startAllInOne(cfgPath string) error {
 	}
 
 	// ── Notifier ──
-	notifSvc := cmdutil.CreateNotifierService(apiClient, serviceCfg)
+	notifSvc := notifier.CreateNotifierService(apiClient, serviceCfg)
 	if notifSvc != nil {
 		go func() { _ = notifSvc.Start(context.Background()) }()
 		defer notifSvc.Shutdown()
 	}
 	var wsBridge *handler.NotifierWSBridge
 	if notifSvc != nil {
-		wsBridge = handler.NewNotifierWSBridge(&cmdutil.NotifToWSAdapter{Svc: notifSvc})
+		wsBridge = handler.NewNotifierWSBridge(&notifier.NotifToWSAdapter{Svc: notifSvc})
 	}
 
 	// ── REST API Server ──
@@ -214,7 +211,7 @@ func startAllInOne(cfgPath string) error {
 		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler)
 	var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
-		restHandler = cmdutil.AuthMiddleware(serviceCfg.Auth, restMux)
+		restHandler = config.AuthMiddleware(serviceCfg.Auth, restMux)
 	}
 
 	restAddr := fmt.Sprintf("%s:%d", serviceCfg.Server.Host, serviceCfg.Server.Port)

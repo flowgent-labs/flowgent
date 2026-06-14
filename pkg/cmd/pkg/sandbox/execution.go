@@ -45,12 +45,12 @@ func (w *SandboxRunner) execute(ctx context.Context, trigger *model.SandboxTrigg
 	}
 
 	if w.image != "" {
-		return w.executeInDocker(ctx, trigger.ScriptPath, script, runtime, netPolicy, trigger.Workspace, d)
+		return w.executeInDocker(ctx, trigger.ScriptPath, script, runtime, netPolicy, trigger.Workspace, trigger.Env, d)
 	}
-	return w.executeInProcess(ctx, trigger.ScriptPath, script, runtime, netPolicy, trigger.Workspace, d)
+	return w.executeInProcess(ctx, trigger.ScriptPath, script, runtime, netPolicy, trigger.Workspace, trigger.Env, d)
 }
 
-func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, timeout time.Duration) *model.TaskResult {
+func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *model.TaskResult {
 	scriptFile := filepath.Join(scriptPath, "script."+extForRuntime(runtime))
 	if err := os.WriteFile(scriptFile, []byte(script), 0700); err != nil {
 		return &model.TaskResult{Error: "write script: " + err.Error()}
@@ -86,6 +86,9 @@ func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script
 		"HOME=/tmp",
 		"SANDBOX_MODE=1",
 	)
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return &model.TaskResult{Error: "start script: " + err.Error()}
@@ -133,7 +136,7 @@ func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script
 	return result
 }
 
-func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, timeout time.Duration) *model.TaskResult {
+func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *model.TaskResult {
 	scriptFile := filepath.Join(scriptPath, "script."+extForRuntime(runtime))
 	if err := os.WriteFile(scriptFile, []byte(script), 0700); err != nil {
 		return &model.TaskResult{Error: "write script: " + err.Error()}
@@ -155,6 +158,10 @@ func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script,
 	if workspace != "" {
 		args = append(args, "-v", workspace+":/workspace:rw")
 	}
+	for k, v := range env {
+		args = append(args, "-e", k+"="+v)
+	}
+
 	args = append(args, w.image, runtime, "/sandbox/script."+extForRuntime(runtime))
 
 	cmd := exec.CommandContext(ctx, "docker", args...)

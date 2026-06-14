@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -37,10 +38,10 @@ func TestE2E_WalletKeyGenStoreSignVerify(t *testing.T) {
 	}
 	defer db.Close()
 
-	os.Setenv("FLOWGENT_MASTER_KEY", "e2e-wallet-test-master-key-32bytes!")
-	defer os.Unsetenv("FLOWGENT_MASTER_KEY")
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+		os.WriteFile(keyFile, []byte("e2e-wallet-test-master-key-32bytes!"), 0600)
 
-	store, err := providers.NewDefaultSecretStoreProvider(db, "", "")
+	store, err := providers.NewDefaultSecretStoreProvider(db, keyFile)
 	if err != nil {
 		t.Fatalf("NewDefaultSecretStoreProvider: %v", err)
 	}

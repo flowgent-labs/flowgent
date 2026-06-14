@@ -30,6 +30,7 @@ type SandboxTrigger struct {
 	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty"`
 	Workspace     string            `json:"workspace,omitempty"`
 	SpanID        string            `json:"span_id"`
+	Env           map[string]string `json:"env,omitempty"`
 }
 
 // ─── Sandbox deployment config ───────────────────────────────

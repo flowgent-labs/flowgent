@@ -442,7 +442,7 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 						Image:           "localhost/flowgent/taskmanager:latest",
 						ImagePullPolicy: corev1.PullNever,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
+							{Name: "FLOWGENT__MESSAGING__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: s.postgresDSN},
 						},
 						Command: []string{"/app/flowgent", "taskmanager", "start"},
@@ -490,7 +490,7 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 						Image:           s.sandboxImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
+							{Name: "FLOWGENT__MESSAGING__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__SANDBOX__WORKSPACE", Value: s.sandboxWorkspace},
 						},
 						Command: []string{"/app/flowgent", "sandbox", "start"},

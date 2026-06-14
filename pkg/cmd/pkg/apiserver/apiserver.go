@@ -7,7 +7,6 @@ package apiserver
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"log/slog"
@@ -18,29 +17,27 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/flowgent-labs/flowgent/api/pkg"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
+	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
 )
 
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	return startServer(cfgPath)
 }
 
-func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
+func Stop(pidFile string) error { return utils.StopByPID(pidFile) }
 
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	return Start(cfgPath, pidFile)
 }
@@ -53,22 +50,18 @@ func startServer(cfgPath string) error {
 	}
 
 	log.Printf("Flowgent API Server — sole DB client, RESTful CRUD only")
-	cmdutil.LogConfig(serviceCfg)
+	config.LogConfig(serviceCfg)
 	logger := utils.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
 
-	// ── Load flow definitions from static YAML dir ──
-	agentFlows, subAgentFlows, err := config.LoadAgentFlows(serviceCfg, cfgPath)
-	if err != nil {
-		log.Printf("WARNING: LoadAgentFlows: %v", err)
-	}
-
 	// ── Database (sole DB connection per architecture) ──
-	storeImpl := cmdutil.InitStore(serviceCfg)
+	storeImpl := store.InitStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
 	// DB-backed agentflow definitions (Standard mode)
+	var agentFlows []model.AgentFlowSpec
+	subAgentFlows := make(map[string]model.AgentFlowSpec)
 	if serviceCfg.Orchestration.AgentFlows.Standard.Enabled {
-		dbFlows, dbSubFlows, dberr := cmdutil.LoadAgentFlowsFromDB(context.Background(), storeImpl)
+		dbFlows, dbSubFlows, dberr := agentflow.LoadFromDB(context.Background(), storeImpl)
 		if dberr != nil {
 			slog.Warn("Failed to load agentflows from DB", "error", dberr)
 		} else {
@@ -78,29 +71,6 @@ func startServer(cfgPath string) error {
 			}
 		}
 	}
-
-	// DB-backed agent definitions (Standard mode — loaded for API serving only)
-	loadedAgents, _ := config.LoadAgents(serviceCfg, cfgPath)
-	if serviceCfg.Orchestration.Agents.Standard.Enabled {
-		var agStore agentdef.IAgentDefStore
-		switch db := storeImpl.DB().(type) {
-		case *pgxpool.Pool:
-			agStore = agentdef.NewAgentDefPostgresStore(db)
-		case *sql.DB:
-			agStore = agentdef.NewAgentDefSQLiteStore(db)
-		}
-		if agStore != nil {
-			agentPage, dberr := agStore.Select(context.Background(), model.PageRequest{Page: 1, Size: 1000})
-			if dberr != nil {
-				slog.Warn("Failed to load agents from DB", "error", dberr)
-			} else {
-				for _, a := range agentPage.Items {
-					loadedAgents = append(loadedAgents, *a)
-				}
-			}
-		}
-	}
-	_ = loadedAgents
 
 	// ── MQTT for lifecycle event publishing (optional; nil-safe handlers) ──
 	var mqttPublisher handler.MQTTPublisher
@@ -117,26 +87,12 @@ func startServer(cfgPath string) error {
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
-	// ── Hot reload (static YAML dir only) ──
-	if refreshStr := serviceCfg.Orchestration.AgentFlows.Static.Refresh; refreshStr != "" {
-		if d, err := time.ParseDuration(refreshStr); err == nil && d > 0 {
-			go func() {
-				t := time.NewTicker(d)
-				defer t.Stop()
-				for range t.C {
-					nf, nsf, _ := config.ReloadAgentFlows(serviceCfg, cfgPath)
-					agentFlowHandler.Reload(nf, nsf)
-				}
-			}()
-		}
-	}
-
 	// ── REST HTTP Server ──
 	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
 		runHandler, humanHandler, notifHandler, nil, llmProviderHandler)
 	var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
-		restHandler = cmdutil.AuthMiddleware(serviceCfg.Auth, restMux)
+		restHandler = config.AuthMiddleware(serviceCfg.Auth, restMux)
 	}
 
 	readTO, _ := time.ParseDuration(serviceCfg.Server.ReadTimeout)

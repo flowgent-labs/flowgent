@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: taskmanager
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       containers:
         - name: taskmanager
@@ -26,7 +30,7 @@ spec:
           args: ["taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            - name: FLOWGENT__TM__SLOTS
+            - name: FLOWGENT__RUNTIME__TM_SLOTS
               value: {{ .Values.taskmanager.slots | quote }}
             - name: FLOWGENT__SANDBOX__WORKSPACE
               value: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
@@ -40,6 +44,9 @@ spec:
               mountPath: /etc/flowgent
             - name: sandbox-workspace
               mountPath: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" }}
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           resources:
             {{- toYaml .Values.taskmanager.resources | nindent 12 }}
       volumes:
@@ -48,4 +55,7 @@ spec:
             name: {{ include "flowgent.fullname" . }}-config
         - name: sandbox-workspace
           emptyDir: {}
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 {{- end }}

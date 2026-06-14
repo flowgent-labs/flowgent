@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -26,8 +25,7 @@ type FlowgentClient struct {
 	BaseURL string
 }
 
-func NewFlowgentClient() *FlowgentClient {
-	baseURL := os.Getenv("FLOWGENT_APISERVER_URL")
+func NewFlowgentClient(baseURL string) *FlowgentClient {
 	if baseURL == "" {
 		baseURL = "http://flowgent-apiserver:9999"
 	}
@@ -403,6 +401,69 @@ func (c *FlowgentClient) ListChannels(ctx context.Context, tenant string) ([]mod
 		return nil, fmt.Errorf("ListChannels: %w", err)
 	}
 	return items, nil
+}
+
+// CreateChannel creates a notification channel.
+func (c *FlowgentClient) CreateChannel(ctx context.Context, tenant string, ch *model.NotifierChannel) (*model.NotifierChannel, error) {
+	b, _ := json.Marshal(ch)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/notifications/channels", bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("CreateChannel: %w", err)
+	}
+	var created model.NotifierChannel
+	if err := readJSON(resp, &created); err != nil {
+		return nil, fmt.Errorf("CreateChannel: %w", err)
+	}
+	return &created, nil
+}
+
+// GetChannel returns a single notification channel.
+func (c *FlowgentClient) GetChannel(ctx context.Context, tenant, id string) (*model.NotifierChannel, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/notifications/channels/"+id, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GetChannel: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetChannel %d: %s", resp.StatusCode, string(b))
+	}
+	var ch model.NotifierChannel
+	if err := json.NewDecoder(resp.Body).Decode(&ch); err != nil {
+		return nil, fmt.Errorf("GetChannel: %w", err)
+	}
+	return &ch, nil
+}
+
+// UpdateChannel updates a notification channel.
+func (c *FlowgentClient) UpdateChannel(ctx context.Context, tenant, id string, ch *model.NotifierChannel) (*model.NotifierChannel, error) {
+	b, _ := json.Marshal(ch)
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/notifications/channels/"+id, bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("UpdateChannel: %w", err)
+	}
+	var updated model.NotifierChannel
+	if err := readJSON(resp, &updated); err != nil {
+		return nil, fmt.Errorf("UpdateChannel: %w", err)
+	}
+	return &updated, nil
+}
+
+// DeleteChannel deletes a notification channel.
+func (c *FlowgentClient) DeleteChannel(ctx context.Context, tenant, id string) error {
+	resp, err := c.do(ctx, "DELETE", "/api/v1/"+tenant+"/notifications/channels/"+id, nil)
+	if err != nil {
+		return fmt.Errorf("DeleteChannel: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode != 404 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DeleteChannel %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
 }
 
 // ─── LLM Providers ───────────────────────────────────────────────

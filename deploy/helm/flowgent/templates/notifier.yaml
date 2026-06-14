@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: notifier
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       containers:
         - name: notifier
@@ -26,7 +30,7 @@ spec:
           args: ["notifier", "start"]
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            - name: FLOWGENT_CONFIG_FILE
+            - name: FLOWGENT__CONFIG__FILE
               value: /etc/flowgent/flowgent.yaml
             - name: POD_NAME
               valueFrom:
@@ -39,6 +43,9 @@ spec:
             - name: workspace
               mountPath: /var/flowgent/workspace
             {{- end }}
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           ports:
             - name: ws
               containerPort: {{ .Values.notifier.service.port }}
@@ -54,6 +61,9 @@ spec:
             path: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" }}
             type: DirectoryOrCreate
         {{- end }}
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 ---
 apiVersion: v1
 kind: Service

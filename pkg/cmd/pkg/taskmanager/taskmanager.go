@@ -9,34 +9,34 @@ import (
 	"log"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 )
 
 // Start launches the TaskManager daemon.
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 	}
 	return startTaskManager(cfgPath)
 }
 
 // Stop stops the TaskManager daemon.
 func Stop(pidFile string) error {
-	return cmdutil.StopByPID(pidFile)
+	return utils.StopByPID(pidFile)
 }
 
 // Restart restarts the TaskManager daemon.
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 	}
 	return startTaskManager(cfgPath)
 }
@@ -55,18 +55,27 @@ func startTaskManager(cfgPath string) error {
 	if svcCfg != nil && svcCfg.Deployment.Mode != "" {
 		mode = svcCfg.Deployment.Mode
 	}
-	defaultTMID := mode + "-tm-" + cmdutil.Hostname()
-	if flowID := cmdutil.EnvOr("FLOWGENT_AGENTFLOW_ID", ""); flowID != "" && mode == "application" {
-		defaultTMID = mode + "-" + svcCfg.Tenant.DefaultTenant + "-" + flowID + "-tm-" + cmdutil.Hostname()
+	defaultTMID := mode + "-tm-" + utils.Hostname()
+	if flowID := svcCfg.Runtime.AgentFlowID; flowID != "" && mode == "application" {
+		defaultTMID = mode + "-" + svcCfg.Tenant.DefaultTenant + "-" + flowID + "-tm-" + utils.Hostname()
 	}
-	tmID := cmdutil.EnvOr("FLOWGENT_TM_ID", defaultTMID)
-	slotCount := cmdutil.EnvIntOr("FLOWGENT__TM__SLOTS", 4)
+	tmID := svcCfg.Runtime.TMID
+	if tmID == "" {
+		tmID = defaultTMID
+	}
+	slotCount := svcCfg.Runtime.TMSlots
+	if slotCount == 0 {
+		slotCount = 4
+	}
 
-	q := cmdutil.NewQueueFromConfig(svcCfg, tmID)
+	q := messager.NewQueueFromConfig(svcCfg, tmID)
 	defer q.Close()
 
-	apiClient := client.NewFlowgentClient()
-	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
+	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
+	tenant := svcCfg.Tenant.DefaultTenant
+	if tenant == "" {
+		tenant = "default"
+	}
 
 	var agentPtrs []*config.AgentDef
 	if svcCfg != nil {
@@ -78,19 +87,10 @@ func startTaskManager(cfgPath string) error {
 		}
 	}
 
-	// ── MCP Clients ────────────────────────────────────
-	mcpFactory := mcp.NewMcpManager()
-	for _, mcpDef := range svcCfg.Orchestration.MCPs {
-		if mcpDef.Enabled {
-			mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
-		}
-	}
+	// ── MCP Clients (DB-backed, loaded at runtime) ────
+	_ = mcp.NewMcpManager() // MCPs now DB-backed, loaded at runtime
 	mcpMap := make(map[string]engine.MCPClient)
-	for _, mcpDef := range svcCfg.Orchestration.MCPs {
-		if mcpDef.Enabled {
-			mcpMap[mcpDef.Name] = &cmdutil.McpAdapter{Factory: mcpFactory, Name: mcpDef.Name}
-		}
-	}
+
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Queue: q,
@@ -111,7 +111,7 @@ func startTaskManager(cfgPath string) error {
 		return fmt.Errorf("start: %w", err)
 	}
 	log.Printf("TaskManager %s started (slots=%d)", tmID, slotCount)
-	cmdutil.WaitSignal()
+	utils.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)
 	return nil

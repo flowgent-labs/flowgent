@@ -34,7 +34,7 @@ Mode: {{ .Values.global.mode }}
 {{- if eq .Values.global.mode "session" }}
 ━━━ Session Mode — Shared Pool ━━━
   API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
-  JobManager       — {{ .Values.jobmanager.replicas }} replicas{{ if .Values.jobmanager.ha.enabled }} (HA){{ end }}
+  JobManager       — {{ .Values.jobmanager.replicas }} replicas
   TaskManager      — {{ .Values.taskmanager.replicas }} replicas × {{ .Values.taskmanager.slots }} slots (inline sandbox)
   Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
 {{- else }}

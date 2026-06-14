@@ -17,11 +17,13 @@ import (
 	a2apkg "github.com/flowgent-labs/flowgent/cmd/pkg/a2a"
 	allinonepkg "github.com/flowgent-labs/flowgent/cmd/pkg/allinone"
 	apiserverpkg "github.com/flowgent-labs/flowgent/cmd/pkg/apiserver"
+	consolepkg "github.com/flowgent-labs/flowgent/cmd/pkg/console"
 	controllerpkg "github.com/flowgent-labs/flowgent/cmd/pkg/controller"
 	jmpkg "github.com/flowgent-labs/flowgent/cmd/pkg/jobmanager"
 	notifierpkg "github.com/flowgent-labs/flowgent/cmd/pkg/notifier"
 	sandboxpkg "github.com/flowgent-labs/flowgent/cmd/pkg/sandbox"
 	tmpkg "github.com/flowgent-labs/flowgent/cmd/pkg/taskmanager"
+	walletpkg "github.com/flowgent-labs/flowgent/cmd/pkg/wallet"
 )
 
 var (
@@ -39,11 +41,11 @@ var (
 
 func init() {
 	defaultCfg := ""
-	if v := os.Getenv("FLOWGENT_CONFIG_FILE"); v != "" {
+	if v := os.Getenv("FLOWGENT__CONFIG__FILE"); v != "" {
 		defaultCfg = v
 	}
 	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c",
-		defaultCfg, "Path to config file (required if FLOWGENT_CONFIG_FILE not set)")
+		defaultCfg, "Path to config file (required if FLOWGENT__CONFIG__FILE not set)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v",
 		false, "Enable debug logging")
 }
@@ -230,7 +232,7 @@ var jobmanagerStartCmd = &cobra.Command{
 	Short: "Start the JobManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if jmFlowID != "" {
-			os.Setenv("FLOWGENT_AGENTFLOW_ID", jmFlowID)
+			os.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_ID", jmFlowID)
 		}
 		return jmpkg.Start(cfgPath, pidJobManager)
 	},
@@ -361,8 +363,6 @@ var notifierRestartCmd = &cobra.Command{
 var (
 	walletListen  string
 	walletDB      string
-	masterKey     string
-	masterKeyFile string
 	keyFormat     string
 	keyEncoding   string
 )
@@ -378,7 +378,7 @@ var walletStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet("start")
+		return walletpkg.RunWallet("start", walletListen, walletDB, cfgPath)
 	},
 }
 
@@ -386,7 +386,7 @@ var walletStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet("stop")
+		return walletpkg.RunWallet("stop", "", "", "")
 	},
 }
 
@@ -394,7 +394,7 @@ var walletRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWallet("restart")
+		return walletpkg.RunWallet("restart", walletListen, walletDB, cfgPath)
 	},
 }
 
@@ -415,7 +415,7 @@ var walletGenKeyCmd = &cobra.Command{
   flowgent wallet generate-key --encoding base64
   flowgent wallet generate-key --format json --encoding base64`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runWalletGenKey(keyFormat, keyEncoding)
+		return walletpkg.RunWalletGenKey(keyFormat, keyEncoding)
 	},
 }
 
@@ -437,7 +437,7 @@ Commands:
   help                     Show available commands
   exit, quit               Exit the console`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		startConsole()
+		consolepkg.StartConsole(cfgPath, verbose)
 		return nil
 	},
 }
@@ -515,8 +515,6 @@ func main() {
 	walletCmd.AddCommand(walletGenKeyCmd)
 	walletStartCmd.Flags().StringVar(&walletListen, "listen", "127.0.0.1:9901", "Listen address")
 	walletStartCmd.Flags().StringVar(&walletDB, "db", "", "SQLite database path")
-	walletStartCmd.Flags().StringVar(&masterKey, "master-key", "", "Master encryption key")
-	walletStartCmd.Flags().StringVar(&masterKeyFile, "master-key-file", "", "Path to master key file")
 	walletGenKeyCmd.Flags().StringVar(&keyFormat, "format", "text", "Output structure: text|json")
 	walletGenKeyCmd.Flags().StringVar(&keyEncoding, "encoding", "hex", "Key encoding: hex|base64")
 

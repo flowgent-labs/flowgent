@@ -11,7 +11,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
@@ -19,6 +18,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/llm"
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 )
@@ -26,20 +26,20 @@ import (
 // Start launches the JobManager daemon.
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 	}
 	return startJobManager(cfgPath)
 }
 
 // Stop stops the JobManager daemon.
-func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
+func Stop(pidFile string) error { return utils.StopByPID(pidFile) }
 
 // Restart restarts the JobManager daemon.
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 	}
 	return startJobManager(cfgPath)
 }
@@ -50,20 +50,23 @@ func startJobManager(cfgPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
-	jmID := "jm-" + cmdutil.Hostname()
+	jmID := "jm-" + utils.Hostname()
 
-	q := cmdutil.NewQueueFromConfig(svcCfg, jmID)
+	q := messager.NewQueueFromConfig(svcCfg, jmID)
 	defer q.Close()
 
-	apiClient := client.NewFlowgentClient()
-	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
+	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
+	tenant := svcCfg.Tenant.DefaultTenant
+	if tenant == "" {
+		tenant = "default"
+	}
 
 	stateClient := &client.RunStateClient{Client: apiClient, Tenant: tenant}
 	taskClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
 	humanClient := &client.HumanApprovalClient{Client: apiClient}
 
 	var rm resourcemanager.ResourceManager
-	jmNamespace := cmdutil.EnvOr("FLOWGENT_NAMESPACE", "")
+	jmNamespace := svcCfg.Runtime.Namespace
 	mode := "session"
 	if svcCfg != nil && svcCfg.Deployment.Mode != "" {
 		mode = svcCfg.Deployment.Mode
@@ -72,11 +75,19 @@ func startJobManager(cfgPath string) error {
 
 	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: tenant}
 
+	k8sNamespace := svcCfg.Runtime.Namespace
+	if k8sNamespace == "" {
+		k8sNamespace = "default"
+	}
+	tmDeploy := svcCfg.Runtime.TMDeploy
+	if tmDeploy == "" {
+		tmDeploy = "flowgent-taskmanager"
+	}
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
-			K8sNamespace:      cmdutil.EnvOr("KUBERNETES_NAMESPACE", "default"),
-			K8sDeploymentName: cmdutil.EnvOr("FLOWGENT__TM__DEPLOY", "flowgent-taskmanager"),
+			K8sNamespace:      k8sNamespace,
+			K8sDeploymentName: tmDeploy,
 			TaskState:         taskClient,
 			HumanApproval:     humanClient,
 			Logger:            logger, Queue: q,
@@ -92,24 +103,14 @@ func startJobManager(cfgPath string) error {
 				agentPtrs = append(agentPtrs, &agents[i])
 			}
 		}
-		mcpFactory := mcp.NewMcpManager()
-		for _, mcpDef := range svcCfg.Orchestration.MCPs {
-			if mcpDef.Enabled {
-				mcpFactory.Register(mcpDef.Name, mcpDef.Command, mcpDef.Args, mcpDef.Env)
-			}
-		}
+		_ = mcp.NewMcpManager() // MCPs now DB-backed, loaded at runtime
 		mcpMap := make(map[string]engine.MCPClient)
-		for _, mcpDef := range svcCfg.Orchestration.MCPs {
-			if mcpDef.Enabled {
-				mcpMap[mcpDef.Name] = &cmdutil.McpAdapter{Factory: mcpFactory, Name: mcpDef.Name}
-			}
-		}
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider:      engine.ProviderStandalone, PoolSize: 10,
 			TaskState:     taskClient,
 			HumanApproval: humanClient,
 			Agents:        agentPtrs, MCPClients: mcpMap,
-			LLMClient: llm.NewLlmProviderManager(&svcCfg.LLM, llmLoader),
+			LLMClient: llm.NewLlmProviderManager(llmLoader),
 			Logger: logger, Queue: q,
 		})
 	}
@@ -119,7 +120,7 @@ func startJobManager(cfgPath string) error {
 		return fmt.Errorf("create jobmanager: %w", err)
 	}
 
-	agentFlowID := cmdutil.EnvOr("FLOWGENT_AGENTFLOW_ID", "")
+	agentFlowID := svcCfg.Runtime.AgentFlowID
 
 	flows := make(map[string]*model.AgentFlowSpec)
 	if appMode && agentFlowID != "" {
@@ -151,7 +152,7 @@ func startJobManager(cfgPath string) error {
 	defer cancel()
 	go startRunPoller(ctx, apiClient, tenant, jm, flows, jmNamespace, agentFlowID)
 	log.Printf("JobManager started (scheduler=%s, namespace=%s, agentFlow=%s, autoScale=%v)", rm.Provider(), jmNamespace, agentFlowID, appMode)
-	cmdutil.WaitSignal()
+	utils.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)
 	return nil

@@ -53,7 +53,7 @@ func Restart(pidFile string) error {
 
 // startService is the actual sandbox worker startup logic.
 func startService() error {
-	cfgPath := os.Getenv("FLOWGENT_CONFIG_FILE")
+	cfgPath := os.Getenv("FLOWGENT__CONFIG__FILE")
 	if cfgPath == "" {
 		cfgPath = "etc/flowgent-dev.yaml"
 	}

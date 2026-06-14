@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: wallet
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       containers:
         - name: wallet
@@ -26,30 +30,50 @@ spec:
           args:
             - "wallet"
             - "start"
+            - "-c"
+            - "/etc/flowgent/flowgent.yaml"
             - "--listen"
             - "0.0.0.0:{{ .Values.wallet.service.port }}"
-            - "--master-key-file"
-            - {{ .Values.wallet.keyFile | quote }}
+            {{- if .Values.wallet.db }}
+            - "--db"
+            - {{ .Values.wallet.db | quote }}
+            {{- end }}
           ports:
             - name: api
               containerPort: {{ .Values.wallet.service.port }}
           volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+            {{- if and .Values.wallet.autoGenerateKey .Values.wallet.keyFile }}
             - name: master-key
-              mountPath: /var/secrets/flowgent
+              mountPath: {{ dir .Values.wallet.keyFile }}
               readOnly: true
+            {{- end }}
             - name: wallet-data
               mountPath: /tmp/wallet
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           env:
             - name: HOME
               value: /tmp/wallet
+            {{- include "flowgent.extraSecretEnv" . | nindent 12 }}
           resources:
             {{- toYaml .Values.wallet.resources | nindent 12 }}
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+        {{- if and .Values.wallet.autoGenerateKey .Values.wallet.keyFile }}
         - name: master-key
           secret:
             secretName: {{ include "flowgent.fullname" . }}-wallet-key
+        {{- end }}
         - name: wallet-data
           emptyDir: {}
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 ---
 apiVersion: v1
 kind: Service

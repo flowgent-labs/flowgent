@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // GeminiProvider implements ILlmProvider for Google Gemini API (stub).
@@ -18,7 +18,7 @@ type GeminiProvider struct {
 	limiter  *rate.Limiter
 }
 
-func newGeminiProvider(p config.LLMProviderDef) *GeminiProvider {
+func newGeminiProvider(p *model.LlmProvider) *GeminiProvider {
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {

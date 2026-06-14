@@ -4,18 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 )
 
-// StaticDiscoveryClient uses environment variables for pod discovery.
+// StaticDiscoveryClient uses configuration for pod discovery.
 // Used in dev/single-node/CI where K8s API is not available.
-//
-// Env vars:
-//
-//	FLOWGENT_CONTROLLER_INDEX  — this pod's index (0-based)
-//	FLOWGENT_CONTROLLER_TOTAL  — total pod count
-//	POD_NAME                   — pod name (defaults to "controller-<index>")
 type StaticDiscoveryClient struct {
 	self      Peer
 	totalPods int
@@ -23,19 +16,16 @@ type StaticDiscoveryClient struct {
 	peers     []Peer
 }
 
-// NewStaticDiscoveryClient creates a discovery client from env vars.
-func NewStaticDiscoveryClient() *StaticDiscoveryClient {
-	total := 1
-	if v := os.Getenv("FLOWGENT_CONTROLLER_TOTAL"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			total = n
-		}
+// NewStaticDiscoveryClient creates a discovery client from RuntimeConfig values.
+// podTotal and podIndex come from cfg.Runtime.PodTotal / cfg.Runtime.PodIndex.
+func NewStaticDiscoveryClient(podTotal, podIndex int) *StaticDiscoveryClient {
+	total := podTotal
+	if total <= 0 {
+		total = 1
 	}
-	index := 0
-	if v := os.Getenv("FLOWGENT_CONTROLLER_INDEX"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n < total {
-			index = n
-		}
+	index := podIndex
+	if index < 0 || index >= total {
+		index = 0
 	}
 	name := os.Getenv("POD_NAME")
 	if name == "" {

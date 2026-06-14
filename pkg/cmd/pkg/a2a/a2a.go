@@ -25,7 +25,6 @@ import (
 	"github.com/a2aproject/a2a-go/a2asrv"
 	"github.com/a2aproject/a2a-go/a2asrv/eventqueue"
 
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -36,16 +35,16 @@ import (
 
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	return startService(cfgPath)
 }
 
-func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
+func Stop(pidFile string) error { return utils.StopByPID(pidFile) }
 
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	return Start(cfgPath, pidFile)
 }
@@ -62,11 +61,11 @@ func startService(cfgPath string) error {
 
 	if !svcCfg.A2A.Enabled {
 		log.Println("A2A is disabled in config")
-		cmdutil.WaitSignal()
+		utils.WaitSignal()
 		return nil
 	}
 
-	apiClient := client.NewFlowgentClient()
+	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
 	taskStore := newA2ATaskStore()
 
 	executor := &adminAgentHandler{

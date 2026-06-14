@@ -9,7 +9,7 @@ import (
 	openaiopt "github.com/openai/openai-go/option"
 	"golang.org/x/time/rate"
 
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 const defaultTimeout = 120 * time.Second
@@ -21,7 +21,7 @@ type OpenAIProvider struct {
 	limiter *rate.Limiter
 }
 
-func newOpenAIProvider(p config.LLMProviderDef) *OpenAIProvider {
+func newOpenAIProvider(p *model.LlmProvider) *OpenAIProvider {
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {

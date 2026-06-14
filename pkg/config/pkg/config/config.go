@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,7 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 
 	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
@@ -17,6 +18,8 @@ import (
 // ─── Top-level config ────────────────────────────────────────
 
 // FlowgentConfig is the top-level runtime configuration for the flowgent engine.
+// All resource definitions (agents, agentflows, MCPs, skills, LLM providers, channels)
+// are now DB-backed and managed via the management console or REST API.
 type FlowgentConfig struct {
 	ServiceName         string                `json:"service-name" yaml:"service-name"`
 	Deployment          DeploymentConfig      `json:"deployment" yaml:"deployment"`
@@ -27,7 +30,6 @@ type FlowgentConfig struct {
 	Auth                AuthConfig            `json:"auth" yaml:"auth"`
 	Cache               CacheConfig           `json:"cache" yaml:"cache"`
 	Storage             StorageConfig         `json:"storage" yaml:"storage"`
-	LLM                 LLMConfig             `json:"llm" yaml:"llm"`
 	Orchestration       OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
 	Messaging           MessagingConfig       `json:"messaging" yaml:"messaging"`
 	Lock                LockConfig            `json:"lock" yaml:"lock"`
@@ -36,6 +38,7 @@ type FlowgentConfig struct {
 	Notifier            NotifierConfig        `json:"notifier" yaml:"notifier"`
 	CredentialPaths     CredentialPathsConfig `json:"credential-paths" yaml:"credential-paths"`
 	Tenant              TenantConfig          `json:"tenant" yaml:"tenant"`
+	Runtime             RuntimeConfig         `json:"runtime" yaml:"runtime"`
 	ResolvedCredentials map[string]string     `json:"-" yaml:"-"`
 }
 
@@ -189,24 +192,25 @@ type PostgresConfig struct {
 	UseSSL         bool   `json:"use-ssl" yaml:"use-ssl"`
 }
 
-// ─── LLM / Orchestration ─────────────────────────────────────
+// ─── Orchestration ────────────────────────────────────────────
 
-type LLMConfig struct {
-	Providers LLMProvidersConfig `json:"providers" yaml:"providers"`
+type OrchestrationConfig struct {
+	Agents               StandardResourceCfg `json:"agents" yaml:"agents"`
+	Skills               StandardResourceCfg `json:"skills,omitempty" yaml:"skills,omitempty"`
+	AgentFlows           StandardResourceCfg `json:"agentflows" yaml:"agentflows"`
+	MaxConcurrentFlows   int                 `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
+	FlowExecutionTimeout string              `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
+	MaxNodeRetries       int                 `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
-type LLMProvidersConfig struct {
+// StandardResourceCfg enables DB-backed resource definitions via management API.
+type StandardResourceCfg struct {
 	Standard StandardAgentCfg `json:"standard" yaml:"standard"`
 }
 
-type OrchestrationConfig struct {
-	MCPs                 []MCPDef    `json:"mcps" yaml:"mcps" mapstructure:"mcps"`
-	Agents               ResourceCfg `json:"agents" yaml:"agents"`
-	Skills               ResourceCfg `json:"skills,omitempty" yaml:"skills,omitempty"`
-	AgentFlows           ResourceCfg `json:"agentflows" yaml:"agentflows"`
-	MaxConcurrentFlows   int         `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
-	FlowExecutionTimeout string      `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
-	MaxNodeRetries       int         `json:"max-node-retries" yaml:"max-node-retries"`
+// StandardAgentCfg enables DB-backed resource definitions (future Flowgent UI).
+type StandardAgentCfg struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
 // SandboxConfig configures the sandbox execution environment.
@@ -245,68 +249,18 @@ type RedisLockConfig struct {
 	Password string   `json:"password" yaml:"password"`
 }
 
-type LLMProviderDef struct {
-	ID        string     `json:"id" yaml:"id"`
-	Type      string     `json:"type" yaml:"type"`
-	Enabled   bool       `json:"enabled" yaml:"enabled"`
-	Timeout   string     `json:"timeout" yaml:"timeout"`
-	Endpoint  string     `json:"endpoint" yaml:"endpoint"`
-	ApiKey    string     `json:"apikey" yaml:"apikey"`
-	Proxy     string     `json:"proxy" yaml:"proxy"`
-	RateLimit int        `json:"rate_limit" yaml:"rate_limit"`
-	Models    []ModelDef `json:"models" yaml:"models"`
-}
 
-// ModalitiesConfig supports the nested YAML format:
-//
-//	modalities:
-//	  input: [text]
-//	  output: [text]
-type ModalitiesConfig struct {
-	Input  []string `json:"input" yaml:"input"`
-	Output []string `json:"output" yaml:"output"`
-}
-
-type ModelDef struct {
-	Name        string            `json:"name" yaml:"name"`
-	Temperature float64           `json:"temperature" yaml:"temperature"`
-	TopK        int               `json:"topk" yaml:"topk"`
-	Modalities  *ModalitiesConfig `json:"modalities" yaml:"modalities"`
-	Thinking    *ThinkingConfig   `json:"thinking" yaml:"thinking"`
-}
-
-type ThinkingConfig struct {
-	Type         string `json:"type" yaml:"type"`
-	BudgetTokens int    `json:"budget_tokens" yaml:"budget_tokens"`
-}
-
-type MCPDef struct {
-	Name    string            `json:"name" yaml:"name"`
-	Enabled bool              `json:"enabled" yaml:"enabled"`
-	Type    string            `json:"type" yaml:"type"`
-	Command []string          `json:"command" yaml:"command"`
-	Args    []string          `json:"args" yaml:"args"`
-	Env     map[string]string `json:"env" yaml:"env"`
-}
-
-// AgentDef is aliased from model for backward compatibility.
-// All agent-related code should use model.AgentDef directly.
+// AgentDef is the DB-backed agent definition type.
 type AgentDef = model.AgentDef
+
+// MCPDef is the DB-backed MCP definition type.
+type MCPDef = model.MCPDef
 
 // ─── Notifier ─────────────────────────────────────────────────
 
-// NotifierConfig configures the notifier service and its channels.
+// NotifierConfig configures the notifier service. Channels are managed via DB CRUD API.
 type NotifierConfig struct {
-	Enabled  bool                    `json:"enabled" yaml:"enabled"`
-	Channels []NotifierChannelConfig `json:"channels" yaml:"channels"`
-}
-
-// NotifierChannelConfig defines a single notifier channel.
-type NotifierChannelConfig struct {
-	Name    string         `json:"name" yaml:"name"`
-	Type    string         `json:"type" yaml:"type"` // telegram, dingtalk, slack, email, webhook
-	Enabled bool           `json:"enabled" yaml:"enabled"`
-	Config  map[string]any `json:"config" yaml:"config"`
+	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
 // ─── Tenant ────────────────────────────────────────────────────
@@ -315,6 +269,21 @@ type NotifierChannelConfig struct {
 type TenantConfig struct {
 	DefaultTenant   string `json:"default_tenant" yaml:"default_tenant"`
 	NamespacePrefix string `json:"namespace_prefix" yaml:"namespace_prefix"`
+}
+
+// RuntimeConfig holds operational parameters set at deploy time (env vars, not YAML).
+// These are populated by viper from FLOWGENT__RUNTIME__* env vars.
+type RuntimeConfig struct {
+	APIServerURL    string `json:"api-server-url" yaml:"api-server-url"`
+	Namespace       string `json:"namespace" yaml:"namespace"`
+	AgentFlowID     string `json:"agent-flow-id" yaml:"agent-flow-id"`
+	TMID            string `json:"tm-id" yaml:"tm-id"`
+	TMDeploy        string `json:"tm-deploy" yaml:"tm-deploy"`
+	TMSlots         int    `json:"tm-slots" yaml:"tm-slots"`
+	ControllerLabel string `json:"controller-label" yaml:"controller-label"`
+	JMImage         string `json:"jm-image" yaml:"jm-image"`
+	PodIndex        int    `json:"pod-index" yaml:"pod-index"`
+	PodTotal        int    `json:"pod-total" yaml:"pod-total"`
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.
@@ -328,70 +297,6 @@ type CredentialPathsConfig struct {
 	BasePath string `json:"base-path" yaml:"base-path"` // default: /var/secret/flowgent
 }
 
-// ─── AgentCfg / SkillCfg / AgentFlowCfg ────────────────────────
-type ResourceCfg struct {
-	Static   StaticResourceCfg `json:"static" yaml:"static"`
-	Standard StandardAgentCfg  `json:"standard" yaml:"standard"`
-}
-
-// StaticResourceCfg is shared config for directory-based static resource loading.
-type StaticResourceCfg struct {
-	Enabled bool   `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
-	LoadDir string `json:"load-dir" yaml:"load-dir" mapstructure:"load-dir"`
-	Refresh string `json:"refresh" yaml:"refresh" mapstructure:"refresh"`
-}
-
-// StandardAgentCfg enables DB-backed resource definitions (future Flowgent UI).
-type StandardAgentCfg struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
-}
-
-// ─── AppConfig ───────────────────────────────────────────────
-
-// AppConfig is the aggregate application configuration combining service config
-// with loaded agentflow definitions.
-type AppConfig struct {
-	Service  FlowgentConfig                 `json:"service" yaml:"service"`
-	Agents   []AgentDef                     `json:"agents,omitempty" yaml:"agents,omitempty"`
-	Flows    []model.AgentFlowSpec          `json:"flows" yaml:"flows"`
-	SubFlows map[string]model.AgentFlowSpec `json:"sub_flows,omitempty" yaml:"sub_flows,omitempty"`
-}
-
-// GetAgent returns the agent definition by name, or nil if not found.
-func (c *AppConfig) GetAgent(name string) *AgentDef {
-	for i := range c.Agents {
-		a := &c.Agents[i]
-		if a.Name == name {
-			return a
-		}
-	}
-	return nil
-}
-
-// GetMCP returns the MCP definition by name if enabled, or nil if not found.
-func (c *AppConfig) GetMCP(name string) *MCPDef {
-	for i := range c.Service.Orchestration.MCPs {
-		m := &c.Service.Orchestration.MCPs[i]
-		if m.Name == name && m.Enabled {
-			return m
-		}
-	}
-	return nil
-}
-
-// GetFlow returns the agentflow spec by ID, searching top-level flows first,
-// then sub-flows.
-func (c *AppConfig) GetFlow(id string) *model.AgentFlowSpec {
-	for i := range c.Flows {
-		if c.Flows[i].ID == id {
-			return &c.Flows[i]
-		}
-	}
-	if sw, ok := c.SubFlows[id]; ok {
-		return &sw
-	}
-	return nil
-}
 
 
 
@@ -580,122 +485,6 @@ func expandStringWithCreds(s string, creds map[string]string) string {
 	return s
 }
 
-// loadResourceDir loads all .yaml files from a directory into a slice of T.
-func loadResourceDir[T any](dir string) ([]T, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read dir %s: %w", dir, err)
-	}
-	var result []T
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var item T
-		if err := yaml.Unmarshal(data, &item); err != nil {
-			continue
-		}
-		result = append(result, item)
-	}
-	return result, nil
-}
-
-// resolveDir returns dir as-is if absolute, otherwise resolves relative to cfgPath parent.
-func resolveDir(cfgPath, dir string) string {
-	if filepath.IsAbs(dir) {
-		return dir
-	}
-	return filepath.Join(filepath.Dir(cfgPath), dir)
-}
-
-// LoadAgents loads agent definitions from the static directory.
-func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentDef, error) {
-	var agents []AgentDef
-	if cfg.Orchestration.Agents.Static.Enabled {
-		dir := resolveDir(cfgPath, cfg.Orchestration.Agents.Static.LoadDir)
-		return loadResourceDir[AgentDef](dir)
-	}
-	return agents, nil
-}
-
-// LoadAgentFlows discovers and loads all L2 agentflow YAML files from the static directory.
-func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
-	var flows []model.AgentFlowSpec
-	subFlows := make(map[string]model.AgentFlowSpec)
-
-	if cfg.Orchestration.AgentFlows.Static.Enabled {
-		dir := resolveDir(cfgPath, cfg.Orchestration.AgentFlows.Static.LoadDir)
-		all, err := loadResourceDir[model.AgentFlowSpec](dir)
-		if err != nil {
-			return flows, subFlows, nil
-		}
-		for _, spec := range all {
-			if spec.ID == "" {
-				continue
-			}
-			flows = append(flows, spec)
-		}
-	}
-
-	// Also load skills if configured
-	if cfg.Orchestration.Skills.Static.Enabled {
-		dir := resolveDir(cfgPath, cfg.Orchestration.Skills.Static.LoadDir)
-		// Load top-level skill YAML files
-		all, err := loadResourceDir[model.AgentFlowSpec](dir)
-		if err == nil {
-			for _, spec := range all {
-				if spec.ID == "" {
-					continue
-				}
-				if spec.Kind == "skill" {
-					flows = append(flows, spec)
-				}
-			}
-		}
-		// Also scan one level of subdirectories for skill.yaml files
-		// (standard skill directory layout: skill-name/{skill.yaml,scripts/,references/,SKILL.md})
-		entries, _ := os.ReadDir(dir)
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			skillFile := filepath.Join(dir, e.Name(), "skill.yaml")
-			data, err := os.ReadFile(skillFile)
-			if err != nil {
-				continue
-			}
-			var spec model.AgentFlowSpec
-			if err := yaml.Unmarshal(data, &spec); err != nil {
-				continue
-			}
-			if spec.ID == "" || spec.Kind != "skill" {
-				continue
-			}
-			flows = append(flows, spec)
-		}
-	}
-
-	return flows, subFlows, nil
-}
-
-// ReloadAgentFlows re-reads agentflow YAML files (for hot reload).
-func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
-	return LoadAgentFlows(cfg, cfgPath)
-}
-
-// BuildAppConfig combines service config with loaded agents and flows.
-func BuildAppConfig(cfg *FlowgentConfig, agents []AgentDef, flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *AppConfig {
-	return &AppConfig{
-		Service:  *cfg,
-		Agents:   agents,
-		Flows:    flows,
-		SubFlows: subFlows,
-	}
-}
 
 // ── Payments config types ─────────────────────────────────────
 
@@ -797,4 +586,80 @@ func expandString(s string) string {
 		}
 	}
 	return s
+}
+
+// ── Config display ──────────────────────────────────────────────
+
+// ── Deprecated: static resource loading stubs ───────────────────
+// These exist for backward compatibility. All resources are now DB-backed.
+// New code should load from the management console or REST API.
+
+func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentDef, error) { return nil, nil }
+func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
+	return nil, make(map[string]model.AgentFlowSpec), nil
+}
+func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
+	return nil, make(map[string]model.AgentFlowSpec), nil
+}
+
+// LogConfig prints key configuration details (masks sensitive fields).
+func LogConfig(cfg *FlowgentConfig) {
+	switch cfg.Storage.Type {
+	case "POSTGRE":
+		pg := cfg.Storage.Postgres
+		log.Printf("Storage:    PostgreSQL host=%s port=%d db=%s schema=%s user=%s pool_min=%d pool_max=%d ssl=%v",
+			pg.Host, pg.Port, pg.Database, pg.Schema, pg.Username, pg.MinConnections, pg.MaxConnections, pg.UseSSL)
+	default:
+		sq := cfg.Storage.SQLite
+		dir := sq.Dir
+		if dir == "" {
+			dir = "~/.flowgent/sqlite"
+		}
+		log.Printf("Storage:    SQLite dir=%s", dir)
+	}
+
+	log.Printf("Cache:      provider=%s", cfg.Cache.Provider)
+	log.Printf("REST API:   %s:%d (context=%s)", cfg.Server.Host, cfg.Server.Port, cfg.Server.ContextPath)
+	if cfg.A2A.Enabled {
+		log.Printf("A2A API:    %s:%d", cfg.A2A.Host, cfg.A2A.Port)
+	} else {
+		log.Printf("A2A API:    disabled")
+	}
+	if cfg.Mgmt.Enabled {
+		log.Printf("Management: %s:%d (pprof=%v, otel=%v)", cfg.Mgmt.Host, cfg.Mgmt.Port, cfg.Mgmt.PProf.Enabled, cfg.Mgmt.OTEL.Enabled)
+	}
+
+	log.Printf("Engine:     max_concurrent=%d timeout=%s max_retries=%d",
+		cfg.Orchestration.MaxConcurrentFlows, cfg.Orchestration.FlowExecutionTimeout, cfg.Orchestration.MaxNodeRetries)
+	log.Printf("DB-backed:  agents=%v skills=%v agentflows=%v",
+		cfg.Orchestration.Agents.Standard.Enabled,
+		cfg.Orchestration.Skills.Standard.Enabled,
+		cfg.Orchestration.AgentFlows.Standard.Enabled)
+}
+
+// ── Auth middleware ──────────────────────────────────────────────
+
+// AuthMiddleware creates a simple auth middleware that skips anonymous paths.
+func AuthMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, p := range cfg.AnonymousPaths {
+			if MatchGlob(p, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// MatchGlob matches a path against a glob-like pattern.
+func MatchGlob(pattern, path string) bool {
+	if pattern == path {
+		return true
+	}
+	if len(pattern) > 2 && pattern[len(pattern)-2:] == "/**" {
+		pfx := pattern[:len(pattern)-2]
+		return len(path) >= len(pfx) && path[:len(pfx)] == pfx
+	}
+	return false
 }

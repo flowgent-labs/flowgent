@@ -59,12 +59,12 @@ Format:
 {{- $secretName := .name }}
 {{- $optional := .optional | default false }}
 {{- range .mappings }}
-            - name: {{ .env | default .key | quote }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $secretName | quote }}
-                  key: {{ .key | quote }}
-                  optional: {{ $optional }}
+- name: {{ .env | default .key | quote }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secretName | quote }}
+      key: {{ .key | quote }}
+      optional: {{ $optional }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -77,12 +77,12 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 */}}
 {{- define "flowgent.internalEnv" -}}
 {{- if .Values.postgresql.enabled }}
-            - name: FLOWGENT__STORAGE__POSTGRES__DSN
-              value: {{ include "flowgent.databaseUrl" . | quote }}
+- name: FLOWGENT__STORAGE__POSTGRES__DSN
+  value: {{ include "flowgent.databaseUrl" . | quote }}
 {{- end }}
 {{- if .Values.emqx.enabled }}
-            - name: FLOWGENT__MESSAGER__MQTT__BROKER
-              value: {{ include "flowgent.mqttBroker" . | quote }}
+- name: FLOWGENT__MESSAGING__MQTT__BROKER
+  value: {{ include "flowgent.mqttBroker" . | quote }}
 {{- end }}
 {{- end }}
 
@@ -94,6 +94,61 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 {{/* MQTT broker URL — only used when emqx.enabled=true (internal) */}}
 {{- define "flowgent.mqttBroker" -}}
 {{- printf "tcp://%s-emqx:1883" (include "flowgent.fullname" .) }}
+{{- end }}
+
+{{/* ── Credential Provider: CSI volumes (GCP / AWS) ── */}}
+{{- define "flowgent.credentialVolumes" -}}
+{{- if .Values.credentialProviders.gcp.enabled }}
+- name: gcp-secrets
+  csi:
+    driver: secrets-store.csi.k8s.io
+    readOnly: true
+    volumeAttributes:
+      secretProviderClass: {{ include "flowgent.fullname" . }}-gcp-secrets
+{{- end }}
+{{- if .Values.credentialProviders.aws.enabled }}
+- name: aws-secrets
+  csi:
+    driver: secrets-store.csi.k8s.io
+    readOnly: true
+    volumeAttributes:
+      secretProviderClass: {{ include "flowgent.fullname" . }}-aws-secrets
+{{- end }}
+{{- end }}
+
+{{/* ── Credential Provider: CSI volumeMounts (GCP / AWS) ── */}}
+{{- define "flowgent.credentialVolumeMounts" -}}
+{{- if .Values.credentialProviders.gcp.enabled }}
+- name: gcp-secrets
+  mountPath: {{ .Values.credentialProviders.gcp.mountPath }}
+  readOnly: true
+{{- end }}
+{{- if .Values.credentialProviders.aws.enabled }}
+- name: aws-secrets
+  mountPath: {{ .Values.credentialProviders.aws.mountPath }}
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{/* ── Credential Provider: Vault Agent annotations ── */}}
+{{- define "flowgent.vaultAnnotations" -}}
+vault.hashicorp.com/agent-inject: "true"
+vault.hashicorp.com/role: {{ .Values.credentialProviders.vault.vaultRole | quote }}
+vault.hashicorp.com/agent-init-first: "true"
+{{- range .Values.credentialProviders.vault.secrets }}
+vault.hashicorp.com/agent-inject-secret-{{ .fileName }}: {{ .secretPath | quote }}
+vault.hashicorp.com/agent-inject-template-{{ .fileName }}: |
+  {{ print "{{-" }} with secret {{ .secretPath | quote }} {{ print "-}}" }}
+  {{ .fileName | upper }}={{ print "{{" }} .Data.data.{{ .secretKey }} {{ print "}}" }}
+  {{ print "{{-" }} end {{ print "-}}" }}
+{{- end }}
+{{- end }}
+
+{{/* ── Credential Provider: ServiceAccount annotations ── */}}
+{{- define "flowgent.credentialServiceAccountAnnotations" -}}
+{{- range $k, $v := .Values.credentialProviders.serviceAccount.annotations }}
+{{ $k }}: {{ $v | quote }}
+{{- end }}
 {{- end }}
 
 {{/* Wallet master key generation (Ed25519) */}}

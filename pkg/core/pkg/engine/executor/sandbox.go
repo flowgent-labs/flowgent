@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 )
@@ -76,6 +77,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		Workspace:     plan.NodeSpec.Workspace,
 		SpanID:        spanID,
 	}
+	trigger.Env = config.LoadCredentials("/var/flowgent", plan.TenantID, plan.AgentFlowDefinitionID, nil)
 	payload, err := json.Marshal(trigger)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox marshal trigger: %w", err)

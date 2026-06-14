@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: a2a
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       containers:
         - name: a2a
@@ -29,7 +33,7 @@ spec:
               containerPort: {{ .Values.a2a.service.port }}
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            - name: FLOWGENT_CONFIG_FILE
+            - name: FLOWGENT__CONFIG__FILE
               value: /etc/flowgent/flowgent.yaml
             - name: POD_NAME
               valueFrom:
@@ -38,6 +42,9 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           resources:
             {{- toYaml .Values.a2a.resources | nindent 12 }}
           livenessProbe:
@@ -50,6 +57,9 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 ---
 apiVersion: v1
 kind: Service

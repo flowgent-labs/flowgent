@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: apiserver
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       containers:
         - name: apiserver
@@ -34,6 +38,9 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           resources:
             {{- toYaml .Values.apiserver.resources | nindent 12 }}
           livenessProbe:
@@ -46,6 +53,9 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 ---
 apiVersion: v1
 kind: Service

@@ -73,9 +73,11 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{tenant}/notifications/test", notif.TestChannel)
 
 	// ── LLM Providers (tenant-scoped) ──────────────────────
-	if llmProvider != nil {
-		mux.HandleFunc("GET /api/v1/{tenant}/llm/providers", llmProvider.List)
-	}
+	mux.HandleFunc("GET /api/v1/{tenant}/llm/providers", llmProvider.List)
+	mux.HandleFunc("POST /api/v1/{tenant}/llm/providers", llmProvider.Create)
+	mux.HandleFunc("GET /api/v1/{tenant}/llm/providers/{id}", llmProvider.Get)
+	mux.HandleFunc("PUT /api/v1/{tenant}/llm/providers/{id}", llmProvider.Update)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/llm/providers/{id}", llmProvider.Delete)
 
 	// ── WebSocket (tenant-scoped) ──────────────────────────
 	if ws != nil {

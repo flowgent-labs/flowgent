@@ -21,7 +21,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -35,7 +34,7 @@ import (
 
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	logSuffix := ""
@@ -46,13 +45,13 @@ func Start(cfgPath, pidFile string) error {
 	return startController(cfgPath)
 }
 
-func Stop(pidFile string) error { return cmdutil.StopByPID(pidFile) }
+func Stop(pidFile string) error { return utils.StopByPID(pidFile) }
 
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	return startController(cfgPath)
@@ -96,7 +95,7 @@ func NewController(api *client.FlowgentClient, tenant string, rm resourcemanager
 // ─── Pod Discovery & Sharding ──────────────────────────────────
 
 func (c *Controller) getPeers(ctx context.Context) (peers []discovery.Peer, selfIndex int, err error) {
-	labelSelector := os.Getenv("FLOWGENT__CONTROLLER__LABEL")
+	labelSelector := c.cfg.Runtime.ControllerLabel
 	if labelSelector == "" {
 		labelSelector = "app.kubernetes.io/component=controller"
 	}
@@ -357,12 +356,12 @@ func (c *Controller) buildJMDeployment(name, namespace, tenantID string, spec *m
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "jobmanager",
-						Image: os.Getenv("FLOWGENT__JM__IMAGE"),
+						Image: c.cfg.Runtime.JMImage,
 						Args:  []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--flow-id", spec.ID},
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT_DEPLOYMENT_MODE", Value: "application"},
-							{Name: "FLOWGENT_NAMESPACE", Value: namespace},
-							{Name: "FLOWGENT_AGENTFLOW_ID", Value: spec.ID},
+							{Name: "FLOWGENT__DEPLOYMENT__MODE", Value: "application"},
+							{Name: "FLOWGENT__RUNTIME__NAMESPACE", Value: namespace},
+							{Name: "FLOWGENT__RUNTIME__AGENT_FLOW_ID", Value: spec.ID},
 						},
 					}},
 				},
@@ -394,8 +393,11 @@ func startController(cfgPath string) error {
 	}
 	logger := utils.NewLogger(logMode, logLevel)
 
-	apiClient := client.NewFlowgentClient()
-	tenant := cmdutil.EnvOr("FLOWGENT_TENANT", "default")
+	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
+	tenant := svcCfg.Tenant.DefaultTenant
+	if tenant == "" {
+		tenant = "default"
+	}
 
 	loadedAgents, _ := config.LoadAgents(svcCfg, cfgPath)
 	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
@@ -424,7 +426,7 @@ func startController(cfgPath string) error {
 		disc = k8sDisc
 		logger.Info("Controller using K8s discovery client")
 	} else {
-		disc = discovery.NewStaticDiscoveryClient()
+		disc = discovery.NewStaticDiscoveryClient(svcCfg.Runtime.PodTotal, svcCfg.Runtime.PodIndex)
 		logger.Info("Controller using static discovery client (env vars)")
 	}
 

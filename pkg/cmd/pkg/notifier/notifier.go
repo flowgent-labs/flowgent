@@ -10,9 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/cmd/pkg/cmdutil"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	notifierpkg "github.com/flowgent-labs/flowgent/notifier/pkg"
 )
 
 // Start launches the Notifier daemon.
@@ -21,7 +22,7 @@ func Start(cfgPath, pidFile string) error {
 		if err := os.WriteFile(pidFile, []byte{}, 0644); err != nil {
 			return err
 		}
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	log.Printf("Flowgent notification service starting (pid=%d)", os.Getpid())
@@ -30,15 +31,15 @@ func Start(cfgPath, pidFile string) error {
 
 // Stop stops the Notifier daemon.
 func Stop(pidFile string) error {
-	return cmdutil.StopByPID(pidFile)
+	return utils.StopByPID(pidFile)
 }
 
 // Restart restarts the Notifier daemon.
 func Restart(cfgPath, pidFile string) error {
-	_ = cmdutil.StopByPID(pidFile)
+	_ = utils.StopByPID(pidFile)
 	time.Sleep(500 * time.Millisecond)
 	if pidFile != "" {
-		cmdutil.WritePID(pidFile)
+		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
 	log.Printf("Flowgent notification service restarting (pid=%d)", os.Getpid())
@@ -60,8 +61,8 @@ func startService(cfgPath string) error {
 		return nil
 	}
 
-	apiClient := client.NewFlowgentClient()
-	notifSvc := cmdutil.CreateNotifierService(apiClient, serviceCfg)
+	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
+	notifSvc := notifierpkg.CreateNotifierService(apiClient, serviceCfg)
 	if notifSvc == nil {
 		log.Println("Notification service is disabled in config")
 		sigCh := make(chan os.Signal, 1)

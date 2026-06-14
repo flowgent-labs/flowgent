@@ -4,10 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+func testMasterKeyFile(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "master.key")
+	if err := os.WriteFile(p, []byte("test-master-key-32bytes!!"), 0600); err != nil {
+		t.Fatalf("write test key file: %v", err)
+	}
+	return p
+}
 
 func TestDefaultSecretStore_EncryptDecrypt(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
@@ -16,11 +27,8 @@ func TestDefaultSecretStore_EncryptDecrypt(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Set a master key for this test
-	os.Setenv("FLOWGENT_MASTER_KEY", "test-master-key-32bytes!!")
-	defer os.Unsetenv("FLOWGENT_MASTER_KEY")
-
-	store, err := NewDefaultSecretStoreProvider(db, "", "")
+	keyFile := testMasterKeyFile(t)
+	store, err := NewDefaultSecretStoreProvider(db, keyFile)
 	if err != nil {
 		t.Fatalf("NewDefaultSecretStoreProvider: %v", err)
 	}
@@ -50,10 +58,8 @@ func TestDefaultSecretStore_NotFound(t *testing.T) {
 	}
 	defer db.Close()
 
-	os.Setenv("FLOWGENT_MASTER_KEY", "test-master-key-32bytes!!")
-	defer os.Unsetenv("FLOWGENT_MASTER_KEY")
-
-	store, _ := NewDefaultSecretStoreProvider(db, "", "")
+	keyFile := testMasterKeyFile(t)
+	store, _ := NewDefaultSecretStoreProvider(db, keyFile)
 	_, err = store.GetSecret(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for missing secret")
@@ -67,10 +73,8 @@ func TestDefaultSecretStore_Delete(t *testing.T) {
 	}
 	defer db.Close()
 
-	os.Setenv("FLOWGENT_MASTER_KEY", "test-master-key-32bytes!!")
-	defer os.Unsetenv("FLOWGENT_MASTER_KEY")
-
-	store, _ := NewDefaultSecretStoreProvider(db, "", "")
+	keyFile := testMasterKeyFile(t)
+	store, _ := NewDefaultSecretStoreProvider(db, keyFile)
 	ctx := context.Background()
 
 	store.PutSecret(ctx, "wallet:del", []byte("secret"))
@@ -90,10 +94,8 @@ func TestDefaultSecretStore_List(t *testing.T) {
 	}
 	defer db.Close()
 
-	os.Setenv("FLOWGENT_MASTER_KEY", "test-master-key-32bytes!!")
-	defer os.Unsetenv("FLOWGENT_MASTER_KEY")
-
-	store, _ := NewDefaultSecretStoreProvider(db, "", "")
+	keyFile := testMasterKeyFile(t)
+	store, _ := NewDefaultSecretStoreProvider(db, keyFile)
 	ctx := context.Background()
 
 	store.PutSecret(ctx, "wallet:a", []byte("1"))
@@ -109,23 +111,19 @@ func TestDefaultSecretStore_List(t *testing.T) {
 	}
 }
 
-func TestResolveMasterKey_EnvVar(t *testing.T) {
-	os.Setenv("FLOWGENT_MASTER_KEY", "my-env-key")
-	defer os.Unsetenv("FLOWGENT_MASTER_KEY")
-
-	key, err := resolveMasterKey("", "")
+func TestResolveMasterKey_File(t *testing.T) {
+	keyFile := testMasterKeyFile(t)
+	key, err := resolveMasterKey(keyFile)
 	if err != nil {
 		t.Fatalf("resolveMasterKey: %v", err)
 	}
-	if string(key) != "my-env-key" {
-		t.Errorf("expected my-env-key, got %s", key)
+	if string(key) != "test-master-key-32bytes!!" {
+		t.Errorf("expected test-master-key-32bytes!!, got %s", key)
 	}
 }
 
 func TestResolveMasterKey_NoConfig(t *testing.T) {
-	os.Unsetenv("FLOWGENT_MASTER_KEY")
-	os.Unsetenv("FLOWGENT_MASTER_KEY_FILE")
-	_, err := resolveMasterKey("", "")
+	_, err := resolveMasterKey("")
 	if err == nil {
 		t.Fatal("expected error when no master key configured")
 	}

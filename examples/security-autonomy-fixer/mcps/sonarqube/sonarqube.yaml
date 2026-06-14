@@ -1,0 +1,16 @@
+name: sonarqube
+enabled: true
+type: local
+command:
+  - /usr/local/bin/sonarqube-mcp
+args:
+  - --transport
+  - stdio
+  - "-v"
+  - "10"
+env:
+  SONARQUBE_URL: http://172.29.235.101:9000
+  SONARQUBE_TOKEN: "${SONARQUBE_TOKEN}"
+  ALL_PROXY: ""
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""

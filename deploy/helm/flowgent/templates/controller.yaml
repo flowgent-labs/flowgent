@@ -6,6 +6,8 @@ metadata:
   name: {{ .Values.controller.serviceAccount.name }}
   labels:
     {{- include "flowgent.labels" . | nindent 4 }}
+  annotations:
+    {{- include "flowgent.credentialServiceAccountAnnotations" . | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -51,6 +53,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: controller
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       serviceAccountName: {{ .Values.controller.serviceAccount.name }}
       containers:
@@ -61,9 +67,9 @@ spec:
           args: ["controller", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            - name: FLOWGENT__CONTROLLER__LABEL
+            - name: FLOWGENT__RUNTIME__CONTROLLER_LABEL
               value: "app.kubernetes.io/component=controller"
-            - name: FLOWGENT__JM__IMAGE
+            - name: FLOWGENT__RUNTIME__JM_IMAGE
               value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
             - name: POD_NAME
               valueFrom:
@@ -76,10 +82,16 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
       volumes:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 {{- end }}

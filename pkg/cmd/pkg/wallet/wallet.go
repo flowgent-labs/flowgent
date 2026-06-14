@@ -1,4 +1,4 @@
-package main
+package wallet
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,15 +22,17 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/wallet/pkg"
 	"github.com/flowgent-labs/flowgent/wallet/pkg/providers"
 )
 
-// runWallet handles wallet start/stop/restart.
-func runWallet(action string) error {
+// RunWallet handles wallet start/stop/restart.
+// master key is loaded from the flowgent.yaml config object (payments.wallet.secret_store).
+func RunWallet(action, listen, db, cfgPath string) error {
 	switch action {
 	case "start":
-		return startWallet()
+		return startWallet(listen, db, cfgPath)
 	case "stop":
 		return fmt.Errorf("stop: send SIGTERM")
 	case "restart":
@@ -39,10 +42,8 @@ func runWallet(action string) error {
 	}
 }
 
-// runWalletGenKey generates a new Ed25519 keypair.
-// format: "text" (human-readable) or "json" (machine-parseable).
-// encoding: "hex" (default) or "base64".
-func runWalletGenKey(format, encoding string) error {
+// RunWalletGenKey generates a new Ed25519 keypair.
+func RunWalletGenKey(format, encoding string) error {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return fmt.Errorf("key generation failed: %w", err)
@@ -76,9 +77,15 @@ func encodeKey(key []byte, enc string) string {
 }
 
 // startWallet starts the wallet key-management daemon.
-func startWallet() error {
+// Master key file path is read from config (payments.wallet.secret_store.master_key_file).
+func startWallet(listen, dbPath, cfgPath string) error {
+	var masterKeyFile string
+	if cfgPath != "" {
+		if cfg, err := config.Load(cfgPath); err == nil && cfg.Payments != nil {
+			masterKeyFile = cfg.Payments.Wallet.SecretStore.MasterKeyFile
+		}
+	}
 
-	dbPath := walletDB
 	if dbPath == "" {
 		home := os.Getenv("HOME")
 		if home == "" {
@@ -97,7 +104,7 @@ func startWallet() error {
 	}
 	defer db.Close()
 
-	secretStore, err := providers.NewDefaultSecretStoreProvider(db, masterKey, masterKeyFile)
+	secretStore, err := providers.NewDefaultSecretStoreProvider(db, masterKeyFile)
 	if err != nil {
 		return fmt.Errorf("create secret store: %w", err)
 	}
@@ -111,9 +118,13 @@ func startWallet() error {
 	mux.HandleFunc("/api/v1/wallet/sign", srv.handleSign)
 	mux.HandleFunc("/api/v1/wallet/address", srv.handleAddress)
 	mux.HandleFunc("/api/v1/wallet/balance", srv.handleBalance)
+	mux.HandleFunc("GET /api/v1/wallet/keys", srv.handleListKeys)
+	mux.HandleFunc("GET /api/v1/wallet/keys/{name}", srv.handleGetKey)
+	mux.HandleFunc("POST /api/v1/wallet/keys", srv.handleCreateKey)
+	mux.HandleFunc("DELETE /api/v1/wallet/keys/{name}", srv.handleDeleteKey)
 
 	httpServer := &http.Server{
-		Addr:    walletListen,
+		Addr:    listen,
 		Handler: mux,
 	}
 
@@ -121,7 +132,7 @@ func startWallet() error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("Flowgent Wallet daemon listening on %s", walletListen)
+		log.Printf("Flowgent Wallet daemon listening on %s", listen)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Wallet server: %v", err)
 		}
@@ -197,6 +208,107 @@ func (s *walletServer) handleBalance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"balance": decimal.Zero.String(),
 	})
+}
+
+func (s *walletServer) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.secretStore.ListSecrets(r.Context(), "wallet:")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	type KeyInfo struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+	}
+	var result []KeyInfo
+	for _, k := range keys {
+		keyBytes, err := s.secretStore.GetSecret(r.Context(), k)
+		if err != nil {
+			continue
+		}
+		privKey := ed25519.PrivateKey(keyBytes)
+		pubKey := privKey.Public().(ed25519.PublicKey)
+		result = append(result, KeyInfo{
+			Name:    strings.TrimPrefix(k, "wallet:"),
+			Address: "0x" + hex.EncodeToString(pubKey),
+		})
+	}
+	if result == nil {
+		result = []KeyInfo{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *walletServer) handleGetKey(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	keyBytes, err := s.secretStore.GetSecret(r.Context(), "wallet:"+name)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "wallet not found: " + name})
+		return
+	}
+	privKey := ed25519.PrivateKey(keyBytes)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"name":    name,
+		"address": "0x" + hex.EncodeToString(pubKey),
+	})
+}
+
+func (s *walletServer) handleCreateKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name       string `json:"name"`
+		PrivateKey string `json:"private_key,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+
+	var privKey ed25519.PrivateKey
+	if req.PrivateKey != "" {
+		kb, err := hex.DecodeString(req.PrivateKey)
+		if err != nil || len(kb) != ed25519.PrivateKeySize {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid private key hex"})
+			return
+		}
+		privKey = ed25519.PrivateKey(kb)
+	} else {
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key generation failed"})
+			return
+		}
+		privKey = priv
+		_ = pub
+	}
+
+	if err := s.secretStore.PutSecret(r.Context(), "wallet:"+req.Name, []byte(privKey)); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	resp := map[string]string{
+		"name":    req.Name,
+		"address": "0x" + hex.EncodeToString(pubKey),
+	}
+	if req.PrivateKey == "" {
+		resp["private_key"] = hex.EncodeToString(privKey)
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (s *walletServer) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.secretStore.DeleteSecret(r.Context(), "wallet:"+name); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

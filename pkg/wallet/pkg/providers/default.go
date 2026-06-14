@@ -17,8 +17,9 @@ import (
 )
 
 // DefaultSecretStoreProvider stores encrypted secrets in SQLite or Postgres.
-// Secrets are encrypted with AES-256-GCM. The master key must come from
-// the FLOWGENT_MASTER_KEY env var or a mounted secret file.
+// Secrets are encrypted with AES-256-GCM. The master key comes from the
+// flowgent.yaml config (payments.wallet.secret_store.master_key or
+// master_key_file), where ${VAR} placeholders are expanded from CSI credentials.
 type DefaultSecretStoreProvider struct {
 	db        *sql.DB
 	gcm       cipher.AEAD
@@ -26,9 +27,9 @@ type DefaultSecretStoreProvider struct {
 }
 
 // NewDefaultSecretStoreProvider creates a new default secret store.
-// The master key is loaded from the raw key, a file, or the FLOWGENT_MASTER_KEY env var.
-func NewDefaultSecretStoreProvider(db *sql.DB, masterKey, masterKeyFile string) (*DefaultSecretStoreProvider, error) {
-	key, err := resolveMasterKey(masterKey, masterKeyFile)
+// masterKeyFile comes from config (payments.wallet.secret_store.master_key_file).
+func NewDefaultSecretStoreProvider(db *sql.DB, masterKeyFile string) (*DefaultSecretStoreProvider, error) {
+	key, err := resolveMasterKey(masterKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("resolve master key: %w", err)
 	}
@@ -57,11 +58,8 @@ func NewDefaultSecretStoreProvider(db *sql.DB, masterKey, masterKeyFile string) 
 	return store, nil
 }
 
-// resolveMasterKey loads the master key from config or environment.
-func resolveMasterKey(masterKey, masterKeyFile string) ([]byte, error) {
-	if masterKey != "" {
-		return []byte(masterKey), nil
-	}
+// resolveMasterKey reads the master key from the configured file path.
+func resolveMasterKey(masterKeyFile string) ([]byte, error) {
 	if masterKeyFile != "" {
 		data, err := os.ReadFile(masterKeyFile)
 		if err != nil {
@@ -69,17 +67,7 @@ func resolveMasterKey(masterKey, masterKeyFile string) ([]byte, error) {
 		}
 		return []byte(strings.TrimSpace(string(data))), nil
 	}
-	if envKey := os.Getenv("FLOWGENT_MASTER_KEY"); envKey != "" {
-		return []byte(envKey), nil
-	}
-	if envFile := os.Getenv("FLOWGENT_MASTER_KEY_FILE"); envFile != "" {
-		data, err := os.ReadFile(envFile)
-		if err != nil {
-			return nil, fmt.Errorf("read master key file from env %s: %w", envFile, err)
-		}
-		return []byte(strings.TrimSpace(string(data))), nil
-	}
-	return nil, fmt.Errorf("no master key configured: set master_key, FLOWGENT_MASTER_KEY, or mount a secret file")
+	return nil, fmt.Errorf("no master key configured: set payments.wallet.secret_store.master_key_file in flowgent.yaml")
 }
 
 func (s *DefaultSecretStoreProvider) migrate(ctx context.Context) error {

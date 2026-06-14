@@ -121,3 +121,13 @@ func (f *McpManager) CallTool(ctx context.Context, clientName, toolName string, 
 	output["tool"] = toolName
 	return output, nil
 }
+
+// Adapter adapts mcp.McpManager to engine.MCPClient.
+type Adapter struct {
+	Factory *McpManager
+	Name    string
+}
+
+func (a *Adapter) CallTool(ctx context.Context, toolName string, args map[string]any) (map[string]any, error) {
+	return a.Factory.CallTool(ctx, a.Name, toolName, args)
+}

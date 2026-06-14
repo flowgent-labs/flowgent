@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/notifier"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type NotifierHandler struct {
@@ -45,17 +48,58 @@ func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid body", 400)
 		return
 	}
+	ch.ID = uuid.New().String()
+	ch.TenantID = r.PathValue("tenant")
+	ch.CreatedAt = time.Now()
+	ch.UpdatedAt = time.Now()
+	if err := h.store.Save(r.Context(), &ch); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
+	json.NewEncoder(w).Encode(ch)
 }
 
 func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
+	ch, err := h.store.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if ch == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": r.PathValue("id")})
+	json.NewEncoder(w).Encode(ch)
 }
 
-func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }
-func (h *NotifierHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }
-func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request)   { w.WriteHeader(200) }
+func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
+	var ch model.NotifierChannel
+	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
+		http.Error(w, "invalid body", 400)
+		return
+	}
+	ch.ID = r.PathValue("id")
+	ch.UpdatedAt = time.Now()
+	if err := h.store.Save(r.Context(), &ch); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ch)
+}
+
+func (h *NotifierHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
+	if err := h.store.Delete(r.Context(), r.PathValue("id")); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }
 
 // NotifierWSBridge bridges WebSocket connections to the notifier service.
 type NotifierWSBridge struct {

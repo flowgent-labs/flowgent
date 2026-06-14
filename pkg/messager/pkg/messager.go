@@ -246,7 +246,7 @@ func NewMessagerManager(cfg *config.FlowgentConfig, clientID string) *MessagerMa
 	}
 
 	if cfg.Deployment.Mode != "" {
-		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGER__MQTT__BROKER env var.")
+		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGING__MQTT__BROKER env var.")
 	}
 
 	log.Printf("WARNING: Using in-memory queue (local dev mode)")

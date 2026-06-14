@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
@@ -19,22 +18,19 @@ type LlmProviderLoader interface {
 	ListProviders(ctx context.Context) ([]*model.LlmProvider, error)
 }
 
-// LlmProviderManager loads and manages LLM provider instances from static
-// config and a ProviderLoader (standard mode), and routes Generate calls.
+// LlmProviderManager loads and manages LLM provider instances from the
+// database via LlmProviderLoader (standard mode), and routes Generate calls.
 type LlmProviderManager struct {
 	mu        sync.Mutex
 	providers map[string]ILlmProvider
 }
 
 // NewLlmProviderManager creates a manager and loads providers from DB via the
-// standard (apiserver-backed) loader when enabled.
-func NewLlmProviderManager(cfg *config.LLMConfig, loader LlmProviderLoader) *LlmProviderManager {
+// standard (apiserver-backed) loader.
+func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 	m := &LlmProviderManager{providers: make(map[string]ILlmProvider)}
-	if cfg == nil {
-		return m
-	}
 
-	if cfg.Providers.Standard.Enabled && loader != nil {
+	if loader != nil {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
@@ -50,13 +46,19 @@ func NewLlmProviderManager(cfg *config.LLMConfig, loader LlmProviderLoader) *Llm
 }
 
 func (m *LlmProviderManager) registerDB(dbP model.LlmProvider) {
-	pc := newProviderFromModel(dbP)
+	// Resolve ApiKey from Credentials map (DB stores credentials as a map, runtime needs the string).
+	if v, ok := dbP.Credentials["apikey"]; ok {
+		if vs, ok := v.(string); ok {
+			dbP.ApiKey = vs
+		}
+	}
+	pc := newProvider(&dbP)
 	if pc != nil {
 		m.providers[dbP.ID] = pc
 	}
 }
 
-func newProvider(p config.LLMProviderDef) ILlmProvider {
+func newProvider(p *model.LlmProvider) ILlmProvider {
 	switch p.Type {
 	case "anthropic":
 		return newAnthropicProvider(p)
@@ -65,27 +67,6 @@ func newProvider(p config.LLMProviderDef) ILlmProvider {
 	default:
 		return newOpenAIProvider(p)
 	}
-}
-
-func newProviderFromModel(p model.LlmProvider) ILlmProvider {
-	apiKey := ""
-	if v, ok := p.Credentials["apikey"]; ok {
-		if vs, ok := v.(string); ok {
-			apiKey = vs
-		}
-	}
-	def := config.LLMProviderDef{
-		ID:        p.ID,
-		Type:      p.Type,
-		Enabled:   p.Enabled,
-		Timeout:   p.Timeout,
-		Endpoint:  p.Endpoint,
-		RateLimit: p.RateLimit,
-		Proxy:     p.Proxy,
-		ApiKey:    apiKey,
-		Models:    nil,
-	}
-	return newProvider(def)
 }
 
 // Generate routes the request to the appropriate provider instance.

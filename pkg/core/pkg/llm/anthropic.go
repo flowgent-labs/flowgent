@@ -9,7 +9,7 @@ import (
 	anthropicopt "github.com/anthropics/anthropic-sdk-go/option"
 	"golang.org/x/time/rate"
 
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // AnthropicProvider implements ILlmProvider for the Anthropic Messages API.
@@ -18,7 +18,7 @@ type AnthropicProvider struct {
 	limiter *rate.Limiter
 }
 
-func newAnthropicProvider(p config.LLMProviderDef) *AnthropicProvider {
+func newAnthropicProvider(p *model.LlmProvider) *AnthropicProvider {
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {

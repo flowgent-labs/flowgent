@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: jobmanager
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
     spec:
       containers:
         - name: jobmanager
@@ -30,7 +34,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: FLOWGENT__TM__DEPLOY
+            - name: FLOWGENT__RUNTIME__TM_DEPLOY
               value: {{ include "flowgent.fullname" . }}-taskmanager
             - name: POD_NAMESPACE
               valueFrom:
@@ -40,10 +44,16 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
           resources:
             {{- toYaml .Values.jobmanager.resources | nindent 12 }}
       volumes:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
 {{- end }}
