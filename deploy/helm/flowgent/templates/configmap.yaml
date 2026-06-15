@@ -62,15 +62,6 @@ data:
       max-concurrent-flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
       flow-execution-timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
       max-node-retries: {{ .Values.orchestration.maxNodeRetries | default 3 }}
-      agents:
-        standard:
-          enabled: {{ .Values.orchestration.agents.standard.enabled | default false }}
-      skills:
-        standard:
-          enabled: {{ .Values.orchestration.skills.standard.enabled | default false }}
-      agentflows:
-        standard:
-          enabled: {{ .Values.orchestration.agentflows.standard.enabled | default false }}
     messaging:
       type: {{ .Values.messaging.type | quote }}
       mqtt:

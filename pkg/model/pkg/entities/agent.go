@@ -1,14 +1,9 @@
-// Package model defines the shared domain types for the Flowgent engine.
-//
-// File: agent.go — Agent persona definition consumed by API Server, Config loader.
-package model
+package entities
 
 import "time"
 
-// AgentDef is the definition of an AI agent persona, persisted in the store
-// and manageable via REST API (standard: enabled). Moved here from config
-// package so it is a first-class model type shared across the codebase.
-type AgentDef struct {
+// AgentInfo is the definition of an AI agent persona.
+type AgentInfo struct {
 	Name         string         `json:"name" yaml:"name"`
 	Model        string         `json:"model" yaml:"model"`
 	Soul         string         `json:"soul" yaml:"soul"`

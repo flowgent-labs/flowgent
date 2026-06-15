@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
@@ -35,10 +35,10 @@ func NewFlowRunHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger)
 	return &FlowRunHandler{runStore: runStore, taskStore: taskStore, mqtt: mqtt, logger: logger}
 }
 
-// Create inserts a new AgentFlowRun.
+// Create inserts a new FlowRunInfo.
 func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	var run model.AgentFlowRun
+	var run entities.FlowRunInfo
 	if err := json.NewDecoder(r.Body).Decode(&run); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -66,7 +66,7 @@ func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 {
 		size = 50
 	}
-	pageReq := model.PageRequest{Page: page, Size: size}
+	pageReq := entities.PageRequest{Page: page, Size: size}
 
 	runs, err := h.runStore.Select(r.Context(), pageReq)
 	if err != nil {
@@ -78,14 +78,14 @@ func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
 	flowID := q.Get("agentflow_id")
 	filtered := filterRuns(runs.Items, status, namespace, flowID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(model.Page[model.AgentFlowRun]{Items: filtered, TotalCount: int64(len(filtered))})
+	json.NewEncoder(w).Encode(entities.Page[entities.FlowRunInfo]{Items: filtered, TotalCount: int64(len(filtered))})
 }
 
-func filterRuns(runs []*model.AgentFlowRun, status, namespace, flowID string) []*model.AgentFlowRun {
+func filterRuns(runs []*entities.FlowRunInfo, status, namespace, flowID string) []*entities.FlowRunInfo {
 	if status == "" && namespace == "" && flowID == "" {
 		return runs
 	}
-	var out []*model.AgentFlowRun
+	var out []*entities.FlowRunInfo
 	for _, r := range runs {
 		if status != "" && string(r.Status) != status {
 			continue
@@ -128,7 +128,7 @@ func (h *FlowRunHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Status != "" {
-		run.Status = model.RunStatus(req.Status)
+		run.Status = entities.RunStatus(req.Status)
 	}
 	if req.Error != "" {
 		run.Error = req.Error
@@ -168,7 +168,7 @@ func (h *FlowRunHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 // CreateTask creates a new task run for a flow run.
 func (h *FlowRunHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	var task model.TaskRun
+	var task entities.TaskRunInfo
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -194,7 +194,7 @@ func (h *FlowRunHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
-	var task model.TaskRun
+	var task entities.TaskRunInfo
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 		http.Error(w, "invalid body", 400)
 		return

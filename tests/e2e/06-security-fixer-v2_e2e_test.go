@@ -188,7 +188,7 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 		"sonarqube": mcp, "github": mcp, "sonatype-iq": mcp, "nexus3": mcp,
 	}
 
-	agents := []*config.AgentDef{
+	agents := []*config.AgentInfo{
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "You are a Supervisor agent.", Instruction: "Decide action: continue/retry/inject/abort. Output JSON."},
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "You are a DevSecOps security expert.", Instruction: "Parse and categorize security issues from scan results."},
 		{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "You are a Secure coding expert.", Instruction: "Generate safe, minimal patches for identified vulnerabilities."},
@@ -221,48 +221,48 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 	}
 
 	// ── Build the full 14-phase DAG ──────────────────────
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID:          "security-autonomy-fixer-v2",
 		Description: "V2 Security Fixer — webhook-triggered, 14-phase pipeline with pre-check gate",
-		Priority:    model.PriorityHigh,
+		Priority:    entities.PriorityHigh,
 		TenantID:    "default",
 		Vars:        map[string]any{"repo": "wl4g/rengine", "repo_path": "/tmp/rengine", "max_iterations": float64(3), "target_severities": []any{"BLOCKER", "CRITICAL", "MAJOR"}},
-		Nodes: []model.Node{
+		Nodes: []entities.Node{
 			// Phase 1: Fetch commit from GitHub
-			{ID: "get-commit", Type: model.ToolNode, Tool: "github", Input: map[string]any{"action": "fetch_commit", "repo": "wl4g/rengine"}},
+			{ID: "get-commit", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "fetch_commit", "repo": "wl4g/rengine"}},
 			// Phase 2: Scan SonarQube
-			{ID: "scan-sonarqube", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project": "rengine"}},
+			{ID: "scan-sonarqube", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project": "rengine"}},
 			// Phase 3: Scan SonatypeIQ
-			{ID: "scan-sonatypeiq", Type: model.ToolNode, Tool: "sonatype-iq", Input: map[string]any{"action": "scan_dependencies"}},
+			{ID: "scan-sonatypeiq", Type: entities.ToolNode, Tool: "sonatype-iq", Input: map[string]any{"action": "scan_dependencies"}},
 			// Phase 4: Fetch safe dependency versions (skill/sub-flow)
-			{ID: "fetch-safe-deps", Type: model.ToolNode, Tool: "nexus3", Input: map[string]any{"action": "get_safe_versions"}},
+			{ID: "fetch-safe-deps", Type: entities.ToolNode, Tool: "nexus3", Input: map[string]any{"action": "get_safe_versions"}},
 			// Phase 5: Aggregate and categorize issues
-			{ID: "aggregate-issues", Type: model.AgentNode, Agent: "issue-detector"},
+			{ID: "aggregate-issues", Type: entities.AgentNode, Agent: "issue-detector"},
 			// Phase 6: Generate fixes
-			{ID: "generate-fixes", Type: model.AgentNode, Agent: "fixer-agent"},
+			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
 			// Phase 7-9: Parallel reviews
-			{ID: "review-security", Type: model.AgentNode, Agent: "security-reviewer"},
-			{ID: "review-quality", Type: model.AgentNode, Agent: "quality-reviewer"},
-			{ID: "review-arch", Type: model.AgentNode, Agent: "arch-reviewer"},
+			{ID: "review-security", Type: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "review-quality", Type: entities.AgentNode, Agent: "quality-reviewer"},
+			{ID: "review-arch", Type: entities.AgentNode, Agent: "arch-reviewer"},
 			// Phase 10: Tribunal vote
-			{ID: "tribunal-vote", Type: model.TribunalNode, Input: map[string]any{}},
+			{ID: "tribunal-vote", Type: entities.TribunalNode, Input: map[string]any{}},
 			// Phase 11: Supervisor validation
-			{ID: "supervisor-check", Type: model.SupervisorNode, Agent: "supervisor"},
+			{ID: "supervisor-check", Type: entities.SupervisorNode, Agent: "supervisor"},
 			// Phase 12: Pre-commit quality gate (sandbox — runs bash to check SonarQube CE task)
-			{ID: "precheck-gate", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_quality_gate", "project": "rengine"}},
+			{ID: "precheck-gate", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_quality_gate", "project": "rengine"}},
 			// Phase 13: Condition gate — branch on gate result
-			{ID: "gate-passed", Type: model.ConditionNode, Input: map[string]any{"expression": "gate_status == 'OK'"}},
+			{ID: "gate-passed", Type: entities.ConditionNode, Input: map[string]any{"expression": "gate_status == 'OK'"}},
 			// Phase 14: Commit fixes + create PR
-			{ID: "commit-fixes", Type: model.ToolNode, Tool: "github", Input: map[string]any{"action": "commit_changes", "branch": "security-bot/fix-run-001"}},
-			{ID: "create-pr", Type: model.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pr", "base": "main", "head": "security-bot/fix-run-001", "title": "Security Fix: Resolve SonarQube issues"}},
+			{ID: "commit-fixes", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "commit_changes", "branch": "security-bot/fix-run-001"}},
+			{ID: "create-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pr", "base": "main", "head": "security-bot/fix-run-001", "title": "Security Fix: Resolve SonarQube issues"}},
 			// Post-PR verification
-			{ID: "trigger-rescan", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_ce_task", "project": "rengine"}},
-			{ID: "check-resolved", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project": "rengine", "statuses": "RESOLVED,FIXED"}},
-			{ID: "summary-report", Type: model.AgentNode, Agent: "issue-detector"},
+			{ID: "trigger-rescan", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_ce_task", "project": "rengine"}},
+			{ID: "check-resolved", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project": "rengine", "statuses": "RESOLVED,FIXED"}},
+			{ID: "summary-report", Type: entities.AgentNode, Agent: "issue-detector"},
 			// Terminal
-			{ID: "end", Type: model.NoopNode},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{
+		Edges: []entities.Edge{
 			{From: "get-commit", To: "scan-sonarqube"},
 			{From: "get-commit", To: "scan-sonatypeiq"},
 			{From: "scan-sonatypeiq", To: "fetch-safe-deps"},
@@ -292,12 +292,12 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 	t.Log("=== V2 E2E: Security Autonomy Fixer Full Pipeline ===")
 	t.Logf("W1–W3: Simulating GitHub webhook trigger for repo=%s", spec.Vars["repo"])
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID:            "run-v2-001",
 		AgentFlowID:   spec.ID,
 		TenantID:      spec.TenantID,
-		Status:        model.RunPending,
-		Priority:      model.PriorityHigh,
+		Status:        entities.RunPending,
+		Priority:      entities.PriorityHigh,
 		TriggerType:   "webhook",
 		TriggerSource: "github",
 		Vars:          spec.Vars,
@@ -318,7 +318,7 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 	t.Logf("Pipeline completed in %v", elapsed)
 
 	// ── W2: Verify run completed ────────────────────────
-	if run.Status != model.RunCompleted {
+	if run.Status != entities.RunCompleted {
 		t.Errorf("W2: Expected run status COMPLETED, got %s", run.Status)
 	} else {
 		t.Logf("W2: Run status = %s (PASS)", run.Status)
@@ -349,7 +349,7 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 	for _, nodeID := range requiredNodes {
 		if task := findTask(tasks, nodeID); task == nil {
 			t.Errorf("W5: Required node %q not found in tasks", nodeID)
-		} else if task.Status != model.Success {
+		} else if task.Status != entities.Success {
 			t.Errorf("W5: Node %q status = %s, expected SUCCESS", nodeID, task.Status)
 		}
 	}
@@ -373,7 +373,7 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 
 	// ── W11–W13: Post-run quality gate ─────────────────
 	checkTask := findTask(tasks, "check-resolved")
-	if checkTask != nil && checkTask.Status == model.Success {
+	if checkTask != nil && checkTask.Status == entities.Success {
 		t.Log("W11–W13: Post-run SonarQube quality gate OK (PASS)")
 	}
 
@@ -405,7 +405,7 @@ func TestE2E_SecurityFixerV2_WebhookTrigger(t *testing.T) {
 	store := testutil.NewMockStore()
 	rm, _ := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 10,
-		Store: store, Agents: []*config.AgentDef{
+		Store: store, Agents: []*config.AgentInfo{
 			{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "DevSecOps expert.", Instruction: "Parse."},
 			{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Secure coding.", Instruction: "Fix."},
 		},
@@ -418,23 +418,23 @@ func TestE2E_SecurityFixerV2_WebhookTrigger(t *testing.T) {
 	}
 	jm, _ := jobmanager.NewJobManager(store, rm, utils.NewLogger("JSON", "DEBUG"), cfg)
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID:       "webhook-test-flow",
-		Priority: model.PriorityHigh, TenantID: "default",
-		Nodes: []model.Node{
-			{ID: "receive-webhook", Type: model.NoopNode},
-			{ID: "process-event", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project": "test"}},
-			{ID: "end", Type: model.NoopNode},
+		Priority: entities.PriorityHigh, TenantID: "default",
+		Nodes: []entities.Node{
+			{ID: "receive-webhook", Type: entities.NoopNode},
+			{ID: "process-event", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project": "test"}},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{
+		Edges: []entities.Edge{
 			{From: "receive-webhook", To: "process-event"},
 			{From: "process-event", To: "end"},
 		},
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "webhook-run-001", AgentFlowID: spec.ID, TenantID: "default",
-		Status: model.RunPending, Priority: model.PriorityHigh,
+		Status: entities.RunPending, Priority: entities.PriorityHigh,
 		TriggerType:   "webhook",
 		TriggerSource: "github",
 		TriggerPayload: map[string]any{
@@ -448,7 +448,7 @@ func TestE2E_SecurityFixerV2_WebhookTrigger(t *testing.T) {
 		t.Fatalf("Webhook test failed: %v", err)
 	}
 
-	if run.Status != model.RunCompleted {
+	if run.Status != entities.RunCompleted {
 		t.Errorf("Expected COMPLETED, got %s", run.Status)
 	}
 	if run.TriggerType != "webhook" {
@@ -470,7 +470,7 @@ func TestE2E_SecurityFixerV2_SandboxWaitRescan(t *testing.T) {
 
 	rm, _ := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 10,
-		Store: store, Agents: []*config.AgentDef{}, MCPClients: map[string]engine.MCPClient{"sonarqube": mcp}, LLMClient: llm,
+		Store: store, Agents: []*config.AgentInfo{}, MCPClients: map[string]engine.MCPClient{"sonarqube": mcp}, LLMClient: llm,
 		Logger: utils.NewLogger("JSON", "DEBUG"),
 	})
 
@@ -480,22 +480,22 @@ func TestE2E_SecurityFixerV2_SandboxWaitRescan(t *testing.T) {
 	jm, _ := jobmanager.NewJobManager(store, rm, utils.NewLogger("JSON", "DEBUG"), cfg)
 
 	// Sandbox node with a simple bash wait script
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID:       "sandbox-rescan-test",
-		Priority: model.PriorityMedium, TenantID: "default",
-		Nodes: []model.Node{
-			{ID: "scan", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues"}},
-			{ID: "wait-rescan", Type: model.SandboxNode, Runtime: "bash",
+		Priority: entities.PriorityMedium, TenantID: "default",
+		Nodes: []entities.Node{
+			{ID: "scan", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues"}},
+			{ID: "wait-rescan", Type: entities.SandboxNode, Runtime: "bash",
 				Script: "#!/bin/bash\necho 'Polling SonarQube CE task...'\nfor i in 1 2 3; do echo \"Attempt $i: checking status...\"; sleep 1; done\necho '{\"status\":\"SUCCESS\",\"taskId\":\"AXx123\"}'",
 				Timeout: "30s"},
-			{ID: "end", Type: model.NoopNode},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{{From: "scan", To: "wait-rescan"}, {From: "wait-rescan", To: "end"}},
+		Edges: []entities.Edge{{From: "scan", To: "wait-rescan"}, {From: "wait-rescan", To: "end"}},
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "sandbox-run-001", AgentFlowID: spec.ID, TenantID: "default",
-		Status: model.RunPending, Priority: model.PriorityMedium,
+		Status: entities.RunPending, Priority: entities.PriorityMedium,
 	}
 
 	err := jm.Submit(context.Background(), run, spec)
@@ -508,7 +508,7 @@ func TestE2E_SecurityFixerV2_SandboxWaitRescan(t *testing.T) {
 	if sandboxTask == nil {
 		t.Fatal("Sandbox task not found")
 	}
-	if sandboxTask.Status != model.Success {
+	if sandboxTask.Status != entities.Success {
 		t.Errorf("Sandbox task status = %s, expected SUCCESS. Error: %s", sandboxTask.Status, sandboxTask.Error)
 	} else {
 		t.Logf("Sandbox wait-rescan completed successfully: output=%v", sandboxTask.Output)
@@ -527,7 +527,7 @@ func TestE2E_SecurityFixerV2_PrecheckGateLoop(t *testing.T) {
 
 	rm, _ := resourcemanager.NewLocalResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider: engine.ProviderLocal, PoolSize: 10,
-		Store: store, Agents: []*config.AgentDef{
+		Store: store, Agents: []*config.AgentInfo{
 			{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Secure coding.", Instruction: "Fix."},
 		},
 		MCPClients: map[string]engine.MCPClient{"sonarqube": mcp}, LLMClient: llm,
@@ -539,17 +539,17 @@ func TestE2E_SecurityFixerV2_PrecheckGateLoop(t *testing.T) {
 	}
 	jm, _ := jobmanager.NewJobManager(store, rm, utils.NewLogger("JSON", "DEBUG"), cfg)
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID:       "precheck-gate-test",
-		Priority: model.PriorityMedium, TenantID: "default",
-		Nodes: []model.Node{
-			{ID: "generate-fixes", Type: model.AgentNode, Agent: "fixer-agent"},
-			{ID: "precheck-gate", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_quality_gate"}},
-			{ID: "gate-passed", Type: model.ConditionNode, Input: map[string]any{"expression": "gate_status == 'OK'"}},
-			{ID: "commit-fixes", Type: model.NoopNode},
-			{ID: "end", Type: model.NoopNode},
+		Priority: entities.PriorityMedium, TenantID: "default",
+		Nodes: []entities.Node{
+			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "precheck-gate", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_quality_gate"}},
+			{ID: "gate-passed", Type: entities.ConditionNode, Input: map[string]any{"expression": "gate_status == 'OK'"}},
+			{ID: "commit-fixes", Type: entities.NoopNode},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{
+		Edges: []entities.Edge{
 			{From: "generate-fixes", To: "precheck-gate"},
 			{From: "precheck-gate", To: "gate-passed"},
 			{From: "gate-passed", To: "commit-fixes", Condition: boolPtr(true)},
@@ -558,9 +558,9 @@ func TestE2E_SecurityFixerV2_PrecheckGateLoop(t *testing.T) {
 		},
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "precheck-run-001", AgentFlowID: spec.ID, TenantID: "default",
-		Status: model.RunPending, Priority: model.PriorityMedium,
+		Status: entities.RunPending, Priority: entities.PriorityMedium,
 	}
 
 	err := jm.Submit(context.Background(), run, spec)
@@ -568,7 +568,7 @@ func TestE2E_SecurityFixerV2_PrecheckGateLoop(t *testing.T) {
 		t.Fatalf("Precheck gate test failed: %v", err)
 	}
 
-	if run.Status != model.RunCompleted {
+	if run.Status != entities.RunCompleted {
 		t.Errorf("Expected COMPLETED, got %s", run.Status)
 	}
 
@@ -615,7 +615,7 @@ func TestE2E_SecurityFixerV2_HierarchicalTopics(t *testing.T) {
 		Provider:    engine.ProviderLocal,
 		PoolSize:    5,
 		Store:       store,
-		Agents:      []*config.AgentDef{},
+		Agents:      []*config.AgentInfo{},
 		MCPClients:  map[string]engine.MCPClient{},
 		LLMClient:   llm,
 		Logger:      utils.NewLogger("JSON", "DEBUG"),
@@ -626,20 +626,20 @@ func TestE2E_SecurityFixerV2_HierarchicalTopics(t *testing.T) {
 	}
 	jm, _ := jobmanager.NewJobManager(store, rm, utils.NewLogger("JSON", "DEBUG"), cfg)
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID:       "topic-verification-flow",
-		Priority: model.PriorityMedium,
+		Priority: entities.PriorityMedium,
 		TenantID: "test-tenant",
-		Nodes: []model.Node{
-			{ID: "step-a", Type: model.NoopNode},
-			{ID: "end", Type: model.NoopNode},
+		Nodes: []entities.Node{
+			{ID: "step-a", Type: entities.NoopNode},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{{From: "step-a", To: "end"}},
+		Edges: []entities.Edge{{From: "step-a", To: "end"}},
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "topic-run-001", AgentFlowID: spec.ID, TenantID: "test-tenant",
-		Status: model.RunPending, Priority: model.PriorityMedium,
+		Status: entities.RunPending, Priority: entities.PriorityMedium,
 	}
 
 	err := jm.Submit(context.Background(), run, spec)
@@ -647,12 +647,13 @@ func TestE2E_SecurityFixerV2_HierarchicalTopics(t *testing.T) {
 		t.Fatalf("Topic test failed: %v", err)
 	}
 
-	if run.Status != model.RunCompleted {
+	if run.Status != entities.RunCompleted {
 		t.Errorf("Expected COMPLETED, got %s", run.Status)
 	}
 
 	// Verify the hierarchical topics were constructed correctly
 	t.Log("Hierarchical topics: flowgent/v1/test-tenant/flows/topic-verification-flow/runs/topic-run-001/exec/plans")
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	t.Log("Hierarchical topics test passed")
 }
 
@@ -662,7 +663,7 @@ func toJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 func toJSONBytes(v any) []byte { b, _ := json.Marshal(v); return b }
 func boolPtr(b bool) *bool { return &b }
 
-func findTask(tasks []model.TaskRun, nodeID string) *model.TaskRun {
+func findTask(tasks []entities.TaskRunInfo, nodeID string) *entities.TaskRunInfo {
 	for i := range tasks {
 		if tasks[i].NodeID == nodeID {
 			return &tasks[i]

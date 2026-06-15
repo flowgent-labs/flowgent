@@ -28,7 +28,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── CLI entry points ──────────────────────────────────────────
@@ -145,7 +145,7 @@ type adminRequest struct {
 	Action      string         `json:"action"`
 	AgentFlowID string         `json:"agentflow_id,omitempty"`
 	RunID       string         `json:"run_id,omitempty"`
-	Spec        *model.AgentFlowSpec `json:"spec,omitempty"`
+	Spec        *entities.AgentFlowInfo `json:"spec,omitempty"`
 	Vars        map[string]any `json:"vars,omitempty"`
 	Tenant      string         `json:"tenant,omitempty"`
 }
@@ -234,7 +234,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 
 	// ── FlowRun Control ──
 	case "start_run":
-		trigger := model.TriggerInfo{Type: "a2a", Source: "admin"}
+		trigger := entities.TriggerInfo{Type: "a2a", Source: "admin"}
 		if _, err := h.client.TriggerRun(ctx, req.Tenant, req.AgentFlowID, req.Vars, trigger); err != nil {
 			return "", err
 		}
@@ -298,7 +298,7 @@ func parseAdminRequest(msg *a2a.Message) *adminRequest {
 			// spec is passed as raw JSON, re-marshalled
 			if raw, ok := p.Data["spec"]; ok {
 				b, _ := json.Marshal(raw)
-				var spec model.AgentFlowSpec
+				var spec entities.AgentFlowInfo
 				if json.Unmarshal(b, &spec) == nil {
 					req.Spec = &spec
 				}

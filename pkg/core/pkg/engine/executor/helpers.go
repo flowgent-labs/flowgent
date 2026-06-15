@@ -2,12 +2,12 @@ package executor
 
 import (
 	"encoding/json"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Helpers ───────────────────────────────────────────
 
-func formatPlanInput(plan *model.ExecutionPlan) string {
+func formatPlanInput(plan *entities.ExecutionPlan) string {
 	b, _ := json.Marshal(plan.Input)
 	return string(b)
 }

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -61,7 +61,7 @@ func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error
 	return &entity, nil
 }
 
-func (s *PostgresGenericStore[T]) Select(ctx context.Context, req model.PageRequest) (*model.Page[T], error) {
+func (s *PostgresGenericStore[T]) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[T], error) {
 	if err := utils.ValidateIdent(s.Table); err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, req model.PageRequ
 		}
 		items = append(items, entity)
 	}
-	return model.NewPage(items, total, req), nil
+	return entities.NewPage(items, total, req), nil
 }
 
 func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {

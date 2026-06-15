@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 func NewSQLiteConn(ctx context.Context, dir string) *sql.DB {
@@ -51,7 +51,7 @@ func (s *SQLiteGenericStore[T]) Get(ctx context.Context, id string) (*T, error) 
 	return &entity, nil
 }
 
-func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req model.PageRequest) (*model.Page[T], error) {
+func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[T], error) {
 	if err := utils.ValidateIdent(s.Table); err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req model.PageReques
 		}
 		items = append(items, e)
 	}
-	return model.NewPage(items, total, req), nil
+	return entities.NewPage(items, total, req), nil
 }
 
 func (s *SQLiteGenericStore[T]) Save(ctx context.Context, entity *T) error {

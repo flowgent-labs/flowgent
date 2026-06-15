@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
 )
@@ -33,14 +33,14 @@ func NewLlmProviderHandler(s store.IStore) *LlmProviderHandler {
 
 // List returns all LLM provider definitions for a tenant.
 func (h *LlmProviderHandler) List(w http.ResponseWriter, r *http.Request) {
-	page, err := h.store.Select(r.Context(), model.PageRequest{Page: 1, Size: 1000})
+	page, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	items := page.Items
 	if items == nil {
-		items = []*model.LlmProvider{}
+		items = []*entities.LlmProviderInfo{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -48,7 +48,7 @@ func (h *LlmProviderHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Create adds a new LLM provider.
 func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var p model.LlmProvider
+	var p entities.LlmProviderInfo
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -83,7 +83,7 @@ func (h *LlmProviderHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update modifies an existing LLM provider.
 func (h *LlmProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
-	var p model.LlmProvider
+	var p entities.LlmProviderInfo
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, "invalid body", 400)
 		return

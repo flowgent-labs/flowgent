@@ -1,6 +1,6 @@
--- Flowgent SQLite — MCP definitions and LLM providers tables
+-- Flowgent SQLite -- MCP definitions and LLM providers tables
 
-CREATE TABLE IF NOT EXISTS mcps (
+CREATE TABLE IF NOT EXISTS llm_mcp (
     name        TEXT PRIMARY KEY,
     enabled     INTEGER NOT NULL DEFAULT 1,
     type        TEXT NOT NULL DEFAULT '',
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS mcps (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_mcps_tenant ON mcps(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_llmmcp_tenant ON llm_mcp(tenant_id);
 
 CREATE TABLE IF NOT EXISTS llm_providers (
     id          TEXT PRIMARY KEY,

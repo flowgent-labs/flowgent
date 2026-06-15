@@ -6,30 +6,30 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Supervisor Executor ───────────────────────────────
 
 type SupervisorExecutor struct {
 	llmClient engine.LLMClient
-	agents    map[string]*config.AgentDef
+	client    *client.FlowgentClient
+	tenant    string
 }
 
-func NewSupervisorExecutor(llm engine.LLMClient, agents []*config.AgentDef) *SupervisorExecutor {
-	m := make(map[string]*config.AgentDef)
-	for _, a := range agents {
-		m[a.Name] = a
+func NewSupervisorExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, tenant string) *SupervisorExecutor {
+	return &SupervisorExecutor{llmClient: llm, client: apiClient, tenant: tenant}
+}
+
+func (e *SupervisorExecutor) TaskType() entities.TaskType { return entities.TaskSupervisor }
+
+func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
+	agent, err := e.client.GetAgent(ctx, e.tenant, plan.NodeSpec.Agent)
+	if err != nil {
+		return nil, fmt.Errorf("supervisor agent not found %q: %w", plan.NodeSpec.Agent, err)
 	}
-	return &SupervisorExecutor{llmClient: llm, agents: m}
-}
-
-func (e *SupervisorExecutor) TaskType() model.TaskType { return model.TaskSupervisor }
-
-func (e *SupervisorExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
-	agent := e.agents[plan.NodeSpec.Agent]
 	if agent == nil {
 		return nil, fmt.Errorf("supervisor agent not found: %s", plan.NodeSpec.Agent)
 	}
@@ -66,7 +66,7 @@ action, _ := decision["action"].(string)
 		}
 	}
 
-	return &model.TaskResult{Output: decision}, nil
+	return &entities.TaskResult{Output: decision}, nil
 }
 
 // extractJSON finds the first balanced JSON object in text, handling LLM preamble.

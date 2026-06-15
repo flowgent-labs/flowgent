@@ -8,20 +8,20 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 type mockStore struct {
 	mu        sync.Mutex
-	approvals map[string]*model.HumanApproval
+	approvals map[string]*entities.ApprovalInfo
 }
 
 func newMockStore() *mockStore {
-	return &mockStore{approvals: make(map[string]*model.HumanApproval)}
+	return &mockStore{approvals: make(map[string]*entities.ApprovalInfo)}
 }
 
-func (s *mockStore) CreateApproval(ctx context.Context, a *model.HumanApproval) error {
+func (s *mockStore) CreateApproval(ctx context.Context, a *entities.ApprovalInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a.Token = "tok-" + a.TaskRunID
@@ -29,7 +29,7 @@ func (s *mockStore) CreateApproval(ctx context.Context, a *model.HumanApproval) 
 	return nil
 }
 
-func (s *mockStore) GetApproval(ctx context.Context, token string) (*model.HumanApproval, error) {
+func (s *mockStore) GetApproval(ctx context.Context, token string) (*entities.ApprovalInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.approvals {
@@ -40,7 +40,7 @@ func (s *mockStore) GetApproval(ctx context.Context, token string) (*model.Human
 	return nil, nil
 }
 
-func (s *mockStore) UpdateApproval(ctx context.Context, a *model.HumanApproval) error {
+func (s *mockStore) UpdateApproval(ctx context.Context, a *entities.ApprovalInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approvals[a.TaskRunID] = a

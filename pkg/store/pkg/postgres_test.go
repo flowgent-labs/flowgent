@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 func testPGDSN() string {
@@ -57,9 +57,9 @@ func TestPostgresStore_AgentFlowRunCRUD(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	run := &model.AgentFlowRun{
-		AgentFlowID: "pg-test-flow", Version: 1, Status: model.RunPending,
-		Trigger: model.TriggerInfo{Type: "manual", Source: "pg-ut"},
+	run := &entities.FlowRunInfo{
+		AgentFlowID: "pg-test-flow", Version: 1, Status: entities.RunPending,
+		Trigger: entities.TriggerInfo{Type: "manual", Source: "pg-ut"},
 	}
 	if err := s.CreateFlowRun(ctx, run); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -78,7 +78,7 @@ func TestPostgresStore_AgentFlowRunCRUD(t *testing.T) {
 		t.Errorf("expected 1 run, got %d", len(runs))
 	}
 
-	run.Status = model.RunCompleted
+	run.Status = entities.RunCompleted
 	s.UpdateFlowRun(ctx, run)
 
 	// Empty filter lists all
@@ -98,11 +98,11 @@ func TestPostgresStore_TaskRunCRUD(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	run := &model.AgentFlowRun{AgentFlowID: "f1", Version: 1, Status: model.RunPending}
+	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	s.CreateFlowRun(ctx, run)
 
-	task := &model.TaskRun{
-		AgentFlowRunID: run.ID, NodeID: "n1", Status: model.TaskPending, ExecID: "pg-exec-1",
+	task := &entities.TaskRunInfo{
+		AgentFlowRunID: run.ID, NodeID: "n1", Status: entities.TaskPending, ExecID: "pg-exec-1",
 	}
 	s.CreateTaskRun(ctx, task)
 	s.UpdateTaskRun(ctx, task)

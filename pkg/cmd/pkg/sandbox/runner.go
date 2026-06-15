@@ -13,7 +13,7 @@
 //
 // Security is enforced via SandboxPolicy at three levels:
 //
-//	global (flowgent.yaml) → flow (AgentFlowSpec.sandbox_policy) → node (Node.network_policy)
+//	global (flowgent.yaml) → flow (AgentFlowInfo.sandbox_policy) → node (Node.network_policy)
 //
 // In distributed mode (sandbox as independent pods), the runner subscribes to:
 //
@@ -34,7 +34,8 @@ import (
 	"time"
 
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
-	model "github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // SandboxRunner consumes and executes sandbox triggers.
@@ -156,7 +157,7 @@ func (w *SandboxRunner) checkBanned(script string) string {
 	return ""
 }
 
-func (w *SandboxRunner) publishResult(trigger *model.SandboxTrigger, result *model.TaskResult) {
+func (w *SandboxRunner) publishResult(trigger *model.SandboxTrigger, result *entities.TaskResult) {
 	payload, _ := json.Marshal(result)
 	tenantID := trigger.TenantID
 	if tenantID == "" {
@@ -171,7 +172,7 @@ func (w *SandboxRunner) publishResult(trigger *model.SandboxTrigger, result *mod
 }
 
 func (w *SandboxRunner) publishError(trigger *model.SandboxTrigger, errStr string) {
-	w.publishResult(trigger, &model.TaskResult{Error: errStr})
+	w.publishResult(trigger, &entities.TaskResult{Error: errStr})
 }
 
 // ─── Utilities ───────────────────────────────────────────────

@@ -11,7 +11,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
@@ -28,14 +28,14 @@ type FlowDefHandler struct {
 	afStore      agentflow.IAgentFlowStore
 	frStore      flowrun.IFlowRunStore
 	logger       *utils.Logger
-	agentFlows   map[string]*model.AgentFlowSpec
+	agentFlows   map[string]*entities.AgentFlowInfo
 	mu           sync.RWMutex
 	watchVersion int64
 	watchChs     []chan struct{}
 }
 
-func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) *FlowDefHandler {
-	afMap := make(map[string]*model.AgentFlowSpec)
+func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.AgentFlowInfo, subFlows map[string]entities.AgentFlowInfo) *FlowDefHandler {
+	afMap := make(map[string]*entities.AgentFlowInfo)
 	for i := range agentFlows {
 		afMap[agentFlows[i].ID] = &agentFlows[i]
 	}
@@ -85,24 +85,24 @@ func (h *FlowDefHandler) Watch(w http.ResponseWriter, r *http.Request) {
 		h.List(w, r)
 	case <-time.After(30 * time.Second):
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"flows": []model.AgentFlowSpec{}, "version": cur})
+		json.NewEncoder(w).Encode(map[string]interface{}{"flows": []entities.AgentFlowInfo{}, "version": cur})
 	case <-r.Context().Done():
 	}
 }
 
-func (h *FlowDefHandler) AgentFlows() map[string]*model.AgentFlowSpec {
+func (h *FlowDefHandler) AgentFlows() map[string]*entities.AgentFlowInfo {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	c := make(map[string]*model.AgentFlowSpec, len(h.agentFlows))
+	c := make(map[string]*entities.AgentFlowInfo, len(h.agentFlows))
 	for k, v := range h.agentFlows {
 		c[k] = v
 	}
 	return c
 }
 
-func (h *FlowDefHandler) Reload(flows []model.AgentFlowSpec, subFlows map[string]model.AgentFlowSpec) {
+func (h *FlowDefHandler) Reload(flows []entities.AgentFlowInfo, subFlows map[string]entities.AgentFlowInfo) {
 	h.mu.Lock()
-	h.agentFlows = make(map[string]*model.AgentFlowSpec)
+	h.agentFlows = make(map[string]*entities.AgentFlowInfo)
 	for i := range flows {
 		h.agentFlows[flows[i].ID] = &flows[i]
 	}
@@ -115,7 +115,7 @@ func (h *FlowDefHandler) Reload(flows []model.AgentFlowSpec, subFlows map[string
 }
 
 func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
-	defs, err := h.afStore.Select(r.Context(), model.PageRequest{Page: 1, Size: 1000})
+	defs, err := h.afStore.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -126,7 +126,7 @@ func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	var spec model.AgentFlowSpec
+	var spec entities.AgentFlowInfo
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -160,7 +160,7 @@ func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *FlowDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	tenant, id := r.PathValue("tenant"), r.PathValue("id")
-	var spec model.AgentFlowSpec
+	var spec entities.AgentFlowInfo
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -187,7 +187,7 @@ func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.notifyWatchers()
 }
 
-func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, trigger model.TriggerInfo) {
+func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) {
 	ctx, span := flowDefTracer.Start(r.Context(), "FlowDefHandler.Trigger", trace.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
 	defer span.End()
 	spec := h.agentFlows[agentFlowID]
@@ -198,7 +198,7 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "agentflow not found", 404)
 		return
 	}
-	run := &model.AgentFlowRun{AgentFlowID: agentFlowID, Version: 1, Status: model.RunPending, Vars: vars, Trigger: trigger}
+	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars, Trigger: trigger}
 	if err := h.frStore.Create(ctx, run); err != nil {
 		http.Error(w, "internal", 500)
 		return
@@ -211,7 +211,7 @@ func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AgentFlowID string            `json:"agentflow_id"`
 		Vars        map[string]any    `json:"vars"`
-		Trigger     model.TriggerInfo `json:"trigger"`
+		Trigger     entities.TriggerInfo `json:"trigger"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", 400)
@@ -223,7 +223,7 @@ func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 func (h *FlowDefHandler) TriggerByID(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Vars    map[string]any    `json:"vars"`
-		Trigger model.TriggerInfo `json:"trigger"`
+		Trigger entities.TriggerInfo `json:"trigger"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	h.TriggerWithVars(w, r, r.PathValue("id"), req.Vars, req.Trigger)

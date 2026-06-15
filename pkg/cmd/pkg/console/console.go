@@ -1,7 +1,6 @@
 package console
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -17,9 +16,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/peterh/liner"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
@@ -35,13 +35,13 @@ import (
 
 // ExportData is the root structure for import/export of all resources.
 type ExportData struct {
-	LLMs       []model.LlmProvider     `json:"llms" yaml:"llms"`
-	Channels   []model.NotifierChannel `json:"channels" yaml:"channels"`
-	MCPs       []model.MCPDef          `json:"mcps" yaml:"mcps"`
-	Skills     []model.AgentFlowSpec   `json:"skills" yaml:"skills"`
-	AgentDefs  []model.AgentDef        `json:"agentDefs" yaml:"agentDefs"`
-	AgentFlows []model.AgentFlowSpec   `json:"agentFlows" yaml:"agentFlows"`
-	FlowRuns   []model.AgentFlowRun    `json:"flowRuns" yaml:"flowRuns"`
+	LLMs       []entities.LlmProviderInfo     `json:"llms" yaml:"llms"`
+	Channels   []entities.NotifyChannelInfo `json:"channels" yaml:"channels"`
+	MCPs       []entities.McpInfo          `json:"mcps" yaml:"mcps"`
+	Skills     []entities.AgentFlowInfo   `json:"skills" yaml:"skills"`
+	AgentDefs  []entities.AgentInfo        `json:"agentDefs" yaml:"agentDefs"`
+	AgentFlows []entities.AgentFlowInfo   `json:"agentFlows" yaml:"agentFlows"`
+	FlowRuns   []entities.FlowRunInfo    `json:"flowRuns" yaml:"flowRuns"`
 	Wallets    []WalletExport          `json:"wallets" yaml:"wallets"`
 }
 
@@ -53,12 +53,12 @@ type WalletExport struct {
 
 // consoleState holds the runtime state of the interactive console.
 type consoleState struct {
-	cfg          *config.FlowgentConfig
-	store        store.IStore
-	tenant       string
-	secretStore  payments.SecretStoreProvider
-	scanner      *bufio.Scanner
-	ctx          context.Context
+	cfg         *config.FlowgentConfig
+	store       store.IStore
+	tenant      string
+	secretStore payments.SecretStoreProvider
+	rl          *liner.State
+	ctx         context.Context
 }
 
 // Stores initialized lazily.
@@ -92,11 +92,34 @@ func StartConsole(cfgPath string, verbose bool) {
 	storeImpl := store.InitStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
+	// Readline with history
+	rl := liner.NewLiner()
+	defer rl.Close()
+	rl.SetCtrlCAborts(true)
+	historyFile := filepath.Join(os.Getenv("HOME"), ".flowagent", "console_history")
+	if f, err := os.Open(historyFile); err == nil {
+		rl.ReadHistory(f)
+		f.Close()
+	}
+	// Ensure history dir exists before write
+	os.MkdirAll(filepath.Dir(historyFile), 0755)
+	defer func() {
+		if f, err := os.Create(historyFile); err == nil {
+			rl.WriteHistory(f)
+			f.Close()
+		}
+	}()
+
 	state := &consoleState{
-		cfg:     serviceCfg,
-		store:   storeImpl,
-		scanner: bufio.NewScanner(os.Stdin),
-		ctx:     context.Background(),
+		cfg:   serviceCfg,
+		store: storeImpl,
+		rl:    rl,
+		ctx:   context.Background(),
+	}
+
+	// Auto-set tenant from config
+	if serviceCfg.Tenant.DefaultTenant != "" {
+		state.tenant = serviceCfg.Tenant.DefaultTenant
 	}
 
 	// Init secret store for wallet commands (non-fatal if no master key)
@@ -111,11 +134,12 @@ func StartConsole(cfgPath string, verbose bool) {
 		if tenantDisplay == "" {
 			tenantDisplay = "(no tenant)"
 		}
-		fmt.Printf("flowgent [%s]> ", tenantDisplay)
-		if !state.scanner.Scan() {
-			break
+		line, err := rl.Prompt(fmt.Sprintf("flowgent [%s]> ", tenantDisplay))
+		if err != nil {
+			break // Ctrl-D or error
 		}
-		line := strings.TrimSpace(state.scanner.Text())
+		rl.AppendHistory(line)
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
@@ -297,7 +321,7 @@ func (s *consoleState) getStores() *lazyStores {
 
 func (s *consoleState) llmList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().llm.Select(s.ctx, model.PageRequest{Page: 1, Size: 1000})
+	page, err := s.getStores().llm.Select(s.ctx, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -333,8 +357,8 @@ func (s *consoleState) llmGet(args []string) {
 func (s *consoleState) llmAdd(args []string) {
 	if !s.requireTenant() { return }
 	fmt.Println("Enter LLM provider JSON (end with a line containing only '.'):")
-	body := readMultiline(s.scanner)
-	var p model.LlmProvider
+	body := readMultiline(s.rl)
+	var p entities.LlmProviderInfo
 	if err := json.Unmarshal([]byte(body), &p); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -367,7 +391,7 @@ func (s *consoleState) llmRemove(args []string) {
 
 func (s *consoleState) channelList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().channels.Select(s.ctx, model.PageRequest{Page: 1, Size: 1000})
+	page, err := s.getStores().channels.Select(s.ctx, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -402,8 +426,8 @@ func (s *consoleState) channelGet(args []string) {
 func (s *consoleState) channelAdd(args []string) {
 	if !s.requireTenant() { return }
 	fmt.Println("Enter channel JSON (end with a line containing only '.'):")
-	body := readMultiline(s.scanner)
-	var ch model.NotifierChannel
+	body := readMultiline(s.rl)
+	var ch entities.NotifyChannelInfo
 	if err := json.Unmarshal([]byte(body), &ch); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -436,7 +460,7 @@ func (s *consoleState) channelRemove(args []string) {
 
 func (s *consoleState) agentList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().agents.Select(s.ctx, model.PageRequest{Page: 1, Size: 1000})
+	page, err := s.getStores().agents.Select(s.ctx, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -471,8 +495,8 @@ func (s *consoleState) agentGet(args []string) {
 func (s *consoleState) agentAdd(args []string) {
 	if !s.requireTenant() { return }
 	fmt.Println("Enter agent JSON (end with a line containing only '.'):")
-	body := readMultiline(s.scanner)
-	var a model.AgentDef
+	body := readMultiline(s.rl)
+	var a entities.AgentInfo
 	if err := json.Unmarshal([]byte(body), &a); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -504,7 +528,7 @@ func (s *consoleState) agentRemove(args []string) {
 
 func (s *consoleState) mcpList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().mcps.Select(s.ctx, model.PageRequest{Page: 1, Size: 1000})
+	page, err := s.getStores().mcps.Select(s.ctx, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -539,8 +563,8 @@ func (s *consoleState) mcpGet(args []string) {
 func (s *consoleState) mcpAdd(args []string) {
 	if !s.requireTenant() { return }
 	fmt.Println("Enter MCP JSON (end with a line containing only '.'):")
-	body := readMultiline(s.scanner)
-	var m model.MCPDef
+	body := readMultiline(s.rl)
+	var m entities.McpInfo
 	if err := json.Unmarshal([]byte(body), &m); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -572,12 +596,12 @@ func (s *consoleState) mcpRemove(args []string) {
 
 func (s *consoleState) skillList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().flows.Select(s.ctx, model.PageRequest{Page: 1, Size: 1000})
+	page, err := s.getStores().flows.Select(s.ctx, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	var skills []*model.AgentFlowVersion
+	var skills []*entities.AgentFlowVersionInfo
 	for _, f := range page.Items {
 		spec, _ := s.getStores().flows.GetSpec(s.ctx, f.AgentFlowID)
 		if spec != nil && spec.Kind == "skill" {
@@ -613,8 +637,8 @@ func (s *consoleState) skillGet(args []string) {
 func (s *consoleState) skillAdd(args []string) {
 	if !s.requireTenant() { return }
 	fmt.Println("Enter skill JSON (end with a line containing only '.'):")
-	body := readMultiline(s.scanner)
-	var spec model.AgentFlowSpec
+	body := readMultiline(s.rl)
+	var spec entities.AgentFlowInfo
 	if err := json.Unmarshal([]byte(body), &spec); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -647,7 +671,7 @@ func (s *consoleState) skillRemove(args []string) {
 
 func (s *consoleState) flowList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().flows.Select(s.ctx, model.PageRequest{Page: 1, Size: 1000})
+	page, err := s.getStores().flows.Select(s.ctx, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -682,8 +706,8 @@ func (s *consoleState) flowGet(args []string) {
 func (s *consoleState) flowAdd(args []string) {
 	if !s.requireTenant() { return }
 	fmt.Println("Enter agentflow JSON (end with a line containing only '.'):")
-	body := readMultiline(s.scanner)
-	var spec model.AgentFlowSpec
+	body := readMultiline(s.rl)
+	var spec entities.AgentFlowInfo
 	if err := json.Unmarshal([]byte(body), &spec); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -736,7 +760,7 @@ func (s *consoleState) cmdRun(args []string) {
 
 func (s *consoleState) runList(args []string) {
 	if !s.requireTenant() { return }
-	page, err := s.getStores().runs.Select(s.ctx, model.PageRequest{Page: 1, Size: 50})
+	page, err := s.getStores().runs.Select(s.ctx, entities.PageRequest{Page: 1, Size: 50})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -775,11 +799,11 @@ func (s *consoleState) runCreate(args []string) {
 		return
 	}
 	flowID := args[0]
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID:          uuid.New().String(),
 		AgentFlowID: flowID,
 		TenantID:    s.tenant,
-		Status:      model.RunPending,
+		Status:      entities.RunPending,
 		CreatedAt:   time.Now(),
 	}
 	if err := s.getStores().runs.Create(s.ctx, run); err != nil {
@@ -801,7 +825,7 @@ func (s *consoleState) runStart(args []string) {
 		fmt.Printf("Run not found: %s\n", args[0])
 		return
 	}
-	run.Status = model.RunRunning
+	run.Status = entities.RunRunning
 	run.StartedAt = timePtr(time.Now())
 	if err := s.getStores().runs.Update(s.ctx, run); err != nil {
 		fmt.Printf("Error starting run: %v\n", err)
@@ -1024,7 +1048,7 @@ func (s *consoleState) exportData() (*ExportData, error) {
 	data := &ExportData{}
 
 	// LLMs
-	if page, err := ls.llm.Select(s.ctx, model.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if page, err := ls.llm.Select(s.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 		for _, p := range page.Items {
 			if p != nil {
 				data.LLMs = append(data.LLMs, *p)
@@ -1032,7 +1056,7 @@ func (s *consoleState) exportData() (*ExportData, error) {
 		}
 	}
 	// Channels
-	if page, err := ls.channels.Select(s.ctx, model.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if page, err := ls.channels.Select(s.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 		for _, ch := range page.Items {
 			if ch != nil {
 				data.Channels = append(data.Channels, *ch)
@@ -1040,7 +1064,7 @@ func (s *consoleState) exportData() (*ExportData, error) {
 		}
 	}
 	// MCPs
-	if page, err := ls.mcps.Select(s.ctx, model.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if page, err := ls.mcps.Select(s.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 		for _, m := range page.Items {
 			if m != nil {
 				data.MCPs = append(data.MCPs, *m)
@@ -1048,7 +1072,7 @@ func (s *consoleState) exportData() (*ExportData, error) {
 		}
 	}
 	// AgentDefs
-	if page, err := ls.agents.Select(s.ctx, model.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if page, err := ls.agents.Select(s.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 		for _, a := range page.Items {
 			if a != nil {
 				data.AgentDefs = append(data.AgentDefs, *a)
@@ -1056,7 +1080,7 @@ func (s *consoleState) exportData() (*ExportData, error) {
 		}
 	}
 	// Skills & AgentFlows from flow store (separate by Kind)
-	if page, err := ls.flows.Select(s.ctx, model.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if page, err := ls.flows.Select(s.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 		for _, fv := range page.Items {
 			if fv == nil {
 				continue
@@ -1073,7 +1097,7 @@ func (s *consoleState) exportData() (*ExportData, error) {
 		}
 	}
 	// FlowRuns
-	if page, err := ls.runs.Select(s.ctx, model.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if page, err := ls.runs.Select(s.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 		for _, r := range page.Items {
 			if r != nil {
 				data.FlowRuns = append(data.FlowRuns, *r)
@@ -1236,10 +1260,13 @@ func detectFormat(filePath string, args []string) (string, error) {
 
 // ─── Helpers ────────────────────────────────────────────────────
 
-func readMultiline(scanner *bufio.Scanner) string {
+func readMultiline(rl *liner.State) string {
 	var lines []string
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, err := rl.Prompt("... ")
+		if err != nil {
+			break
+		}
 		if line == "." {
 			break
 		}

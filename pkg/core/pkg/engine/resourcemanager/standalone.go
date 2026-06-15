@@ -7,7 +7,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // StandaloneResourceManager executes plans in-process via a goroutine pool.
@@ -23,12 +23,12 @@ func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResour
 	if poolSize <= 0 {
 		poolSize = 10
 	}
+
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: "tm-local", SlotCount: poolSize,
-		Queue: cfg.Queue, State: cfg.TaskState, HumanApproval: cfg.HumanApproval,
-		Agents: cfg.Agents, MCPClients: cfg.MCPClients, LLMClient: cfg.LLMClient,
-		Logger: cfg.Logger,
-		SandboxQueue:             cfg.Queue,
+		Messager: cfg.Messager, State: cfg.TaskState, ApprovalInfo: cfg.ApprovalInfo,
+		APIServerURL: cfg.APIServerURL, Tenant: cfg.Tenant, Logger: cfg.Logger,
+		SandboxMessager:             cfg.Messager,
 		SandboxPolicy:            cfg.SandboxPolicy,
 		SandboxWorkspace:         cfg.SandboxWorkspace,
 		SandboxDeploymentEnabled: false,
@@ -52,7 +52,7 @@ func (s *StandaloneResourceManager) Validate(ctx context.Context) error {
 
 // Schedule acquires a slot (non-blocking), executes the plan via the local TM.
 // Returns INSUFFICIENT_RESOURCES if all slots are occupied (session mode capacity).
-func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *model.ExecutionPlan) (*model.TaskResult, error) {
+func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
 	select {
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()
@@ -62,14 +62,14 @@ func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *model.Ex
 
 	slog.Debug("local rm schedule", "plan", plan.PlanID, "node", plan.NodeID)
 
-	task := &model.TaskRun{
+	task := &entities.TaskRunInfo{
 		AgentFlowRunID: plan.AgentFlowRunID, NodeID: plan.NodeID,
-		Status: model.TaskPending, ExecID: plan.PlanID,
+		Status: entities.TaskPending, ExecID: plan.PlanID,
 	}
 	if _, err := s.tm.ExecutePlan(ctx, plan, task); err != nil {
-		return &model.TaskResult{Error: err.Error()}, nil
+		return &entities.TaskResult{Error: err.Error()}, nil
 	}
-	return &model.TaskResult{Output: task.Output}, nil
+	return &entities.TaskResult{Output: task.Output}, nil
 }
 
 func (s *StandaloneResourceManager) Shutdown(ctx context.Context) error { return nil }

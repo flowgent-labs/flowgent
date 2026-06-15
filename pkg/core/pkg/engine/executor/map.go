@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"sync"
 	"time"
@@ -14,13 +14,13 @@ import (
 
 type MapExecutor struct{}
 
-func (e *MapExecutor) TaskType() model.TaskType { return model.TaskMap }
+func (e *MapExecutor) TaskType() entities.TaskType { return entities.TaskMap }
 
-func (e *MapExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
+func (e *MapExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	// Map execution: the JM creates child ExecutionPlans for each item
 	// and dispatches them. The MapExecutor just marks the map plan as
 	// complete; the actual fan-out is handled by the JM.
-	return &model.TaskResult{Output: map[string]any{"status": "dispatched"}}, nil
+	return &entities.TaskResult{Output: map[string]any{"status": "dispatched"}}, nil
 }
 
 // ─── MapRunner (kept for inline fan-out within map nodes) ─
@@ -35,7 +35,7 @@ func newMapRunner(store store.IStore, logger *utils.Logger) *MapRunner {
 	return &MapRunner{store: store, logger: logger}
 }
 
-func (m *MapRunner) runMap(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any, router *TaskExecutorRouter) error {
+func (m *MapRunner) runMap(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any, router *TaskExecutorRouter) error {
 	source := plan.Input["source"]
 	items, ok := source.([]any)
 	if !ok {
@@ -65,10 +65,10 @@ func (m *MapRunner) runMap(ctx context.Context, plan *model.ExecutionPlan, scope
 			}
 			innerScope["item"] = map[string]any{"item": it, "index": idx}
 
-			innerPlan := &model.ExecutionPlan{
+			innerPlan := &entities.ExecutionPlan{
 				PlanID:         fmt.Sprintf("%s-%d", plan.PlanID, idx),
 				AgentFlowRunID: plan.AgentFlowRunID,
-				TaskType:       model.TaskAgent,
+				TaskType:       entities.TaskAgent,
 				NodeID:         fmt.Sprintf("%s[%d]", plan.NodeID, idx),
 				Input:          map[string]any{"item": it, "index": idx},
 				NodeSpec:       plan.NodeSpec.ChildNode,
@@ -86,7 +86,7 @@ func (m *MapRunner) runMap(ctx context.Context, plan *model.ExecutionPlan, scope
 	}
 
 	wg.Wait()
-	plan.Result = &model.TaskResult{Output: map[string]any{"results": results}}
+	plan.Result = &entities.TaskResult{Output: map[string]any{"results": results}}
 	if firstErr != nil {
 		return firstErr
 	}

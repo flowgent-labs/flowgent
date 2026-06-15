@@ -13,6 +13,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
@@ -43,9 +44,9 @@ func NewSandboxExecutor(q messager.IMessager, policy *model.SandboxPolicy, works
 	return &SandboxExecutor{queue: q, policy: policy, workspace: workspace}
 }
 
-func (e *SandboxExecutor) TaskType() model.TaskType { return model.TaskSandbox }
+func (e *SandboxExecutor) TaskType() entities.TaskType { return entities.TaskSandbox }
 
-func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
+func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	if e.policy != nil && plan.NodeSpec != nil && plan.NodeSpec.NetworkPolicy == nil {
 		plan.NodeSpec.NetworkPolicy = &e.policy.Network
 	}
@@ -86,11 +87,11 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 	triggerTopic := messager.SandboxTriggerTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 	resultTopic := messager.SandboxResultTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 
-	resultCh := make(chan *model.TaskResult, 1)
+	resultCh := make(chan *entities.TaskResult, 1)
 
 	// Subscribe BEFORE publishing to avoid race (result arrives before subscriber is ready).
 	if err := e.queue.Subscribe(ctx, resultTopic, func(topic string, payload []byte) {
-		var result model.TaskResult
+		var result entities.TaskResult
 		if err := json.Unmarshal(payload, &result); err != nil {
 			return
 		}
@@ -116,13 +117,13 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan
 		if result, err := e.readResultFile(scriptPath); err == nil {
 			return result, nil
 		}
-		return &model.TaskResult{Error: "sandbox execution timeout"}, nil
+		return &entities.TaskResult{Error: "sandbox execution timeout"}, nil
 	case result := <-resultCh:
 		return result, nil
 	}
 }
 
-func (e *SandboxExecutor) buildPath(plan *model.ExecutionPlan, spanID string) string {
+func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan, spanID string) string {
 	return filepath.Join(
 		e.workspace,
 		sanitize(plan.TenantID),
@@ -133,7 +134,7 @@ func (e *SandboxExecutor) buildPath(plan *model.ExecutionPlan, spanID string) st
 	)
 }
 
-func (e *SandboxExecutor) writeScript(plan *model.ExecutionPlan) error {
+func (e *SandboxExecutor) writeScript(plan *entities.ExecutionPlan) error {
 	dir := plan.NodeSpec.ScriptPath
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -152,7 +153,7 @@ func (e *SandboxExecutor) writeScript(plan *model.ExecutionPlan) error {
 	return nil
 }
 
-func (e *SandboxExecutor) snapshotOriginals(plan *model.ExecutionPlan) error {
+func (e *SandboxExecutor) snapshotOriginals(plan *entities.ExecutionPlan) error {
 	origDir := filepath.Join(plan.NodeSpec.ScriptPath, "original")
 	if err := os.MkdirAll(origDir, 0755); err != nil {
 		return err
@@ -161,12 +162,12 @@ func (e *SandboxExecutor) snapshotOriginals(plan *model.ExecutionPlan) error {
 	return cmd.Run()
 }
 
-func (e *SandboxExecutor) readResultFile(scriptPath string) (*model.TaskResult, error) {
+func (e *SandboxExecutor) readResultFile(scriptPath string) (*entities.TaskResult, error) {
 	data, err := os.ReadFile(filepath.Join(scriptPath, "result.json"))
 	if err != nil {
 		return nil, err
 	}
-	var result model.TaskResult
+	var result entities.TaskResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
 	}

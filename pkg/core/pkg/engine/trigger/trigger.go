@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/robfig/cron/v3"
 )
 
@@ -25,7 +25,7 @@ func NewScheduleTrigger() *ScheduleTrigger {
 	}
 }
 
-func (s *ScheduleTrigger) RegisterAgentFlows(flows []model.AgentFlowSpec, triggerFn func(context.Context, string)) {
+func (s *ScheduleTrigger) RegisterAgentFlows(flows []entities.AgentFlowInfo, triggerFn func(context.Context, string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range flows {

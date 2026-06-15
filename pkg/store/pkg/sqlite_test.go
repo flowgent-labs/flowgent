@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 func TestSQLiteStore_Init(t *testing.T) {
@@ -25,9 +25,9 @@ func TestSQLiteStore_AgentFlowRuns(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	run := &model.AgentFlowRun{
-		AgentFlowID: "test-flow", Version: 1, Status: model.RunPending,
-		Trigger: model.TriggerInfo{Type: "manual", Source: "ut"},
+	run := &entities.FlowRunInfo{
+		AgentFlowID: "test-flow", Version: 1, Status: entities.RunPending,
+		Trigger: entities.TriggerInfo{Type: "manual", Source: "ut"},
 	}
 	if err := s.CreateFlowRun(ctx, run); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -44,7 +44,7 @@ func TestSQLiteStore_AgentFlowRuns(t *testing.T) {
 		t.Errorf("expected test-flow, got %s", got.AgentFlowID)
 	}
 
-	run.Status = model.RunRunning
+	run.Status = entities.RunRunning
 	if err := s.UpdateFlowRun(ctx, run); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -71,11 +71,11 @@ func TestSQLiteStore_TaskRuns(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a parent run first
-	run := &model.AgentFlowRun{AgentFlowID: "f1", Version: 1, Status: model.RunPending}
+	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	s.CreateFlowRun(ctx, run)
 
-	task := &model.TaskRun{
-		AgentFlowRunID: run.ID, NodeID: "node-1", Status: model.TaskPending,
+	task := &entities.TaskRunInfo{
+		AgentFlowRunID: run.ID, NodeID: "node-1", Status: entities.TaskPending,
 		ExecID: "exec-001", MaxRetries: 3,
 	}
 	if err := s.CreateTaskRun(ctx, task); err != nil {
@@ -93,7 +93,7 @@ func TestSQLiteStore_TaskRuns(t *testing.T) {
 		t.Errorf("expected node-1, got %s", got.NodeID)
 	}
 
-	task.Status = model.Success
+	task.Status = entities.Success
 	task.Output = map[string]any{"result": "ok"}
 	s.UpdateTaskRun(ctx, task)
 
@@ -120,12 +120,12 @@ func TestSQLiteStore_HumanApproval(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	run := &model.AgentFlowRun{AgentFlowID: "f1", Version: 1, Status: model.RunPending}
+	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	s.CreateFlowRun(ctx, run)
-	task := &model.TaskRun{AgentFlowRunID: run.ID, NodeID: "human", Status: model.TaskPending, ExecID: "e1"}
+	task := &entities.TaskRunInfo{AgentFlowRunID: run.ID, NodeID: "human", Status: entities.TaskPending, ExecID: "e1"}
 	s.CreateTaskRun(ctx, task)
 
-	approval := &model.HumanApproval{
+	approval := &entities.ApprovalInfo{
 		TaskRunID: task.ID, Status: "PENDING", Timeout: 1 * time.Hour,
 	}
 	if err := s.CreateApproval(ctx, approval); err != nil {
@@ -160,7 +160,7 @@ func TestSQLiteStore_AgentFlowDefinitions(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 
-	def := &model.AgentFlowVersion{
+	def := &entities.AgentFlowVersionInfo{
 		AgentFlowID: "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
 		CreatedBy: "test", Comment: "initial",
 	}

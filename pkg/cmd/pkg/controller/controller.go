@@ -27,7 +27,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/discovery"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── CLI entry points ──────────────────────────────────────────
@@ -170,12 +170,12 @@ func (c *Controller) reconcile(ctx context.Context) {
 		return
 	}
 
-	seen := make(map[string]*model.AgentFlowSpec)
+	seen := make(map[string]*entities.AgentFlowInfo)
 	for _, v := range versions {
 		if _, exists := seen[v.AgentFlowID]; exists {
 			continue
 		}
-		var spec model.AgentFlowSpec
+		var spec entities.AgentFlowInfo
 		if err := json.Unmarshal(v.Definition, &spec); err != nil {
 			c.logger.Warn("Skipping invalid agentflow definition", "agentflow_id", v.AgentFlowID, "error", err)
 			continue
@@ -207,7 +207,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 	}
 }
 
-func (c *Controller) dispatchFlow(ctx context.Context, spec *model.AgentFlowSpec) {
+func (c *Controller) dispatchFlow(ctx context.Context, spec *entities.AgentFlowInfo) {
 	flowCtx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	c.running[spec.ID] = cancel
@@ -222,14 +222,14 @@ func (c *Controller) dispatchFlow(ctx context.Context, spec *model.AgentFlowSpec
 
 	mode := spec.EffectiveMode()
 	switch mode {
-	case model.ModeApplication:
+	case entities.ModeApplication:
 		c.dispatchApplicationMode(flowCtx, spec)
 	default:
 		c.dispatchSessionMode(flowCtx, spec)
 	}
 }
 
-func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentFlowSpec) {
+func (c *Controller) dispatchSessionMode(ctx context.Context, spec *entities.AgentFlowInfo) {
 	c.logger.Info("Session mode dispatch", "flow_id", spec.ID)
 
 	tenant := spec.TenantID
@@ -237,16 +237,16 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 		tenant = c.tenant
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID:          fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()),
 		AgentFlowID: spec.ID,
 		Version:     1,
-		Status:      model.RunPending,
+		Status:      entities.RunPending,
 		Priority:    spec.Priority,
 		TenantID:    tenant,
 		Namespace:   spec.Namespace,
 		Vars:        spec.Vars,
-		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
+		Trigger:     entities.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
 
 	created, err := c.api.CreateRun(ctx, tenant, run)
@@ -276,7 +276,7 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *model.AgentF
 	}
 }
 
-func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *model.AgentFlowSpec) {
+func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *entities.AgentFlowInfo) {
 	c.logger.Info("Application mode dispatch", "flow_id", spec.ID, "namespace", spec.Namespace)
 
 	ns := spec.Namespace
@@ -318,23 +318,23 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *model.Ag
 	c.logger.Info("Dedicated JM deployment created",
 		"flow_id", spec.ID, "namespace", ns, "deployment", jmName)
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID:          fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()),
 		AgentFlowID: spec.ID,
 		Version:     1,
-		Status:      model.RunPending,
-		Priority:    model.PriorityGrade,
+		Status:      entities.RunPending,
+		Priority:    entities.PriorityGrade,
 		TenantID:    tenantID,
 		Namespace:   ns,
 		Vars:        spec.Vars,
-		Trigger:     model.TriggerInfo{Type: "schedule", Source: "controller"},
+		Trigger:     entities.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
 	if _, err := c.api.CreateRun(ctx, tenantID, run); err != nil {
 		c.logger.Error("Failed to create application run via apiserver", "flow_id", spec.ID, "error", err)
 	}
 }
 
-func (c *Controller) buildJMDeployment(name, namespace, tenantID string, spec *model.AgentFlowSpec) *appsv1.Deployment {
+func (c *Controller) buildJMDeployment(name, namespace, tenantID string, spec *entities.AgentFlowInfo) *appsv1.Deployment {
 	replicas := int32(1)
 	labels := map[string]string{
 		"app":                "flowgent-jobmanager",
@@ -399,12 +399,6 @@ func startController(cfgPath string) error {
 		tenant = "default"
 	}
 
-	loadedAgents, _ := config.LoadAgents(svcCfg, cfgPath)
-	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
-	for i := range loadedAgents {
-		agentPtrs[i] = &loadedAgents[i]
-	}
-
 	stateClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
 	humanClient := &client.HumanApprovalClient{Client: apiClient}
 
@@ -412,10 +406,10 @@ func startController(cfgPath string) error {
 		Provider:      engine.ProviderStandalone,
 		PoolSize:      svcCfg.Orchestration.MaxConcurrentFlows,
 		TaskState:     stateClient,
-		HumanApproval: humanClient,
-		Agents:        agentPtrs,
-		MCPClients:    make(map[string]engine.MCPClient),
+		ApprovalInfo: humanClient,
 		Logger:        logger,
+		APIServerURL:  svcCfg.Runtime.APIServerURL,
+		Tenant:        tenant,
 	})
 	if err != nil {
 		return fmt.Errorf("create resource manager: %w", err)
@@ -450,6 +444,6 @@ func startController(cfgPath string) error {
 	return nil
 }
 
-func isTerminalStatus(s model.RunStatus) bool {
-	return s == model.RunCompleted || s == model.RunFailed || s == model.RunCancelled
+func isTerminalStatus(s entities.RunStatus) bool {
+	return s == entities.RunCompleted || s == entities.RunFailed || s == entities.RunCancelled
 }

@@ -2,7 +2,7 @@
 -- Column types use DATETIME for date fields so the Go sqlite3 driver
 -- scans them as time.Time (not string).
 
-CREATE TABLE IF NOT EXISTS agentflow_definitions (
+CREATE TABLE IF NOT EXISTS orh_agentflow (
     agentflow_id TEXT    NOT NULL,
     version      INTEGER NOT NULL DEFAULT 1,
     definition   TEXT    NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS agentflow_definitions (
     PRIMARY KEY (agentflow_id, version)
 );
 
-CREATE TABLE IF NOT EXISTS agentflow_runs (
+CREATE TABLE IF NOT EXISTS orh_flowrun (
     id              TEXT PRIMARY KEY,
     agentflow_id     TEXT NOT NULL,
     version         INTEGER NOT NULL DEFAULT 1,
@@ -29,12 +29,12 @@ CREATE TABLE IF NOT EXISTS agentflow_runs (
     started_at      DATETIME,
     finished_at     DATETIME
 );
-CREATE INDEX IF NOT EXISTS idx_afruns_agentflow ON agentflow_runs(agentflow_id);
-CREATE INDEX IF NOT EXISTS idx_afruns_status    ON agentflow_runs(status);
+CREATE INDEX IF NOT EXISTS idx_orhflowrun_agentflow ON orh_flowrun(agentflow_id);
+CREATE INDEX IF NOT EXISTS idx_orhflowrun_status    ON orh_flowrun(status);
 
 CREATE TABLE IF NOT EXISTS task_runs (
     id                 TEXT PRIMARY KEY,
-    agentflow_run_id    TEXT NOT NULL REFERENCES agentflow_runs(id),
+    agentflow_run_id    TEXT NOT NULL REFERENCES orh_flowrun(id),
     node_id            TEXT NOT NULL,
     status             TEXT NOT NULL DEFAULT 'PENDING',
     input              TEXT,
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 -- RAG agent memory
-CREATE TABLE IF NOT EXISTS agent_memories (
+CREATE TABLE IF NOT EXISTS llm_memory (
     id               TEXT PRIMARY KEY,
     agent_id         TEXT NOT NULL,
     agentflow_run_id  TEXT,
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     metadata         TEXT,
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_memories_agent ON agent_memories(agent_id, type);
+CREATE INDEX IF NOT EXISTS idx_llmmemory_agent ON llm_memory(agent_id, type);
 
 CREATE TABLE IF NOT EXISTS knowledge_entries (
     id         TEXT PRIMARY KEY,

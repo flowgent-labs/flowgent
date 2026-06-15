@@ -3,20 +3,23 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/tests/testutil"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
+	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
+
+const testTenant = "test-tenant"
 
 // ── Condition ────────────────────────────────────────
 
 func TestConditionExecutor_True(t *testing.T) {
 	e := &ConditionExecutor{}
-	plan := &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Expression: "${input.result == true}"},
+	plan := &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Expression: "${input.result == true}"},
 		Input:    map[string]any{"result": true},
 	}
 	result, err := e.Execute(context.Background(), plan, map[string]map[string]any{"input": plan.Input})
@@ -30,8 +33,8 @@ func TestConditionExecutor_True(t *testing.T) {
 
 func TestConditionExecutor_False(t *testing.T) {
 	e := &ConditionExecutor{}
-	plan := &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Expression: "false"},
+	plan := &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Expression: "false"},
 	}
 	result, _ := e.Execute(context.Background(), plan, nil)
 	if result.Output["result"] != false {
@@ -41,7 +44,7 @@ func TestConditionExecutor_False(t *testing.T) {
 
 func TestConditionExecutor_TaskType(t *testing.T) {
 	e := &ConditionExecutor{}
-	if e.TaskType() != model.TaskCondition {
+	if e.TaskType() != entities.TaskCondition {
 		t.Error("wrong task type for ConditionExecutor")
 	}
 }
@@ -50,7 +53,7 @@ func TestConditionExecutor_TaskType(t *testing.T) {
 
 func TestNoopExecutor(t *testing.T) {
 	e := &NoopExecutor{}
-	if e.TaskType() != model.TaskNoop {
+	if e.TaskType() != entities.TaskNoop {
 		t.Error("wrong task type")
 	}
 	result, err := e.Execute(context.Background(), nil, nil)
@@ -66,7 +69,7 @@ func TestNoopExecutor(t *testing.T) {
 
 func TestMapExecutor(t *testing.T) {
 	e := &MapExecutor{}
-	if e.TaskType() != model.TaskMap {
+	if e.TaskType() != entities.TaskMap {
 		t.Error("wrong task type")
 	}
 	result, _ := e.Execute(context.Background(), nil, nil)
@@ -79,10 +82,10 @@ func TestMapExecutor(t *testing.T) {
 
 func TestJoinExecutor(t *testing.T) {
 	e := &JoinExecutor{}
-	if e.TaskType() != model.TaskJoin {
+	if e.TaskType() != entities.TaskJoin {
 		t.Error("wrong task type")
 	}
-	result, _ := e.Execute(context.Background(), &model.ExecutionPlan{
+	result, _ := e.Execute(context.Background(), &entities.ExecutionPlan{
 		Input: map[string]any{"results": []any{
 			map[string]any{"id": 1}, map[string]any{"id": 2},
 		}},
@@ -96,12 +99,11 @@ func TestJoinExecutor(t *testing.T) {
 
 func TestTribunalExecutor_Majority(t *testing.T) {
 	e := &TribunalExecutor{}
-	if e.TaskType() != model.TaskTribunal {
+	if e.TaskType() != entities.TaskTribunal {
 		t.Error("wrong task type")
 	}
-	// 3 reviews, 2 approve → majority
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Strategy: map[string]any{"type": "majority"}},
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}},
 		Input: map[string]any{"votes": []any{
 			map[string]any{"decision": true},
 			map[string]any{"decision": true},
@@ -118,8 +120,8 @@ func TestTribunalExecutor_Majority(t *testing.T) {
 
 func TestTribunalExecutor_Unanimous_Fail(t *testing.T) {
 	e := &TribunalExecutor{}
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Strategy: map[string]any{"type": "unanimous"}},
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "unanimous"}},
 		Input: map[string]any{"votes": []any{
 			map[string]any{"decision": true},
 			map[string]any{"decision": true},
@@ -136,8 +138,8 @@ func TestTribunalExecutor_Unanimous_Fail(t *testing.T) {
 
 func TestTribunalExecutor_EmptyVotes(t *testing.T) {
 	e := &TribunalExecutor{}
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Strategy: map[string]any{"type": "majority"}},
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}},
 		Input:    map[string]any{},
 	}, nil)
 	if err != nil {
@@ -150,17 +152,24 @@ func TestTribunalExecutor_EmptyVotes(t *testing.T) {
 
 // ── Human ────────────────────────────────────────────
 
+type mockHumanStore struct{}
+
+func (m *mockHumanStore) CreateApproval(_ context.Context, a *entities.ApprovalInfo) error {
+	a.Token = "test-token"
+	return nil
+}
+
 func TestHumanExecutor(t *testing.T) {
-	store := testutil.NewMockStore()
+	store := &mockHumanStore{}
 	e := NewHumanExecutor(store)
-	if e.TaskType() != model.TaskHuman {
+	if e.TaskType() != entities.TaskHuman {
 		t.Error("wrong task type")
 	}
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		AgentFlowRunID: "run-1",
 		TaskID:         "task-1",
-		NodeSpec: &model.NodeSpec{
-			Approval: &model.HumanApprovalConfig{Timeout: 3600000000000}, // 1h in ns
+		NodeSpec: &entities.NodeSpec{
+			Approval: &entities.HumanApprovalConfig{},
 		},
 	}, nil)
 	if err != nil {
@@ -178,11 +187,11 @@ func TestHumanExecutor(t *testing.T) {
 
 func TestSubflowExecutor(t *testing.T) {
 	e := &SubflowExecutor{}
-	if e.TaskType() != model.TaskSubflow {
+	if e.TaskType() != entities.TaskSubflow {
 		t.Error("wrong task type")
 	}
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{AgentFlowID: "sub-fix"},
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{AgentFlowID: "sub-fix"},
 		Input:    map[string]any{"repo": "test"},
 	}, nil)
 	if err != nil {
@@ -193,49 +202,7 @@ func TestSubflowExecutor(t *testing.T) {
 	}
 }
 
-// ── Tool ─────────────────────────────────────────────
-
-type testMCPClient struct {
-	tools map[string]string
-}
-
-func (c *testMCPClient) CallTool(_ context.Context, toolName string, args map[string]any) (map[string]any, error) {
-	return map[string]any{"tool": toolName, "args": args}, nil
-}
-
-func TestToolExecutor(t *testing.T) {
-	e := NewToolExecutor(map[string]engine.MCPClient{
-		"github": &testMCPClient{},
-	})
-	if e.TaskType() != model.TaskTool {
-		t.Error("wrong task type")
-	}
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Tool: "github"},
-		Input: map[string]any{
-			"action": "get_issue",
-			"repo":   "test/repo",
-		},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Output["tool"] != "get_issue" {
-		t.Errorf("expected tool name, got %v", result.Output)
-	}
-}
-
-func TestToolExecutor_MissingClient(t *testing.T) {
-	e := NewToolExecutor(nil)
-	_, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Tool: "nonexistent"},
-	}, nil)
-	if err == nil {
-		t.Fatal("expected error for missing client")
-	}
-}
-
-// ── Supervisor ───────────────────────────────────────
+// ── Test helpers ─────────────────────────────────────
 
 type testLLMClient struct {
 	response string
@@ -243,153 +210,6 @@ type testLLMClient struct {
 
 func (c *testLLMClient) Generate(_ context.Context, _, _, _ string, _ float64) (string, error) {
 	return c.response, nil
-}
-
-func TestSupervisorExecutor_ValidAction(t *testing.T) {
-	llm := &testLLMClient{response: `{"action":"continue","target":"","reason":"ok"}`}
-	e := NewSupervisorExecutor(llm, []*config.AgentDef{
-		{Name: "supervisor", Model: "test/gpt"},
-	})
-
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{
-			Agent: "supervisor",
-			SupervisorConfig: &model.SupervisorConfig{
-				AllowedActions: []string{"continue", "retry", "abort"},
-			},
-		},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Output["action"] != "continue" {
-		t.Errorf("expected continue, got %v", result.Output["action"])
-	}
-}
-
-func TestSupervisorExecutor_DisallowedAction(t *testing.T) {
-	llm := &testLLMClient{response: `{"action":"redirect","target":"x","reason":"test"}`}
-	e := NewSupervisorExecutor(llm, []*config.AgentDef{
-		{Name: "supervisor", Model: "test/gpt"},
-	})
-
-	_, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{
-			Agent: "supervisor",
-			SupervisorConfig: &model.SupervisorConfig{
-				AllowedActions: []string{"continue", "retry"},
-			},
-		},
-	}, nil)
-	if err == nil {
-		t.Fatal("expected error for disallowed action")
-	}
-}
-
-func TestSupervisorExecutor_DefaultContinue(t *testing.T) {
-	// LLM returns JSON without action field → should default to "continue"
-	llm := &testLLMClient{response: `{"reason":"testing"}`}
-	e := NewSupervisorExecutor(llm, []*config.AgentDef{
-		{Name: "supervisor", Model: "test/gpt"},
-	})
-
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{
-			Agent: "supervisor",
-			SupervisorConfig: &model.SupervisorConfig{
-				AllowedActions: []string{"continue", "retry"},
-			},
-		},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Output["action"] != "continue" {
-		t.Errorf("expected default continue, got %v", result.Output["action"])
-	}
-}
-
-// ── Agent (with schema validation) ────────────────────
-
-func TestAgentExecutor_Success(t *testing.T) {
-	llm := &testLLMClient{response: `{"issues":[{"id":"ISS-001","severity":"high"}]}`}
-	e := NewAgentExecutor(llm, []*config.AgentDef{
-		{Name: "issue-detector", Model: "test/gpt", Instruction: "find issues", Soul: "you are a scanner"},
-	})
-
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Agent: "issue-detector"},
-		Input:    map[string]any{"repo": "test"},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Output == nil {
-		t.Fatal("expected output")
-	}
-}
-
-func TestAgentExecutor_SchemaValidation_Pass(t *testing.T) {
-	llm := &testLLMClient{response: `{"decision":true,"reason":"ok"}`}
-	e := NewAgentExecutor(llm, []*config.AgentDef{
-		{Name: "reviewer", Model: "test/gpt", Instruction: "review", Soul: "you are a reviewer",
-			OutputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"decision": map[string]any{"type": "boolean"},
-					"reason":   map[string]any{"type": "string"},
-				},
-				"required": []any{"decision", "reason"},
-			},
-		},
-	})
-
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Agent: "reviewer"},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Output == nil {
-		t.Fatal("expected output")
-	}
-}
-
-func TestAgentExecutor_SchemaValidation_Retry(t *testing.T) {
-	callCount := 0
-	llm := &retryLLM{
-		responses: []string{
-			`{"decision":"yes","reason":"ok"}`,          // fail: decision not boolean
-			`{"decision":true}`,                         // fail: missing reason
-			`{"decision":true,"reason":"final answer"}`, // pass
-		},
-		onCall: func() { callCount++ },
-	}
-	e := NewAgentExecutor(llm, []*config.AgentDef{
-		{Name: "reviewer", Model: "test/gpt", Instruction: "review", Soul: "you are a reviewer",
-			OutputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"decision": map[string]any{"type": "boolean"},
-					"reason":   map[string]any{"type": "string"},
-				},
-				"required": []any{"decision", "reason"},
-			},
-		},
-	})
-	// First response fails schema → retry → second fails → retry → third passes
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Agent: "reviewer"},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if callCount < 3 {
-		t.Errorf("expected 3 retries, got %d", callCount)
-	}
-	if result.Output["decision"] != true {
-		t.Errorf("expected true, got %v", result.Output["decision"])
-	}
 }
 
 type retryLLM struct {
@@ -407,15 +227,222 @@ func (c *retryLLM) Generate(_ context.Context, _, _, _ string, _ float64) (strin
 	return resp, nil
 }
 
+// agentServer creates an httptest server that serves agent definitions.
+func agentServer(agents []*entities.AgentInfo) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, a := range agents {
+			if r.URL.Path == "/api/v1/"+testTenant+"/agents/"+a.Name {
+				json.NewEncoder(w).Encode(a)
+				return
+			}
+		}
+		w.WriteHeader(404)
+	}))
+}
+
+// ── Tool ─────────────────────────────────────────────
+
+func TestToolExecutor_TaskType(t *testing.T) {
+	e := NewToolExecutor(mcp.NewMcpManager())
+	if e.TaskType() != entities.TaskTool {
+		t.Error("wrong task type")
+	}
+}
+
+func TestToolExecutor_MissingTool(t *testing.T) {
+	e := NewToolExecutor(mcp.NewMcpManager())
+	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Tool: "nonexistent"},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for missing tool")
+	}
+}
+
+// ── Supervisor ───────────────────────────────────────
+
+func TestSupervisorExecutor_ValidAction(t *testing.T) {
+	llm := &testLLMClient{response: `{"action":"continue","target":"","reason":"ok"}`}
+	srv := agentServer([]*entities.AgentInfo{
+		{Name: "supervisor", Model: "test/gpt"},
+	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewSupervisorExecutor(llm, apiClient, testTenant)
+
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{
+			Agent: "supervisor",
+			SupervisorConfig: &entities.SupervisorConfig{
+				AllowedActions: []string{"continue", "retry", "abort"},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output["action"] != "continue" {
+		t.Errorf("expected continue, got %v", result.Output["action"])
+	}
+}
+
+func TestSupervisorExecutor_DisallowedAction(t *testing.T) {
+	llm := &testLLMClient{response: `{"action":"redirect","target":"x","reason":"test"}`}
+	srv := agentServer([]*entities.AgentInfo{
+		{Name: "supervisor", Model: "test/gpt"},
+	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewSupervisorExecutor(llm, apiClient, testTenant)
+
+	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{
+			Agent: "supervisor",
+			SupervisorConfig: &entities.SupervisorConfig{
+				AllowedActions: []string{"continue", "retry"},
+			},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for disallowed action")
+	}
+}
+
+func TestSupervisorExecutor_DefaultContinue(t *testing.T) {
+	llm := &testLLMClient{response: `{"reason":"testing"}`}
+	srv := agentServer([]*entities.AgentInfo{
+		{Name: "supervisor", Model: "test/gpt"},
+	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewSupervisorExecutor(llm, apiClient, testTenant)
+
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{
+			Agent: "supervisor",
+			SupervisorConfig: &entities.SupervisorConfig{
+				AllowedActions: []string{"continue", "retry"},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output["action"] != "continue" {
+		t.Errorf("expected default continue, got %v", result.Output["action"])
+	}
+}
+
+// ── Agent ────────────────────────────────────────────
+
+func TestAgentExecutor_Success(t *testing.T) {
+	llm := &testLLMClient{response: `{"issues":[{"id":"ISS-001","severity":"high"}]}`}
+	srv := agentServer([]*entities.AgentInfo{
+		{Name: "issue-detector", Model: "test/gpt", Instruction: "find issues", Soul: "you are a scanner"},
+	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewAgentExecutor(llm, apiClient, testTenant)
+
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Agent: "issue-detector"},
+		Input:    map[string]any{"repo": "test"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output == nil {
+		t.Fatal("expected output")
+	}
+}
+
+func TestAgentExecutor_SchemaValidation_Pass(t *testing.T) {
+	llm := &testLLMClient{response: `{"decision":true,"reason":"ok"}`}
+	srv := agentServer([]*entities.AgentInfo{
+		{Name: "reviewer", Model: "test/gpt", Instruction: "review", Soul: "you are a reviewer",
+			OutputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"decision": map[string]any{"type": "boolean"},
+					"reason":   map[string]any{"type": "string"},
+				},
+				"required": []any{"decision", "reason"},
+			},
+		},
+	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewAgentExecutor(llm, apiClient, testTenant)
+
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Agent: "reviewer"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output == nil {
+		t.Fatal("expected output")
+	}
+}
+
+func TestAgentExecutor_SchemaValidation_Retry(t *testing.T) {
+	callCount := 0
+	llm := &retryLLM{
+		responses: []string{
+			`{"decision":"yes","reason":"ok"}`,
+			`{"decision":true}`,
+			`{"decision":true,"reason":"final answer"}`,
+		},
+		onCall: func() { callCount++ },
+	}
+	srv := agentServer([]*entities.AgentInfo{
+		{Name: "reviewer", Model: "test/gpt", Instruction: "review", Soul: "you are a reviewer",
+			OutputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"decision": map[string]any{"type": "boolean"},
+					"reason":   map[string]any{"type": "string"},
+				},
+				"required": []any{"decision", "reason"},
+			},
+		},
+	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewAgentExecutor(llm, apiClient, testTenant)
+
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Agent: "reviewer"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callCount < 3 {
+		t.Errorf("expected 3 retries, got %d", callCount)
+	}
+	if result.Output["decision"] != true {
+		t.Errorf("expected true, got %v", result.Output["decision"])
+	}
+}
+
 func TestAgentExecutor_JSONPreamble(t *testing.T) {
-	// LLM output with markdown preamble → extractJSON should handle it
 	llm := &testLLMClient{response: "Based on analysis, the best approach is:\n\n```json\n{\"decision\":false,\"reason\":\"unsafe\"}\n```\n\nLet me know if changes are needed."}
-	e := NewAgentExecutor(llm, []*config.AgentDef{
+	srv := agentServer([]*entities.AgentInfo{
 		{Name: "security-reviewer", Model: "test/gpt", Instruction: "review", Soul: "you are a reviewer"},
 	})
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
 
-	result, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Agent: "security-reviewer"},
+	e := NewAgentExecutor(llm, apiClient, testTenant)
+
+	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Agent: "security-reviewer"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -426,9 +453,13 @@ func TestAgentExecutor_JSONPreamble(t *testing.T) {
 }
 
 func TestAgentExecutor_NotFound(t *testing.T) {
-	e := NewAgentExecutor(nil, nil)
-	_, err := e.Execute(context.Background(), &model.ExecutionPlan{
-		NodeSpec: &model.NodeSpec{Agent: "nonexistent"},
+	srv := agentServer(nil)
+	defer srv.Close()
+	apiClient := client.NewFlowgentClient(srv.URL)
+
+	e := NewAgentExecutor(nil, apiClient, testTenant)
+	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
+		NodeSpec: &entities.NodeSpec{Agent: "nonexistent"},
 	}, nil)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
@@ -447,15 +478,15 @@ func TestTaskExecutorRouter(t *testing.T) {
 	router.Register(&SubflowExecutor{})
 
 	tests := []struct {
-		taskType model.TaskType
-		plan     *model.ExecutionPlan
+		taskType entities.TaskType
+		plan     *entities.ExecutionPlan
 	}{
-		{model.TaskCondition, &model.ExecutionPlan{TaskType: model.TaskCondition, NodeSpec: &model.NodeSpec{Expression: "true"}}},
-		{model.TaskNoop, &model.ExecutionPlan{TaskType: model.TaskNoop}},
-		{model.TaskMap, &model.ExecutionPlan{TaskType: model.TaskMap}},
-		{model.TaskJoin, &model.ExecutionPlan{TaskType: model.TaskJoin, Input: map[string]any{}}},
-		{model.TaskTribunal, &model.ExecutionPlan{TaskType: model.TaskTribunal, NodeSpec: &model.NodeSpec{Strategy: map[string]any{"type": "majority"}}, Input: map[string]any{"votes": []any{map[string]any{"decision": true}}}}},
-		{model.TaskSubflow, &model.ExecutionPlan{TaskType: model.TaskSubflow, NodeSpec: &model.NodeSpec{AgentFlowID: "test-flow"}}},
+		{entities.TaskCondition, &entities.ExecutionPlan{TaskType: entities.TaskCondition, NodeSpec: &entities.NodeSpec{Expression: "true"}}},
+		{entities.TaskNoop, &entities.ExecutionPlan{TaskType: entities.TaskNoop}},
+		{entities.TaskMap, &entities.ExecutionPlan{TaskType: entities.TaskMap}},
+		{entities.TaskJoin, &entities.ExecutionPlan{TaskType: entities.TaskJoin, Input: map[string]any{}}},
+		{entities.TaskTribunal, &entities.ExecutionPlan{TaskType: entities.TaskTribunal, NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}}, Input: map[string]any{"votes": []any{map[string]any{"decision": true}}}}},
+		{entities.TaskSubflow, &entities.ExecutionPlan{TaskType: entities.TaskSubflow, NodeSpec: &entities.NodeSpec{AgentFlowID: "test-flow"}}},
 	}
 
 	for _, tt := range tests {
@@ -470,8 +501,8 @@ func TestTaskExecutorRouter(t *testing.T) {
 
 func TestTaskExecutorRouter_UnknownType(t *testing.T) {
 	router := NewTaskExecutorRouter()
-	_, err := router.Execute(context.Background(), &model.ExecutionPlan{
-		TaskType: model.TaskType("unknown"),
+	_, err := router.Execute(context.Background(), &entities.ExecutionPlan{
+		TaskType: entities.TaskType("unknown"),
 	}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown task type")
@@ -493,12 +524,11 @@ func TestExtractJSON(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractJSON(tt.input)
-		// Compare after parsing both as JSON to ignore formatting
 		var wantParsed, gotParsed map[string]any
 		wErr := json.Unmarshal([]byte(tt.expected), &wantParsed)
 		gErr := json.Unmarshal([]byte(got), &gotParsed)
 		if wErr != nil && gErr != nil {
-			continue // both fail to parse, strings should match
+			continue
 		}
 		if wErr != nil || gErr != nil {
 			t.Errorf("extractJSON(%q) = %q; expected %q", tt.input, got, tt.expected)

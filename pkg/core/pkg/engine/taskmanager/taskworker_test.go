@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
@@ -18,13 +18,13 @@ func TestSlotWorker_Execute(t *testing.T) {
 
 	worker := NewSlotWorker("slot-1", "tm-test", q, router, nil, nil)
 
-	plan := &model.ExecutionPlan{
+	plan := &entities.ExecutionPlan{
 		PlanID:   "plan-test-1",
 		NodeID:   "node-1",
-		TaskType: model.TaskNoop,
-		State:    model.TaskPending,
+		TaskType: entities.TaskNoop,
+		State:    entities.TaskPending,
 		Input:    map[string]any{"key": "val"},
-		NodeSpec: &model.NodeSpec{Type: model.NoopNode},
+		NodeSpec: &entities.NodeSpec{Type: entities.NoopNode},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -68,12 +68,12 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 
 	worker := NewSlotWorker("slot-3", "tm-test", q, router, nil, nil)
 
-	plan := &model.ExecutionPlan{
+	plan := &entities.ExecutionPlan{
 		PlanID:   "plan-fail-1",
 		NodeID:   "node-fail",
-		TaskType: model.TaskType("failing"),
-		State:    model.TaskPending,
-		NodeSpec: &model.NodeSpec{Type: model.NodeType("failing")},
+		TaskType: entities.TaskType("failing"),
+		State:    entities.TaskPending,
+		NodeSpec: &entities.NodeSpec{Type: entities.NodeType("failing")},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -93,7 +93,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 
 type failingExecutor struct{}
 
-func (e *failingExecutor) TaskType() model.TaskType { return "failing" }
-func (e *failingExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
+func (e *failingExecutor) TaskType() entities.TaskType { return "failing" }
+func (e *failingExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	return nil, context.DeadlineExceeded
 }

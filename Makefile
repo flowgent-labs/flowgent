@@ -1,46 +1,42 @@
-.PHONY: help build build-all build-host build-host-all build-image build-image-all clean test fmt
+.PHONY: help build build-dev build-bin build-bin-dev clean test fmt
 
 BIN_DIR  ?= bin
-GO       ?= $(GOROOT)/bin/go
+GO       ?= go
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 help:
 	@echo "Flowgent -- Makefile"
 	@echo ""
-	@echo "  Docker builds (no host Go):"
-	@echo "    make build             flowgent binary via Docker"
-	@echo "    make build-all         flowgent + MCPs via Docker"
-	@echo "    make build-image       production image (flowgent:latest)"
-	@echo "    make build-image-all   all-in-one image (flowgent:all-in-one)"
+	@echo "  Docker builds (Recommended):"
+	@echo "    make build              Build the production image."
+	@echo "    make build-dev          Build the all-in-one image (bundles example MCPs)."
 	@echo ""
-	@echo "  Host builds (dev, requires Go):"
-	@echo "    make build-host        flowgent on host"
-	@echo "    make build-host-all    flowgent + MCPs on host"
+	@echo "  Binary builds (Development only):"
+	@echo "    make build-bin          Build the flowgent binary on the host."
+	@echo "    make build-bin-dev      Build flowgent + example MCP binaries on the host."
 	@echo ""
 	@echo "  Utils: make test fmt clean"
 
 .DEFAULT_GOAL := help
 
+# ── Docker builds ─────────────────────────────────────────────────
+
 build:
-	@mkdir -p $(BIN_DIR)
-	DOCKER_BUILDKIT=1 docker build -f deploy/docker/Dockerfile --target export --output type=local,dest=$(BIN_DIR) .
-
-build-all:
-	@mkdir -p $(BIN_DIR)
-	DOCKER_BUILDKIT=1 docker build -f deploy/docker/Dockerfile.all-in-one --target export --output type=local,dest=$(BIN_DIR) .
-
-build-image:
 	DOCKER_BUILDKIT=1 docker build -t flowgent:latest -f deploy/docker/Dockerfile .
 
-build-image-all:
+build-dev:
 	DOCKER_BUILDKIT=1 docker build -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
 
-build-host:
+# ── Binary builds ─────────────────────────────────────────────────
+
+build-bin:
 	@mkdir -p $(BIN_DIR)
 	cd pkg/cmd && CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent ./pkg/
 
-build-host-all: build-host
-	@echo "build-host-all: done (MCP examples removed — see git history)"
+build-bin-dev: build-bin
+	@echo "build-bin-dev: MCP example binaries — see examples/security-autonomy-fixer/mcps/"
+
+# ── Utils ─────────────────────────────────────────────────────────
 
 clean:
 	rm -rf $(BIN_DIR)/

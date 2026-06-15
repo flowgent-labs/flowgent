@@ -1,7 +1,7 @@
--- Flowgent PostgreSQL — agents, notification channels, subscription routes, multi-tenant fields
+-- Flowgent PostgreSQL -- agents, notification channels, subscription routes, multi-tenant fields
 
--- ── Agents table (DB-backed agent definitions) ──────────────
-CREATE TABLE IF NOT EXISTS agents (
+-- -- Agents table (DB-backed agent definitions) ------------------------------
+CREATE TABLE IF NOT EXISTS llm_agent (
     name          VARCHAR(255) PRIMARY KEY,
     model         VARCHAR(255) NOT NULL,
     soul          TEXT NOT NULL,
@@ -13,10 +13,10 @@ CREATE TABLE IF NOT EXISTS agents (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_agents_tenant ON agents(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_llmagent_tenant ON llm_agent(tenant_id);
 
--- ── Notification channels ───────────────────────────────────
-CREATE TABLE IF NOT EXISTS notification_channels (
+-- -- Notification channels --------------------------------------------------
+CREATE TABLE IF NOT EXISTS nfy_channel (
     id           VARCHAR(64) PRIMARY KEY,
     name         VARCHAR(255) NOT NULL,
     channel_type VARCHAR(32) NOT NULL,
@@ -26,9 +26,9 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_notifchannels_tenant ON notification_channels(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_nfychannel_tenant ON nfy_channel(tenant_id);
 
--- ── Subscription routes (clustered WS delivery) ─────────────
+-- -- Subscription routes (clustered WS delivery) ----------------------------
 CREATE TABLE IF NOT EXISTS subscription_routes (
     id            VARCHAR(64) PRIMARY KEY,
     agentflow_id  VARCHAR(255) NOT NULL,
@@ -39,21 +39,21 @@ CREATE TABLE IF NOT EXISTS subscription_routes (
 CREATE INDEX IF NOT EXISTS idx_subroutes_agentflow ON subscription_routes(agentflow_id);
 CREATE INDEX IF NOT EXISTS idx_subroutes_pod ON subscription_routes(pod_id);
 
--- ── Multi-tenant columns for agentflow definitions ──────────
-ALTER TABLE agentflow_definitions ADD COLUMN IF NOT EXISTS priority  VARCHAR(16) DEFAULT 'medium';
-ALTER TABLE agentflow_definitions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255) DEFAULT 'default';
-ALTER TABLE agentflow_definitions ADD COLUMN IF NOT EXISTS namespace VARCHAR(255) DEFAULT '';
-ALTER TABLE agentflow_definitions ADD COLUMN IF NOT EXISTS mode      VARCHAR(32) DEFAULT '';
-ALTER TABLE agentflow_definitions ADD COLUMN IF NOT EXISTS labels    JSONB DEFAULT '{}';
+-- -- Multi-tenant columns for agentflow definitions -------------------------
+ALTER TABLE orh_agentflow ADD COLUMN IF NOT EXISTS priority  VARCHAR(16) DEFAULT 'medium';
+ALTER TABLE orh_agentflow ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255) DEFAULT 'default';
+ALTER TABLE orh_agentflow ADD COLUMN IF NOT EXISTS namespace VARCHAR(255) DEFAULT '';
+ALTER TABLE orh_agentflow ADD COLUMN IF NOT EXISTS mode      VARCHAR(32) DEFAULT '';
+ALTER TABLE orh_agentflow ADD COLUMN IF NOT EXISTS labels    JSONB DEFAULT '{}';
 
--- ── Missing columns from original PG migration ──────────
-ALTER TABLE agentflow_runs ADD COLUMN IF NOT EXISTS trigger_payload JSONB;
+-- -- Missing columns from original PG migration -------------------------
+ALTER TABLE orh_flowrun ADD COLUMN IF NOT EXISTS trigger_payload JSONB;
 
--- ── Multi-tenant columns for agentflow runs ────────────────
-ALTER TABLE agentflow_runs ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255) DEFAULT 'default';
-ALTER TABLE agentflow_runs ADD COLUMN IF NOT EXISTS namespace VARCHAR(255) DEFAULT '';
-ALTER TABLE agentflow_runs ADD COLUMN IF NOT EXISTS priority  VARCHAR(16) DEFAULT 'medium';
+-- -- Multi-tenant columns for agentflow runs -------------------------------
+ALTER TABLE orh_flowrun ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255) DEFAULT 'default';
+ALTER TABLE orh_flowrun ADD COLUMN IF NOT EXISTS namespace VARCHAR(255) DEFAULT '';
+ALTER TABLE orh_flowrun ADD COLUMN IF NOT EXISTS priority  VARCHAR(16) DEFAULT 'medium';
 
--- ── agentflow_run_id on human_approvals ────────────────────
+-- -- agentflow_run_id on human_approvals -----------------------------------
 ALTER TABLE human_approvals ADD COLUMN IF NOT EXISTS agentflow_run_id VARCHAR(64) DEFAULT '';
-CREATE INDEX IF NOT EXISTS idx_human_afrun ON human_approvals(agentflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_human_orhflowrun ON human_approvals(agentflow_run_id);

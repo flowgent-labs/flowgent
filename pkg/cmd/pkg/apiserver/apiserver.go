@@ -22,7 +22,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
 )
 
@@ -57,18 +57,15 @@ func startServer(cfgPath string) error {
 	storeImpl := store.InitStore(serviceCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
-	// DB-backed agentflow definitions (Standard mode)
-	var agentFlows []model.AgentFlowSpec
-	subAgentFlows := make(map[string]model.AgentFlowSpec)
-	if serviceCfg.Orchestration.AgentFlows.Standard.Enabled {
-		dbFlows, dbSubFlows, dberr := agentflow.LoadFromDB(context.Background(), storeImpl)
-		if dberr != nil {
-			slog.Warn("Failed to load agentflows from DB", "error", dberr)
-		} else {
-			agentFlows = append(agentFlows, dbFlows...)
-			for k, v := range dbSubFlows {
-				subAgentFlows[k] = v
-			}
+	// DB-backed agentflow definitions
+	var agentFlows []entities.AgentFlowInfo
+	subAgentFlows := make(map[string]entities.AgentFlowInfo)
+	if dbFlows, dbSubFlows, dberr := agentflow.LoadFromDB(context.Background(), storeImpl); dberr != nil {
+		slog.Warn("Failed to load agentflows from DB", "error", dberr)
+	} else {
+		agentFlows = append(agentFlows, dbFlows...)
+		for k, v := range dbSubFlows {
+			subAgentFlows[k] = v
 		}
 	}
 

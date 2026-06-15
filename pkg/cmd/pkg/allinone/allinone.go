@@ -5,7 +5,6 @@ package allinone
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,25 +18,32 @@ import (
 
 	"github.com/a2aproject/a2a-go/a2a"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/api/pkg"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/trigger"
-	"github.com/flowgent-labs/flowgent/core/pkg/llm"
-	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
-	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/notifier/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
 )
+
+// allInOneState bundles shared dependencies for the all-in-one process.
+type allInOneState struct {
+	cfg         *config.FlowgentConfig
+	store       store.IStore
+	apiClient   *client.FlowgentClient
+	tenant      string
+	taskClient  *client.TaskStateClient
+	humanClient *client.HumanApprovalClient
+	logger      *utils.Logger
+}
 
 func Start(cfgPath, pidFile string) error {
 	if pidFile != "" {
@@ -56,260 +62,298 @@ func Restart(cfgPath, pidFile string) error {
 	return Start(cfgPath, pidFile)
 }
 
+// startAllInOne loads config, initializes shared state, then starts each component.
 func startAllInOne(cfgPath string) error {
-	serviceCfg, err := config.Load(cfgPath)
+	svcCfg, err := config.Load(cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	config.LogConfig(serviceCfg)
-	logger := utils.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
+	config.LogConfig(svcCfg)
+	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
 
-	agentFlows, subAgentFlows, err := config.LoadAgentFlows(serviceCfg, cfgPath)
-	if err != nil {
-		return fmt.Errorf("load agentFlows: %w", err)
-	}
-	slog.Info("AgentFlows loaded", "count", len(agentFlows)+len(subAgentFlows))
-
-	// ── Database (apiserver-owned) ──
-	storeImpl := store.InitStore(serviceCfg)
+	storeImpl := store.InitStore(svcCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 
-	// ── FlowgentClient for internal component state access ──
-	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
-	tenant := serviceCfg.Tenant.DefaultTenant
+	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
+	tenant := svcCfg.Tenant.DefaultTenant
 	if tenant == "" {
 		tenant = "default"
 	}
-	stateClient := &client.RunStateClient{Client: apiClient, Tenant: tenant}
-	taskClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
-	humanClient := &client.HumanApprovalClient{Client: apiClient}
-	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: tenant}
 
-	// DB-backed resources (apiserver-only path)
-	loadedAgents, _ := config.LoadAgents(serviceCfg, cfgPath)
-	if serviceCfg.Orchestration.Agents.Standard.Enabled {
-		var agStore agentdef.IAgentDefStore
-		switch db := storeImpl.DB().(type) {
-		case *pgxpool.Pool:
-			agStore = agentdef.NewAgentDefPostgresStore(db)
-		case *sql.DB:
-			agStore = agentdef.NewAgentDefSQLiteStore(db)
-		}
-		if agStore != nil {
-			if agentPage, dberr := agStore.Select(context.Background(), model.PageRequest{Page: 1, Size: 1000}); dberr == nil {
-				for _, a := range agentPage.Items {
-					loadedAgents = append(loadedAgents, *a)
-				}
-			}
-		}
-	}
-	if serviceCfg.Orchestration.AgentFlows.Standard.Enabled {
-		if dbFlows, dbSubFlows, dberr := agentflow.LoadFromDB(context.Background(), storeImpl); dberr == nil {
-			agentFlows = append(agentFlows, dbFlows...)
-			for k, v := range dbSubFlows {
-				subAgentFlows[k] = v
-			}
-		}
+	state := &allInOneState{
+		cfg:         svcCfg,
+		store:       storeImpl,
+		apiClient:   apiClient,
+		tenant:      tenant,
+		taskClient:  &client.TaskStateClient{Client: apiClient, Tenant: tenant},
+		humanClient: &client.HumanApprovalClient{Client: apiClient},
+		logger:      logger,
 	}
 
-	// ── MCP + LLM ──
-	_ = mcp.NewMcpManager() // MCPs now DB-backed, loaded at runtime
+	// Load agent flows (YAML + DB)
+	agentFlows, subFlows := loadFlows(state, cfgPath)
+	allFlows := append(agentFlows, flattenSubflows(subFlows)...)
 
-	mcpMap := make(map[string]engine.MCPClient)
+	// Resource Manager (standalone, starts TM in-process)
+	rm := createStandaloneRM(state)
 
+	// Notifier + WS bridge (before REST so bridge is available)
+	notifSvc, wsBridge := startNotifier(state)
 
-	agentPtrs := make([]*config.AgentDef, len(loadedAgents))
-	for i := range loadedAgents {
-		agentPtrs[i] = &loadedAgents[i]
-	}
-	rm, _ := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:      engine.ProviderStandalone,
-		PoolSize:      serviceCfg.Orchestration.MaxConcurrentFlows,
-		TaskState:     taskClient,
-		HumanApproval: humanClient,
-		Agents:        agentPtrs, MCPClients: mcpMap,
-		LLMClient: llm.NewLlmProviderManager(llmLoader),
-		Logger: logger,
-	})
+	// REST API Server (with optional WS bridge)
+	restSrv, flowHandler := startRESTServer(state, agentFlows, subFlows, wsBridge)
 
-	// ── API Handlers ──
-	healthHandler := &handler.HealthHandler{}
-	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows)
-	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
-	var mqttPub handler.MQTTPublisher // nil-safe for all-in-one
-	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
-	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPub, logger)
-	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
-	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
+	// Cron triggers
+	startCronScheduler(allFlows, state.apiClient, state.tenant)
 
-	// ── Cron ──
-	cronSched := trigger.NewScheduleTrigger()
-	cronSched.RegisterAgentFlows(append(agentFlows, flattenSubflows(subAgentFlows)...), func(ctx context.Context, id string) {
-		run := &model.AgentFlowRun{AgentFlowID: id, Version: 1, Status: model.RunPending,
-			Trigger: model.TriggerInfo{Type: "schedule", Source: "cron"}}
-		_, _ = apiClient.CreateRun(ctx, tenant, run)
-	})
-	cronSched.Start()
-	defer cronSched.Stop()
+	// JobManager + RunPoller
+	startOrchestrator(state, rm, flowHandler.AgentFlows())
 
-	// ── JobManager + RunPoller ──
-	timeout, _ := time.ParseDuration(serviceCfg.Orchestration.FlowExecutionTimeout)
-	if timeout == 0 {
-		timeout = 30 * time.Minute
-	}
-	jm, err := jobmanager.NewJobManager(stateClient, rm, logger, &jobmanager.JobManagerConfig{
-		FlowExecutionTimeout: timeout,
-		MaxNodeRetries:       serviceCfg.Orchestration.MaxNodeRetries,
-		MaxConcurrentFlows:   serviceCfg.Orchestration.MaxConcurrentFlows,
-	})
-	if err != nil {
-		return fmt.Errorf("create jobmanager: %w", err)
-	}
-	flowMap := agentFlowHandler.AgentFlows()
-	go startRunPoller(context.Background(), apiClient, tenant, jm, flowMap, "", "")
+	// A2A Server
+	a2aSrv := startA2AServer(state)
 
-	// ── Hot reload ──
-	if refreshStr := "" /* static reload removed */; refreshStr != "" {
-		if d, err := time.ParseDuration(refreshStr); err == nil && d > 0 {
-			go func() {
-				t := time.NewTicker(d)
-				defer t.Stop()
-				for range t.C {
-					nf, nsf, _ := config.ReloadAgentFlows(serviceCfg, cfgPath)
-					agentFlowHandler.Reload(nf, nsf)
-				}
-			}()
-		}
-	}
+	// Pprof
+	pprofSrv := startPprof(state)
 
-	readTO, _ := time.ParseDuration(serviceCfg.Server.ReadTimeout)
-	if readTO == 0 {
-		readTO = 30 * time.Second
-	}
-	writeTO, _ := time.ParseDuration(serviceCfg.Server.WriteTimeout)
-	if writeTO == 0 {
-		writeTO = 60 * time.Second
-	}
-	shutdownTO, _ := time.ParseDuration(serviceCfg.Server.ShutdownTimeout)
-	if shutdownTO == 0 {
-		shutdownTO = 15 * time.Second
-	}
-
-	// ── Notifier ──
-	notifSvc := notifier.CreateNotifierService(apiClient, serviceCfg)
-	if notifSvc != nil {
-		go func() { _ = notifSvc.Start(context.Background()) }()
-		defer notifSvc.Shutdown()
-	}
-	var wsBridge *handler.NotifierWSBridge
-	if notifSvc != nil {
-		wsBridge = handler.NewNotifierWSBridge(&notifier.NotifToWSAdapter{Svc: notifSvc})
-	}
-
-	// ── REST API Server ──
-	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler)
-	var restHandler http.Handler = restMux
-	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
-		restHandler = config.AuthMiddleware(serviceCfg.Auth, restMux)
-	}
-
-	restAddr := fmt.Sprintf("%s:%d", serviceCfg.Server.Host, serviceCfg.Server.Port)
-	restSrv := &http.Server{
-		Addr: restAddr, Handler: restHandler,
-		ReadTimeout: readTO, WriteTimeout: writeTO,
-		MaxHeaderBytes: serviceCfg.Server.MaxBodyBytes,
-	}
-	go func() {
-		slog.Info("REST API server", "addr", restAddr)
-		_ = restSrv.ListenAndServe()
-	}()
-
-	// ── A2A Server ──
-	var a2aSrv *http.Server
-	if serviceCfg.A2A.Enabled {
-		a2aMux := http.NewServeMux()
-		a2aMux.HandleFunc("GET /.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(a2a.AgentCard{
-				Name: serviceCfg.ServiceName, Description: "Flowgent orchestration engine",
-				URL: fmt.Sprintf("http://%s:%d", serviceCfg.A2A.Host, serviceCfg.A2A.Port),
-				Version: "dev", Capabilities: a2a.AgentCapabilities{Streaming: false},
-			})
-		})
-		a2aMux.HandleFunc("POST /a2a/tasks", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				AgentFlowID string         `json:"agentflow_id"`
-				Vars        map[string]any `json:"vars"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			run := &model.AgentFlowRun{
-				ID: uuid.NewString(), AgentFlowID: req.AgentFlowID, Version: 1,
-				Status: model.RunPending, Vars: req.Vars,
-				Trigger: model.TriggerInfo{Type: "api", Source: "a2a"},
-			}
-			if _, err := apiClient.CreateRun(r.Context(), tenant, run); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(a2a.Task{
-				ID: a2a.TaskID(run.ID), ContextID: run.ID,
-				Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted},
-			})
-		})
-		a2aMux.HandleFunc("GET /_/healthz", healthHandler.Healthz)
-		a2aSrv = &http.Server{
-			Addr: fmt.Sprintf("%s:%d", serviceCfg.A2A.Host, serviceCfg.A2A.Port),
-			Handler: a2aMux, ReadTimeout: readTO, WriteTimeout: writeTO,
-		}
-		go func() {
-			slog.Info("A2A server", "addr", a2aSrv.Addr)
-			_ = a2aSrv.ListenAndServe()
-		}()
-	}
-
-	// ── Pprof ──
-	if serviceCfg.Mgmt.Enabled && serviceCfg.Mgmt.PProf.Enabled {
-		ppMux := http.NewServeMux()
-		ppMux.HandleFunc("GET /debug/pprof/", pprof.Index)
-		ppMux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
-		ppMux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
-		ppMux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
-		ppMux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
-		ppSrv := &http.Server{Addr: fmt.Sprintf("%s:%d", serviceCfg.Mgmt.Host, serviceCfg.Mgmt.Port), Handler: ppMux}
-		go func() { ppSrv.ListenAndServe() }()
-		defer ppSrv.Close()
-	}
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-	slog.Info("shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTO)
-	defer cancel()
-	if restSrv != nil {
-		restSrv.Shutdown(ctx)
-	}
-	if a2aSrv != nil {
-		a2aSrv.Shutdown(ctx)
-	}
-	return nil
+	return waitForShutdown(state, restSrv, a2aSrv, pprofSrv, notifSvc)
 }
 
-func flattenSubflows(m map[string]model.AgentFlowSpec) []model.AgentFlowSpec {
-	var out []model.AgentFlowSpec
+// ─── Flow loading ─────────────────────────────────────────────────
+
+func loadFlows(state *allInOneState, cfgPath string) ([]entities.AgentFlowInfo, map[string]entities.AgentFlowInfo) {
+	agentFlows, subFlows, err := config.LoadAgentFlows(state.cfg, cfgPath)
+	if err != nil {
+		slog.Warn("load agent flows from YAML", "error", err)
+	}
+	if dbFlows, dbSubFlows, dberr := agentflow.LoadFromDB(context.Background(), state.store); dberr == nil {
+		agentFlows = append(agentFlows, dbFlows...)
+		for k, v := range dbSubFlows {
+			subFlows[k] = v
+		}
+	}
+	slog.Info("AgentFlows loaded", "count", len(agentFlows)+len(subFlows))
+	return agentFlows, subFlows
+}
+
+func flattenSubflows(m map[string]entities.AgentFlowInfo) []entities.AgentFlowInfo {
+	var out []entities.AgentFlowInfo
 	for _, v := range m {
 		out = append(out, v)
 	}
 	return out
 }
 
+// ─── Resource Manager ─────────────────────────────────────────────
+
+func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
+	rm, _ := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
+		Provider:      engine.ProviderStandalone,
+		PoolSize:      state.cfg.Orchestration.MaxConcurrentFlows,
+		TaskState:     state.taskClient,
+		ApprovalInfo: state.humanClient,
+		Logger:        state.logger,
+		APIServerURL:  state.cfg.Runtime.APIServerURL,
+		Tenant:        state.tenant,
+	})
+	return rm
+}
+
+// ─── Notifier ─────────────────────────────────────────────────────
+
+func startNotifier(state *allInOneState) (*notifier.NotifierServer, *handler.NotifierWSBridge) {
+	notifSvc := notifier.CreateNotifierService(state.apiClient, state.cfg)
+	if notifSvc == nil {
+		return nil, nil
+	}
+	go func() { _ = notifSvc.Start(context.Background()) }()
+	return notifSvc, handler.NewNotifierWSBridge(&notifier.NotifToWSAdapter{Svc: notifSvc})
+}
+
+// ─── REST API Server ──────────────────────────────────────────────
+
+func startRESTServer(state *allInOneState, agentFlows []entities.AgentFlowInfo,
+	subFlows map[string]entities.AgentFlowInfo, wsBridge *handler.NotifierWSBridge) (*http.Server, *handler.FlowDefHandler) {
+
+	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows)
+	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
+	humanHandler := handler.NewHumanHandler(state.store, nil, state.logger)
+	runHandler := handler.NewFlowRunHandler(state.store, nil, state.logger)
+	notifHandler := handler.NewNotifierHandler(state.store, state.logger)
+	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
+
+	restMux := api.RegisterRESTRoutes(
+		&handler.HealthHandler{}, flowHandler, agentHandler,
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler)
+
+	var restHandler http.Handler = restMux
+	if len(state.cfg.Auth.AnonymousPaths) > 0 {
+		restHandler = config.AuthMiddleware(state.cfg.Auth, restMux)
+	}
+
+	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
+	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
+
+	restAddr := fmt.Sprintf("%s:%d", state.cfg.Server.Host, state.cfg.Server.Port)
+	restSrv := &http.Server{
+		Addr: restAddr, Handler: restHandler,
+		ReadTimeout: readTO, WriteTimeout: writeTO,
+		MaxHeaderBytes: state.cfg.Server.MaxBodyBytes,
+	}
+	go func() {
+		slog.Info("REST API server", "addr", restAddr)
+		_ = restSrv.ListenAndServe()
+	}()
+	return restSrv, flowHandler
+}
+
+// ─── Cron Scheduler ───────────────────────────────────────────────
+
+func startCronScheduler(allFlows []entities.AgentFlowInfo, apiClient *client.FlowgentClient, tenant string) {
+	cronSched := trigger.NewScheduleTrigger()
+	cronSched.RegisterAgentFlows(allFlows, func(ctx context.Context, id string) {
+		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending,
+			Trigger: entities.TriggerInfo{Type: "schedule", Source: "cron"}}
+		_, _ = apiClient.CreateRun(ctx, tenant, run)
+	})
+	cronSched.Start()
+}
+
+// ─── Orchestrator (JM + RunPoller) ────────────────────────────────
+
+func startOrchestrator(state *allInOneState, rm resourcemanager.ResourceManager,
+	flowMap map[string]*entities.AgentFlowInfo) {
+
+	timeout := parseDuration(state.cfg.Orchestration.FlowExecutionTimeout, 30*time.Minute)
+	stateClient := &client.RunStateClient{Client: state.apiClient, Tenant: state.tenant}
+
+	jm, err := jobmanager.NewJobManager(stateClient, rm, state.logger, &jobmanager.JobManagerConfig{
+		FlowExecutionTimeout: timeout,
+		MaxNodeRetries:       state.cfg.Orchestration.MaxNodeRetries,
+		MaxConcurrentFlows:   state.cfg.Orchestration.MaxConcurrentFlows,
+	})
+	if err != nil {
+		slog.Error("create jobmanager", "error", err)
+		return
+	}
+
+	go startRunPoller(context.Background(), state.apiClient, state.tenant, jm, flowMap, "", "")
+}
+
+// ─── A2A Server ───────────────────────────────────────────────────
+
+func startA2AServer(state *allInOneState) *http.Server {
+	if !state.cfg.A2A.Enabled {
+		return nil
+	}
+
+	a2aMux := http.NewServeMux()
+	a2aMux.HandleFunc("GET /.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(a2a.AgentCard{
+			Name: state.cfg.ServiceName, Description: "Flowgent orchestration engine",
+			URL: fmt.Sprintf("http://%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
+			Version: "dev", Capabilities: a2a.AgentCapabilities{Streaming: false},
+		})
+	})
+	a2aMux.HandleFunc("POST /a2a/tasks", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentFlowID string         `json:"agentflow_id"`
+			Vars        map[string]any `json:"vars"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		run := &entities.FlowRunInfo{
+			ID: uuid.NewString(), AgentFlowID: req.AgentFlowID, Version: 1,
+			Status: entities.RunPending, Vars: req.Vars,
+			Trigger: entities.TriggerInfo{Type: "api", Source: "a2a"},
+		}
+		if _, err := state.apiClient.CreateRun(r.Context(), state.tenant, run); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(a2a.Task{
+			ID: a2a.TaskID(run.ID), ContextID: run.ID,
+			Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted},
+		})
+	})
+	a2aMux.HandleFunc("GET /_/healthz", (&handler.HealthHandler{}).Healthz)
+
+	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
+	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
+
+	a2aSrv := &http.Server{
+		Addr: fmt.Sprintf("%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
+		Handler: a2aMux, ReadTimeout: readTO, WriteTimeout: writeTO,
+	}
+	go func() {
+		slog.Info("A2A server", "addr", a2aSrv.Addr)
+		_ = a2aSrv.ListenAndServe()
+	}()
+	return a2aSrv
+}
+
+// ─── Pprof ────────────────────────────────────────────────────────
+
+func startPprof(state *allInOneState) *http.Server {
+	if !state.cfg.Mgmt.Enabled || !state.cfg.Mgmt.PProf.Enabled {
+		return nil
+	}
+	ppMux := http.NewServeMux()
+	ppMux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	ppMux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	ppMux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	ppMux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	ppMux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+	ppSrv := &http.Server{Addr: fmt.Sprintf("%s:%d", state.cfg.Mgmt.Host, state.cfg.Mgmt.Port), Handler: ppMux}
+	go func() { ppSrv.ListenAndServe() }()
+	return ppSrv
+}
+
+// ─── Shutdown ─────────────────────────────────────────────────────
+
+func waitForShutdown(state *allInOneState, restSrv, a2aSrv, pprofSrv *http.Server,
+	notifSvc *notifier.NotifierServer) error {
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	slog.Info("shutting down...")
+
+	shutdownTO := parseDuration(state.cfg.Server.ShutdownTimeout, 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTO)
+	defer cancel()
+
+	if restSrv != nil {
+		restSrv.Shutdown(ctx)
+	}
+	if a2aSrv != nil {
+		a2aSrv.Shutdown(ctx)
+	}
+	if pprofSrv != nil {
+		pprofSrv.Close()
+	}
+	if notifSvc != nil {
+		notifSvc.Shutdown()
+	}
+	return nil
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────
+
+func parseDuration(s string, defaultDur time.Duration) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d == 0 {
+		return defaultDur
+	}
+	return d
+}
+
 // startRunPoller polls for pending runs via the apiserver client.
 func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant string,
-	jm *jobmanager.JobManager, flows map[string]*model.AgentFlowSpec,
+	jm *jobmanager.JobManager, flows map[string]*entities.AgentFlowInfo,
 	namespace, agentFlowID string) {
+
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -317,12 +361,12 @@ func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, err := api.ListRuns(ctx, tenant, string(model.RunPending), namespace, agentFlowID, 1, 50)
+			page, err := api.ListRuns(ctx, tenant, string(entities.RunPending), namespace, agentFlowID, 1, 50)
 			if err != nil {
 				continue
 			}
 			for _, run := range page.Items {
-				if run.Status != model.RunPending {
+				if run.Status != entities.RunPending {
 					continue
 				}
 				if namespace == "" && run.Namespace != "" {
@@ -340,7 +384,7 @@ func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 				if spec == nil {
 					continue
 				}
-				go func(r *model.AgentFlowRun, sp *model.AgentFlowSpec) {
+				go func(r *entities.FlowRunInfo, sp *entities.AgentFlowInfo) {
 					_ = jm.Submit(ctx, r, sp)
 				}(run, spec)
 			}

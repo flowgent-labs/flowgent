@@ -6,40 +6,40 @@ import (
 	"fmt"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Agent Executor ────────────────────────────────────
 
 // NodeMemoryStore is the subset of store.NodeMemoryStore needed by executors.
 type NodeMemoryStore = interface {
-	GetMemory(ctx context.Context, flowID, nodeID string) (*model.NodeMemory, error)
-	UpsertMemory(ctx context.Context, mem *model.NodeMemory) error
-	SearchMemory(ctx context.Context, flowID string, embedding []float32, topK int) ([]model.NodeMemory, error)
+	GetMemory(ctx context.Context, flowID, nodeID string) (*entities.MemoryInfo, error)
+	UpsertMemory(ctx context.Context, mem *entities.MemoryInfo) error
+	SearchMemory(ctx context.Context, flowID string, embedding []float32, topK int) ([]entities.MemoryInfo, error)
 }
 
 type AgentExecutor struct {
 	llmClient  engine.LLMClient
-	agents     map[string]*config.AgentDef
-	memStore   NodeMemoryStore // optional: flow-scoped memory persistence
+	client     *client.FlowgentClient
+	tenant     string
+	memStore   NodeMemoryStore
 	maxRetries int
 }
 
-func NewAgentExecutor(llm engine.LLMClient, agents []*config.AgentDef) *AgentExecutor {
-	m := make(map[string]*config.AgentDef)
-	for _, a := range agents {
-		m[a.Name] = a
-	}
-	return &AgentExecutor{llmClient: llm, agents: m, maxRetries: 3}
+func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, tenant string) *AgentExecutor {
+	return &AgentExecutor{llmClient: llm, client: apiClient, tenant: tenant, maxRetries: 3}
 }
 
 func (e *AgentExecutor) SetMemoryStore(s NodeMemoryStore) { e.memStore = s }
-func (e *AgentExecutor) TaskType() model.TaskType         { return model.TaskAgent }
+func (e *AgentExecutor) TaskType() entities.TaskType         { return entities.TaskAgent }
 
-func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
-	agent := e.agents[plan.NodeSpec.Agent]
+func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
+	agent, err := e.client.GetAgent(ctx, e.tenant, plan.NodeSpec.Agent)
+	if err != nil {
+		return nil, fmt.Errorf("agent not found %q: %w", plan.NodeSpec.Agent, err)
+	}
 	if agent == nil {
 		return nil, fmt.Errorf("agent not found: %s", plan.NodeSpec.Agent)
 	}
@@ -104,7 +104,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		}
 
 		e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, "")
-		return &model.TaskResult{Output: out}, nil
+		return &entities.TaskResult{Output: out}, nil
 	}
 
 	return nil, lastErr
@@ -129,7 +129,7 @@ func (e *AgentExecutor) upsertMemory(ctx context.Context, flowID, nodeID, prompt
 		content = existing.Content + "\n" + entry // accumulate, don't replace
 	}
 
-	_ = e.memStore.UpsertMemory(ctx, &model.NodeMemory{
+	_ = e.memStore.UpsertMemory(ctx, &entities.MemoryInfo{
 		FlowID:   flowID,
 		NodeID:   nodeID,
 		Content:  content,

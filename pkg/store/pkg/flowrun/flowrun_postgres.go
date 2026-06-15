@@ -4,32 +4,32 @@ import (
 	"context"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// FlowRunPostgresStore wraps store.PostgresGenericStore[model.AgentFlowRun].
+// FlowRunPostgresStore wraps store.PostgresGenericStore[entities.FlowRunInfo].
 type FlowRunPostgresStore struct {
-	inner *store.PostgresGenericStore[model.AgentFlowRun]
+	inner *store.PostgresGenericStore[entities.FlowRunInfo]
 }
 
 func NewFlowRunPostgresStore(pool *pgxpool.Pool) *FlowRunPostgresStore {
 	return &FlowRunPostgresStore{
-		inner: &store.PostgresGenericStore[model.AgentFlowRun]{
-			Pool: pool, Table: "agentflow_runs", IDCol: "id",
+		inner: &store.PostgresGenericStore[entities.FlowRunInfo]{
+			Pool: pool, Table: "orh_flowrun", IDCol: "id",
 		},
 	}
 }
 
-func (s *FlowRunPostgresStore) Get(ctx context.Context, id string) (*model.AgentFlowRun, error) {
+func (s *FlowRunPostgresStore) Get(ctx context.Context, id string) (*entities.FlowRunInfo, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *FlowRunPostgresStore) Select(ctx context.Context, req model.PageRequest) (*model.Page[model.AgentFlowRun], error) {
+func (s *FlowRunPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.FlowRunInfo], error) {
 	return s.inner.Select(ctx, req)
 }
-func (s *FlowRunPostgresStore) Save(ctx context.Context, e *model.AgentFlowRun) error {
+func (s *FlowRunPostgresStore) Save(ctx context.Context, e *entities.FlowRunInfo) error {
 	return s.inner.Save(ctx, e)
 }
 func (s *FlowRunPostgresStore) Delete(ctx context.Context, id string) error {
@@ -37,7 +37,7 @@ func (s *FlowRunPostgresStore) Delete(ctx context.Context, id string) error {
 }
 
 // Create generates a UUID and sets timestamps before inserting.
-func (s *FlowRunPostgresStore) Create(ctx context.Context, e *model.AgentFlowRun) error {
+func (s *FlowRunPostgresStore) Create(ctx context.Context, e *entities.FlowRunInfo) error {
 	e.ID = uuid.New().String()
 	now := time.Now().UTC()
 	e.CreatedAt = now
@@ -46,9 +46,9 @@ func (s *FlowRunPostgresStore) Create(ctx context.Context, e *model.AgentFlowRun
 }
 
 // Update performs a targeted update of mutable columns.
-func (s *FlowRunPostgresStore) Update(ctx context.Context, e *model.AgentFlowRun) error {
+func (s *FlowRunPostgresStore) Update(ctx context.Context, e *entities.FlowRunInfo) error {
 	_, err := s.inner.Pool.Exec(ctx,
-		`UPDATE agentflow_runs SET status=$1, vars=$2, output=$3, error=$4, started_at=$5, finished_at=$6, shared_memory=$7, updated_at=NOW() WHERE id=$8`,
+		`UPDATE orh_flowrun SET status=$1, vars=$2, output=$3, error=$4, started_at=$5, finished_at=$6, shared_memory=$7, updated_at=NOW() WHERE id=$8`,
 		e.Status, e.Vars, e.Output, e.Error, e.StartedAt, e.FinishedAt, e.SharedMemory, e.ID)
 	return err
 }
@@ -56,6 +56,6 @@ func (s *FlowRunPostgresStore) Update(ctx context.Context, e *model.AgentFlowRun
 // Cancel sets the run status to CANCELLED.
 func (s *FlowRunPostgresStore) Cancel(ctx context.Context, id string) error {
 	_, err := s.inner.Pool.Exec(ctx,
-		`UPDATE agentflow_runs SET status='CANCELLED', updated_at=NOW() WHERE id=$1`, id)
+		`UPDATE orh_flowrun SET status='CANCELLED', updated_at=NOW() WHERE id=$1`, id)
 	return err
 }

@@ -1,7 +1,7 @@
--- Flowgent SQLite — agents, notification channels, subscription routes, multi-tenant fields
+-- Flowgent SQLite -- agents, notification channels, subscription routes, multi-tenant fields
 
--- ── Agents table (DB-backed agent definitions) ──────────────
-CREATE TABLE IF NOT EXISTS agents (
+-- -- Agents table (DB-backed agent definitions) ------------------------------
+CREATE TABLE IF NOT EXISTS llm_agent (
     name          TEXT PRIMARY KEY,
     model         TEXT NOT NULL,
     soul          TEXT NOT NULL,
@@ -13,10 +13,10 @@ CREATE TABLE IF NOT EXISTS agents (
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_agents_tenant ON agents(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_llmagent_tenant ON llm_agent(tenant_id);
 
--- ── Notification channels ───────────────────────────────────
-CREATE TABLE IF NOT EXISTS notification_channels (
+-- -- Notification channels --------------------------------------------------
+CREATE TABLE IF NOT EXISTS nfy_channel (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     channel_type TEXT NOT NULL,
@@ -26,9 +26,9 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_notifchannels_tenant ON notification_channels(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_nfychannel_tenant ON nfy_channel(tenant_id);
 
--- ── Subscription routes (clustered WS delivery) ─────────────
+-- -- Subscription routes (clustered WS delivery) ----------------------------
 CREATE TABLE IF NOT EXISTS subscription_routes (
     id            TEXT PRIMARY KEY,
     agentflow_id  TEXT NOT NULL,
@@ -39,18 +39,18 @@ CREATE TABLE IF NOT EXISTS subscription_routes (
 CREATE INDEX IF NOT EXISTS idx_subroutes_agentflow ON subscription_routes(agentflow_id);
 CREATE INDEX IF NOT EXISTS idx_subroutes_pod ON subscription_routes(pod_id);
 
--- ── Multi-tenant columns for agentflow definitions ──────────
-ALTER TABLE agentflow_definitions ADD COLUMN priority  TEXT DEFAULT 'medium';
-ALTER TABLE agentflow_definitions ADD COLUMN tenant_id TEXT DEFAULT 'default';
-ALTER TABLE agentflow_definitions ADD COLUMN namespace TEXT DEFAULT '';
-ALTER TABLE agentflow_definitions ADD COLUMN mode      TEXT DEFAULT '';
-ALTER TABLE agentflow_definitions ADD COLUMN labels    TEXT DEFAULT '{}';
+-- -- Multi-tenant columns for agentflow definitions -------------------------
+ALTER TABLE orh_agentflow ADD COLUMN priority  TEXT DEFAULT 'medium';
+ALTER TABLE orh_agentflow ADD COLUMN tenant_id TEXT DEFAULT 'default';
+ALTER TABLE orh_agentflow ADD COLUMN namespace TEXT DEFAULT '';
+ALTER TABLE orh_agentflow ADD COLUMN mode      TEXT DEFAULT '';
+ALTER TABLE orh_agentflow ADD COLUMN labels    TEXT DEFAULT '{}';
 
--- ── Multi-tenant columns for agentflow runs ────────────────
-ALTER TABLE agentflow_runs ADD COLUMN tenant_id TEXT DEFAULT 'default';
-ALTER TABLE agentflow_runs ADD COLUMN namespace TEXT DEFAULT '';
-ALTER TABLE agentflow_runs ADD COLUMN priority  TEXT DEFAULT 'medium';
+-- -- Multi-tenant columns for agentflow runs -------------------------------
+ALTER TABLE orh_flowrun ADD COLUMN tenant_id TEXT DEFAULT 'default';
+ALTER TABLE orh_flowrun ADD COLUMN namespace TEXT DEFAULT '';
+ALTER TABLE orh_flowrun ADD COLUMN priority  TEXT DEFAULT 'medium';
 
--- ── agentflow_run_id on human_approvals (for efficient lookup) ─
+-- -- agentflow_run_id on human_approvals (for efficient lookup) -------------
 ALTER TABLE human_approvals ADD COLUMN agentflow_run_id TEXT DEFAULT '';
-CREATE INDEX IF NOT EXISTS idx_human_afrun ON human_approvals(agentflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_human_orhflowrun ON human_approvals(agentflow_run_id);

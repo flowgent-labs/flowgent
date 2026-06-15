@@ -2,28 +2,24 @@ package executor
 
 import (
 	"context"
-	"fmt"
-	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+
+	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Tool Executor ─────────────────────────────────────
 
 type ToolExecutor struct {
-	mcpClients map[string]engine.MCPClient
+	mcpMgr *mcp.McpManager
 }
 
-func NewToolExecutor(mcp map[string]engine.MCPClient) *ToolExecutor {
-	return &ToolExecutor{mcpClients: mcp}
+func NewToolExecutor(mcpMgr *mcp.McpManager) *ToolExecutor {
+	return &ToolExecutor{mcpMgr: mcpMgr}
 }
 
-func (e *ToolExecutor) TaskType() model.TaskType { return model.TaskTool }
+func (e *ToolExecutor) TaskType() entities.TaskType { return entities.TaskTool }
 
-func (e *ToolExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
-	client, ok := e.mcpClients[plan.NodeSpec.Tool]
-	if !ok {
-		return nil, fmt.Errorf("MCP client not found: %s", plan.NodeSpec.Tool)
-	}
+func (e *ToolExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	toolName := "call"
 	if action, ok := plan.Input["action"].(string); ok {
 		toolName = action
@@ -39,9 +35,9 @@ func (e *ToolExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, s
 		inputCopy = make(map[string]any)
 	}
 
-	out, err := client.CallTool(ctx, toolName, inputCopy)
+	out, err := e.mcpMgr.CallTool(ctx, plan.NodeSpec.Tool, toolName, inputCopy)
 	if err != nil {
 		return nil, err
 	}
-	return &model.TaskResult{Output: out}, nil
+	return &entities.TaskResult{Output: out}, nil
 }

@@ -3,6 +3,7 @@ module github.com/flowgent-labs/flowgent/cmd
 go 1.26.0
 
 require (
+	github.com/a2aproject/a2a-go v0.3.15
 	github.com/flowgent-labs/flowgent/api v0.0.0
 	github.com/flowgent-labs/flowgent/cache v0.0.0
 	github.com/flowgent-labs/flowgent/common v0.0.0
@@ -14,8 +15,13 @@ require (
 	github.com/flowgent-labs/flowgent/sandbox v0.0.0
 	github.com/flowgent-labs/flowgent/store v0.0.0
 	github.com/flowgent-labs/flowgent/wallet v0.0.0
-	github.com/a2aproject/a2a-go v0.3.15
 	github.com/spf13/cobra v1.10.1
+)
+
+require (
+	github.com/mattn/go-runewidth v0.0.3 // indirect
+	github.com/peterh/liner v1.2.2 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 )
 
 replace (

@@ -14,6 +14,7 @@ import (
 	"github.com/flowgent-labs/flowgent/cache/pkg"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -82,8 +83,9 @@ type KubernetesResourceManager struct {
 	sandboxPolicy           *model.SandboxPolicy
 	sandboxPendingTriggers  int64
 
-	mqttBroker  string
-	postgresDSN string
+	mqttBroker   string
+	postgresDSN  string
+	apiServerURL string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -214,7 +216,7 @@ func (s *KubernetesResourceManager) Start(ctx context.Context) {
 		"slots_per_tm", s.slotsPerTM, "idle_timeout", s.idleTimeout)
 }
 
-func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.ExecutionPlan) (*model.TaskResult, error) {
+func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
 	if s.q == nil {
 		return nil, fmt.Errorf("kubernetes rm: queue not set")
 	}
@@ -238,7 +240,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *model.Ex
 	}); err != nil {
 		return nil, fmt.Errorf("kubernetes rm publish: %w", err)
 	}
-	return &model.TaskResult{Output: map[string]any{"dispatched": true}}, nil
+	return &entities.TaskResult{Output: map[string]any{"dispatched": true}}, nil
 }
 
 // ─── Scaling ────────────────────────────────────────────

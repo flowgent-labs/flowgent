@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,7 +33,7 @@ func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
 // List returns all agent definitions for the given tenant.
 func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	agents, err := h.store.Select(r.Context(), model.PageRequest{Page: 1, Size: 1000})
+	agents, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -46,7 +46,7 @@ func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create persists a new agent definition.
 func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	var agent model.AgentDef
+	var agent entities.AgentInfo
 	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -82,7 +82,7 @@ func (h *AgentDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	tenant := r.PathValue("tenant")
-	var agent model.AgentDef
+	var agent entities.AgentInfo
 	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return

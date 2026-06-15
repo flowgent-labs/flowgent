@@ -1,9 +1,9 @@
-package model
+package entities
 
 import "time"
 
-// MCPDef is a DB-backed MCP (Model Context Protocol) server definition.
-type MCPDef struct {
+// McpInfo is a DB-backed MCP (Model Context Protocol) server definition.
+type McpInfo struct {
 	Name      string            `json:"name"`
 	Enabled   bool              `json:"enabled"`
 	Type      string            `json:"type"`

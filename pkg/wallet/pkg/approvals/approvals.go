@@ -11,13 +11,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg/approval"
 	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // PaymentApprover implements pwf.ApprovalHandler using Flowgent's existing
-// human approval infrastructure (model.HumanApprovalStore). No second approval subsystem.
+// human approval infrastructure. No second approval subsystem.
 type PaymentApprover struct {
 	store   approval.IApprovalStore
 	timeout time.Duration
@@ -40,7 +40,7 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 	token := uuid.NewString()
 	expiresAt := time.Now().Add(a.timeout)
 
-	approval := &model.HumanApproval{
+	approval := &entities.ApprovalInfo{
 		TaskRunID: intent.ID,
 		Token:     token,
 		Status:    "PENDING",
@@ -73,7 +73,7 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 				Message: fmt.Sprintf("payment approval %s timed out after %s", token, a.timeout),
 			}
 		case <-ticker.C:
-			updated, err := a.store.GetApproval(ctx, token)
+			updated, err := a.store.Get(ctx, token)
 			if err != nil {
 				continue
 			}

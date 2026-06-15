@@ -1,7 +1,7 @@
--- Flowgent PostgreSQL schema — base tables
+-- Flowgent PostgreSQL schema -- base tables
 -- Applied automatically by the migration runner on first startup.
 
-CREATE TABLE IF NOT EXISTS agentflow_definitions (
+CREATE TABLE IF NOT EXISTS orh_agentflow (
     agentflow_id VARCHAR(255) NOT NULL,
     version      BIGINT NOT NULL DEFAULT 1,
     definition   JSONB NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS agentflow_definitions (
     PRIMARY KEY (agentflow_id, version)
 );
 
-CREATE TABLE IF NOT EXISTS agentflow_runs (
+CREATE TABLE IF NOT EXISTS orh_flowrun (
     id              VARCHAR(64) PRIMARY KEY,
     agentflow_id    VARCHAR(255) NOT NULL,
     version         BIGINT NOT NULL DEFAULT 1,
@@ -36,12 +36,12 @@ CREATE TABLE IF NOT EXISTS agentflow_runs (
     priority        VARCHAR(16) DEFAULT 'medium'
 );
 
-CREATE INDEX IF NOT EXISTS idx_afruns_agentflow ON agentflow_runs(agentflow_id);
-CREATE INDEX IF NOT EXISTS idx_afruns_status ON agentflow_runs(status);
+CREATE INDEX IF NOT EXISTS idx_orhflowrun_agentflow ON orh_flowrun(agentflow_id);
+CREATE INDEX IF NOT EXISTS idx_orhflowrun_status ON orh_flowrun(status);
 
 CREATE TABLE IF NOT EXISTS task_runs (
     id                VARCHAR(64) PRIMARY KEY,
-    agentflow_run_id   VARCHAR(64) NOT NULL REFERENCES agentflow_runs(id),
+    agentflow_run_id   VARCHAR(64) NOT NULL REFERENCES orh_flowrun(id),
     node_id           VARCHAR(255) NOT NULL,
     status            VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     input             JSONB,
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 -- RAG agent memory tables
-CREATE TABLE IF NOT EXISTS agent_memories (
+CREATE TABLE IF NOT EXISTS llm_memory (
     id         VARCHAR(64) PRIMARY KEY,
     agent_id   VARCHAR(255) NOT NULL,
     type       VARCHAR(32) NOT NULL DEFAULT 'episodic',
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_memories_agent ON agent_memories(agent_id, type);
+CREATE INDEX IF NOT EXISTS idx_llmmemory_agent ON llm_memory(agent_id, type);
 
 CREATE TABLE IF NOT EXISTS knowledge_entries (
     id         VARCHAR(64) PRIMARY KEY,

@@ -16,11 +16,9 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/core/pkg/llm"
-	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // Start launches the JobManager daemon.
@@ -73,8 +71,6 @@ func startJobManager(cfgPath string) error {
 	}
 	appMode := mode == "application"
 
-	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: tenant}
-
 	k8sNamespace := svcCfg.Runtime.Namespace
 	if k8sNamespace == "" {
 		k8sNamespace = "default"
@@ -89,29 +85,23 @@ func startJobManager(cfgPath string) error {
 			K8sNamespace:      k8sNamespace,
 			K8sDeploymentName: tmDeploy,
 			TaskState:         taskClient,
-			HumanApproval:     humanClient,
-			Logger:            logger, Queue: q,
-			AutoScale: appMode,
-				MQTTBroker:  svcCfg.Messaging.MQTT.Broker,
-				PostgresDSN: svcCfg.Storage.Postgres.Dsn,
+			ApprovalInfo:     humanClient,
+			Logger:            logger, Messager: q,
+			AutoScale:         appMode,
+			MQTTBroker:        svcCfg.Messaging.MQTT.Broker,
+			PostgresDSN:       svcCfg.Storage.Postgres.Dsn,
+			APIServerURL:      svcCfg.Runtime.APIServerURL,
+			Tenant:            tenant,
 		})
 	}
 	if rm == nil {
-		var agentPtrs []*config.AgentDef
-		if agents, err := config.LoadAgents(svcCfg, cfgPath); err == nil {
-			for i := range agents {
-				agentPtrs = append(agentPtrs, &agents[i])
-			}
-		}
-		_ = mcp.NewMcpManager() // MCPs now DB-backed, loaded at runtime
-		mcpMap := make(map[string]engine.MCPClient)
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 			Provider:      engine.ProviderStandalone, PoolSize: 10,
 			TaskState:     taskClient,
-			HumanApproval: humanClient,
-			Agents:        agentPtrs, MCPClients: mcpMap,
-			LLMClient: llm.NewLlmProviderManager(llmLoader),
-			Logger: logger, Queue: q,
+			ApprovalInfo: humanClient,
+			Logger:        logger, Messager: q,
+			APIServerURL:  svcCfg.Runtime.APIServerURL,
+			Tenant:        tenant,
 		})
 	}
 
@@ -122,17 +112,15 @@ func startJobManager(cfgPath string) error {
 
 	agentFlowID := svcCfg.Runtime.AgentFlowID
 
-	flows := make(map[string]*model.AgentFlowSpec)
+	flows := make(map[string]*entities.AgentFlowInfo)
 	if appMode && agentFlowID != "" {
-		if svcCfg != nil && svcCfg.Orchestration.AgentFlows.Standard.Enabled {
-			apiFlows, err := apiClient.ListFlows(context.Background(), tenant)
-			if err == nil {
-				for i := range apiFlows {
-					var spec model.AgentFlowSpec
-					if json.Unmarshal(apiFlows[i].Definition, &spec) == nil && spec.ID == agentFlowID {
-						flows[spec.ID] = &spec
-						break
-					}
+		apiFlows, err := apiClient.ListFlows(context.Background(), tenant)
+		if err == nil {
+			for i := range apiFlows {
+				var spec entities.AgentFlowInfo
+				if json.Unmarshal(apiFlows[i].Definition, &spec) == nil && spec.ID == agentFlowID {
+					flows[spec.ID] = &spec
+					break
 				}
 			}
 		}

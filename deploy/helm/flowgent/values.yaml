@@ -279,23 +279,9 @@ notifier:
     limits:   { cpu: "500m", memory: "512Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# LLM Providers — loaded from database via apiserver (standard mode)
-# Provider definitions (type, endpoint, apikey, models, timeout) are
-# managed through the REST API and stored in PostgreSQL.
-# ═══════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════
-# Orchestration — MCPs, Agents, Skills, Agentflows
+# Orchestration — runtime execution settings
 # ═══════════════════════════════════════════════════════════════
 orchestration:
   maxConcurrentFlows: 10
   flowExecutionTimeout: "30m"
   maxNodeRetries: 3
-  agents:
-    standard:
-      enabled: false
-  skills:
-    standard:
-      enabled: false
-  agentflows:
-    standard:
-      enabled: false

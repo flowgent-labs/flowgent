@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/notifier"
 )
@@ -33,7 +33,7 @@ func NewNotifierHandler(s store.IStore, logger *utils.Logger) *NotifierHandler {
 }
 
 func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := h.store.Select(r.Context(), model.PageRequest{Page: 1, Size: 1000})
+	channels, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -43,7 +43,7 @@ func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
-	var ch model.NotifierChannel
+	var ch entities.NotifyChannelInfo
 	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -76,7 +76,7 @@ func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
-	var ch model.NotifierChannel
+	var ch entities.NotifyChannelInfo
 	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
 		http.Error(w, "invalid body", 400)
 		return

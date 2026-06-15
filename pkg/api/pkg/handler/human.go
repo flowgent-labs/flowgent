@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/approval"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,7 +58,7 @@ func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
 
 // CreateApproval creates a new human approval record.
 func (h *HumanHandler) CreateApproval(w http.ResponseWriter, r *http.Request) {
-	var approval model.HumanApproval
+	var approval entities.ApprovalInfo
 	if err := json.NewDecoder(r.Body).Decode(&approval); err != nil {
 		http.Error(w, "invalid body", 400)
 		return

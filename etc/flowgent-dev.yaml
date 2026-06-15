@@ -136,101 +136,13 @@ lock:
     nodes: ["redis://127.0.0.1:6379"]
     password: "bitnami"
 
-# ── LLM Providers ────────────────────────────────────────────────────────────
-# Providers are loaded from DB via apiserver (standard mode).
-llm: {}
-#        rate_limit: 30
-#        apikey: "<YOUR_ANTHROPIC_API_KEY>"
-#        models:
-#          - name: claude-sonnet-4-6
-#            temperature: 0.3
-
-    standard:
-      enabled: false                # DB-backed providers (future Flowgent UI)
-
 # ── Orchestration Engine ─────────────────────────────────────────────────────
+# LLM providers, MCP servers, agents, skills, and agentflows are all DB-backed.
+# Use the management console (flowgent console) or REST API to manage them.
 orchestration:
   max-concurrent-flows: 10
   flow-execution-timeout: 30m
   max-node-retries: 3
-
-  # -- MCP Server Definitions -------------------------------------------------
-  #     These are EXAMPLE MCPs for e2e testing. For production, use dedicated
-  #     MCP implementations with proper authentication and reliability.
-  #     Environment variables set here override inherited proxy/etc. settings
-  #     for the MCP subprocess. Use ALL_PROXY="" to bypass proxy for localhost.
-  mcps:
-    - name: github
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/usr/local/bin/github-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: sonarqube
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/usr/local/bin/sonarqube-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        SONARQUBE_URL: "http://localhost:9000"
-        SONARQUBE_TOKEN: "squ_eab3ac9428573619417b0b3bd90ca986e87cbd11"
-        SONARQUBE_PASSWORD: "<YOUR_SONARQUBE_PASSWORD>"
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: nexus3
-      enabled: false
-      type: local
-      command: ["/bin/nexus3-mcp"]
-      args: ["--transport", "stdio"]
-      env:
-        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-
-    - name: confluence
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/confluence-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        CONFLUENCE_BASE_URL: "https://your-domain.atlassian.net/wiki"
-        CONFLUENCE_API_TOKEN: "<YOUR_ATLASSIAN_API_TOKEN>"
-        CONFLUENCE_USER_EMAIL: "<YOUR_EMAIL>"
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-  # -- Agent Definitions -------------------------------------------------------
-  agents:
-    static:
-      enabled: true
-      load-dir: "../examples/security-autonomy-fixer/agents/"
-      refresh: 30s                  # hot-reload interval
-    standard:
-      enabled: false                # DB-backed agents (future Flowgent UI)
-
-  # -- Skill Definitions -------------------------------------------------------
-  skills:
-    static:
-      enabled: true
-      load-dir: "../examples/security-autonomy-fixer/skills/"
-      refresh: 30s
-    standard:
-      enabled: false
-
-  # -- AgentFlow Definitions (Layer 2) -----------------------------------------
-  agentflows:
-    static:
-      enabled: true
-      load-dir: "../examples/security-autonomy-fixer/flows/"
-      refresh: 1m
-    standard:
-      enabled: false                # DB-backed agentflows (future Flowgent UI)
 
 # ── Sandbox — Secure Script Execution Worker ─────────────────────────────────
 #    In standalone/all-in-one mode (deployment.enabled=false), sandbox runs inline
@@ -257,43 +169,9 @@ sandbox:
     slots_per_pod: 4
 
 # ── Notifier Service ─────────────────────────────────────────────────────
+# Notification channels are DB-backed. Use the management console or REST API.
 notifier:
   enabled: false                    # set true to enable
-  channels:
-    - name: telegram-ops
-      type: telegram
-      enabled: false
-      config:
-        bot_token: "${TELEGRAM_BOT_TOKEN}"
-        chat_id: "-1001234567890"
-    - name: dingtalk-ops
-      type: dingtalk
-      enabled: false
-      config:
-        webhook_url: "${DINGTALK_WEBHOOK_URL}"
-        secret: "${DINGTALK_SECRET}"
-    - name: slack-ops
-      type: slack
-      enabled: false
-      config:
-        webhook_url: "${SLACK_WEBHOOK_URL}"
-        channel: "#flowgent-alerts"
-    # - name: email-ops
-    #   type: email
-    #   enabled: false
-    #   config:
-    #     smtp_host: "smtp.example.com"
-    #     smtp_port: 587
-    #     username: "flowgent@example.com"
-    #     password: "<YOUR_SMTP_PASSWORD>"
-    #     from: "flowgent@example.com"
-    # - name: webhook-generic
-    #   type: webhook
-    #   enabled: false
-    #   config:
-    #     url: "https://hooks.example.com/flowgent"
-    #     headers:
-    #       X-Custom: "value"
 
 # ── Multi-Tenant ─────────────────────────────────────────────────────────────
 tenant:

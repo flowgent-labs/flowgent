@@ -7,13 +7,13 @@ import (
 
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // startRunPoller polls for pending AgentFlowRuns via the apiserver API
 // and dispatches them via the JobManager.
 func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant string,
-	jm *jobmanager.JobManager, flows map[string]*model.AgentFlowSpec,
+	jm *jobmanager.JobManager, flows map[string]*entities.AgentFlowInfo,
 	namespace, agentFlowID string) {
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -23,13 +23,13 @@ func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, err := api.ListRuns(ctx, tenant, string(model.RunPending), namespace, agentFlowID, 1, 50)
+			page, err := api.ListRuns(ctx, tenant, string(entities.RunPending), namespace, agentFlowID, 1, 50)
 			if err != nil {
 				log.Printf("[poller] ListRuns error: %v", err)
 				continue
 			}
 			for _, run := range page.Items {
-				if run.Status != model.RunPending {
+				if run.Status != entities.RunPending {
 					continue
 				}
 				if namespace == "" && run.Namespace != "" {
@@ -49,7 +49,7 @@ func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 					continue
 				}
 				log.Printf("[poller] dispatch run=%s flow=%s priority=%s", run.ID[:8], run.AgentFlowID, run.Priority)
-				go func(r *model.AgentFlowRun, sp *model.AgentFlowSpec) {
+				go func(r *entities.FlowRunInfo, sp *entities.AgentFlowInfo) {
 					_ = jm.Submit(ctx, r, sp)
 				}(run, spec)
 			}

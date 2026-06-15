@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 
 	"go.opentelemetry.io/otel/metric"
@@ -43,7 +43,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 	defer slog.Info("slot worker stopped", "tm_id", sw.tmID, "slot_id", sw.id)
 
 	sw.q.Subscribe(ctx, messager.SharedExecPlans(), func(topic string, payload []byte) {
-		var plan model.ExecutionPlan
+		var plan entities.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
 			slog.Error("slot worker cannot unmarshal execution plan", "error", err)
 			return
@@ -64,10 +64,10 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 				"task_type", string(plan.TaskType),
 				"error", err,
 			)
-			plan.State = model.Failed
-			plan.Result = &model.TaskResult{Error: err.Error()}
+			plan.State = entities.Failed
+			plan.Result = &entities.TaskResult{Error: err.Error()}
 		} else {
-			plan.State = model.Success
+			plan.State = entities.Success
 			plan.Result = result
 			plan.FinishedAt = timePtr()
 		}
@@ -78,7 +78,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			sw.metrics.TasksExecuted.Add(ctx, 1, metric.WithAttributes(taskTypeAttr(plan.TaskType)))
 		}
 
-		_ = sw.state.SaveTask(ctx, &model.TaskRun{
+		_ = sw.state.SaveTask(ctx, &entities.TaskRunInfo{
 			ID:             plan.TaskID,
 			AgentFlowRunID: plan.AgentFlowRunID,
 			NodeID:         plan.NodeID,
@@ -95,14 +95,14 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 	<-ctx.Done()
 }
 
-func planResultOutput(r *model.TaskResult) map[string]any {
+func planResultOutput(r *entities.TaskResult) map[string]any {
 	if r == nil {
 		return nil
 	}
 	return r.Output
 }
 
-func planResultError(r *model.TaskResult) string {
+func planResultError(r *entities.TaskResult) string {
 	if r == nil {
 		return ""
 	}
@@ -111,7 +111,7 @@ func planResultError(r *model.TaskResult) string {
 
 // emitDownstream publishes execution status so the JM can detect satisfied
 // dependencies and publish the next wave of plans.
-func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *model.ExecutionPlan) {
+func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.ExecutionPlan) {
 	b, _ := json.Marshal(map[string]any{
 		"plan_id":          plan.PlanID,
 		"agentflow_run_id": plan.AgentFlowRunID,

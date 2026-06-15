@@ -1,9 +1,8 @@
-package model
+package entities
 
 import "time"
 
 // BaseEntity provides common audit and lifecycle fields for all persisted entities.
-// Embed this in entity structs to get consistent CreatedAt/UpdatedAt/SoftDelete behavior.
 type BaseEntity struct {
 	Status    string    `json:"status" yaml:"status"`
 	CreatedAt time.Time `json:"created_at" yaml:"created_at"`

@@ -6,7 +6,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // JobManagerConfig is the startup configuration for a JobManager, extracted
@@ -38,7 +38,7 @@ func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logg
 }
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
-func (m *JobManager) Submit(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec) error {
+func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.AgentFlowInfo) error {
 	mode := spec.EffectiveMode()
 	m.logger.Info("jobmanager submit",
 		"run_id", run.ID,
@@ -53,7 +53,7 @@ func (m *JobManager) Submit(ctx context.Context, run *model.AgentFlowRun, spec *
 	run.Namespace = spec.Namespace
 	run.TenantID = spec.TenantID
 
-	if mode == model.ModeApplication {
+	if mode == entities.ModeApplication {
 		m.logger.Info("application mode — dedicated cluster", "agentflow_id", spec.ID, "tenant", spec.TenantID)
 		if err := m.rm.Validate(ctx); err != nil {
 			m.logger.Warn("application mode: resource validation failed, falling back to session", "error", err)

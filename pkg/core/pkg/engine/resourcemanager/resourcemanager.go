@@ -8,11 +8,11 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cache/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
@@ -28,7 +28,7 @@ import (
 type ResourceManager interface {
 	Provider() engine.Provider
 	Validate(ctx context.Context) error
-	Schedule(ctx context.Context, plan *model.ExecutionPlan) (*model.TaskResult, error)
+	Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error)
 	Shutdown(ctx context.Context) error
 }
 
@@ -42,13 +42,10 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Queue         messager.IMessager
+	Messager      messager.IMessager
 	Cache         cache.ICache
 	TaskState     taskmanager.TaskStateStore
-	HumanApproval executor.HumanApprovalStore
-	Agents        []*config.AgentDef
-	MCPClients    map[string]engine.MCPClient
-	LLMClient     engine.LLMClient
+	ApprovalInfo executor.HumanApprovalStore
 	Logger        *utils.Logger
 
 	K8sNamespace      string
@@ -70,6 +67,8 @@ type ResourceManagerConfig struct {
 	SandboxPolicy         *model.SandboxPolicy
 	MQTTBroker            string
 	PostgresDSN           string
+	APIServerURL          string // API server URL for TM pod env var (K8s mode)
+	Tenant                string // default tenant for TM runtime resolution
 }
 
 // ─── Factory ──────────────────────────────────────────────────
@@ -85,8 +84,8 @@ func NewResourceManager(cfg *ResourceManagerConfig) (ResourceManager, error) {
 			slog.Warn("kubernetes rm init failed, falling back to local", "err", err)
 			return NewStandaloneResourceManager(cfg)
 		}
-		if cfg.Queue != nil {
-			rm.SetQueue(cfg.Queue)
+		if cfg.Messager != nil {
+			rm.SetQueue(cfg.Messager)
 		}
 		return rm, nil
 	case engine.ProviderStandalone:

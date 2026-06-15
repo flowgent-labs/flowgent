@@ -9,7 +9,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -20,8 +20,8 @@ import (
 // RunStateStore is the narrow state interface JobMaster needs for persistence.
 // Implementations call the apiserver REST API (never direct DB).
 type RunStateStore interface {
-	UpdateRun(ctx context.Context, run *model.AgentFlowRun) error
-	SaveTask(ctx context.Context, task *model.TaskRun) error
+	UpdateRun(ctx context.Context, run *entities.FlowRunInfo) error
+	SaveTask(ctx context.Context, task *entities.TaskRunInfo) error
 }
 
 type EdgeCondition struct {
@@ -30,7 +30,7 @@ type EdgeCondition struct {
 }
 
 // JobMaster is the per-run DAG orchestrator. It builds the execution graph
-// from an AgentFlowSpec and dispatches plans via resourcemanager.ResourceManager.Schedule().
+// from an AgentFlowInfo and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
 	state   RunStateStore
@@ -54,7 +54,7 @@ type JobMaster struct {
 	pending        map[string]bool
 	conditions     map[string]bool
 
-	planMap     map[string]*model.ExecutionPlan
+	planMap     map[string]*entities.ExecutionPlan
 	nodeOutputs map[string]map[string]any
 }
 
@@ -88,7 +88,7 @@ func (jm *JobMaster) BuildGraphNodes(nodes []string, rawEdges [][2]string) {
 	jm.conditions = make(map[string]bool)
 	jm.nodeErrors = make(map[string]string)
 	jm.nodeOutputs = make(map[string]map[string]any)
-	jm.planMap = make(map[string]*model.ExecutionPlan)
+	jm.planMap = make(map[string]*entities.ExecutionPlan)
 	for _, n := range nodes {
 		jm.deps[n] = []string{}
 		jm.children[n] = []string{}
@@ -203,7 +203,7 @@ func (jm *JobMaster) Deps(n string) []string { jm.mu.Lock(); defer jm.mu.Unlock(
 
 // ─── buildExecutionGraph — single pass: DAG state + ExecutionPlans ─
 
-func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string) {
+func (jm *JobMaster) buildExecutionGraph(spec *entities.AgentFlowInfo, runID string) {
 	nodeIDs := make([]string, len(spec.Nodes))
 	for i, n := range spec.Nodes {
 		nodeIDs[i] = n.ID
@@ -229,7 +229,7 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 	jm.conditions = make(map[string]bool)
 	jm.nodeErrors = make(map[string]string)
 	jm.nodeOutputs = make(map[string]map[string]any)
-	jm.planMap = make(map[string]*model.ExecutionPlan)
+	jm.planMap = make(map[string]*entities.ExecutionPlan)
 
 	for _, n := range nodeIDs {
 		jm.deps[n] = []string{}
@@ -250,22 +250,22 @@ func (jm *JobMaster) buildExecutionGraph(spec *model.AgentFlowSpec, runID string
 
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
-		jm.planMap[n.ID] = &model.ExecutionPlan{
+		jm.planMap[n.ID] = &entities.ExecutionPlan{
 			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
 			AgentFlowRunID:        runID,
 			AgentFlowDefinitionID: spec.ID,
 			TenantID:              spec.TenantID,
 			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
 			TaskType:              NodeToTaskType(n.Type), NodeID: n.ID,
-			State: model.TaskPending, MaxRetries: RetryMax(n.Retry),
-			NodeSpec: model.NodeSpecFromNode(n), CreatedAt: time.Now(),
+			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
+			NodeSpec: entities.NodeSpecFromNode(n), CreatedAt: time.Now(),
 		}
 	}
 }
 
 // ─── Execute ─────────────────────────────────────────────
 
-func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec *model.AgentFlowSpec) error {
+func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spec *entities.AgentFlowInfo) error {
 	if jm.tracer == nil {
 		jm.tracer = tracing.Tracer("flowgent/jobmaster")
 	}
@@ -282,7 +282,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 	)
 	defer span.End()
 
-	run.Status = model.RunRunning
+	run.Status = entities.RunRunning
 	now := time.Now()
 	run.StartedAt = &now
 	_ = jm.state.UpdateRun(ctx, run)
@@ -300,14 +300,14 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 		default:
 		}
 		if jm.HasFailed() {
-			run.Status = model.RunFailed
+			run.Status = entities.RunFailed
 			run.Error = jm.collectFirstError()
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Error, "failed")
 			return jm.state.UpdateRun(ctx, run)
 		}
 		if jm.IsComplete() {
-			run.Status = model.RunCompleted
+			run.Status = entities.RunCompleted
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Ok, "done")
 			return jm.state.UpdateRun(ctx, run)
@@ -345,7 +345,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *model.AgentFlowRun, spec 
 			}
 			jm.Done(nodeID)
 
-			if plan.TaskType == model.TaskCondition {
+			if plan.TaskType == entities.TaskCondition {
 				if r, ok := result.Output["result"].(bool); ok {
 					jm.SetConditionResult(nodeID, r)
 					for _, child := range jm.Children(nodeID) {
@@ -380,17 +380,17 @@ func (jm *JobMaster) collectFirstError() string {
 	return "node failed"
 }
 
-func (jm *JobMaster) applySupervisorConfig(spec *model.AgentFlowSpec) {
+func (jm *JobMaster) applySupervisorConfig(spec *entities.AgentFlowInfo) {
 	for _, n := range spec.Nodes {
-		if n.Type == model.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
+		if n.Type == entities.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
 			jm.maxNodes = n.SupervisorConfig.MaxNodes
 		}
 	}
 }
 
-// taskRunFromPlan converts an ExecutionPlan to a minimal TaskRun for persistence.
-func taskRunFromPlan(plan *model.ExecutionPlan) *model.TaskRun {
-	return &model.TaskRun{
+// taskRunFromPlan converts an ExecutionPlan to a minimal TaskRunInfo for persistence.
+func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
+	return &entities.TaskRunInfo{
 		ID:             plan.TaskID,
 		AgentFlowRunID: plan.AgentFlowRunID,
 		NodeID:         plan.NodeID,
@@ -399,30 +399,30 @@ func taskRunFromPlan(plan *model.ExecutionPlan) *model.TaskRun {
 	}
 }
 
-func NodeToTaskType(nt model.NodeType) model.TaskType {
+func NodeToTaskType(nt entities.NodeType) entities.TaskType {
 	switch nt {
-	case model.AgentNode:
-		return model.TaskAgent
-	case model.ToolNode:
-		return model.TaskTool
-	case model.ConditionNode:
-		return model.TaskCondition
-	case model.TribunalNode:
-		return model.TaskTribunal
-	case model.SupervisorNode:
-		return model.TaskSupervisor
-	case model.MapNode:
-		return model.TaskMap
-	case model.HumanNode:
-		return model.TaskHuman
-	case model.AgentFlowNode:
-		return model.TaskSubflow
+	case entities.AgentNode:
+		return entities.TaskAgent
+	case entities.ToolNode:
+		return entities.TaskTool
+	case entities.ConditionNode:
+		return entities.TaskCondition
+	case entities.TribunalNode:
+		return entities.TaskTribunal
+	case entities.SupervisorNode:
+		return entities.TaskSupervisor
+	case entities.MapNode:
+		return entities.TaskMap
+	case entities.HumanNode:
+		return entities.TaskHuman
+	case entities.AgentFlowNode:
+		return entities.TaskSubflow
 	default:
-		return model.TaskNoop
+		return entities.TaskNoop
 	}
 }
 
-func RetryMax(r *model.RetryPolicy) int {
+func RetryMax(r *entities.RetryPolicy) int {
 	if r == nil {
 		return 3
 	}
@@ -437,7 +437,7 @@ type RetryPolicy struct {
 	Factor   float64
 }
 
-func ModelRetry(r *model.RetryPolicy) RetryPolicy {
+func ModelRetry(r *entities.RetryPolicy) RetryPolicy {
 	if r == nil {
 		return RetryPolicy{Max: 3, Initial: time.Second, MaxDelay: 30 * time.Second, Factor: 2.0}
 	}

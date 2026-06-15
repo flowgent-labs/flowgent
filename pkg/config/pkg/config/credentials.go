@@ -45,7 +45,7 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 			log.Printf("[credentials] loaded flow-level: %s (%d vars)", flowPath, len(m))
 		}
 
-		// 3. Inline flow credentials from AgentFlowSpec (highest of all)
+		// 3. Inline flow credentials from AgentFlowInfo (highest of all)
 		for k, v := range flowCreds {
 			result[k] = v
 			found = true

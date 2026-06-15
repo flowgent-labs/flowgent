@@ -57,7 +57,7 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 		"github": mcp, "sonarqube": mcp, "sonatype-iq": mcp, "sonatype-nexus3": mcp,
 	}
 
-	agents := []*config.AgentDef{
+	agents := []*config.AgentInfo{
 		{Name: "supervisor", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Supervisor.", Instruction: "Output action/target/reason JSON."},
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "DevSecOps expert.", Instruction: "Parse scan results."},
 		{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Secure coding expert.", Instruction: "Generate secure patches."},
@@ -85,29 +85,29 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 		t.Fatalf("create JM: %v", err)
 	}
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID:          "security-autonomy-fixer",
 		Description: "E2E security fix pipeline",
-		Priority:    model.PriorityMedium,
+		Priority:    entities.PriorityMedium,
 		TenantID:    "default",
 		Vars:        map[string]any{"repos": []any{"org/repo1"}},
-		Nodes: []model.Node{
-			{ID: "scan-sonarqube", Type: model.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues"}},
-			{ID: "aggregate-issues", Type: model.AgentNode, Agent: "issue-detector"},
-			{ID: "generate-fixes", Type: model.AgentNode, Agent: "fixer-agent"},
-			{ID: "review-sec", Type: model.AgentNode, Agent: "security-reviewer"},
-			{ID: "review-quality", Type: model.AgentNode, Agent: "quality-reviewer"},
-			{ID: "review-arch", Type: model.AgentNode, Agent: "arch-reviewer"},
-			{ID: "tribunal", Type: model.TribunalNode, Strategy: map[string]any{"type": "majority"}},
-			{ID: "supervisor-check", Type: model.SupervisorNode, Agent: "supervisor",
-				SupervisorConfig: &model.SupervisorConfig{AllowedActions: []string{"continue", "retry", "inject", "abort"}, MaxInjections: 3, MaxRetries: 3, MaxNodes: 50}},
-			{ID: "approved", Type: model.ConditionNode, Expression: "${tribunal.decision == true}"},
-			{ID: "create-pr", Type: model.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pull_request"}},
-			{ID: "summary-report", Type: model.AgentNode, Agent: "issue-detector"},
-			{ID: "notify-pr", Type: model.ToolNode, Tool: "github", Input: map[string]any{"action": "create_issue_comment"}},
-			{ID: "end", Type: model.NoopNode},
+		Nodes: []entities.Node{
+			{ID: "scan-sonarqube", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues"}},
+			{ID: "aggregate-issues", Type: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "review-sec", Type: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "review-quality", Type: entities.AgentNode, Agent: "quality-reviewer"},
+			{ID: "review-arch", Type: entities.AgentNode, Agent: "arch-reviewer"},
+			{ID: "tribunal", Type: entities.TribunalNode, Strategy: map[string]any{"type": "majority"}},
+			{ID: "supervisor-check", Type: entities.SupervisorNode, Agent: "supervisor",
+				SupervisorConfig: &entities.SupervisorConfig{AllowedActions: []string{"continue", "retry", "inject", "abort"}, MaxInjections: 3, MaxRetries: 3, MaxNodes: 50}},
+			{ID: "approved", Type: entities.ConditionNode, Expression: "${tribunal.decision == true}"},
+			{ID: "create-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pull_request"}},
+			{ID: "summary-report", Type: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "notify-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_issue_comment"}},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{
+		Edges: []entities.Edge{
 			{From: "scan-sonarqube", To: "aggregate-issues"},
 			{From: "aggregate-issues", To: "generate-fixes"},
 			{From: "generate-fixes", To: "review-sec"},
@@ -126,11 +126,11 @@ func TestE2E_SecurityFixPipeline_Local(t *testing.T) {
 		},
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "e2e-secfix-local", AgentFlowID: "security-autonomy-fixer", Version: 1,
-		Status: model.RunPending, Trigger: model.TriggerInfo{Type: "manual", Source: "e2e"},
+		Status: entities.RunPending, Trigger: entities.TriggerInfo{Type: "manual", Source: "e2e"},
 		Vars:    map[string]any{"repos": []any{"org/repo1"}},
-		Priority: model.PriorityMedium, TenantID: "default",
+		Priority: entities.PriorityMedium, TenantID: "default",
 	}
 	store.CreateAgentFlowRun(context.Background(), run)
 
@@ -159,6 +159,7 @@ func TestE2E_MQTTQueue_Local(t *testing.T) {
 		Broker:   "tcp://127.0.0.1:1883",
 		ClientID: "e2e-test",
 		Topic:    "flowgent/e2e",
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	})
 	if err != nil {
 		t.Skipf("MQTT not available: %v", err)

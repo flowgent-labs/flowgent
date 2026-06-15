@@ -11,19 +11,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
-
-// Store is the subset of store.IStore needed by the notification service.
-type Store interface {
-	ListPendingApprovals(ctx context.Context) ([]model.HumanApproval, error)
-	ListChannels(ctx context.Context, tenantID string) ([]model.NotifierChannel, error)
-	SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error
-	GetRoutesByFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error)
-	DeleteRoute(ctx context.Context, id string) error
-	CleanupOrphanedRoutes(ctx context.Context, podID string, maxAge time.Duration) (int64, error)
-}
 
 // MQTTClient is the interface for publishing notification messages to MQTT.
 type MQTTClient interface {
@@ -31,7 +23,7 @@ type MQTTClient interface {
 	Publish(ctx context.Context, topic string, payload []byte) error
 }
 
-// Service is the notification & WebSocket push service. It runs:
+// NotifierServer is the notification & WebSocket push service. It runs:
 //   - A scanner goroutine that detects pending human approvals
 //   - A WebSocket hub that manages client connections with MQTT-based routing
 //     for clustered multi-pod deployment
@@ -39,8 +31,8 @@ type MQTTClient interface {
 // Each pod subscribes to its own MQTT channel /flowgent/notify/pod/{podID}/ws/+
 // and pushes messages to local WS connections. The scanner publishes to
 // the correct pod's channel based on the subscription routing table.
-type Service struct {
-	store     Store
+type NotifierServer struct {
+	client    *client.NotifierClient
 	mqtt      MQTTClient
 	senders   map[string]Sender
 	podID     string
@@ -71,13 +63,13 @@ func (c *wsConn) Done() <-chan struct{} { return c.done }
 // Close signals the connection to shut down.
 func (c *wsConn) Close() { close(c.done) }
 
-// NewService creates a notification service with the given store and optional MQTT client.
-func NewService(s Store, mqtt MQTTClient) *Service {
+// NewNotifierServer creates a notification service with the given client and optional MQTT client.
+func NewNotifierServer(c *client.NotifierClient, mqtt MQTTClient) *NotifierServer {
 	hostname, _ := os.Hostname()
 	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
 
-	svc := &Service{
-		store:     s,
+	svc := &NotifierServer{
+		client:    c,
 		mqtt:      mqtt,
 		senders:   make(map[string]Sender),
 		podID:     podID,
@@ -96,12 +88,11 @@ func NewService(s Store, mqtt MQTTClient) *Service {
 }
 
 // PodID returns the unique pod identifier for MQTT routing.
-func (s *Service) PodID() string { return s.podID }
+func (s *NotifierServer) PodID() string { return s.podID }
 
 // Start begins the scanner goroutine, MQTT listener, queue consumer, and cleanup loop.
-func (s *Service) Start(ctx context.Context) error {
+func (s *NotifierServer) Start(ctx context.Context) error {
 	if s.mqtt != nil {
-		// 1. Pod-level WS routing: messages addressed to this pod's WS clients
 		topicWS := messager.NotifyPodWSWildcard(s.podID)
 		if err := s.mqtt.Subscribe(ctx, topicWS, s.onMQTTMessage); err != nil {
 			s.logger.Warn("mqtt WS subscribe failed", "topic", topicWS, "error", err)
@@ -109,10 +100,6 @@ func (s *Service) Start(ctx context.Context) error {
 			s.logger.Info("notification WS routing subscribed", "topic", topicWS)
 		}
 
-		// 2. Queue consumer: stacked notifications by tenant+agentflow ID
-		//    Each notification pod subscribes to /flowgent/notify/queue/+/+
-		//    MQTT shared subscriptions ensure load-balanced consumption across pods.
-		//    Topic pattern: /flowgent/notify/queue/{tenantID}/{agentflowID}
 		topicQueue := messager.NotifyQueueWildcard()
 		if err := s.mqtt.Subscribe(ctx, topicQueue, s.onQueueMessage); err != nil {
 			s.logger.Warn("mqtt queue subscribe failed", "topic", topicQueue, "error", err)
@@ -129,18 +116,13 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 // RegisterSender adds or overrides a named sender implementation.
-func (s *Service) RegisterSender(name string, sender Sender) {
+func (s *NotifierServer) RegisterSender(name string, sender Sender) {
 	s.senders[name] = sender
 }
 
-// onQueueMessage handles incoming notification messages from the queue topic.
-// Topic: /flowgent/notify/queue/{tenantID}/{agentflowID}
-// Each message is dispatched to configured notification channels for that tenant.
-func (s *Service) onQueueMessage(topic string, payload []byte) {
+func (s *NotifierServer) onQueueMessage(topic string, payload []byte) {
 	s.logger.Debug("queue message received", "topic", topic)
 
-	// Parse tenantID and agentflowID from topic
-	// /flowgent/notify/queue/{tenantID}/{agentflowID}
 	var tenantID, flowID string
 	if n, _ := fmt.Sscanf(topic, messager.TopicPrefix+"/%s/flows/%s/runs/", &tenantID, &flowID); n < 2 {
 		s.logger.Warn("invalid queue topic format", "topic", topic)
@@ -158,13 +140,11 @@ func (s *Service) onQueueMessage(topic string, payload []byte) {
 		"flow", flowID,
 		"title", msg.Title)
 
-	// Dispatch to configured notification channels for this tenant
 	s.notifyChannels(context.Background(), "", msg.Title, msg.Body)
 }
 
-// PublishNotification enqueues a notification to the MQTT queue for the given
-// tenant and agentflow. NotificationService pods consume and dispatch to channels.
-func (s *Service) PublishNotification(ctx context.Context, tenantID, agentflowID, title, body string) error {
+// PublishNotification enqueues a notification to the MQTT queue.
+func (s *NotifierServer) PublishNotification(ctx context.Context, tenantID, agentflowID, title, body string) error {
 	if s.mqtt == nil {
 		return fmt.Errorf("notification: mqtt not configured")
 	}
@@ -186,17 +166,15 @@ func (s *Service) PublishNotification(ctx context.Context, tenantID, agentflowID
 	return s.mqtt.Publish(ctx, topic, payload)
 }
 
-func (s *Service) onMQTTMessage(topic string, payload []byte) {
-	// topic: /flowgent/notify/pod/{podID}/ws/{wsID}
+func (s *NotifierServer) onMQTTMessage(topic string, payload []byte) {
 	var msg model.WSMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		s.logger.Warn("mqtt message unmarshal", "error", err)
 		return
 	}
 
-	// Find local WS connection
 	s.mu.RLock()
-	conn, ok := s.wsClients[msg.TaskID] // TaskID reused as routing key
+	conn, ok := s.wsClients[msg.TaskID]
 	s.mu.RUnlock()
 
 	if ok {
@@ -210,7 +188,7 @@ func (s *Service) onMQTTMessage(topic string, payload []byte) {
 }
 
 // RegisterWS adds a WebSocket client and creates a subscription route.
-func (s *Service) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error) {
+func (s *NotifierServer) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error) {
 	conn := &wsConn{
 		ID:          uuid.New().String(),
 		AgentFlowID: agentFlowID,
@@ -218,14 +196,13 @@ func (s *Service) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, e
 		done:        make(chan struct{}),
 	}
 
-	// Persist subscription route
 	route := &model.SubscriptionRoute{
 		ID:          uuid.New().String(),
 		AgentFlowID: agentFlowID,
 		WSID:        conn.ID,
 		PodID:       s.podID,
 	}
-	if err := s.store.SaveRoute(ctx, route); err != nil {
+	if err := s.client.SaveRoute(ctx, route); err != nil {
 		return nil, fmt.Errorf("save subscription route: %w", err)
 	}
 
@@ -238,26 +215,24 @@ func (s *Service) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, e
 }
 
 // UnregisterWS removes a WebSocket client and its subscription route.
-func (s *Service) UnregisterWS(ctx context.Context, wsID string) {
+func (s *NotifierServer) UnregisterWS(ctx context.Context, wsID string) {
 	s.mu.Lock()
 	delete(s.wsClients, wsID)
 	s.mu.Unlock()
 
-	// Find and delete the route
-	_ = s.store.DeleteRoute(ctx, wsID) // wsID == route ID in our convention
+	_ = s.client.DeleteRoute(ctx, wsID)
 }
 
-// scanHumanApprovals polls for pending human approvals and dispatches notifications.
-func (s *Service) scanHumanApprovals(ctx context.Context) {
+func (s *NotifierServer) scanHumanApprovals(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	seen := make(map[string]bool) // deduplicate within this pod's lifetime
+	seen := make(map[string]bool)
 
 	for {
 		select {
 		case <-ticker.C:
-			approvals, err := s.store.ListPendingApprovals(ctx)
+			approvals, err := s.client.ListPendingApprovals(ctx)
 			if err != nil {
 				s.logger.Error("scan pending approvals", "error", err)
 				continue
@@ -271,7 +246,7 @@ func (s *Service) scanHumanApprovals(ctx context.Context) {
 
 				afRunID := a.AgentFlowRunID
 				if afRunID == "" {
-					afRunID = a.TaskRunID // fallback
+					afRunID = a.TaskRunID
 				}
 
 				msg := model.WSMessage{
@@ -284,12 +259,10 @@ func (s *Service) scanHumanApprovals(ctx context.Context) {
 					},
 				}
 
-				// Push via MQTT to all subscribed pods
 				if s.mqtt != nil {
 					s.pushToSubscribers(ctx, afRunID, &msg)
 				}
 
-				// Also send via configured notification channels
 				s.notifyChannels(ctx, a.Token, "Human Approval Required",
 					fmt.Sprintf("A human approval is pending for task %s. Token: %s", a.TaskRunID, a.Token))
 			}
@@ -299,10 +272,8 @@ func (s *Service) scanHumanApprovals(ctx context.Context) {
 	}
 }
 
-// pushToSubscribers looks up the subscription routing table and publishes
-// to each subscriber pod's MQTT channel.
-func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
-	routes, err := s.store.GetRoutesByFlow(ctx, agentFlowID)
+func (s *NotifierServer) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
+	routes, err := s.client.GetRoutesByFlow(ctx, agentFlowID)
 	if err != nil {
 		s.logger.Error("lookup subscription routes", "error", err)
 		return
@@ -317,9 +288,8 @@ func (s *Service) pushToSubscribers(ctx context.Context, agentFlowID string, msg
 	}
 }
 
-// notifyChannels sends a notification through all configured notification channels.
-func (s *Service) notifyChannels(ctx context.Context, recipient, title, body string) {
-	channels, err := s.store.ListChannels(ctx, "")
+func (s *NotifierServer) notifyChannels(ctx context.Context, recipient, title, body string) {
+	channels, err := s.client.ListChannels(ctx, "")
 	if err != nil {
 		s.logger.Error("list notification channels", "error", err)
 		return
@@ -335,13 +305,12 @@ func (s *Service) notifyChannels(ctx context.Context, recipient, title, body str
 			continue
 		}
 
-		// Configure sender with channel config
 		if err := configureSender(sender, ch.Config); err != nil {
 			s.logger.Warn("configure sender", "channel", ch.Name, "error", err)
 			continue
 		}
 
-		go func(ch model.NotifierChannel, sender Sender) {
+		go func(ch entities.NotifyChannelInfo, sender Sender) {
 			if err := sender.Send(ctx, recipient, title, body); err != nil {
 				s.logger.Error("send notification", "channel", ch.Name, "error", err)
 			}
@@ -349,15 +318,14 @@ func (s *Service) notifyChannels(ctx context.Context, recipient, title, body str
 	}
 }
 
-// cleanupLoop periodically removes orphaned subscription routes.
-func (s *Service) cleanupLoop(ctx context.Context) {
+func (s *NotifierServer) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			n, err := s.store.CleanupOrphanedRoutes(ctx, s.podID, 5*time.Minute)
+			n, err := s.client.CleanupOrphanedRoutes(ctx, s.podID, 5*time.Minute)
 			if err != nil {
 				s.logger.Error("cleanup orphaned routes", "error", err)
 			} else if n > 0 {
@@ -370,7 +338,7 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 }
 
 // Shutdown gracefully stops the notification service.
-func (s *Service) Shutdown() {
+func (s *NotifierServer) Shutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, conn := range s.wsClients {

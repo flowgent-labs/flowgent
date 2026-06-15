@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 
@@ -48,10 +48,10 @@ func TestStandaloneResourceManager_Schedule_Noop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan := &model.ExecutionPlan{
+	plan := &entities.ExecutionPlan{
 		PlanID: "p1", AgentFlowRunID: "r1", NodeID: "n1",
-		TaskType: model.TaskNoop,
-		NodeSpec: &model.NodeSpec{ID: "n1", Type: model.NoopNode},
+		TaskType: entities.TaskNoop,
+		NodeSpec: &entities.NodeSpec{ID: "n1", Type: entities.NoopNode},
 	}
 	result, err := rm.Schedule(context.Background(), plan)
 	if err != nil {
@@ -71,10 +71,10 @@ func TestStandaloneResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan := &model.ExecutionPlan{
+	plan := &entities.ExecutionPlan{
 		PlanID: "p1", AgentFlowRunID: "r1", NodeID: "n1",
-		TaskType: model.TaskNoop,
-		NodeSpec: &model.NodeSpec{ID: "n1", Type: model.NoopNode},
+		TaskType: entities.TaskNoop,
+		NodeSpec: &entities.NodeSpec{ID: "n1", Type: entities.NoopNode},
 	}
 	// Should schedule same plan twice without blocking (pool=2)
 	result, err := rm.Schedule(context.Background(), plan)

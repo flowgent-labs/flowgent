@@ -2,16 +2,16 @@ package executor
 
 import (
 	"context"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Tribunal Executor ─────────────────────────────────
 
 type TribunalExecutor struct{}
 
-func (e *TribunalExecutor) TaskType() model.TaskType { return model.TaskTribunal }
+func (e *TribunalExecutor) TaskType() entities.TaskType { return entities.TaskTribunal }
 
-func (e *TribunalExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
+func (e *TribunalExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	strategy := plan.NodeSpec.Strategy
 	decisionType := "majority"
 	if strategy != nil {
@@ -50,7 +50,7 @@ func (e *TribunalExecutor) Execute(ctx context.Context, plan *model.ExecutionPla
 		confidence = float64(approveCount) / float64(totalCount)
 	}
 
-	return &model.TaskResult{Output: map[string]any{
+	return &entities.TaskResult{Output: map[string]any{
 		"decision":   approved,
 		"confidence": confidence,
 		"approve":    approveCount,

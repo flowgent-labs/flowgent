@@ -1,6 +1,6 @@
--- Flowgent PostgreSQL — MCP definitions and LLM providers tables
+-- Flowgent PostgreSQL -- MCP definitions and LLM providers tables
 
-CREATE TABLE IF NOT EXISTS mcps (
+CREATE TABLE IF NOT EXISTS llm_mcp (
     name        VARCHAR(255) PRIMARY KEY,
     enabled     BOOLEAN NOT NULL DEFAULT true,
     type        VARCHAR(32) NOT NULL DEFAULT '',
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS mcps (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_mcps_tenant ON mcps(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_llmmcp_tenant ON llm_mcp(tenant_id);
 
 CREATE TABLE IF NOT EXISTS llm_providers (
     id          VARCHAR(64) PRIMARY KEY,

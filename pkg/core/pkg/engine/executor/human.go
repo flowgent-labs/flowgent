@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // HumanApprovalStore is the narrow interface for creating human approval records.
 // Implementations call the apiserver REST API (never direct DB).
 type HumanApprovalStore interface {
-	CreateApproval(ctx context.Context, approval *model.HumanApproval) error
+	CreateApproval(ctx context.Context, approval *entities.ApprovalInfo) error
 }
 
 // HumanExecutor handles human-in-the-loop approval tasks.
@@ -23,15 +23,15 @@ func NewHumanExecutor(store HumanApprovalStore) *HumanExecutor {
 	return &HumanExecutor{store: store}
 }
 
-func (e *HumanExecutor) TaskType() model.TaskType { return model.TaskHuman }
+func (e *HumanExecutor) TaskType() entities.TaskType { return entities.TaskHuman }
 
-func (e *HumanExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, scope map[string]map[string]any) (*model.TaskResult, error) {
+func (e *HumanExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	timeout := 24 * time.Hour
 	if plan.NodeSpec.Approval != nil && plan.NodeSpec.Approval.Timeout.IsPositive() {
 		timeout = plan.NodeSpec.Approval.Timeout.ToDuration()
 	}
 
-	approval := &model.HumanApproval{
+	approval := &entities.ApprovalInfo{
 		TaskRunID: plan.TaskID,
 		Timeout:   timeout,
 		Status:    "PENDING",
@@ -47,7 +47,7 @@ func (e *HumanExecutor) Execute(ctx context.Context, plan *model.ExecutionPlan, 
 		onReject = plan.NodeSpec.Approval.OnReject
 	}
 
-	return &model.TaskResult{Output: map[string]any{
+	return &entities.TaskResult{Output: map[string]any{
 		"approval_token": approval.Token,
 		"timeout":        timeout.String(),
 		"status":         "WAITING_HUMAN",

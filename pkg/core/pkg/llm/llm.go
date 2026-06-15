@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ILlmProvider is the interface each LLM provider implementation must satisfy.
@@ -15,7 +15,7 @@ type ILlmProvider interface {
 
 // LlmProviderLoader loads DB-backed LLM provider definitions via apiserver.
 type LlmProviderLoader interface {
-	ListProviders(ctx context.Context) ([]*model.LlmProvider, error)
+	ListProviders(ctx context.Context) ([]*entities.LlmProviderInfo, error)
 }
 
 // LlmProviderManager loads and manages LLM provider instances from the
@@ -45,7 +45,7 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 	return m
 }
 
-func (m *LlmProviderManager) registerDB(dbP model.LlmProvider) {
+func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 	// Resolve ApiKey from Credentials map (DB stores credentials as a map, runtime needs the string).
 	if v, ok := dbP.Credentials["apikey"]; ok {
 		if vs, ok := v.(string); ok {
@@ -58,7 +58,7 @@ func (m *LlmProviderManager) registerDB(dbP model.LlmProvider) {
 	}
 }
 
-func newProvider(p *model.LlmProvider) ILlmProvider {
+func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
 	switch p.Type {
 	case "anthropic":
 		return newAnthropicProvider(p)

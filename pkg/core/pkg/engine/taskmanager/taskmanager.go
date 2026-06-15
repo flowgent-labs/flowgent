@@ -9,10 +9,12 @@ import (
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
+	"github.com/flowgent-labs/flowgent/core/pkg/llm"
+	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	sandbox "github.com/flowgent-labs/flowgent/cmd/pkg/sandbox"
 
@@ -23,22 +25,21 @@ import (
 // TaskStateStore is the narrow state interface TM workers need for persistence.
 // Implementations call the apiserver REST API (never direct DB).
 type TaskStateStore interface {
-	SaveTask(ctx context.Context, task *model.TaskRun) error
+	SaveTask(ctx context.Context, task *entities.TaskRunInfo) error
 }
 
 // TaskManagerConfig is the startup configuration for a TaskManager.
 type TaskManagerConfig struct {
 	ID                string
 	SlotCount         int
-	Queue             messager.IMessager
+	Messager          messager.IMessager
 	State             TaskStateStore
-	HumanApproval     executor.HumanApprovalStore
-	Agents            []*config.AgentDef
-	MCPClients        map[string]engine.MCPClient
-	LLMClient         engine.LLMClient
+	ApprovalInfo     executor.HumanApprovalStore
+	APIServerURL      string // API server URL for runtime resource resolution
+	Tenant            string // default tenant for API calls
 	Logger            *utils.Logger
 	HeartbeatInterval time.Duration
-	SandboxQueue      messager.IMessager
+	SandboxMessager   messager.IMessager
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
 	SandboxDeploymentEnabled bool
@@ -67,26 +68,32 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 		cfg.SlotCount = 4
 	}
 
+	// Runtime resolvers — TM owns MCP/agent/LLM lifecycle, resolved via API at execution time.
+	apiClient := client.NewFlowgentClient(cfg.APIServerURL)
+	mcpMgr := mcp.NewMcpManager()
+	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: cfg.Tenant}
+	llmClient := llm.NewLlmProviderManager(llmLoader)
+
 	router := executor.NewTaskExecutorRouter()
-	router.Register(executor.NewAgentExecutor(cfg.LLMClient, cfg.Agents))
+	router.Register(executor.NewAgentExecutor(llmClient, apiClient, cfg.Tenant))
 	router.Register(&executor.ConditionExecutor{})
-	router.Register(executor.NewToolExecutor(cfg.MCPClients))
-	router.Register(executor.NewSupervisorExecutor(cfg.LLMClient, cfg.Agents))
+	router.Register(executor.NewToolExecutor(mcpMgr))
+	router.Register(executor.NewSupervisorExecutor(llmClient, apiClient, cfg.Tenant))
 	router.Register(&executor.TribunalExecutor{})
 	router.Register(&executor.MapExecutor{})
 	router.Register(&executor.JoinExecutor{})
 	router.Register(&executor.SubflowExecutor{})
-	router.Register(executor.NewHumanExecutor(cfg.HumanApproval))
+	router.Register(executor.NewHumanExecutor(cfg.ApprovalInfo))
 	router.Register(&executor.NoopExecutor{})
 	router.Register(&executor.SkillExecutor{})
-	router.Register(executor.NewSandboxExecutor(cfg.SandboxQueue, cfg.SandboxPolicy, cfg.SandboxWorkspace))
+	router.Register(executor.NewSandboxExecutor(cfg.SandboxMessager, cfg.SandboxPolicy, cfg.SandboxWorkspace))
 
 	metrics := NewTaskManagerMetrics()
 
 	tm := &TaskManager{
 		ID:      cfg.ID,
 		router:  router,
-		queue:   cfg.Queue,
+		queue:   cfg.Messager,
 		state:   cfg.State,
 		metrics: metrics,
 		logger:  cfg.Logger,
@@ -95,13 +102,13 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 
 	for i := 0; i < cfg.SlotCount; i++ {
 		slotID := fmt.Sprintf("%s-slot-%d", cfg.ID, i)
-		sw := NewSlotWorker(slotID, cfg.ID, cfg.Queue, router, cfg.State, metrics)
+		sw := NewSlotWorker(slotID, cfg.ID, cfg.Messager, router, cfg.State, metrics)
 		tm.slotWorkers = append(tm.slotWorkers, sw)
 	}
 
-	if !cfg.SandboxDeploymentEnabled && cfg.SandboxQueue != nil {
+	if !cfg.SandboxDeploymentEnabled && cfg.SandboxMessager != nil {
 		embeddedRunner := sandbox.NewSandboxRunner(
-			cfg.ID+"-sb", cfg.SandboxQueue, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
+			cfg.ID+"-sb", cfg.SandboxMessager, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
 		go func() {
 			slog.Info("embedded sandbox runner started", "id", embeddedRunner.GetID())
 			if err := embeddedRunner.Start(context.Background()); err != nil {
@@ -132,7 +139,7 @@ func (tm *TaskManager) Stop() {
 }
 
 // ExecutePlan executes a single ExecutionPlan via the router.
-func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *model.ExecutionPlan, task *model.TaskRun) (*model.TaskResult, error) {
+func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.ExecutionPlan, task *entities.TaskRunInfo) (*entities.TaskResult, error) {
 	task.Input = plan.Input
 	scope := map[string]map[string]any{"input": plan.Input}
 	result, err := tm.router.Execute(ctx, plan, scope)
@@ -140,7 +147,7 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *model.ExecutionPla
 		return nil, err
 	}
 	task.Output = result.Output
-	task.Status = model.Success
+	task.Status = entities.Success
 	now := time.Now()
 	task.FinishedAt = &now
 	plan.FinishedAt = &now
@@ -173,6 +180,6 @@ func NewTaskManagerMetrics() *TaskManagerMetrics {
 	return m
 }
 
-func taskTypeAttr(t model.TaskType) attribute.KeyValue {
+func taskTypeAttr(t entities.TaskType) attribute.KeyValue {
 	return attribute.String("task_type", string(t))
 }

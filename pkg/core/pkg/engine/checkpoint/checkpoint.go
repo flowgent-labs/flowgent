@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -24,21 +24,21 @@ func NewCheckpointer(store store.IStore) *Checkpointer {
 }
 
 // Save persists the current checkpoint from the plan.
-func (c *Checkpointer) Save(ctx context.Context, plan *model.ExecutionPlan) error {
+func (c *Checkpointer) Save(ctx context.Context, plan *entities.ExecutionPlan) error {
 	if plan.Checkpoint == nil {
-		plan.Checkpoint = &model.TaskCheckpoint{}
+		plan.Checkpoint = &entities.TaskCheckpoint{}
 	}
 	plan.Checkpoint.CheckpointedAt = time.Now()
 	return c.store.SaveCheckpoint(ctx, plan.PlanID, plan.Checkpoint)
 }
 
 // Load retrieves the checkpoint for a given plan, or nil if none exists.
-func (c *Checkpointer) Load(ctx context.Context, planID string) (*model.TaskCheckpoint, error) {
+func (c *Checkpointer) Load(ctx context.Context, planID string) (*entities.TaskCheckpoint, error) {
 	return c.store.LoadCheckpoint(ctx, planID)
 }
 
 // Restore restores a plan's checkpoint from the store.
-func (c *Checkpointer) Restore(ctx context.Context, plan *model.ExecutionPlan) error {
+func (c *Checkpointer) Restore(ctx context.Context, plan *entities.ExecutionPlan) error {
 	cp, err := c.store.LoadCheckpoint(ctx, plan.PlanID)
 	if err != nil {
 		return err

@@ -14,6 +14,7 @@ import (
 	"github.com/flowgent-labs/flowgent/pkg/model"
 	"github.com/flowgent-labs/flowgent/pkg/common/utils"
 	"github.com/flowgent-labs/flowgent/tests/testutil"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Mock LLM Clients ──────────────────────────────────────
@@ -56,7 +57,7 @@ func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 // ─── E2E Tests ────────────────────────────────────────────
 
 func TestE2E_BasicAgentFlow(t *testing.T) {
-	agents := []*config.AgentDef{
+	agents := []*config.AgentInfo{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 		{Name: "fixer-agent", Model: "bailian-codeplan/qwen3.5-coder", Soul: "Fixer."},
 		{Name: "security-reviewer", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Reviewer."},
@@ -74,22 +75,22 @@ func TestE2E_BasicAgentFlow(t *testing.T) {
 		t.Fatalf("create JM: %v", err)
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "test-run-001", AgentFlowID: "test-flow", Version: 1,
-		Status: model.RunPending, Trigger: model.TriggerInfo{Type: "manual", Source: "test"},
+		Status: entities.RunPending, Trigger: entities.TriggerInfo{Type: "manual", Source: "test"},
 		Vars: map[string]any{"repos": []any{"org/repo1"}},
 	}
 	store.CreateAgentFlowRun(context.Background(), run)
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID: "test-flow", Vars: map[string]any{"repos": []any{"org/repo1"}},
-		Nodes: []model.Node{
-			{ID: "detect", Type: model.AgentNode, Agent: "issue-detector"},
-			{ID: "fix", Type: model.AgentNode, Agent: "fixer-agent"},
-			{ID: "review", Type: model.AgentNode, Agent: "security-reviewer"},
-			{ID: "end", Type: model.NoopNode},
+		Nodes: []entities.Node{
+			{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "fix", Type: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "review", Type: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{
+		Edges: []entities.Edge{
 			{From: "detect", To: "fix"},
 			{From: "fix", To: "review"},
 			{From: "review", To: "end"},
@@ -111,7 +112,7 @@ func TestE2E_BasicAgentFlow(t *testing.T) {
 }
 
 func TestE2E_MapNodeExecution(t *testing.T) {
-	agents := []*config.AgentDef{
+	agents := []*config.AgentInfo{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
 	store := testutil.NewMockStore()
@@ -126,20 +127,20 @@ func TestE2E_MapNodeExecution(t *testing.T) {
 		t.Fatalf("create JM: %v", err)
 	}
 
-	run := &model.AgentFlowRun{
+	run := &entities.FlowRunInfo{
 		ID: "test-run-map", AgentFlowID: "test-map", Version: 1,
-		Status: model.RunPending, Vars: map[string]any{"repos": []any{"org/r1", "org/r2"}},
+		Status: entities.RunPending, Vars: map[string]any{"repos": []any{"org/r1", "org/r2"}},
 	}
 	store.CreateAgentFlowRun(context.Background(), run)
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID: "test-map", Vars: map[string]any{"repos": []any{"org/r1", "org/r2"}},
-		Nodes: []model.Node{
-			{ID: "scan", Type: model.MapNode, Source: "${vars.repos}", Concurrency: 2,
-				Node: &model.Node{Type: model.AgentNode, Agent: "issue-detector", Input: map[string]any{"repo": "${item}"}}},
-			{ID: "end", Type: model.NoopNode},
+		Nodes: []entities.Node{
+			{ID: "scan", Type: entities.MapNode, Source: "${vars.repos}", Concurrency: 2,
+				Node: &entities.Node{Type: entities.AgentNode, Agent: "issue-detector", Input: map[string]any{"repo": "${item}"}}},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{{From: "scan", To: "end"}},
+		Edges: []entities.Edge{{From: "scan", To: "end"}},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -152,7 +153,7 @@ func TestE2E_MapNodeExecution(t *testing.T) {
 }
 
 func TestE2E_NodeRetry(t *testing.T) {
-	agents := []*config.AgentDef{
+	agents := []*config.AgentInfo{
 		{Name: "issue-detector", Model: "bailian-codeplan/qwen3.6-plus", Soul: "Security expert."},
 	}
 	store := testutil.NewMockStore()
@@ -168,19 +169,19 @@ func TestE2E_NodeRetry(t *testing.T) {
 		t.Fatalf("create JM: %v", err)
 	}
 
-	run := &model.AgentFlowRun{
-		ID: "test-run-retry", AgentFlowID: "test-retry", Version: 1, Status: model.RunPending,
+	run := &entities.FlowRunInfo{
+		ID: "test-run-retry", AgentFlowID: "test-retry", Version: 1, Status: entities.RunPending,
 	}
 	store.CreateAgentFlowRun(context.Background(), run)
 
-	spec := &model.AgentFlowSpec{
+	spec := &entities.AgentFlowInfo{
 		ID: "test-retry",
-		Nodes: []model.Node{
-			{ID: "detect", Type: model.AgentNode, Agent: "issue-detector",
-				Retry: &model.RetryPolicy{Max: 3, Initial: 10 * time.Millisecond, Factor: 1.0}},
-			{ID: "end", Type: model.NoopNode},
+		Nodes: []entities.Node{
+			{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector",
+				Retry: &entities.RetryPolicy{Max: 3, Initial: 10 * time.Millisecond, Factor: 1.0}},
+			{ID: "end", Type: entities.NoopNode},
 		},
-		Edges: []model.Edge{{From: "detect", To: "end"}},
+		Edges: []entities.Edge{{From: "detect", To: "end"}},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

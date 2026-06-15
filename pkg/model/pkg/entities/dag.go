@@ -1,11 +1,9 @@
-// Package model defines the shared domain types for the Flowgent engine.
-//
-// File: dag.go — DAG building blocks consumed by JobManager.
-//
-//	Node, Edge, NodeType enum, RetryPolicy, HumanApprovalConfig, SupervisorConfig.
-package model
+package entities
 
-// ─── Node type enum ──────────────────────────────────────────
+import (
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+)
 
 // NodeType is the type of a DAG node.
 type NodeType string
@@ -24,8 +22,6 @@ const (
 	NoopNode       NodeType = "noop"
 )
 
-// ─── DAG building blocks ─────────────────────────────────────
-
 // Node represents a single node in the agentflow DAG.
 type Node struct {
 	ID               string               `json:"id" yaml:"id"`
@@ -39,44 +35,38 @@ type Node struct {
 	Strategy         map[string]any       `json:"strategy,omitempty" yaml:"strategy,omitempty"`
 	Input            map[string]any       `json:"input,omitempty" yaml:"input,omitempty"`
 	Retry            *RetryPolicy         `json:"retry,omitempty" yaml:"retry,omitempty"`
-	Node             *Node                `json:"node,omitempty" yaml:"node,omitempty"` // nested child node (map)
+	Node             *Node                `json:"node,omitempty" yaml:"node,omitempty"`
 	Concurrency      int                  `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
 	Approval         *HumanApprovalConfig `json:"approval,omitempty" yaml:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig    `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
 	AgentFlowID      string               `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
 	OutputSchema     map[string]any       `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
-	// Sandbox fields
-	Runtime       string            `json:"runtime,omitempty" yaml:"runtime,omitempty"` // python3 | bash | node
-	Script        string            `json:"script,omitempty" yaml:"script,omitempty"`   // inline script (YAML-authored or agent-generated via ${agent.output})
-	Timeout       string            `json:"timeout,omitempty" yaml:"timeout,omitempty"` // e.g. "120s"
-	Resources     *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
-	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty" yaml:"network_policy,omitempty"`
-	// Workspace is the optional host/data directory the sandbox can read/write.
-	// For code-fix scenarios this is the git repo path (e.g. "/home/agent/rengine").
-	// Mounted read-write; original files are snapshotted to {script_path}/original/ before modification.
-	Workspace string `json:"workspace,omitempty" yaml:"workspace,omitempty"`
+	Runtime          string               `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	Script           string               `json:"script,omitempty" yaml:"script,omitempty"`
+	Timeout          string               `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Resources        *model.SandboxResources    `json:"resources,omitempty" yaml:"resources,omitempty"`
+	NetworkPolicy    *model.NetworkPolicy       `json:"network_policy,omitempty" yaml:"network_policy,omitempty"`
+	Workspace        string               `json:"workspace,omitempty" yaml:"workspace,omitempty"`
 }
 
-// Edge represents a directed edge in the DAG, with an optional condition for branching.
+// Edge represents a directed edge in the DAG.
 type Edge struct {
 	From      string `json:"from" yaml:"from"`
 	To        string `json:"to" yaml:"to"`
 	Condition *bool  `json:"condition,omitempty" yaml:"condition,omitempty"`
 }
 
-// ─── Node configuration types ────────────────────────────────
-
 // RetryPolicy defines the retry behavior for a node.
 type RetryPolicy struct {
 	Max      int      `json:"max" yaml:"max"`
-	Initial  Duration `json:"initial" yaml:"initial"`
-	MaxDelay Duration `json:"max_delay" yaml:"max_delay"`
+	Initial  utils.Duration `json:"initial" yaml:"initial"`
+	MaxDelay utils.Duration `json:"max_delay" yaml:"max_delay"`
 	Factor   float64  `json:"factor" yaml:"factor"`
 }
 
 // HumanApprovalConfig defines the approval gate configuration for human nodes.
 type HumanApprovalConfig struct {
-	Timeout   Duration `json:"timeout" yaml:"timeout"`
+	Timeout   utils.Duration `json:"timeout" yaml:"timeout"`
 	OnApprove string   `json:"on_approve" yaml:"on_approve"`
 	OnReject  string   `json:"on_reject" yaml:"on_reject"`
 }

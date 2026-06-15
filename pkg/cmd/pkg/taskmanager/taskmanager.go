@@ -11,9 +11,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
-	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
-	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 )
@@ -77,29 +75,16 @@ func startTaskManager(cfgPath string) error {
 		tenant = "default"
 	}
 
-	var agentPtrs []*config.AgentDef
-	if svcCfg != nil {
-		if agents, err := config.LoadAgents(svcCfg, cfgPath); err == nil {
-			agentPtrs = make([]*config.AgentDef, len(agents))
-			for i := range agents {
-				agentPtrs[i] = &agents[i]
-			}
-		}
-	}
-
-	// ── MCP Clients (DB-backed, loaded at runtime) ────
-	_ = mcp.NewMcpManager() // MCPs now DB-backed, loaded at runtime
-	mcpMap := make(map[string]engine.MCPClient)
-
-
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
-		ID: tmID, SlotCount: slotCount, Queue: q,
+		ID: tmID, SlotCount: slotCount, Messager: q,
 		State:         &client.TaskStateClient{Client: apiClient, Tenant: tenant},
-		HumanApproval: &client.HumanApprovalClient{Client: apiClient},
-		Agents: agentPtrs, MCPClients: mcpMap, Logger: logger,
-		SandboxQueue:     q,
-		SandboxPolicy:    svcCfg.Sandbox.Policy,
-		SandboxWorkspace: svcCfg.Sandbox.Workspace,
+		ApprovalInfo: &client.HumanApprovalClient{Client: apiClient},
+		APIServerURL:  svcCfg.Runtime.APIServerURL,
+		Tenant:        tenant,
+		Logger:        logger,
+		SandboxMessager:             q,
+		SandboxPolicy:            svcCfg.Sandbox.Policy,
+		SandboxWorkspace:         svcCfg.Sandbox.Workspace,
 	})
 	if err != nil {
 		return fmt.Errorf("create taskmanager: %w", err)

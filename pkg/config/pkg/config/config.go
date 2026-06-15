@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 
-	model "github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Top-level config ────────────────────────────────────────
@@ -195,22 +197,9 @@ type PostgresConfig struct {
 // ─── Orchestration ────────────────────────────────────────────
 
 type OrchestrationConfig struct {
-	Agents               StandardResourceCfg `json:"agents" yaml:"agents"`
-	Skills               StandardResourceCfg `json:"skills,omitempty" yaml:"skills,omitempty"`
-	AgentFlows           StandardResourceCfg `json:"agentflows" yaml:"agentflows"`
-	MaxConcurrentFlows   int                 `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
-	FlowExecutionTimeout string              `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
-	MaxNodeRetries       int                 `json:"max-node-retries" yaml:"max-node-retries"`
-}
-
-// StandardResourceCfg enables DB-backed resource definitions via management API.
-type StandardResourceCfg struct {
-	Standard StandardAgentCfg `json:"standard" yaml:"standard"`
-}
-
-// StandardAgentCfg enables DB-backed resource definitions (future Flowgent UI).
-type StandardAgentCfg struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	MaxConcurrentFlows   int    `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
+	FlowExecutionTimeout string `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
+	MaxNodeRetries       int    `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
 // SandboxConfig configures the sandbox execution environment.
@@ -250,11 +239,11 @@ type RedisLockConfig struct {
 }
 
 
-// AgentDef is the DB-backed agent definition type.
-type AgentDef = model.AgentDef
+// AgentInfo is the DB-backed agent definition type.
+type AgentInfo = entities.AgentInfo
 
-// MCPDef is the DB-backed MCP definition type.
-type MCPDef = model.MCPDef
+// McpInfo is the DB-backed MCP definition type.
+type McpInfo = entities.McpInfo
 
 // ─── Notifier ─────────────────────────────────────────────────
 
@@ -322,7 +311,9 @@ func Load(path string) (*FlowgentConfig, error) {
 	applyFlowgentOverrides(v)
 
 	var cfg FlowgentConfig
-	if err := v.Unmarshal(&cfg); err != nil {
+	if err := v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
+		c.TagName = "yaml"
+	}); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
@@ -594,12 +585,12 @@ func expandString(s string) string {
 // These exist for backward compatibility. All resources are now DB-backed.
 // New code should load from the management console or REST API.
 
-func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentDef, error) { return nil, nil }
-func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
-	return nil, make(map[string]model.AgentFlowSpec), nil
+func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentInfo, error) { return nil, nil }
+func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.AgentFlowInfo, map[string]entities.AgentFlowInfo, error) {
+	return nil, make(map[string]entities.AgentFlowInfo), nil
 }
-func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]model.AgentFlowSpec, map[string]model.AgentFlowSpec, error) {
-	return nil, make(map[string]model.AgentFlowSpec), nil
+func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.AgentFlowInfo, map[string]entities.AgentFlowInfo, error) {
+	return nil, make(map[string]entities.AgentFlowInfo), nil
 }
 
 // LogConfig prints key configuration details (masks sensitive fields).
@@ -631,10 +622,6 @@ func LogConfig(cfg *FlowgentConfig) {
 
 	log.Printf("Engine:     max_concurrent=%d timeout=%s max_retries=%d",
 		cfg.Orchestration.MaxConcurrentFlows, cfg.Orchestration.FlowExecutionTimeout, cfg.Orchestration.MaxNodeRetries)
-	log.Printf("DB-backed:  agents=%v skills=%v agentflows=%v",
-		cfg.Orchestration.Agents.Standard.Enabled,
-		cfg.Orchestration.Skills.Standard.Enabled,
-		cfg.Orchestration.AgentFlows.Standard.Enabled)
 }
 
 // ── Auth middleware ──────────────────────────────────────────────

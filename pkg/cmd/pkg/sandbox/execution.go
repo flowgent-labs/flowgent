@@ -10,21 +10,22 @@ import (
 	"path/filepath"
 	"time"
 
-	model "github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/sandbox/pkg/seccomp"
 )
 
 // execute validates policy and dispatches to process or Docker executor.
-func (w *SandboxRunner) execute(ctx context.Context, trigger *model.SandboxTrigger, script string) *model.TaskResult {
+func (w *SandboxRunner) execute(ctx context.Context, trigger *model.SandboxTrigger, script string) *entities.TaskResult {
 	runtime := trigger.Runtime
 	if runtime == "" {
 		runtime = "bash"
 	}
 	if !w.isRuntimeAllowed(runtime) {
-		return &model.TaskResult{Error: fmt.Sprintf("runtime %q not allowed", runtime)}
+		return &entities.TaskResult{Error: fmt.Sprintf("runtime %q not allowed", runtime)}
 	}
 	if banned := w.checkBanned(script); banned != "" {
-		return &model.TaskResult{Error: fmt.Sprintf("banned pattern: %q", banned)}
+		return &entities.TaskResult{Error: fmt.Sprintf("banned pattern: %q", banned)}
 	}
 
 	timeout := trigger.Timeout
@@ -50,22 +51,22 @@ func (w *SandboxRunner) execute(ctx context.Context, trigger *model.SandboxTrigg
 	return w.executeInProcess(ctx, trigger.ScriptPath, script, runtime, netPolicy, trigger.Workspace, trigger.Env, d)
 }
 
-func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *model.TaskResult {
+func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *entities.TaskResult {
 	scriptFile := filepath.Join(scriptPath, "script."+extForRuntime(runtime))
 	if err := os.WriteFile(scriptFile, []byte(script), 0700); err != nil {
-		return &model.TaskResult{Error: "write script: " + err.Error()}
+		return &entities.TaskResult{Error: "write script: " + err.Error()}
 	}
 
 	// Build seccomp filter from the effective network policy.
 	filter, ferr := seccomp.BuildFilter(netPolicy)
 	if ferr != nil {
-		return &model.TaskResult{Error: "seccomp build: " + ferr.Error()}
+		return &entities.TaskResult{Error: "seccomp build: " + ferr.Error()}
 	}
 
 	// Get a filtered command (via re-exec if seccomp is needed).
 	cmd, notifCh, cerr := filter.ScriptCmd(scriptPath, runtime, workspace)
 	if cerr != nil {
-		return &model.TaskResult{Error: "seccomp cmd: " + cerr.Error()}
+		return &entities.TaskResult{Error: "seccomp cmd: " + cerr.Error()}
 	}
 
 	// Apply context timeout. exec.CommandContext sets cmd.Cancel internally.
@@ -91,7 +92,7 @@ func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script
 	}
 
 	if err := cmd.Start(); err != nil {
-		return &model.TaskResult{Error: "start script: " + err.Error()}
+		return &entities.TaskResult{Error: "start script: " + err.Error()}
 	}
 
 	// If the filter has a notifier, start it in a goroutine.
@@ -113,7 +114,7 @@ func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
-		result := &model.TaskResult{
+		result := &entities.TaskResult{
 			Output: map[string]any{
 				"exit_code": exitCode,
 				"stdout":    stdout.String(), "stderr": stderr.String(),
@@ -130,16 +131,16 @@ func (w *SandboxRunner) executeInProcess(ctx context.Context, scriptPath, script
 	if parsed, ok := tryParseJSON(stdout.String()); ok {
 		output["parsed"] = parsed
 	}
-	result := &model.TaskResult{Output: output}
+	result := &entities.TaskResult{Output: output}
 	w.writeResultFile(scriptPath, result)
 	os.WriteFile(filepath.Join(scriptPath, "status"), []byte("SUCCESS"), 0644)
 	return result
 }
 
-func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *model.TaskResult {
+func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *entities.TaskResult {
 	scriptFile := filepath.Join(scriptPath, "script."+extForRuntime(runtime))
 	if err := os.WriteFile(scriptFile, []byte(script), 0700); err != nil {
-		return &model.TaskResult{Error: "write script: " + err.Error()}
+		return &entities.TaskResult{Error: "write script: " + err.Error()}
 	}
 
 	containerName := fmt.Sprintf("flowgent-sandbox-%d", time.Now().UnixNano())
@@ -170,7 +171,7 @@ func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script,
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		result := &model.TaskResult{
+		result := &entities.TaskResult{
 			Output: map[string]any{"stdout": stdout.String(), "stderr": stderr.String()},
 			Error:  fmt.Sprintf("docker sandbox failed: %v", err),
 		}
@@ -183,13 +184,13 @@ func (w *SandboxRunner) executeInDocker(ctx context.Context, scriptPath, script,
 	if parsed, ok := tryParseJSON(stdout.String()); ok {
 		output["parsed"] = parsed
 	}
-	result := &model.TaskResult{Output: output}
+	result := &entities.TaskResult{Output: output}
 	w.writeResultFile(scriptPath, result)
 	os.WriteFile(filepath.Join(scriptPath, "status"), []byte("SUCCESS"), 0644)
 	return result
 }
 
-func (w *SandboxRunner) writeResultFile(scriptPath string, result *model.TaskResult) {
+func (w *SandboxRunner) writeResultFile(scriptPath string, result *entities.TaskResult) {
 	data, _ := json.Marshal(result)
 	os.WriteFile(filepath.Join(scriptPath, "result.json"), data, 0644)
 }
