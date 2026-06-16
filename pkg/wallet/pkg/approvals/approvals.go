@@ -43,7 +43,7 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 	approval := &entities.ApprovalInfo{
 		TaskRunID: intent.ID,
 		Token:     token,
-		Status:    "PENDING",
+		Status: "PENDING",
 		Timeout:   a.timeout,
 		ExpiresAt: &expiresAt,
 	}

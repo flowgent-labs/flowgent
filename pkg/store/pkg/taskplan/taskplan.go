@@ -23,7 +23,7 @@ func PlanToTaskRun(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 		createdAt = now
 	}
 	return &entities.TaskRunInfo{
-		ID:             plan.TaskID,
+		BaseEntity:     entities.BaseEntity{ID: plan.TaskID, CreatedAt: createdAt, UpdatedAt: now},
 		AgentFlowRunID: plan.AgentFlowRunID,
 		NodeID:         plan.NodeID,
 		Status:         plan.State,
@@ -33,8 +33,6 @@ func PlanToTaskRun(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 		RetryCount:     plan.RetryCount,
 		MaxRetries:     plan.MaxRetries,
 		ExecID:         plan.PlanID,
-		CreatedAt:      createdAt,
-		UpdatedAt:      now,
 		StartedAt:      plan.StartedAt,
 		FinishedAt:     plan.FinishedAt,
 	}

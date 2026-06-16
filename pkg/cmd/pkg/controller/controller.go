@@ -238,12 +238,11 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *entities.Age
 	}
 
 	run := &entities.FlowRunInfo{
-		ID:          fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()),
+		BaseEntity:  entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), TenantID: tenant},
 		AgentFlowID: spec.ID,
 		Version:     1,
 		Status:      entities.RunPending,
 		Priority:    spec.Priority,
-		TenantID:    tenant,
 		Namespace:   spec.Namespace,
 		Vars:        spec.Vars,
 		Trigger:     entities.TriggerInfo{Type: "schedule", Source: "controller"},
@@ -319,12 +318,11 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *entities
 		"flow_id", spec.ID, "namespace", ns, "deployment", jmName)
 
 	run := &entities.FlowRunInfo{
-		ID:          fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()),
+		BaseEntity:  entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), TenantID: tenantID},
 		AgentFlowID: spec.ID,
 		Version:     1,
 		Status:      entities.RunPending,
 		Priority:    entities.PriorityGrade,
-		TenantID:    tenantID,
 		Namespace:   ns,
 		Vars:        spec.Vars,
 		Trigger:     entities.TriggerInfo{Type: "schedule", Source: "controller"},

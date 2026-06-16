@@ -36,8 +36,9 @@ func (s *ApprovalSQLiteStore) Delete(ctx context.Context, token string) error {
 	return s.inner.Delete(ctx, token)
 }
 
-// CreateApproval generates a token and sets timestamps before inserting.
+// CreateApproval generates id/token and sets timestamps before inserting.
 func (s *ApprovalSQLiteStore) CreateApproval(ctx context.Context, e *entities.ApprovalInfo) error {
+	e.ID = uuid.New().String()
 	e.Token = uuid.New().String()
 	now := time.Now().UTC()
 	e.CreatedAt = now
@@ -78,10 +79,11 @@ func scanApproval(s scanner) (*entities.ApprovalInfo, error) {
 	var e entities.ApprovalInfo
 	var expiresAt, resolvedAt sql.NullTime
 	err := s.Scan(
-		&e.TaskRunID, &e.AgentFlowRunID, &e.Token, &e.Status,
+		&e.ID, &e.Token, &e.AgentFlowRunID, &e.TaskRunID, &e.Status,
 		&e.Approved, &e.Comment, &e.Timeout,
-		&e.CreatedAt, &e.UpdatedAt,
 		&expiresAt, &resolvedAt,
+		&e.Description, &e.TenantID,
+		&e.CreatedAt, &e.CreatedBy, &e.UpdatedAt, &e.UpdatedBy, &e.DelFlag,
 	)
 	if err != nil {
 		return nil, err

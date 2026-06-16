@@ -800,11 +800,9 @@ func (s *consoleState) runCreate(args []string) {
 	}
 	flowID := args[0]
 	run := &entities.FlowRunInfo{
-		ID:          uuid.New().String(),
+		BaseEntity:  entities.BaseEntity{ID: uuid.New().String(), TenantID: s.tenant, CreatedAt: time.Now()},
 		AgentFlowID: flowID,
-		TenantID:    s.tenant,
 		Status:      entities.RunPending,
-		CreatedAt:   time.Now(),
 	}
 	if err := s.getStores().runs.Create(s.ctx, run); err != nil {
 		fmt.Printf("Error creating run: %v\n", err)

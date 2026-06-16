@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/google/uuid"
 )
 
 type AgentFlowSQLiteStore struct {
@@ -33,14 +35,9 @@ func (s *AgentFlowSQLiteStore) Delete(ctx context.Context, id string) error {
 	return s.inner.Delete(ctx, id)
 }
 func (s *AgentFlowSQLiteStore) GetVersion(ctx context.Context, id string, ver int64) (*entities.AgentFlowVersionInfo, error) {
-	row := s.inner.Conn.QueryRowContext(ctx, "SELECT * FROM orh_agentflow WHERE agentflow_id=?1 AND version=?2", id, ver)
-	var v entities.AgentFlowVersionInfo
-	var b []byte
-	if err := row.Scan(&v.AgentFlowID, &v.Version, &b, &v.CreatedBy, &v.Comment, &v.CreatedAt); err != nil {
-		return nil, err
-	}
-	v.Definition = b
-	return &v, nil
+	row := s.inner.Conn.QueryRowContext(ctx,
+		"SELECT id,agentflow_id,version,definition,checksum,comment,priority,namespace,mode,labels,description,tenant_id,status,created_at,created_by,updated_at,updated_by,del_flag FROM orh_agentflow WHERE agentflow_id=?1 AND version=?2", id, ver)
+	return utils.ScanStruct(row, new(entities.AgentFlowVersionInfo))
 }
 func (s *AgentFlowSQLiteStore) SaveSpec(ctx context.Context, spec *entities.AgentFlowInfo, createdBy, comment string) error {
 	b, _ := json.Marshal(spec)
@@ -49,7 +46,9 @@ func (s *AgentFlowSQLiteStore) SaveSpec(ctx context.Context, spec *entities.Agen
 	if nextVer == 0 {
 		nextVer = 1
 	}
-	_, err := s.inner.Conn.ExecContext(ctx, "INSERT OR REPLACE INTO orh_agentflow (agentflow_id,version,definition,created_by,comment,priority,tenant_id) VALUES (?1,?2,?3,?4,?5,?6,?7)", spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.TenantID)
+	_, err := s.inner.Conn.ExecContext(ctx,
+		"INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,priority,tenant_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT (agentflow_id,version) DO UPDATE SET definition=?4,comment=?6,priority=?7,updated_at=CURRENT_TIMESTAMP",
+		uuid.New().String(), spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.TenantID)
 	return err
 }
 func (s *AgentFlowSQLiteStore) GetSpec(ctx context.Context, id string) (*entities.AgentFlowInfo, error) {

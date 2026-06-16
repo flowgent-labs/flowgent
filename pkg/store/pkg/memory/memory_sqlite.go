@@ -8,6 +8,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/google/uuid"
 )
 
 // MemorySQLiteStore wraps store.SQLiteGenericStore[entities.MemoryInfo].
@@ -48,10 +49,10 @@ func (s *MemorySQLiteStore) UpsertMemory(ctx context.Context, mem *entities.Memo
 	meta, _ := json.Marshal(mem.Metadata)
 
 	_, err := s.inner.Conn.ExecContext(ctx,
-		`INSERT INTO llm_memory (flow_id, node_id, content, embedding, metadata, created_at, updated_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-		 ON CONFLICT (flow_id, node_id) DO UPDATE SET content=?3, embedding=?4, metadata=?5, updated_at=?7`,
-		mem.FlowID, mem.NodeID, mem.Content, string(emb), string(meta), now, now)
+		`INSERT INTO llm_memory (id, flow_id, node_id, content, embedding, metadata, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+		 ON CONFLICT (flow_id, node_id) DO UPDATE SET content=?4, embedding=?5, metadata=?6, updated_at=?8`,
+		uuid.New().String(), mem.FlowID, mem.NodeID, mem.Content, string(emb), string(meta), now, now)
 	return err
 }
 

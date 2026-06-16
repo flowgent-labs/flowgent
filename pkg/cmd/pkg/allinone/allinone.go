@@ -264,7 +264,8 @@ func startA2AServer(state *allInOneState) *http.Server {
 			return
 		}
 		run := &entities.FlowRunInfo{
-			ID: uuid.NewString(), AgentFlowID: req.AgentFlowID, Version: 1,
+			BaseEntity: entities.BaseEntity{ID: uuid.NewString()},
+			AgentFlowID: req.AgentFlowID, Version: 1,
 			Status: entities.RunPending, Vars: req.Vars,
 			Trigger: entities.TriggerInfo{Type: "api", Source: "a2a"},
 		}

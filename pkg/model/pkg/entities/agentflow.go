@@ -1,17 +1,15 @@
 package entities
 
 import (
-	"time"
-
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"gopkg.in/yaml.v3"
 )
 
 // AgentFlowInfo contains the full specification of an agentflow (nodes, edges, triggers, etc.).
 type AgentFlowInfo struct {
-	ID            string                 `json:"id" yaml:"id"`
+	BaseEntity
+
 	Kind          string                 `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Description   string                 `json:"description,omitempty" yaml:"description,omitempty"`
 	Summary       string                 `json:"summary,omitempty" yaml:"summary,omitempty"`
 	InputSchema   map[string]any         `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
 	OutputSchema  map[string]any         `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
@@ -22,7 +20,6 @@ type AgentFlowInfo struct {
 	SandboxPolicy *model.SandboxPolicyOverride `json:"sandbox_policy,omitempty" yaml:"sandbox_policy,omitempty"`
 
 	Priority    Priority          `json:"priority,omitempty" yaml:"priority,omitempty"`
-	TenantID    string            `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Mode        ExecutionMode     `json:"mode,omitempty" yaml:"mode,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
@@ -77,11 +74,10 @@ func (d *AgentFlowDefinition) UnmarshalYAML(value *yaml.Node) error {
 
 // AgentFlowVersionInfo represents a versioned agentflow stored in the database.
 type AgentFlowVersionInfo struct {
-	AgentFlowID string    `json:"agentflow_id"`
-	Version     int64     `json:"version"`
-	Definition  []byte    `json:"definition"`
-	CreatedBy   string    `json:"created_by,omitempty"`
-	Comment     string    `json:"comment,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-}
+	BaseEntity
 
+	AgentFlowID string `json:"agentflow_id"`
+	Version     int64  `json:"version"`
+	Definition  []byte `json:"definition"`
+	Comment     string `json:"comment,omitempty"`
+}

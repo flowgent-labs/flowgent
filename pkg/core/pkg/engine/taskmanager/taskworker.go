@@ -79,7 +79,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 		}
 
 		_ = sw.state.SaveTask(ctx, &entities.TaskRunInfo{
-			ID:             plan.TaskID,
+			BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
 			AgentFlowRunID: plan.AgentFlowRunID,
 			NodeID:         plan.NodeID,
 			Status:         plan.State,

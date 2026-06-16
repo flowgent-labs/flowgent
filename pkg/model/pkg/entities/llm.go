@@ -1,10 +1,9 @@
 package entities
 
-import "time"
-
 // LlmProviderInfo is a persisted LLM provider definition.
 type LlmProviderInfo struct {
-	ID          string         `json:"id" yaml:"id"`
+	BaseEntity
+
 	Type        string         `json:"type" yaml:"type"`
 	Enabled     bool           `json:"enabled" yaml:"enabled"`
 	Timeout     string         `json:"timeout" yaml:"timeout"`
@@ -13,9 +12,6 @@ type LlmProviderInfo struct {
 	Proxy       string         `json:"proxy,omitempty" yaml:"proxy,omitempty"`
 	RateLimit   int            `json:"rate_limit" yaml:"rate_limit"`
 	Models      []LlmModelInfo `json:"models" yaml:"models"`
-	TenantID    string         `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
 	ApiKey      string         `json:"-" yaml:"-"`
 }
 

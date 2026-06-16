@@ -37,8 +37,9 @@ func (s *ApprovalPostgresStore) Delete(ctx context.Context, token string) error 
 	return s.inner.Delete(ctx, token)
 }
 
-// CreateApproval generates a token and sets timestamps before inserting.
+// CreateApproval generates id/token and sets timestamps before inserting.
 func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, e *entities.ApprovalInfo) error {
+	e.ID = uuid.New().String()
 	e.Token = uuid.New().String()
 	now := time.Now().UTC()
 	e.CreatedAt = now

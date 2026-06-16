@@ -1,0 +1,2 @@
+-- Flowgent SQLite — Initial Seed Data
+-- No seed data required for initial release.

@@ -391,7 +391,7 @@ func (jm *JobMaster) applySupervisorConfig(spec *entities.AgentFlowInfo) {
 // taskRunFromPlan converts an ExecutionPlan to a minimal TaskRunInfo for persistence.
 func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 	return &entities.TaskRunInfo{
-		ID:             plan.TaskID,
+		BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
 		AgentFlowRunID: plan.AgentFlowRunID,
 		NodeID:         plan.NodeID,
 		Status:         plan.State,

@@ -59,14 +59,14 @@ type Edge struct {
 // RetryPolicy defines the retry behavior for a node.
 type RetryPolicy struct {
 	Max      int      `json:"max" yaml:"max"`
-	Initial  utils.Duration `json:"initial" yaml:"initial"`
-	MaxDelay utils.Duration `json:"max_delay" yaml:"max_delay"`
+	Initial  utils.UnitDuration `json:"initial" yaml:"initial"`
+	MaxDelay utils.UnitDuration `json:"max_delay" yaml:"max_delay"`
 	Factor   float64  `json:"factor" yaml:"factor"`
 }
 
 // HumanApprovalConfig defines the approval gate configuration for human nodes.
 type HumanApprovalConfig struct {
-	Timeout   utils.Duration `json:"timeout" yaml:"timeout"`
+	Timeout   utils.UnitDuration `json:"timeout" yaml:"timeout"`
 	OnApprove string   `json:"on_approve" yaml:"on_approve"`
 	OnReject  string   `json:"on_reject" yaml:"on_reject"`
 }

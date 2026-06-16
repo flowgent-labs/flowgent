@@ -161,8 +161,9 @@ func TestSQLiteStore_AgentFlowDefinitions(t *testing.T) {
 	ctx := context.Background()
 
 	def := &entities.AgentFlowVersionInfo{
+		BaseEntity:  entities.BaseEntity{CreatedBy: "test"},
 		AgentFlowID: "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
-		CreatedBy: "test", Comment: "initial",
+		Comment: "initial",
 	}
 	s.SaveAgentFlow(ctx, def)
 

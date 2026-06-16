@@ -7,6 +7,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -49,10 +50,10 @@ func (s *MemoryPostgresStore) UpsertMemory(ctx context.Context, mem *entities.Me
 	meta, _ := json.Marshal(mem.Metadata)
 
 	_, err := s.inner.Pool.Exec(ctx,
-		`INSERT INTO llm_memory (flow_id, node_id, content, embedding, metadata, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (flow_id, node_id) DO UPDATE SET content=$3, embedding=$4, metadata=$5, updated_at=$7`,
-		mem.FlowID, mem.NodeID, mem.Content, emb, meta, mem.CreatedAt, mem.UpdatedAt)
+		`INSERT INTO llm_memory (id, flow_id, node_id, content, embedding, metadata, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (flow_id, node_id) DO UPDATE SET content=$4, embedding=$5, metadata=$6, updated_at=$8`,
+		uuid.New().String(), mem.FlowID, mem.NodeID, mem.Content, emb, meta, mem.CreatedAt, mem.UpdatedAt)
 	return err
 }
 

@@ -10,6 +10,7 @@ import (
 )
 
 // StructFields extracts column names and values from a struct's tags.
+// Embedded structs are flattened; outer fields shadow inner ones with the same column name.
 // Column name priority: db tag > json tag > snake_case(field name).
 func StructFields(entity any) (cols []string, args []any) {
 	v := reflect.ValueOf(entity)
@@ -19,20 +20,30 @@ func StructFields(entity any) (cols []string, args []any) {
 	if v.Kind() != reflect.Struct {
 		return
 	}
+	seen := map[string]bool{}
+	collectFields(v, &cols, &args, seen, false)
+	return
+}
+
+func collectFields(v reflect.Value, cols *[]string, args *[]any, seen map[string]bool, embedded bool) {
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
 		}
-		col := ColName(f)
-		if col == "" || col == "-" {
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			collectFields(v.Field(i), cols, args, seen, true)
 			continue
 		}
-		cols = append(cols, col)
-		args = append(args, v.Field(i).Interface())
+		col := ColName(f)
+		if col == "" || col == "-" || seen[col] {
+			continue
+		}
+		seen[col] = true
+		*cols = append(*cols, col)
+		*args = append(*args, v.Field(i).Interface())
 	}
-	return
 }
 
 // ColName returns the SQL column name for a struct field.
@@ -84,46 +95,73 @@ func IsJSONType(ft reflect.Type) bool {
 	return false
 }
 
+type scanEntry struct {
+	ptr  any
+	idx  int // index into ev for the owning struct
+	json bool
+}
+
 // ScanStruct scans a row into a struct, handling JSON types automatically.
-// Uses ColName to filter fields, matching StructFields output.
+// Embedded structs are flattened; outer fields shadow inner ones with the same column name.
 func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 	v := reflect.ValueOf(dest)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("dest must be *struct")
 	}
 	ev := v.Elem()
-	t := ev.Type()
+
+	var entries []scanEntry
+	seen := map[string]bool{}
+	collectScanFields(ev, &entries, seen)
 
 	var ptrs []any
-	jsonIdxs := make(map[int]int) // ptrsIndex → fieldIndex
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		if ColName(f) == "" || ColName(f) == "-" {
-			continue
-		}
-		fv := ev.Field(i)
-		ft := fv.Type()
-		if IsJSONType(ft) {
-			jsonIdxs[len(ptrs)] = i
+	jsonIdxs := make(map[int]int) // ptrsIndex → entriesIndex
+	for ei, e := range entries {
+		if e.json {
+			jsonIdxs[len(ptrs)] = ei
 			ptrs = append(ptrs, reflect.New(reflect.TypeOf([]byte{})).Interface())
 		} else {
-			ptrs = append(ptrs, fv.Addr().Interface())
+			ptrs = append(ptrs, e.ptr)
 		}
 	}
 	if err := scanner.Scan(ptrs...); err != nil {
 		return err
 	}
-	for pi, fi := range jsonIdxs {
+	for pi, ei := range jsonIdxs {
 		b := ptrs[pi].(*[]byte)
 		if b == nil || len(*b) == 0 {
 			continue
 		}
-		json.Unmarshal(*b, ev.Field(fi).Addr().Interface())
+		ent := entries[ei]
+		fv := ev.Field(ent.idx)
+		json.Unmarshal(*b, fv.Addr().Interface())
 	}
 	return nil
+}
+
+func collectScanFields(v reflect.Value, entries *[]scanEntry, seen map[string]bool) {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			collectScanFields(v.Field(i), entries, seen)
+			continue
+		}
+		col := ColName(f)
+		if col == "" || col == "-" || seen[col] {
+			continue
+		}
+		seen[col] = true
+		fv := v.Field(i)
+		if IsJSONType(fv.Type()) {
+			*entries = append(*entries, scanEntry{ptr: nil, idx: i, json: true})
+		} else {
+			*entries = append(*entries, scanEntry{ptr: fv.Addr().Interface(), idx: i, json: false})
+		}
+	}
 }
 
 var sqlIdentRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)

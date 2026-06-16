@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/jackc/pgx/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -44,7 +45,7 @@ func (s *AgentFlowPostgresStore) Delete(ctx context.Context, id string) error {
 // Custom queries
 func (s *AgentFlowPostgresStore) GetVersion(ctx context.Context, id string, ver int64) (*entities.AgentFlowVersionInfo, error) {
 	rows, err := s.inner.Pool.Query(ctx,
-		"SELECT * FROM orh_agentflow WHERE agentflow_id=$1 AND version=$2", id, ver)
+		"SELECT id,agentflow_id,version,definition,checksum,comment,priority,namespace,mode,labels,description,tenant_id,status,created_at,created_by,updated_at,updated_by,del_flag FROM orh_agentflow WHERE agentflow_id=$1 AND version=$2", id, ver)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +53,11 @@ func (s *AgentFlowPostgresStore) GetVersion(ctx context.Context, id string, ver 
 	if !rows.Next() {
 		return nil, fmt.Errorf("not found")
 	}
-	return scanVersion(rows)
+	var v entities.AgentFlowVersionInfo
+	if err := utils.ScanStruct(rows, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 func (s *AgentFlowPostgresStore) SaveSpec(ctx context.Context, spec *entities.AgentFlowInfo, createdBy, comment string) error {
 	b, _ := json.Marshal(spec)
@@ -63,9 +68,9 @@ func (s *AgentFlowPostgresStore) SaveSpec(ctx context.Context, spec *entities.Ag
 		nextVer = 1
 	}
 	_, err := s.inner.Pool.Exec(ctx,
-		`INSERT INTO orh_agentflow (agentflow_id,version,definition,created_by,comment,priority,tenant_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (agentflow_id,version) DO NOTHING`,
-		spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.TenantID)
+		`INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,priority,tenant_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (agentflow_id,version) DO UPDATE SET definition=$4,comment=$6,priority=$7,updated_at=NOW()`,
+		uuid.New().String(), spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.TenantID)
 	return err
 }
 func (s *AgentFlowPostgresStore) GetSpec(ctx context.Context, id string) (*entities.AgentFlowInfo, error) {
@@ -78,12 +83,4 @@ func (s *AgentFlowPostgresStore) GetSpec(ctx context.Context, id string) (*entit
 		return nil, err
 	}
 	return &spec, nil
-}
-
-func scanVersion(r pgx.Row) (*entities.AgentFlowVersionInfo, error) {
-	var v entities.AgentFlowVersionInfo
-	var b []byte
-	err := r.Scan(&v.AgentFlowID, &v.Version, &b, &v.CreatedBy, &v.Comment, &v.CreatedAt)
-	v.Definition = b
-	return &v, err
 }

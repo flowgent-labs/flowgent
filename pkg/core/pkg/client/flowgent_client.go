@@ -349,7 +349,7 @@ func (c *FlowgentClient) GetTaskRun(ctx context.Context, tenant, runID, taskID s
 func (c *FlowgentClient) SavePlan(ctx context.Context, tenant, runID string, plan *entities.ExecutionPlan) error {
 	// execution plans flow through the tasks endpoint
 	task := &entities.TaskRunInfo{
-		ID:             plan.TaskID,
+		BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
 		AgentFlowRunID: plan.AgentFlowRunID,
 		NodeID:         plan.NodeID,
 		Status:         plan.State,
