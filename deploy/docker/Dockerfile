@@ -7,7 +7,7 @@ ENV GOPROXY=https://goproxy.cn,direct
 ARG BUILD_TS=0
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=.,target=/build \
-    cd /build/pkg/cmd && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent ./pkg/
+    cd /build/pkg/cmd && CGO_ENABLED=0 go build -v -trimpath -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent ./pkg/
 
 # ─── Stage 2: Build GitHub MCP ────────────────────────────────
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder-github-mcp
@@ -16,7 +16,7 @@ ENV GOPROXY=https://goproxy.cn,direct
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=.,target=/build \
-    cd /build/examples/security-autonomy-fixer/mcps/github && GOWORK=off CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/github-mcp .
+    cd /build/examples/security-autonomy-fixer/mcps/github && GOWORK=off CGO_ENABLED=0 go build -v -trimpath -ldflags="-s -w" -o /out/github-mcp .
 
 # ─── Stage 3: Build SonarQube MCP ─────────────────────────────
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder-sonarqube-mcp
@@ -25,7 +25,7 @@ ENV GOPROXY=https://goproxy.cn,direct
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=.,target=/build \
-    cd /build/examples/security-autonomy-fixer/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/sonarqube-mcp .
+    cd /build/examples/security-autonomy-fixer/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 go build -v -trimpath -ldflags="-s -w" -o /out/sonarqube-mcp .
 
 # ─── Stage 4: Export (used by `make build`) ───────────────────
 FROM scratch AS export

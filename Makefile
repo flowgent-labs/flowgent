@@ -22,10 +22,10 @@ help:
 # ── Docker builds ─────────────────────────────────────────────────
 
 build:
-	DOCKER_BUILDKIT=1 docker build -t flowgent:latest -f deploy/docker/Dockerfile .
+	DOCKER_BUILDKIT=1 docker build --progress=plain -t flowgent:latest -f deploy/docker/Dockerfile .
 
 build-dev:
-	DOCKER_BUILDKIT=1 docker build -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
+	DOCKER_BUILDKIT=1 docker build --progress=plain -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
 
 # ── Binary builds ─────────────────────────────────────────────────
 
