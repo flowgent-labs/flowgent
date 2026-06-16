@@ -37,7 +37,11 @@ func (s *AgentFlowSQLiteStore) Delete(ctx context.Context, id string) error {
 func (s *AgentFlowSQLiteStore) GetVersion(ctx context.Context, id string, ver int64) (*entities.AgentFlowVersionInfo, error) {
 	row := s.inner.Conn.QueryRowContext(ctx,
 		"SELECT id,agentflow_id,version,definition,checksum,comment,priority,namespace,mode,labels,description,tenant_id,status,created_at,created_by,updated_at,updated_by,del_flag FROM orh_agentflow WHERE agentflow_id=?1 AND version=?2", id, ver)
-	return utils.ScanStruct(row, new(entities.AgentFlowVersionInfo))
+	var v entities.AgentFlowVersionInfo
+	if err := utils.ScanStruct(row, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 func (s *AgentFlowSQLiteStore) SaveSpec(ctx context.Context, spec *entities.AgentFlowInfo, createdBy, comment string) error {
 	b, _ := json.Marshal(spec)

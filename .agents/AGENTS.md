@@ -16,10 +16,14 @@
 
 ## Code Quality
 
+- **Any code, config, or documentation change must follow high cohesion, low coupling. Logical structure must be clear — concise without losing core logic. If related dependent modules exist, they MUST be updated synchronously to remain consistent.**
 - Convergent file/directory naming; avoid ad-hoc new directories
 - Go conventions: lowercase packages, exported symbols capitalized, `-er`/`-or` interfaces
 - Program to interfaces; high cohesion, low coupling
-- **Any code or configuration changes must maintain clear structure and logic, with high cohesion and low coupling. If related dependent modules exist, they MUST be updated synchronously to remain consistent.**
+
+## Build & Test
+
+- **Any code change MUST pass build and tests. Code that doesn't compile or pass tests is not acceptable.**
 
 ## Test Code Organization
 
