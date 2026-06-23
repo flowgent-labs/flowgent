@@ -4,10 +4,11 @@ go 1.26.0
 
 require (
 	github.com/flowgent-labs/flowgent/config v0.0.0
+	github.com/flowgent-labs/flowgent/messager v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/shopspring/decimal v1.4.0
-	github.com/x402-foundation/x402/go v0.0.0-20260527075215-3cd6debb0c3b
+	github.com/x402-foundation/x402/go v0.0.0-20260527075215-3cd6debb0c3b  // build with -tags x402
 	modernc.org/sqlite v1.50.1
 )
 
@@ -39,5 +40,6 @@ require (
 replace (
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/config => ../config
+	github.com/flowgent-labs/flowgent/messager => ../messager
 	github.com/flowgent-labs/flowgent/model => ../model
 )

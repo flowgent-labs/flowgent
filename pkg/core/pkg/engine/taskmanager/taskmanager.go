@@ -34,7 +34,7 @@ type TaskManagerConfig struct {
 	SlotCount         int
 	Messager          messager.IMessager
 	State             TaskStateStore
-	ApprovalInfo     executor.HumanApprovalStore
+	ApprovalInfo      executor.HumanApprovalStore
 	APIServerURL      string // API server URL for runtime resource resolution
 	Tenant            string // default tenant for API calls
 	Logger            *utils.Logger
@@ -43,6 +43,7 @@ type TaskManagerConfig struct {
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
 	SandboxDeploymentEnabled bool
+	HttpClient        model.IFlowgentHttpClient // unified HTTP client (x402-aware when payments enabled)
 }
 
 // TaskManager is a persistent worker that consumes ExecutionPlans from
@@ -70,14 +71,14 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 
 	// Runtime resolvers — TM owns MCP/agent/LLM lifecycle, resolved via API at execution time.
 	apiClient := client.NewFlowgentClient(cfg.APIServerURL)
-	mcpMgr := mcp.NewMcpManager()
+	mcpMgr := mcp.NewMcpManager(cfg.HttpClient)
 	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: cfg.Tenant}
 	llmClient := llm.NewLlmProviderManager(llmLoader)
 
 	router := executor.NewTaskExecutorRouter()
 	router.Register(executor.NewAgentExecutor(llmClient, apiClient, cfg.Tenant))
 	router.Register(&executor.ConditionExecutor{})
-	router.Register(executor.NewToolExecutor(mcpMgr))
+	router.Register(executor.NewToolExecutor(mcpMgr, cfg.HttpClient))
 	router.Register(executor.NewSupervisorExecutor(llmClient, apiClient, cfg.Tenant))
 	router.Register(&executor.TribunalExecutor{})
 	router.Register(&executor.MapExecutor{})

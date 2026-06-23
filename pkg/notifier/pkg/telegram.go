@@ -7,16 +7,21 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // TelegramSender sends notifications via Telegram Bot API.
 type TelegramSender struct {
 	BotToken string `json:"bot_token"`
 	ChatID   string `json:"chat_id"`
-	client   *http.Client
+	client   model.IFlowgentHttpClient
 }
 
 func (s *TelegramSender) Type() string { return "telegram" }
+
+func (s *TelegramSender) SetHTTPClient(c model.IFlowgentHttpClient) { s.client = c }
 
 func (s *TelegramSender) Validate() error {
 	if s.BotToken == "" {
@@ -52,7 +57,7 @@ func (s *TelegramSender) Send(ctx context.Context, recipient, title, body string
 	req.Header.Set("Content-Type", "application/json")
 
 	if s.client == nil {
-		s.client = &http.Client{Timeout: 10 * time.Second}
+		s.client = client.NewGenericHttpClient(10 * time.Second)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

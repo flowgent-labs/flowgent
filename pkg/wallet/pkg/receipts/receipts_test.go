@@ -10,7 +10,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 func TestStore_SaveAndGet(t *testing.T) {
@@ -26,7 +26,7 @@ func TestStore_SaveAndGet(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	receipt := &payments.PaymentReceipt{
+	receipt := &model.PaymentReceipt{
 		ID: "rec-1", IntentID: "int-1", TxHash: "0xtx",
 		Asset: "USDC", Amount: decimal.NewFromFloat(0.01),
 		Chain: "base", Facilitator: "https://facilitator.example.com",
@@ -74,12 +74,12 @@ func TestStore_ListByDate(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	store.Save(ctx, &payments.PaymentReceipt{
+	store.Save(ctx, &model.PaymentReceipt{
 		ID: "r1", IntentID: "i1", Asset: "USDC",
 		Amount: decimal.NewFromFloat(0.1), Chain: "base",
 		Facilitator: "f1", Authorization: "tok1", PaidAt: now,
 	})
-	store.Save(ctx, &payments.PaymentReceipt{
+	store.Save(ctx, &model.PaymentReceipt{
 		ID: "r2", IntentID: "i2", Asset: "USDC",
 		Amount: decimal.NewFromFloat(0.2), Chain: "base",
 		Facilitator: "f1", Authorization: "tok2", PaidAt: now,

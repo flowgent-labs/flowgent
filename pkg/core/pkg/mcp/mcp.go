@@ -9,13 +9,17 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// McpManager manages MCP client lifecycle.
+// McpManager manages MCP client lifecycle and provides the unified HTTP client
+// to MCP tool implementations for x402 payment-aware external API calls.
 type McpManager struct {
-	mu      sync.Mutex
-	clients map[string]*client.Client
-	defs    map[string]definition
+	mu         sync.Mutex
+	clients    map[string]*client.Client
+	defs       map[string]definition
+	httpClient model.IFlowgentHttpClient // unified HTTP client (x402-aware when payments enabled)
 }
 
 type definition struct {
@@ -24,12 +28,18 @@ type definition struct {
 	env     map[string]string
 }
 
-// NewFactory creates an MCP client manager.
-func NewMcpManager() *McpManager {
+// NewMcpManager creates an MCP client manager with the given HTTP client.
+func NewMcpManager(httpClient model.IFlowgentHttpClient) *McpManager {
 	return &McpManager{
-		clients: make(map[string]*client.Client),
-		defs:    make(map[string]definition),
+		clients:    make(map[string]*client.Client),
+		defs:       make(map[string]definition),
+		httpClient: httpClient,
 	}
+}
+
+// HttpClient returns the unified HTTP client for use by MCP tool implementations.
+func (f *McpManager) HttpClient() model.IFlowgentHttpClient {
+	return f.httpClient
 }
 
 // Register adds an MCP server definition.

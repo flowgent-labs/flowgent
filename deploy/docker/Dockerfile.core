@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# ─── Stage 1: Build flowgent-core ────────────────────────────────
+FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder
+
+ENV GOPROXY=https://goproxy.cn,direct
+
+ARG BUILD_TS=0
+ARG BUILD_TAGS=
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=bind,source=.,target=/build \
+    cd /build/pkg/cmd && CGO_ENABLED=0 go build -v -trimpath -tags "${BUILD_TAGS}" -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent-core ./pkg/
+
+# ─── Stage 2: Export ────────────────────────────────────────────
+FROM scratch AS export
+COPY --from=builder /out/ /
+
+# ─── Stage 3: Runtime ───────────────────────────────────────────
+FROM registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata curl jq bash
+ENV TZ=Asia/Shanghai
+
+COPY --from=builder /out/flowgent-core /app/flowgent-core
+COPY etc/ /app/etc/
+
+ENTRYPOINT ["/app/flowgent-core"]
+CMD ["--help"]

@@ -1,7 +1,6 @@
-// Package x402 provides parsing and validation for x402 payment protocol responses.
-// Uses the official x402 SDK types (github.com/x402-foundation/x402/go/types) for
-// protocol-level structures (PaymentRequired, PaymentRequirements, PaymentPayload).
-package x402
+//go:build x402
+
+package client
 
 import (
 	"encoding/json"
@@ -33,7 +32,6 @@ func Parse(resp *http.Response) (*types.PaymentRequired, error) {
 			}
 			return &pr, nil
 		}
-		// If V2 parse fails, try V1 header fallback below
 	}
 
 	// V1 fallback: parse X402-Payment header

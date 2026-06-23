@@ -6,11 +6,12 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-func testCfg() *payments.PoliciesConfig {
-	return &payments.PoliciesConfig{
+func testCfg() *config.PoliciesConfig {
+	return &config.PoliciesConfig{
 		MaxSinglePaymentUSD:          1.0,
 		MaxDailyBudgetUSD:            10.0,
 		AllowedDomains:               []string{"*.googleapis.com", "api.openai.com"},
@@ -25,7 +26,7 @@ func TestEngine_Allow(t *testing.T) {
 	eng := NewEngine(testCfg(), nil)
 	ctx := context.Background()
 
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i1", URL: "https://api.openai.com/v1/chat",
 		Asset: "USDC", Amount: decimal.NewFromFloat(0.5),
 		Chain: "base", Recipient: "0x1234",
@@ -38,7 +39,7 @@ func TestEngine_Allow(t *testing.T) {
 
 func TestEngine_DenyBlockedDomain(t *testing.T) {
 	eng := NewEngine(testCfg(), nil)
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i2", URL: "https://bad.evil.xyz/api",
 		Asset: "USDC", Amount: decimal.NewFromFloat(0.1),
 		Chain: "base", Recipient: "0x",
@@ -52,7 +53,7 @@ func TestEngine_DenyUnknownDomain(t *testing.T) {
 	cfg := testCfg()
 	cfg.BlockedDomains = nil
 	eng := NewEngine(cfg, nil)
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i3", URL: "https://random.unknown.com/api",
 		Asset: "USDC", Amount: decimal.NewFromFloat(0.1),
 		Chain: "base", Recipient: "0x",
@@ -64,7 +65,7 @@ func TestEngine_DenyUnknownDomain(t *testing.T) {
 
 func TestEngine_DenyExceedsMaxSingle(t *testing.T) {
 	eng := NewEngine(testCfg(), nil)
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i4", URL: "https://api.openai.com",
 		Asset: "USDC", Amount: decimal.NewFromFloat(2.0),
 		Chain: "base", Recipient: "0x",
@@ -76,7 +77,7 @@ func TestEngine_DenyExceedsMaxSingle(t *testing.T) {
 
 func TestEngine_DenyWrongAsset(t *testing.T) {
 	eng := NewEngine(testCfg(), nil)
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i5", URL: "https://api.openai.com",
 		Asset: "ETH", Amount: decimal.NewFromFloat(0.1),
 		Chain: "base", Recipient: "0x",
@@ -88,7 +89,7 @@ func TestEngine_DenyWrongAsset(t *testing.T) {
 
 func TestEngine_DenyWrongChain(t *testing.T) {
 	eng := NewEngine(testCfg(), nil)
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i6", URL: "https://api.openai.com",
 		Asset: "USDC", Amount: decimal.NewFromFloat(0.1),
 		Chain: "ethereum", Recipient: "0x",
@@ -106,7 +107,7 @@ func TestEngine_DenyDailyBudget(t *testing.T) {
 	eng.RecordSpend(ctx, "0x", decimal.NewFromFloat(9.5))
 
 	// $1.0 would push to $10.5 > $10 budget
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "i7", URL: "https://api.openai.com",
 		Asset: "USDC", Amount: decimal.NewFromFloat(1.0),
 		Chain: "base", Recipient: "0x",
@@ -118,8 +119,8 @@ func TestEngine_DenyDailyBudget(t *testing.T) {
 
 func TestEngine_RequiresHumanApproval(t *testing.T) {
 	eng := NewEngine(testCfg(), nil)
-	small := &payments.PaymentIntent{Amount: decimal.NewFromFloat(1.0)}
-	large := &payments.PaymentIntent{Amount: decimal.NewFromFloat(6.0)}
+	small := &model.PaymentIntent{Amount: decimal.NewFromFloat(1.0)}
+	large := &model.PaymentIntent{Amount: decimal.NewFromFloat(6.0)}
 
 	if eng.RequiresHumanApproval(small) {
 		t.Error("small amount should not require approval")
@@ -159,9 +160,9 @@ func TestEngine_NilIntent(t *testing.T) {
 }
 
 func TestEngine_NoApprovalThreshold(t *testing.T) {
-	cfg := &payments.PoliciesConfig{}
+	cfg := &config.PoliciesConfig{}
 	eng := NewEngine(cfg, nil)
-	intent := &payments.PaymentIntent{Amount: decimal.NewFromFloat(1000)}
+	intent := &model.PaymentIntent{Amount: decimal.NewFromFloat(1000)}
 	if eng.RequiresHumanApproval(intent) {
 		t.Error("zero threshold should never require approval")
 	}

@@ -32,13 +32,14 @@ type MQTTClient interface {
 // and pushes messages to local WS connections. The scanner publishes to
 // the correct pod's channel based on the subscription routing table.
 type NotifierServer struct {
-	client    *client.NotifierClient
-	mqtt      MQTTClient
-	senders   map[string]Sender
-	podID     string
-	wsClients map[string]*wsConn
-	mu        sync.RWMutex
-	logger    *slog.Logger
+	client     *client.NotifierClient
+	mqtt       MQTTClient
+	senders    map[string]Sender
+	podID      string
+	wsClients  map[string]*wsConn
+	httpClient model.IFlowgentHttpClient
+	mu         sync.RWMutex
+	logger     *slog.Logger
 }
 
 // WSConn is an active WebSocket client connection.
@@ -64,17 +65,18 @@ func (c *wsConn) Done() <-chan struct{} { return c.done }
 func (c *wsConn) Close() { close(c.done) }
 
 // NewNotifierServer creates a notification service with the given client and optional MQTT client.
-func NewNotifierServer(c *client.NotifierClient, mqtt MQTTClient) *NotifierServer {
+func NewNotifierServer(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentHttpClient) *NotifierServer {
 	hostname, _ := os.Hostname()
 	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
 
 	svc := &NotifierServer{
-		client:    c,
-		mqtt:      mqtt,
-		senders:   make(map[string]Sender),
-		podID:     podID,
-		wsClients: make(map[string]*wsConn),
-		logger:    slog.Default().With("component", "notification"),
+		client:     c,
+		mqtt:       mqtt,
+		senders:    make(map[string]Sender),
+		podID:      podID,
+		wsClients:  make(map[string]*wsConn),
+		httpClient: httpClient,
+		logger:     slog.Default().With("component", "notification"),
 	}
 
 	// Register built-in senders
@@ -83,6 +85,15 @@ func NewNotifierServer(c *client.NotifierClient, mqtt MQTTClient) *NotifierServe
 	svc.senders["slack"] = &SlackSender{}
 	svc.senders["email"] = &EmailSender{}
 	svc.senders["webhook"] = &WebhookSender{}
+
+	// Inject HTTP client into senders that support it.
+	if httpClient != nil {
+		for _, sender := range svc.senders {
+			if s, ok := sender.(interface{ SetHTTPClient(model.IFlowgentHttpClient) }); ok {
+				s.SetHTTPClient(httpClient)
+			}
+		}
+	}
 
 	return svc
 }

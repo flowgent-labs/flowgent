@@ -7,8 +7,8 @@ require (
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
-	go.opentelemetry.io/otel v1.38.0
-	go.opentelemetry.io/otel/trace v1.38.0
+	// go.opentelemetry.io/otel v1.38.0       // UNUSED
+	// go.opentelemetry.io/otel/trace v1.38.0  // UNUSED
 	modernc.org/sqlite v1.50.1
 )
 

@@ -8,26 +8,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 
-	"github.com/shopspring/decimal"
-
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
-
-// Wallet is the core wallet interface for signing payment authorizations.
-type Wallet interface {
-	Address() string
-	SignAuthorization(ctx context.Context, data []byte) ([]byte, error)
-	Balance(ctx context.Context) (decimal.Decimal, error)
-}
 
 // Manager manages multiple wallets and signs payment authorizations.
 type Manager struct {
-	wallets  map[string]Wallet
+	wallets  map[string]model.Wallet
 	default_ string
 }
 
 // NewManager creates a wallet manager with the given wallets.
-func NewManager(defaultWallet string, wallets map[string]Wallet) *Manager {
+func NewManager(defaultWallet string, wallets map[string]model.Wallet) *Manager {
 	return &Manager{
 		wallets:  wallets,
 		default_: defaultWallet,
@@ -35,24 +26,24 @@ func NewManager(defaultWallet string, wallets map[string]Wallet) *Manager {
 }
 
 // Get returns the wallet with the given address, or the default wallet if address is empty.
-func (m *Manager) Get(address string) (Wallet, error) {
+func (m *Manager) Get(address string) (model.Wallet, error) {
 	if address == "" {
 		address = m.default_
 	}
 	w, ok := m.wallets[address]
 	if !ok {
-		return nil, &payments.PaymentError{Code: "WALLET_NOT_FOUND", Message: "wallet not found: " + address}
+		return nil, &model.PaymentError{Code: "WALLET_NOT_FOUND", Message: "wallet not found: " + address}
 	}
 	return w, nil
 }
 
 // Default returns the default wallet.
-func (m *Manager) Default() (Wallet, error) {
+func (m *Manager) Default() (model.Wallet, error) {
 	return m.Get(m.default_)
 }
 
 // SignPaymentAuthorization signs a payment intent for the given wallet address.
-func (m *Manager) SignPaymentAuthorization(ctx context.Context, walletAddr string, intent *payments.PaymentIntent) (*payments.PaymentAuthorization, error) {
+func (m *Manager) SignPaymentAuthorization(ctx context.Context, walletAddr string, intent *model.PaymentIntent) (*model.PaymentAuthorization, error) {
 	w, err := m.Get(walletAddr)
 	if err != nil {
 		return nil, err
@@ -63,13 +54,13 @@ func (m *Manager) SignPaymentAuthorization(ctx context.Context, walletAddr strin
 
 	sig, err := w.SignAuthorization(ctx, payloadBytes)
 	if err != nil {
-		return nil, &payments.PaymentError{
+		return nil, &model.PaymentError{
 			Code:    "SIGN_FAILED",
 			Message: "failed to sign payment authorization: " + err.Error(),
 		}
 	}
 
-	return &payments.PaymentAuthorization{
+	return &model.PaymentAuthorization{
 		IntentID:  intent.ID,
 		Wallet:    w.Address(),
 		Signature: hex.EncodeToString(sig),

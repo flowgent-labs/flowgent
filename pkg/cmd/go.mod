@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/a2aproject/a2a-go v0.3.15
 	github.com/flowgent-labs/flowgent/api v0.0.0
-	github.com/flowgent-labs/flowgent/cache v0.0.0
+	// github.com/flowgent-labs/flowgent/cache v0.0.0  // UNUSED
 	github.com/flowgent-labs/flowgent/common v0.0.0
 	github.com/flowgent-labs/flowgent/config v0.0.0
 	github.com/flowgent-labs/flowgent/core v0.0.0

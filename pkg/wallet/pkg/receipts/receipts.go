@@ -9,7 +9,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // Store persists payment receipts.
@@ -51,7 +51,7 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 // Save persists a payment receipt.
-func (s *Store) Save(ctx context.Context, r *payments.PaymentReceipt) error {
+func (s *Store) Save(ctx context.Context, r *model.PaymentReceipt) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO payment_receipts (id, intent_id, tx_hash, asset, amount, chain, facilitator, authorization, paid_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -60,8 +60,8 @@ func (s *Store) Save(ctx context.Context, r *payments.PaymentReceipt) error {
 }
 
 // GetByIntent retrieves a receipt by payment intent ID.
-func (s *Store) GetByIntent(ctx context.Context, intentID string) (*payments.PaymentReceipt, error) {
-	var r payments.PaymentReceipt
+func (s *Store) GetByIntent(ctx context.Context, intentID string) (*model.PaymentReceipt, error) {
+	var r model.PaymentReceipt
 	var amountStr string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, intent_id, tx_hash, asset, amount, chain, facilitator, authorization, paid_at, expires_at
@@ -75,7 +75,7 @@ func (s *Store) GetByIntent(ctx context.Context, intentID string) (*payments.Pay
 }
 
 // ListByDate returns all receipts within a date range.
-func (s *Store) ListByDate(ctx context.Context, from, to time.Time) ([]payments.PaymentReceipt, error) {
+func (s *Store) ListByDate(ctx context.Context, from, to time.Time) ([]model.PaymentReceipt, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, intent_id, tx_hash, asset, amount, chain, facilitator, authorization, paid_at, expires_at
 		FROM payment_receipts WHERE paid_at BETWEEN $1 AND $2 ORDER BY paid_at DESC
@@ -85,9 +85,9 @@ func (s *Store) ListByDate(ctx context.Context, from, to time.Time) ([]payments.
 	}
 	defer rows.Close()
 
-	var results []payments.PaymentReceipt
+	var results []model.PaymentReceipt
 	for rows.Next() {
-		var r payments.PaymentReceipt
+		var r model.PaymentReceipt
 		var amountStr string
 		if err := rows.Scan(&r.ID, &r.IntentID, &r.TxHash, &r.Asset, &amountStr, &r.Chain, &r.Facilitator, &r.Authorization, &r.PaidAt, &r.ExpiresAt); err != nil {
 			return nil, err

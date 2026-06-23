@@ -28,6 +28,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/trigger"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/notifier/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg"
@@ -39,6 +40,7 @@ type allInOneState struct {
 	cfg         *config.FlowgentConfig
 	store       store.IStore
 	apiClient   *client.FlowgentClient
+	httpClient  model.IFlowgentHttpClient
 	tenant      string
 	taskClient  *client.TaskStateClient
 	humanClient *client.HumanApprovalClient
@@ -84,6 +86,7 @@ func startAllInOne(cfgPath string) error {
 		cfg:         svcCfg,
 		store:       storeImpl,
 		apiClient:   apiClient,
+		httpClient:  client.NewHttpClient(svcCfg, nil),
 		tenant:      tenant,
 		taskClient:  &client.TaskStateClient{Client: apiClient, Tenant: tenant},
 		humanClient: &client.HumanApprovalClient{Client: apiClient},
@@ -161,7 +164,7 @@ func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
 // ─── Notifier ─────────────────────────────────────────────────────
 
 func startNotifier(state *allInOneState) (*notifier.NotifierServer, *handler.NotifierWSBridge) {
-	notifSvc := notifier.CreateNotifierService(state.apiClient, state.cfg)
+	notifSvc := notifier.CreateNotifierService(state.apiClient, state.cfg, state.httpClient)
 	if notifSvc == nil {
 		return nil, nil
 	}

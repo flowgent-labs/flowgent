@@ -1,4 +1,6 @@
-package x402
+//go:build x402
+
+package client
 
 import (
 	"bytes"

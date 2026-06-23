@@ -4,17 +4,19 @@ import (
 	"context"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Tool Executor ─────────────────────────────────────
 
 type ToolExecutor struct {
-	mcpMgr *mcp.McpManager
+	mcpMgr     *mcp.McpManager
+	httpClient model.IFlowgentHttpClient // unified HTTP client (x402-aware when payments enabled)
 }
 
-func NewToolExecutor(mcpMgr *mcp.McpManager) *ToolExecutor {
-	return &ToolExecutor{mcpMgr: mcpMgr}
+func NewToolExecutor(mcpMgr *mcp.McpManager, httpClient model.IFlowgentHttpClient) *ToolExecutor {
+	return &ToolExecutor{mcpMgr: mcpMgr, httpClient: httpClient}
 }
 
 func (e *ToolExecutor) TaskType() entities.TaskType { return entities.TaskTool }

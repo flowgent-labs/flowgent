@@ -1,4 +1,4 @@
-package payments
+package model
 
 import (
 	"testing"

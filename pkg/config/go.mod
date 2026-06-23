@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/spf13/viper v1.20.1
-	gopkg.in/yaml.v3 v3.0.1
+	// gopkg.in/yaml.v3 v3.0.1  // UNUSED
 )
 
 require (

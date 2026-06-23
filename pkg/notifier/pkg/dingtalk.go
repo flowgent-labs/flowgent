@@ -11,16 +11,21 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // DingTalkSender sends notifications via DingTalk custom bot webhook.
 type DingTalkSender struct {
 	WebhookURL string `json:"webhook_url"`
 	Secret     string `json:"secret"`
-	client     *http.Client
+	client     model.IFlowgentHttpClient
 }
 
 func (s *DingTalkSender) Type() string { return "dingtalk" }
+
+func (s *DingTalkSender) SetHTTPClient(c model.IFlowgentHttpClient) { s.client = c }
 
 func (s *DingTalkSender) Validate() error {
 	if s.WebhookURL == "" {
@@ -61,7 +66,7 @@ func (s *DingTalkSender) Send(ctx context.Context, recipient, title, body string
 	req.Header.Set("Content-Type", "application/json")
 
 	if s.client == nil {
-		s.client = &http.Client{Timeout: 10 * time.Second}
+		s.client = client.NewGenericHttpClient(10 * time.Second)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // Engine evaluates payment intents against configured spending policies.
@@ -69,26 +69,26 @@ func NewEngine(cfg *config.PoliciesConfig, store SpendingStore) *Engine {
 }
 
 // Allow evaluates whether a payment intent is allowed by policy.
-func (e *Engine) Allow(ctx context.Context, intent *payments.PaymentIntent) error {
+func (e *Engine) Allow(ctx context.Context, intent *model.PaymentIntent) error {
 	if intent == nil {
 		return fmt.Errorf("nil payment intent")
 	}
 
 	// Asset allowlist
 	if len(e.cfg.AllowedAssets) > 0 && !containsFold(e.cfg.AllowedAssets, intent.Asset) {
-		return fmt.Errorf("%w: asset %s not in allowed list", payments.ErrPaymentDenied, intent.Asset)
+		return fmt.Errorf("%w: asset %s not in allowed list", model.ErrPaymentDenied, intent.Asset)
 	}
 
 	// Chain allowlist
 	if len(e.cfg.AllowedChains) > 0 && !containsFold(e.cfg.AllowedChains, intent.Chain) {
-		return fmt.Errorf("%w: chain %s not in allowed list", payments.ErrPaymentDenied, intent.Chain)
+		return fmt.Errorf("%w: chain %s not in allowed list", model.ErrPaymentDenied, intent.Chain)
 	}
 
 	// Max single payment
 	if e.cfg.MaxSinglePaymentUSD > 0 {
 		limit := decimal.NewFromFloat(e.cfg.MaxSinglePaymentUSD)
 		if intent.Amount.GreaterThan(limit) {
-			return fmt.Errorf("%w: amount %s exceeds max single payment %s", payments.ErrPaymentDenied, intent.Amount, limit)
+			return fmt.Errorf("%w: amount %s exceeds max single payment %s", model.ErrPaymentDenied, intent.Amount, limit)
 		}
 	}
 
@@ -109,7 +109,7 @@ func (e *Engine) Allow(ctx context.Context, intent *payments.PaymentIntent) erro
 		}
 		budget := decimal.NewFromFloat(e.cfg.MaxDailyBudgetUSD)
 		if spent.Add(intent.Amount).GreaterThan(budget) {
-			return fmt.Errorf("%w: daily budget %s would be exceeded (spent: %s, pending: %s)", payments.ErrPaymentDenied, budget, spent, intent.Amount)
+			return fmt.Errorf("%w: daily budget %s would be exceeded (spent: %s, pending: %s)", model.ErrPaymentDenied, budget, spent, intent.Amount)
 		}
 	}
 
@@ -117,7 +117,7 @@ func (e *Engine) Allow(ctx context.Context, intent *payments.PaymentIntent) erro
 }
 
 // RequiresHumanApproval checks if the payment amount exceeds the approval threshold.
-func (e *Engine) RequiresHumanApproval(intent *payments.PaymentIntent) bool {
+func (e *Engine) RequiresHumanApproval(intent *model.PaymentIntent) bool {
 	if e.cfg.RequireHumanApprovalAboveUSD <= 0 {
 		return false
 	}
@@ -135,7 +135,7 @@ func (e *Engine) checkDomain(domain string) error {
 	// Blocked domains take precedence
 	for _, pattern := range e.cfg.BlockedDomains {
 		if matchDomain(pattern, domain) {
-			return fmt.Errorf("%w: domain %s is blocked (matches %s)", payments.ErrPaymentDenied, domain, pattern)
+			return fmt.Errorf("%w: domain %s is blocked (matches %s)", model.ErrPaymentDenied, domain, pattern)
 		}
 	}
 
@@ -146,25 +146,22 @@ func (e *Engine) checkDomain(domain string) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("%w: domain %s not in allowed list", payments.ErrPaymentDenied, domain)
+		return fmt.Errorf("%w: domain %s not in allowed list", model.ErrPaymentDenied, domain)
 	}
 
 	return nil
 }
 
 func extractDomain(rawURL string) string {
-	// Strip protocol
 	s := rawURL
 	if after, found := strings.CutPrefix(s, "https://"); found {
 		s = after
 	} else if after, found := strings.CutPrefix(s, "http://"); found {
 		s = after
 	}
-	// Strip path
 	if idx := strings.Index(s, "/"); idx >= 0 {
 		s = s[:idx]
 	}
-	// Strip port
 	if idx := strings.Index(s, ":"); idx >= 0 {
 		s = s[:idx]
 	}
@@ -172,11 +169,9 @@ func extractDomain(rawURL string) string {
 }
 
 func matchDomain(pattern, domain string) bool {
-	// Exact match
 	if pattern == domain {
 		return true
 	}
-	// Wildcard prefix: "*.example.com" matches "api.example.com"
 	if strings.HasPrefix(pattern, "*.") {
 		suffix := pattern[1:] // ".example.com"
 		return strings.HasSuffix(domain, suffix) || domain == pattern[2:]

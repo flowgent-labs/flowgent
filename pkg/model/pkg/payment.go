@@ -1,24 +1,10 @@
-// Package payments provides the optional economic runtime layer for Flowgent.
-// It implements x402 payment protocol client-side support, spending policies,
-// wallet abstraction, and facilitator integration.
-//
-// Flowgent acts as a consumer-side economic runtime. Settlement is delegated
-// to facilitator providers (e.g. Coinbase x402 facilitator).
-package payments
+package model
 
 import (
 	"time"
 
 	"github.com/shopspring/decimal"
 )
-
-// ─── x402 types ────────────────────────────────────────────────
-// Payment request parsing uses the official x402 SDK types (V2):
-//   - types.PaymentRequired  — 402 HTTP response body
-//   - types.PaymentRequirements — individual payment option within Accepts[]
-//
-// Flowgent-internal tracking types follow (PaymentIntent, PaymentReceipt, etc.)
-// These are NOT in the SDK — they track the payment lifecycle within the engine.
 
 // ─── Payment intent ────────────────────────────────────────────
 

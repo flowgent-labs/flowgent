@@ -1,13 +1,6 @@
+//go:build x402
+
 // Package facilitator implements the x402 facilitator HTTP client.
-// Uses the official x402 SDK (github.com/x402-foundation/x402/go) for
-// protocol types. Request types are transport-layer only (SDK handles
-// protocol logic via raw bytes; we construct HTTP requests directly).
-//
-// Protocol endpoints:
-//   - GET  /health     — health check
-//   - GET  /supported  — list supported payment schemes (→ x402.SupportedResponse)
-//   - POST /verify     — verify a proposed x402 payment (→ x402.VerifyResponse)
-//   - POST /settle     — settle a verified payment on-chain (→ x402.SettleResponse)
 package facilitator
 
 import (
@@ -21,7 +14,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go"
 	"github.com/x402-foundation/x402/go/types"
 
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // Client is the x402 facilitator HTTP client.
@@ -40,11 +33,10 @@ func New(endpoint string, timeout time.Duration) *Client {
 	}
 }
 
-// ─── Health ──────────────────────────────────────────────────
-
+// Health checks the facilitator's health endpoint.
 func (c *Client) Health(ctx context.Context) error {
 	if c.endpoint == "" {
-		return &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
+		return &model.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+"/health", nil)
 	if err != nil {
@@ -56,20 +48,17 @@ func (c *Client) Health(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return &payments.PaymentError{
+		return &model.PaymentError{
 			Code: "FACILITATOR_UNHEALTHY", Message: fmt.Sprintf("health returned status %d", resp.StatusCode),
 		}
 	}
 	return nil
 }
 
-// ─── Supported ───────────────────────────────────────────────
-
 // Supported returns the facilitator's supported schemes and networks.
-// Response type is from the official x402 SDK.
 func (c *Client) Supported(ctx context.Context) (*x402.SupportedResponse, error) {
 	if c.endpoint == "" {
-		return nil, &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
+		return nil, &model.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+"/supported", nil)
 	if err != nil {
@@ -88,14 +77,10 @@ func (c *Client) Supported(ctx context.Context) (*x402.SupportedResponse, error)
 	return &result, nil
 }
 
-// ─── Verify ────────────────────────────────────────────────
-
 // Verify sends a payment verification request to the facilitator.
-// Uses the official x402 SDK PaymentRequirements type (V2) as the request body.
-// Returns the SDK's VerifyResponse type.
 func (c *Client) Verify(ctx context.Context, req *types.PaymentRequirements) (*x402.VerifyResponse, error) {
 	if c.endpoint == "" {
-		return nil, &payments.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
+		return nil, &model.PaymentError{Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured"}
 	}
 
 	body, err := json.Marshal(req)
@@ -122,14 +107,10 @@ func (c *Client) Verify(ctx context.Context, req *types.PaymentRequirements) (*x
 	return &vr, nil
 }
 
-// ─── Settle ────────────────────────────────────────────────
-
-// Authorize sends a signed PaymentPayload (V2) to the facilitator's
-// POST /settle endpoint and returns a PaymentReceipt.
-// Uses the official x402 SDK types.PaymentPayload as the transport body.
-func (c *Client) Authorize(ctx context.Context, payload *types.PaymentPayload) (*payments.PaymentReceipt, error) {
+// Authorize sends a signed PaymentPayload to the facilitator's /settle endpoint.
+func (c *Client) Authorize(ctx context.Context, payload *types.PaymentPayload) (*model.PaymentReceipt, error) {
 	if c.endpoint == "" {
-		return nil, &payments.PaymentError{
+		return nil, &model.PaymentError{
 			Code: "FACILITATOR_NOT_CONFIGURED", Message: "no facilitator endpoint configured",
 		}
 	}
@@ -152,7 +133,7 @@ func (c *Client) Authorize(ctx context.Context, payload *types.PaymentPayload) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &payments.PaymentError{
+		return nil, &model.PaymentError{
 			Code: "FACILITATOR_ERROR", Message: fmt.Sprintf("settlement returned status %d", resp.StatusCode),
 		}
 	}
@@ -162,7 +143,7 @@ func (c *Client) Authorize(ctx context.Context, payload *types.PaymentPayload) (
 		return nil, fmt.Errorf("decode settle response: %w", err)
 	}
 
-	return &payments.PaymentReceipt{
+	return &model.PaymentReceipt{
 		ID:            payload.Accepted.PayTo + "-" + sr.Transaction,
 		IntentID:      payload.Accepted.PayTo + "-" + sr.Transaction,
 		TxHash:        sr.Transaction,

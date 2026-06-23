@@ -9,7 +9,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 type mockStore struct {
@@ -21,15 +21,7 @@ func newMockStore() *mockStore {
 	return &mockStore{approvals: make(map[string]*entities.ApprovalInfo)}
 }
 
-func (s *mockStore) CreateApproval(ctx context.Context, a *entities.ApprovalInfo) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a.Token = "tok-" + a.TaskRunID
-	s.approvals[a.TaskRunID] = a
-	return nil
-}
-
-func (s *mockStore) GetApproval(ctx context.Context, token string) (*entities.ApprovalInfo, error) {
+func (s *mockStore) Get(ctx context.Context, token string) (*entities.ApprovalInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.approvals {
@@ -40,11 +32,35 @@ func (s *mockStore) GetApproval(ctx context.Context, token string) (*entities.Ap
 	return nil, nil
 }
 
+func (s *mockStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.ApprovalInfo], error) {
+	return nil, nil
+}
+
+func (s *mockStore) Save(ctx context.Context, a *entities.ApprovalInfo) error {
+	return nil
+}
+
+func (s *mockStore) Delete(ctx context.Context, token string) error {
+	return nil
+}
+
+func (s *mockStore) CreateApproval(ctx context.Context, a *entities.ApprovalInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a.Token = "tok-" + a.TaskRunID
+	s.approvals[a.TaskRunID] = a
+	return nil
+}
+
 func (s *mockStore) UpdateApproval(ctx context.Context, a *entities.ApprovalInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approvals[a.TaskRunID] = a
 	return nil
+}
+
+func (s *mockStore) ListPending(ctx context.Context) ([]*entities.ApprovalInfo, error) {
+	return nil, nil
 }
 
 func TestPaymentApprover_New(t *testing.T) {
@@ -68,26 +84,24 @@ func TestPaymentApprover_RequestApproval(t *testing.T) {
 	approver := New(store, 200*time.Millisecond)
 	ctx := context.Background()
 
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "int-1", Asset: "USDC",
 		Amount: decimal.NewFromFloat(10.0),
 		Chain:  "base", Recipient: "0x1234",
 	}
 
-	// Start approval request in goroutine (it will time out since nobody resolves it)
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := approver.RequestApproval(ctx, intent)
 		errCh <- err
 	}()
 
-	// Wait for timeout
 	select {
 	case err := <-errCh:
 		if err == nil {
 			t.Fatal("expected timeout error")
 		}
-		if perr, ok := err.(*payments.PaymentError); !ok || perr.Code != "APPROVAL_TIMEOUT" {
+		if perr, ok := err.(*model.PaymentError); !ok || perr.Code != "APPROVAL_TIMEOUT" {
 			t.Errorf("expected APPROVAL_TIMEOUT, got %v", err)
 		}
 	case <-time.After(500 * time.Millisecond):

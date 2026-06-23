@@ -6,7 +6,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 type testWallet struct {
@@ -22,7 +22,7 @@ func (w *testWallet) Balance(ctx context.Context) (decimal.Decimal, error) { ret
 
 func TestManager_GetDefault(t *testing.T) {
 	w := &testWallet{addr: "0x1234", balance: decimal.NewFromInt(100)}
-	mgr := NewManager("0x1234", map[string]Wallet{"0x1234": w})
+	mgr := NewManager("0x1234", map[string]model.Wallet{"0x1234": w})
 
 	got, err := mgr.Default()
 	if err != nil {
@@ -34,7 +34,7 @@ func TestManager_GetDefault(t *testing.T) {
 }
 
 func TestManager_GetNotFound(t *testing.T) {
-	mgr := NewManager("0xabc", map[string]Wallet{})
+	mgr := NewManager("0xabc", map[string]model.Wallet{})
 	_, err := mgr.Get("0xmissing")
 	if err == nil {
 		t.Fatal("expected error for missing wallet")
@@ -43,9 +43,9 @@ func TestManager_GetNotFound(t *testing.T) {
 
 func TestManager_SignPaymentAuthorization(t *testing.T) {
 	w := &testWallet{addr: "0xsigner"}
-	mgr := NewManager("0xsigner", map[string]Wallet{"0xsigner": w})
+	mgr := NewManager("0xsigner", map[string]model.Wallet{"0xsigner": w})
 
-	intent := &payments.PaymentIntent{
+	intent := &model.PaymentIntent{
 		ID: "int-1", Amount: decimal.NewFromFloat(0.01),
 		Asset: "USDC", Recipient: "0xrecv",
 	}
@@ -81,7 +81,7 @@ func TestGenerateID(t *testing.T) {
 func TestManager_MultipleWallets(t *testing.T) {
 	w1 := &testWallet{addr: "0xaaa"}
 	w2 := &testWallet{addr: "0xbbb"}
-	mgr := NewManager("0xaaa", map[string]Wallet{"0xaaa": w1, "0xbbb": w2})
+	mgr := NewManager("0xaaa", map[string]model.Wallet{"0xaaa": w1, "0xbbb": w2})
 
 	a, _ := mgr.Get("0xaaa")
 	if a.Address() != "0xaaa" {

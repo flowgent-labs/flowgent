@@ -243,14 +243,14 @@ func agentServer(agents []*entities.AgentInfo) *httptest.Server {
 // ── Tool ─────────────────────────────────────────────
 
 func TestToolExecutor_TaskType(t *testing.T) {
-	e := NewToolExecutor(mcp.NewMcpManager())
+	e := NewToolExecutor(mcp.NewMcpManager(client.NewGenericHttpClient(0)), client.NewGenericHttpClient(0))
 	if e.TaskType() != entities.TaskTool {
 		t.Error("wrong task type")
 	}
 }
 
 func TestToolExecutor_MissingTool(t *testing.T) {
-	e := NewToolExecutor(mcp.NewMcpManager())
+	e := NewToolExecutor(mcp.NewMcpManager(client.NewGenericHttpClient(0)), client.NewGenericHttpClient(0))
 	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Tool: "nonexistent"},
 	}, nil)

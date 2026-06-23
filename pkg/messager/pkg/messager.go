@@ -16,6 +16,10 @@
 //	flowgent/v1/{tenantId}/flows/{flowId}/
 //	  └── ctrl/jm/create      ← Controller→JM leader
 //
+//	flowgent/v1/{tenantId}/flows/{flowId}/runs/{runId}/
+//	  ├── sign/request         ← TM→Wallet: unsigned payment     ($share/wallet-pool)
+//	  └── sign/response        ← Wallet→TM: signed result        (point-to-point)
+//
 //	flowgent/v1/heartbeat/{tmId}  ← TM→JM: liveness signals
 package messager
 
@@ -117,6 +121,47 @@ func NotifyPodWSWildcard(podID string) string {
 // NotifyQueueWildcard builds the wildcard subscription for notifier queue consumers.
 func NotifyQueueWildcard() string {
 	return "$share/notify-pool/" + TopicPrefix + "/+/flows/+/runs/+/notify/event"
+}
+
+// SignRequestTopic builds the topic for TM→Wallet payment signing requests.
+// Wallet daemons subscribe with SharedSignRequest() for load-balanced consumption.
+func SignRequestTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/request", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SharedSignRequest is the $share subscription for wallet daemon pods.
+func SharedSignRequest() string {
+	return "$share/wallet-pool/" + TopicPrefix + "/+/flows/+/runs/+/sign/request"
+}
+
+// SignResponseTopic builds the topic for Wallet→TM signed payment result.
+func SignResponseTopic(tenantID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/response", TopicPrefix, tenantID, flowID, runID)
+}
+
+// SignResponseSubscription is the per-run subscription for TM to receive the signed result.
+func SignResponseSubscription(tenantID, flowID, runID string) string {
+	return TopicPrefix + "/" + tenantID + "/flows/" + flowID + "/runs/" + runID + "/sign/response"
+}
+
+// ─── Payment Signing Types ──────────────────────────────────────
+
+// SignRequest is the MQTT payload for an unsigned payment authorization request.
+type SignRequest struct {
+	RequestID string `json:"request_id"`
+	Wallet    string `json:"wallet"`
+	Payload   string `json:"payload"`
+	TenantID  string `json:"tenant_id"`
+	FlowID    string `json:"flow_id"`
+	RunID     string `json:"run_id"`
+}
+
+// SignResponse is the MQTT payload for a signed payment authorization result.
+type SignResponse struct {
+	RequestID string `json:"request_id"`
+	Wallet    string `json:"wallet"`
+	Signature string `json:"signature,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // ─── InterMessage ──────────────────────────────────────────────

@@ -1,0 +1,80 @@
+//go:build x402
+
+package client
+
+import (
+	"log"
+	"time"
+
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client/facilitator"
+	"github.com/flowgent-labs/flowgent/core/pkg/client/policy"
+	"github.com/flowgent-labs/flowgent/core/pkg/client/signclient"
+	"github.com/flowgent-labs/flowgent/messager/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
+)
+
+// NewHttpClient creates the appropriate IFlowgentHttpClient based on config.
+// When payments.enabled is true, returns an X402PaymentHttpClient with
+// policy evaluation, async MQTT signing, and facilitator integration.
+// When payments are disabled, falls back to GenericHttpClient.
+func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlowgentHttpClient {
+	if cfg == nil || cfg.Payments == nil || !cfg.Payments.Enabled {
+		return NewGenericHttpClient(30 * time.Second)
+	}
+
+	payCfg := cfg.Payments
+	if payCfg.Wallet.DefaultWallet == "" {
+		log.Printf("WARNING: payments enabled but no default wallet configured, falling back to GenericHttpClient")
+		return NewGenericHttpClient(30 * time.Second)
+	}
+
+	timeout := resolveTimeout(payCfg)
+
+	// Policy engine
+	eng := policy.NewEngine(&payCfg.Policies, nil)
+
+	// Facilitator client
+	facEndpoint := payCfg.X402.DefaultFacilitator
+	fc := facilitator.New(facEndpoint, timeout)
+
+	// Sign client — async MQTT when a messager is available (distributed or local)
+	var sc model.SignClient
+	if q != nil {
+		var err error
+		sc, err = signclient.NewMqttSignClient(q, cfg.Tenant.DefaultTenant, "", "", 30*time.Second)
+		if err != nil {
+			log.Printf("WARNING: MQTT sign client unavailable: %v", err)
+			return NewGenericHttpClient(30 * time.Second)
+		}
+	} else {
+		log.Printf("WARNING: no messager available, falling back to GenericHttpClient")
+		return NewGenericHttpClient(30 * time.Second)
+	}
+
+	maxRetries := payCfg.X402.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 3
+	}
+
+	client := NewX402PaymentHttpClient(X402Config{
+		HTTPTimeout: timeout,
+		MaxRetries:  maxRetries,
+	}, eng, fc, sc, nil)
+
+	client.SetDefaultWallet(payCfg.Wallet.DefaultWallet)
+
+	log.Printf("HttpClient: X402PaymentHttpClient (timeout=%s, facilitator=%s, sign=mqtt)",
+		timeout, facEndpoint)
+
+	return client
+}
+
+func resolveTimeout(payCfg *config.PaymentsConfig) time.Duration {
+	if payCfg.X402.Timeout != "" {
+		if d, err := time.ParseDuration(payCfg.X402.Timeout); err == nil {
+			return d
+		}
+	}
+	return 30 * time.Second
+}

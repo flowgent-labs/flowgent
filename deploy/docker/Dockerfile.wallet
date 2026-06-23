@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+# ─── Build flowgent-wallet ──────────────────────────────────────
+FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder
+
+ENV GOPROXY=https://goproxy.cn,direct
+
+ARG BUILD_TS=0
+ARG BUILD_TAGS=x402
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=bind,source=.,target=/build \
+    cd /build/pkg/wallet && CGO_ENABLED=0 go build -v -trimpath -tags "${BUILD_TAGS}" -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent-wallet ./cmd/wallet/
+
+# ─── Runtime ────────────────────────────────────────────────────
+FROM registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata curl
+ENV TZ=Asia/Shanghai
+
+COPY --from=builder /out/flowgent-wallet /app/flowgent-wallet
+
+ENTRYPOINT ["/app/flowgent-wallet"]
+CMD ["--help"]

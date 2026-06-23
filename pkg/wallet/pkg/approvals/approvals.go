@@ -13,7 +13,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg/approval"
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
 // PaymentApprover implements pwf.ApprovalHandler using Flowgent's existing
@@ -36,7 +36,7 @@ func New(store approval.IApprovalStore, timeout time.Duration) *PaymentApprover 
 
 // RequestApproval creates a human approval request for a payment intent.
 // The workflow pauses until the approval is resolved via the external API.
-func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.PaymentIntent) (*payments.PaymentReceipt, error) {
+func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *model.PaymentIntent) (*model.PaymentReceipt, error) {
 	token := uuid.NewString()
 	expiresAt := time.Now().Add(a.timeout)
 
@@ -68,7 +68,7 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 			rejected := false
 			approval.Approved = &rejected
 			_ = a.store.UpdateApproval(ctx, approval)
-			return nil, &payments.PaymentError{
+			return nil, &model.PaymentError{
 				Code:    "APPROVAL_TIMEOUT",
 				Message: fmt.Sprintf("payment approval %s timed out after %s", token, a.timeout),
 			}
@@ -81,7 +81,7 @@ func (a *PaymentApprover) RequestApproval(ctx context.Context, intent *payments.
 				return nil, nil // Approved — proceed to payment
 			}
 			if updated.Status == "REJECTED" {
-				return nil, &payments.PaymentError{
+				return nil, &model.PaymentError{
 					Code:    "APPROVAL_REJECTED",
 					Message: "payment approval " + token + " was rejected",
 				}

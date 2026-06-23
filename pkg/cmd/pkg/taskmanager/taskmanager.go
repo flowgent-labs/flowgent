@@ -78,13 +78,14 @@ func startTaskManager(cfgPath string) error {
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Messager: q,
 		State:         &client.TaskStateClient{Client: apiClient, Tenant: tenant},
-		ApprovalInfo: &client.HumanApprovalClient{Client: apiClient},
+		ApprovalInfo:  &client.HumanApprovalClient{Client: apiClient},
 		APIServerURL:  svcCfg.Runtime.APIServerURL,
 		Tenant:        tenant,
 		Logger:        logger,
 		SandboxMessager:             q,
-		SandboxPolicy:            svcCfg.Sandbox.Policy,
-		SandboxWorkspace:         svcCfg.Sandbox.Workspace,
+		SandboxPolicy:               svcCfg.Sandbox.Policy,
+		SandboxWorkspace:            svcCfg.Sandbox.Workspace,
+		HttpClient:                  client.NewHttpClient(svcCfg, q),
 	})
 	if err != nil {
 		return fmt.Errorf("create taskmanager: %w", err)

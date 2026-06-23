@@ -62,7 +62,8 @@ func startService(cfgPath string) error {
 	}
 
 	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
-	notifSvc := notifierpkg.CreateNotifierService(apiClient, serviceCfg)
+	httpClient := client.NewHttpClient(serviceCfg, nil)
+	notifSvc := notifierpkg.CreateNotifierService(apiClient, serviceCfg, httpClient)
 	if notifSvc == nil {
 		log.Println("Notification service is disabled in config")
 		sigCh := make(chan os.Signal, 1)

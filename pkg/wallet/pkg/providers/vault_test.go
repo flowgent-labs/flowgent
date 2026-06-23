@@ -7,7 +7,7 @@ import (
 )
 
 func TestVaultProvider_New(t *testing.T) {
-	p, err := NewVaultSecretStoreProvider("https://vault.example.com:8200", "s.token", "secret", "wallet", "flowgent")
+	p, err := NewVaultSecretStoreProvider("https://vault.example.com:8200", "s.token", "", "secret", "wallet", "flowgent")
 	if err != nil {
 		t.Fatalf("NewVaultSecretStoreProvider: %v", err)
 	}
@@ -17,14 +17,14 @@ func TestVaultProvider_New(t *testing.T) {
 }
 
 func TestVaultProvider_NewMissingAddress(t *testing.T) {
-	_, err := NewVaultSecretStoreProvider("", "token", "", "", "")
+	_, err := NewVaultSecretStoreProvider("", "token", "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for missing address")
 	}
 }
 
 func TestVaultProvider_NewMissingToken(t *testing.T) {
-	_, err := NewVaultSecretStoreProvider("https://vault:8200", "", "", "", "")
+	_, err := NewVaultSecretStoreProvider("https://vault:8200", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for missing token")
 	}
@@ -35,7 +35,7 @@ func TestVaultProvider_ImplementsInterface(t *testing.T) {
 }
 
 func TestVaultProvider_NotConnected(t *testing.T) {
-	p, _ := NewVaultSecretStoreProvider("https://vault:8200", "tok", "", "", "")
+	p, _ := NewVaultSecretStoreProvider("https://vault:8200", "tok", "", "", "", "")
 	_, err := p.GetSecret(nil, "any")
 	if err == nil {
 		t.Fatal("expected not-connected error from GetSecret")
