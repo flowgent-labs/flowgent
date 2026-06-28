@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -96,7 +97,7 @@ func (wm *WalletManager) Start(ctx context.Context) error {
 	}
 
 	// ── MQTT subscribe → sign → publish loop ─────────────────
-	if wm.cfg != nil && wm.cfg.Messaging.MQTT.Broker != "" {
+	if wm.cfg != nil && wm.cfg.Messager.MQTT.Broker != "" {
 		clientID := "wallet-" + wm.listenAddr
 		mq := messager.NewMessagerManager(wm.cfg, clientID)
 		wm.messager = mq
@@ -107,7 +108,7 @@ func (wm *WalletManager) Start(ctx context.Context) error {
 		if err := mq.Subscribe(ctx, messager.SharedSignRequest(), wm.handleSignRequest); err != nil {
 			return fmt.Errorf("wallet MQTT sign subscription failed: %w", err)
 		}
-		log.Printf("WalletManager subscribed to sign requests via MQTT broker %s", wm.cfg.Messaging.MQTT.Broker)
+		slog.Info("WalletManager subscribed to sign requests via MQTT", "broker", wm.cfg.Messager.MQTT.Broker)
 
 		defer mq.Close()
 	}
@@ -117,8 +118,7 @@ func (wm *WalletManager) Start(ctx context.Context) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("WalletManager started: HTTP=%s provider=%s mqtt=%s",
-			wm.listenAddr, wm.providerName, mqttBroker(wm.cfg))
+		slog.Info("WalletManager started", "http", wm.listenAddr, "provider", wm.providerName, "mqtt", mqttBroker(wm.cfg))
 		if err := wm.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("WalletManager HTTP server: %v", err)
 		}
@@ -139,7 +139,7 @@ func (wm *WalletManager) Start(ctx context.Context) error {
 func (wm *WalletManager) handleSignRequest(topic string, payload []byte) {
 	var req messager.SignRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		log.Printf("WARNING: WalletManager invalid sign request: %v", err)
+		slog.Warn("WalletManager invalid sign request", "err", err)
 		return
 	}
 
@@ -154,7 +154,7 @@ func (wm *WalletManager) handleSignRequest(topic string, payload []byte) {
 	privKey := ed25519.PrivateKey(keyBytes)
 	sig := ed25519.Sign(privKey, []byte(req.Payload))
 
-	log.Printf("WalletManager signed payment request %s for wallet %s", req.RequestID, req.Wallet)
+	slog.Info("WalletManager signed payment request", "requestID", req.RequestID, "wallet", req.Wallet)
 
 	resp := messager.SignResponse{
 		RequestID: req.RequestID,
@@ -168,12 +168,12 @@ func (wm *WalletManager) handleSignRequest(topic string, payload []byte) {
 		ID:      req.RequestID,
 		Payload: respBody,
 	}); err != nil {
-		log.Printf("ERROR: WalletManager publish sign response: %v", err)
+		slog.Error("WalletManager publish sign response failed", "err", err)
 	}
 }
 
 func (wm *WalletManager) publishSignError(req messager.SignRequest, errMsg string) {
-	log.Printf("WARNING: WalletManager sign request %s failed: %s", req.RequestID, errMsg)
+	slog.Warn("WalletManager sign request failed", "requestID", req.RequestID, "error", errMsg)
 	resp := messager.SignResponse{
 		RequestID: req.RequestID,
 		Wallet:    req.Wallet,
@@ -185,7 +185,7 @@ func (wm *WalletManager) publishSignError(req messager.SignRequest, errMsg strin
 		ID:      req.RequestID,
 		Payload: respBody,
 	}); err != nil {
-		log.Printf("ERROR: WalletManager publish sign error: %v", err)
+		slog.Error("WalletManager publish sign error failed", "err", err)
 	}
 }
 
@@ -311,7 +311,7 @@ func (wm *WalletManager) handleCreateKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	if req.PrivateKey != "" && wm.providerName == "vault" {
-		log.Printf("INFO: importing private key for wallet %s into Vault", req.Name)
+		slog.Info("importing private key for wallet into Vault", "wallet", req.Name)
 	}
 
 	var privKey ed25519.PrivateKey
@@ -378,10 +378,10 @@ func loadConfig(cfgPath string) (*config.FlowgentConfig, error) {
 
 func resolveStoreConfig(cfg *config.FlowgentConfig) storeConfig {
 	c := storeConfig{}
-	if cfg == nil || cfg.Payments == nil {
+	if cfg == nil || cfg.Wallet == nil {
 		return c
 	}
-	sc := cfg.Payments.Wallet.SecretStore
+	sc := cfg.Wallet.SecretStore
 	c.provider = sc.Provider
 	c.masterKeyFile = sc.MasterKeyFile
 	c.vault = sc.Vault
@@ -396,12 +396,12 @@ func resolveStoreConfig(cfg *config.FlowgentConfig) storeConfig {
 func createSecretStore(sc storeConfig, dbPath string) (payments.SecretStoreProvider, *sql.DB, error) {
 	switch sc.provider {
 	case "csi":
-		log.Printf("Wallet secret store: CSI (base=%s)", sc.csiBasePath)
+		slog.Info("Wallet secret store: CSI", "base", sc.csiBasePath)
 		p, err := providers.NewCSISecretStoreProvider(sc.csiBasePath)
 		return p, nil, err
 
 	case "vault":
-		log.Printf("Wallet secret store: Vault (addr=%s)", sc.vault.Address)
+		slog.Info("Wallet secret store: Vault", "addr", sc.vault.Address)
 		p, err := providers.NewVaultSecretStoreProvider(
 			sc.vault.Address, sc.vault.Token, sc.vault.TokenFile,
 			sc.vault.MountPath, sc.vault.SecretPath, sc.vault.Role,
@@ -409,7 +409,7 @@ func createSecretStore(sc storeConfig, dbPath string) (payments.SecretStoreProvi
 		return p, nil, err
 
 	default:
-		log.Printf("Wallet secret store: default (AES-256-GCM encrypted DB)")
+		slog.Info("Wallet secret store: default (AES-256-GCM encrypted DB)")
 		if dbPath == "" {
 			home := os.Getenv("HOME")
 			if home == "" {
@@ -433,8 +433,8 @@ func mqttBroker(cfg *config.FlowgentConfig) string {
 	if cfg == nil {
 		return "disabled"
 	}
-	if cfg.Messaging.MQTT.Broker != "" {
-		return cfg.Messaging.MQTT.Broker
+	if cfg.Messager.MQTT.Broker != "" {
+		return cfg.Messager.MQTT.Broker
 	}
 	return "disabled"
 }

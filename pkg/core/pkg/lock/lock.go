@@ -3,7 +3,7 @@ package lock
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -95,13 +95,13 @@ type Config struct {
 func New(cfg Config) (DistributedLock, error) {
 	switch cfg.Type {
 	case "memory", "":
-		log.Printf("[lock] using in-memory distributed lock")
+		slog.Debug("using in-memory distributed lock")
 		return NewMemoryLock(), nil
 	case "postgres":
-		log.Printf("[lock] using PostgreSQL distributed lock")
+		slog.Debug("using PostgreSQL distributed lock")
 		return NewPostgresLock(cfg.PGConn)
 	case "redis":
-		log.Printf("[lock] using Redis distributed lock")
+		slog.Debug("using Redis distributed lock")
 		if cfg.RedisCA == nil {
 			return nil, fmt.Errorf("redis client required for redis lock")
 		}

@@ -6,7 +6,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -91,6 +91,6 @@ func startService() error {
 		cancel()
 	}()
 
-	log.Printf("Sandbox worker starting (pid=%d, pod=%s, workspace=%s)", os.Getpid(), podName, workspace)
+	slog.Info("Sandbox worker starting", "pid", os.Getpid(), "pod", podName, "workspace", workspace)
 	return runner.Start(ctx)
 }

@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -88,7 +88,7 @@ func startJobManager(cfgPath string) error {
 			ApprovalInfo:     humanClient,
 			Logger:            logger, Messager: q,
 			AutoScale:         appMode,
-			MQTTBroker:        svcCfg.Messaging.MQTT.Broker,
+			MQTTBroker:        svcCfg.Messager.MQTT.Broker,
 			PostgresDSN:       svcCfg.Storage.Postgres.Dsn,
 			APIServerURL:      svcCfg.Runtime.APIServerURL,
 			Tenant:            tenant,
@@ -135,11 +135,11 @@ func startJobManager(cfgPath string) error {
 		}
 	}
 
-	log.Printf("[jm] loaded %d flows (agentFlowID=%s, appMode=%v)", len(flows), agentFlowID, appMode)
+	slog.Debug("jobmanager loaded flows", "count", len(flows), "agentFlowID", agentFlowID, "appMode", appMode)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go startRunPoller(ctx, apiClient, tenant, jm, flows, jmNamespace, agentFlowID)
-	log.Printf("JobManager started (scheduler=%s, namespace=%s, agentFlow=%s, autoScale=%v)", rm.Provider(), jmNamespace, agentFlowID, appMode)
+	slog.Info("JobManager started", "scheduler", rm.Provider(), "namespace", jmNamespace, "agentFlow", agentFlowID, "autoScale", appMode)
 	utils.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)

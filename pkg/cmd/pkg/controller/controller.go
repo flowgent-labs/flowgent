@@ -245,8 +245,8 @@ func (c *Controller) dispatchSessionMode(ctx context.Context, spec *entities.Age
 		Priority:    spec.Priority,
 		Namespace:   spec.Namespace,
 		Vars:        spec.Vars,
-		Trigger:     entities.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
+	run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "controller"})
 
 	created, err := c.api.CreateRun(ctx, tenant, run)
 	if err != nil {
@@ -325,8 +325,8 @@ func (c *Controller) dispatchApplicationMode(ctx context.Context, spec *entities
 		Priority:    entities.PriorityGrade,
 		Namespace:   ns,
 		Vars:        spec.Vars,
-		Trigger:     entities.TriggerInfo{Type: "schedule", Source: "controller"},
 	}
+	run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "controller"})
 	if _, err := c.api.CreateRun(ctx, tenantID, run); err != nil {
 		c.logger.Error("Failed to create application run via apiserver", "flow_id", spec.ID, "error", err)
 	}

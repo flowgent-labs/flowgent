@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,10 +33,10 @@ type FlowgentConfig struct {
 	Cache               CacheConfig           `json:"cache" yaml:"cache"`
 	Storage             StorageConfig         `json:"storage" yaml:"storage"`
 	Orchestration       OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
-	Messaging           MessagingConfig       `json:"messaging" yaml:"messaging"`
+	Messager            MessagerConfig        `json:"messaging" yaml:"messaging"`
 	Lock                LockConfig            `json:"lock" yaml:"lock"`
 	Sandbox             SandboxConfig         `json:"sandbox" yaml:"sandbox"`
-	Payments            *PaymentsConfig       `json:"payments" yaml:"payments"`
+	Wallet              *WalletConfig         `json:"wallet" yaml:"wallet"`
 	Notifier            NotifierConfig        `json:"notifier" yaml:"notifier"`
 	CredentialPaths     CredentialPathsConfig `json:"credential-paths" yaml:"credential-paths"`
 	Tenant              TenantConfig          `json:"tenant" yaml:"tenant"`
@@ -212,8 +212,8 @@ type SandboxConfig struct {
 	Deployment model.SandboxDeploymentConfig `json:"deployment" yaml:"deployment"`
 }
 
-// MessagingConfig configures the message queue for inter-component communication.
-type MessagingConfig struct {
+// MessagerConfig configures the message queue for inter-component communication.
+type MessagerConfig struct {
 	Type string     `json:"type" yaml:"type"` // memory | mqtt
 	MQTT MQTTConfig `json:"mqtt" yaml:"mqtt"`
 }
@@ -477,13 +477,13 @@ func expandStringWithCreds(s string, creds map[string]string) string {
 }
 
 
-// ── Payments config types ─────────────────────────────────────
+// ── Wallet config types ─────────────────────────────────────
 
-type PaymentsConfig struct {
-	Enabled  bool           `json:"enabled" yaml:"enabled"`
-	Policies PoliciesConfig `json:"policies" yaml:"policies"`
-	Wallet   WalletCfg      `json:"wallet" yaml:"wallet"`
-	X402     X402Cfg        `json:"x402" yaml:"x402"`
+type WalletConfig struct {
+	Enabled     bool           `json:"enabled" yaml:"enabled"`
+	Policies    PoliciesConfig `json:"policies" yaml:"policies"`
+	SecretStore SecretStoreCfg `json:"secret_store" yaml:"secret_store"`
+	X402        X402Cfg        `json:"x402" yaml:"x402"`
 }
 
 type PoliciesConfig struct {
@@ -494,14 +494,6 @@ type PoliciesConfig struct {
 	RequireHumanApprovalAboveUSD float64  `json:"require_human_approval_above_usd" yaml:"require_human_approval_above_usd"`
 	AllowedAssets                []string `json:"allowed_assets" yaml:"allowed_assets"`
 	AllowedChains                []string `json:"allowed_chains" yaml:"allowed_chains"`
-}
-
-type WalletCfg struct {
-	Endpoint      string         `json:"endpoint" yaml:"endpoint"`
-	AuthToken     string         `json:"auth_token" yaml:"auth_token"`
-	AuthTokenFile string         `json:"auth_token_file" yaml:"auth_token_file"`
-	DefaultWallet string         `json:"default_wallet" yaml:"default_wallet"`
-	SecretStore   SecretStoreCfg `json:"secret_store" yaml:"secret_store"`
 }
 
 type SecretStoreCfg struct {
@@ -598,30 +590,28 @@ func LogConfig(cfg *FlowgentConfig) {
 	switch cfg.Storage.Type {
 	case "POSTGRE":
 		pg := cfg.Storage.Postgres
-		log.Printf("Storage:    PostgreSQL host=%s port=%d db=%s schema=%s user=%s pool_min=%d pool_max=%d ssl=%v",
-			pg.Host, pg.Port, pg.Database, pg.Schema, pg.Username, pg.MinConnections, pg.MaxConnections, pg.UseSSL)
+		slog.Info("Storage", "type", "PostgreSQL", "host", pg.Host, "port", pg.Port, "db", pg.Database, "schema", pg.Schema, "user", pg.Username, "pool_min", pg.MinConnections, "pool_max", pg.MaxConnections, "ssl", pg.UseSSL)
 	default:
 		sq := cfg.Storage.SQLite
 		dir := sq.Dir
 		if dir == "" {
 			dir = "~/.flowgent/sqlite"
 		}
-		log.Printf("Storage:    SQLite dir=%s", dir)
+		slog.Info("Storage", "type", "SQLite", "dir", dir)
 	}
 
-	log.Printf("Cache:      provider=%s", cfg.Cache.Provider)
-	log.Printf("REST API:   %s:%d (context=%s)", cfg.Server.Host, cfg.Server.Port, cfg.Server.ContextPath)
+	slog.Info("Cache", "provider", cfg.Cache.Provider)
+	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "context", cfg.Server.ContextPath)
 	if cfg.A2A.Enabled {
-		log.Printf("A2A API:    %s:%d", cfg.A2A.Host, cfg.A2A.Port)
+		slog.Info("A2A API", "host", cfg.A2A.Host, "port", cfg.A2A.Port)
 	} else {
-		log.Printf("A2A API:    disabled")
+		slog.Info("A2A API disabled")
 	}
 	if cfg.Mgmt.Enabled {
-		log.Printf("Management: %s:%d (pprof=%v, otel=%v)", cfg.Mgmt.Host, cfg.Mgmt.Port, cfg.Mgmt.PProf.Enabled, cfg.Mgmt.OTEL.Enabled)
+		slog.Info("Management", "host", cfg.Mgmt.Host, "port", cfg.Mgmt.Port, "pprof", cfg.Mgmt.PProf.Enabled, "otel", cfg.Mgmt.OTEL.Enabled)
 	}
 
-	log.Printf("Engine:     max_concurrent=%d timeout=%s max_retries=%d",
-		cfg.Orchestration.MaxConcurrentFlows, cfg.Orchestration.FlowExecutionTimeout, cfg.Orchestration.MaxNodeRetries)
+	slog.Info("Engine", "max_concurrent", cfg.Orchestration.MaxConcurrentFlows, "timeout", cfg.Orchestration.FlowExecutionTimeout, "max_retries", cfg.Orchestration.MaxNodeRetries)
 }
 
 // ── Auth middleware ──────────────────────────────────────────────

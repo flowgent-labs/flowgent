@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,7 +57,10 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agent name is required", http.StatusBadRequest)
 		return
 	}
+	agent.ID = uuid.New().String()
 	agent.TenantID = tenant
+	agent.CreatedAt = time.Now()
+	agent.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &agent); err != nil {
 		h.logger.Error("save agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

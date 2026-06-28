@@ -8,7 +8,7 @@ ARG BUILD_TS=0
 ARG BUILD_TAGS=
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=bind,source=.,target=/build \
-    cd /build/pkg/cmd && CGO_ENABLED=0 go build -v -trimpath -tags "${BUILD_TAGS}" -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent-core ./pkg/
+    cd /build/pkg/cmd && CGO_ENABLED=0 go build -v -trimpath -tags "${BUILD_TAGS}" -ldflags="-s -w -X main.BuildTime=$BUILD_TS" -o /out/flowgent ./pkg/
 
 # ─── Stage 2: Export ────────────────────────────────────────────
 FROM scratch AS export
@@ -20,8 +20,11 @@ FROM registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata curl jq bash
 ENV TZ=Asia/Shanghai
 
-COPY --from=builder /out/flowgent-core /app/flowgent-core
+COPY --from=builder /out/flowgent /app/flowgent
+COPY deploy/docker/mcp-server.sh /app/mcp-server.sh
+RUN chmod +x /app/mcp-server.sh
+COPY examples/ /app/examples/
 COPY etc/ /app/etc/
 
-ENTRYPOINT ["/app/flowgent-core"]
+ENTRYPOINT ["/app/flowgent"]
 CMD ["--help"]

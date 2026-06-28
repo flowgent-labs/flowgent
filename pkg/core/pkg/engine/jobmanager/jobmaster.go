@@ -3,6 +3,8 @@ package jobmanager
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,12 +132,18 @@ func (jm *JobMaster) Ready() []string {
 	return r
 }
 func (jm *JobMaster) depsDone(n string) bool {
+	anySatisfied := len(jm.deps[n]) == 0
 	for _, d := range jm.deps[n] {
-		if !jm.skipped[d] && !jm.completed[d] {
-			return false
+		if jm.skipped[d] || jm.completed[d] {
+			anySatisfied = true
+			continue
 		}
+		if c, exists := jm.edgeConditions[d+"->"+n]; exists && c != nil {
+			continue // dormant conditional edge (source not yet evaluated)
+		}
+		return false
 	}
-	return true
+	return anySatisfied
 }
 func (jm *JobMaster) Done(n string) {
 	jm.mu.Lock()
@@ -200,6 +208,47 @@ func (jm *JobMaster) Children(n string) []string {
 	return jm.children[n]
 }
 func (jm *JobMaster) Deps(n string) []string { jm.mu.Lock(); defer jm.mu.Unlock(); return jm.deps[n] }
+
+func (jm *JobMaster) dumpGraphState() string {
+	jm.mu.Lock()
+	defer jm.mu.Unlock()
+	var pending, notReady []string
+	for _, n := range jm.nodes {
+		if jm.completed[n] || jm.skipped[n] || jm.failed[n] {
+			continue
+		}
+		pending = append(pending, n)
+		if !jm.depsDoneLocked(n) {
+			notReady = append(notReady, n)
+		}
+	}
+	parts := make([]string, 0)
+	for _, n := range notReady {
+		var missing []string
+		for _, d := range jm.deps[n] {
+			if !jm.skipped[d] && !jm.completed[d] {
+				missing = append(missing, d)
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s(wait:%v)", n, missing))
+	}
+	return fmt.Sprintf("pending=%d not_ready=%s", len(pending), strings.Join(parts, " "))
+}
+
+func (jm *JobMaster) depsDoneLocked(n string) bool {
+	anySatisfied := len(jm.deps[n]) == 0
+	for _, d := range jm.deps[n] {
+		if jm.skipped[d] || jm.completed[d] {
+			anySatisfied = true
+			continue
+		}
+		if c, exists := jm.edgeConditions[d+"->"+n]; exists && c != nil {
+			continue // dormant conditional edge (source not yet evaluated)
+		}
+		return false
+	}
+	return anySatisfied
+}
 
 // ─── buildExecutionGraph — single pass: DAG state + ExecutionPlans ─
 
@@ -293,13 +342,15 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		defer cancel()
 	}
 
-	for {
+	for iteration := 1; ; iteration++ {
 		select {
 		case <-ctx.Done():
+			slog.Debug("jobmaster execute context done", "err", ctx.Err())
 			return ctx.Err()
 		default:
 		}
 		if jm.HasFailed() {
+			slog.Debug("jobmaster execute has failed", "error", jm.collectFirstError())
 			run.Status = entities.RunFailed
 			run.Error = jm.collectFirstError()
 			run.FinishedAt = TimePtr()
@@ -307,6 +358,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 			return jm.state.UpdateRun(ctx, run)
 		}
 		if jm.IsComplete() {
+			slog.Debug("jobmaster execute is complete")
 			run.Status = entities.RunCompleted
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Ok, "done")
@@ -314,32 +366,41 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		}
 
 		ready := jm.Ready()
+		slog.Debug("jobmaster execute iteration", "iteration", iteration, "ready", ready,
+			"completed", len(jm.completed), "total", len(jm.nodes), "deps", jm.dumpGraphState())
 		if len(ready) == 0 {
+			slog.Debug("jobmaster execute no ready nodes, breaking", "completed", len(jm.completed),
+				"failed", len(jm.failed), "skipped", len(jm.skipped), "pending", len(jm.pending))
 			break
 		}
 
 		for _, nodeID := range ready {
 			plan, ok := jm.planMap[nodeID]
 			if !ok {
+				slog.Debug("jobmaster execute plan not found", "node", nodeID)
 				continue
 			}
 			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
 			_ = jm.state.SaveTask(ctx, taskRunFromPlan(plan))
 
+			slog.Debug("jobmaster execute scheduling node", "node", nodeID, "type", plan.TaskType, "planID", plan.PlanID)
 			result, err := jm.rm.Schedule(ctx, plan)
 			if err != nil {
+				slog.Warn("jobmaster execute schedule failed", "node", nodeID, "err", err)
 				jm.logger.Error("submit failed", "node", nodeID, "err", err)
 				jm.nodeErrors[nodeID] = err.Error()
 				jm.Fail(nodeID)
 				continue
 			}
 			if result.Error != "" {
+				slog.Warn("jobmaster execute execution failed", "node", nodeID, "err", result.Error)
 				jm.logger.Error("node execution failed", "node", nodeID, "err", result.Error)
 				jm.nodeErrors[nodeID] = result.Error
 				jm.Fail(nodeID)
 				continue
 			}
 
+			slog.Debug("jobmaster execute node done", "node", nodeID, "hasOutput", result.Output != nil)
 			if result.Output != nil {
 				jm.nodeOutputs[nodeID] = result.Output
 			}
@@ -357,6 +418,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 			}
 		}
 	}
+	slog.Debug("jobmaster execute loop exited, returning nil")
 	return nil
 }
 

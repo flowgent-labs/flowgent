@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -11,9 +12,9 @@ import (
 )
 
 type MQTTMessager struct {
-	mu     sync.Mutex
-	client mqtt.Client
-	subs   map[string]struct{}
+	mu       sync.RWMutex
+	client   mqtt.Client
+	handlers map[string][]SubHandler // multiple handlers per topic (one MQTT sub)
 }
 
 type MQTTConfig struct {
@@ -43,38 +44,56 @@ func NewMQTTMessager(cfg *MQTTConfig) (*MQTTMessager, error) {
 	if token := client.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
 		return nil, fmt.Errorf("mqtt connect: %w", token.Error())
 	}
-	return &MQTTMessager{client: client, subs: make(map[string]struct{})}, nil
+	return &MQTTMessager{client: client, handlers: make(map[string][]SubHandler)}, nil
 }
 
 func (q *MQTTMessager) Publish(ctx context.Context, topic string, msg *InterMessage) error {
 	data, _ := json.Marshal(msg)
+	slog.Debug("mqtt publish", "topic", topic, "len", len(data), "connected", q.client.IsConnected())
 	token := q.client.Publish(topic, 1, false, data)
 	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
+		slog.Error("mqtt publish failed", "topic", topic, "err", token.Error())
 		return token.Error()
 	}
+	slog.Debug("mqtt publish ok", "topic", topic)
 	return nil
 }
 
 func (q *MQTTMessager) Subscribe(ctx context.Context, topic string, handler SubHandler) error {
 	q.mu.Lock()
-	if _, ok := q.subs[topic]; ok {
-		q.mu.Unlock()
+	_, exists := q.handlers[topic]
+	q.handlers[topic] = append(q.handlers[topic], handler)
+	count := len(q.handlers[topic])
+	q.mu.Unlock()
+
+	if exists {
+		slog.Debug("mqtt subscribe handler appended", "topic", topic, "handlers", count)
 		return nil
 	}
-	q.subs[topic] = struct{}{}
-	q.mu.Unlock()
+
+	slog.Debug("mqtt subscribe first handler", "topic", topic, "connected", q.client.IsConnected())
 	token := q.client.Subscribe(topic, 1, func(c mqtt.Client, m mqtt.Message) {
+		q.mu.RLock()
+		handlers := q.handlers[topic]
+		q.mu.RUnlock()
+		slog.Debug("mqtt message received", "topic", m.Topic(), "len", len(m.Payload()), "handlers", len(handlers))
 		var msg InterMessage
 		if json.Unmarshal(m.Payload(), &msg) == nil {
-			handler(topic, msg.Payload)
+			for i, h := range handlers {
+				slog.Debug("mqtt dispatch handler", "topic", topic, "handler", i+1, "total", len(handlers))
+				go h(topic, msg.Payload)
+			}
 		}
 	})
 	if !token.WaitTimeout(5 * time.Second) {
+		slog.Warn("mqtt subscribe timeout", "topic", topic)
 		return nil
 	}
 	if token.Error() != nil {
+		slog.Error("mqtt subscribe failed", "topic", topic, "err", token.Error())
 		return fmt.Errorf("mqtt subscribe %s: %w", topic, token.Error())
 	}
+	slog.Debug("mqtt subscribe ok", "topic", topic)
 	return nil
 }
 

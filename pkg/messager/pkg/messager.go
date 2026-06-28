@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -274,27 +275,27 @@ type MessagerManager struct {
 
 // NewMessagerManager creates the correct IMessager implementation from FlowgentConfig.
 func NewMessagerManager(cfg *config.FlowgentConfig, clientID string) *MessagerManager {
-	if cfg.Messaging.Type == "mqtt" && cfg.Messaging.MQTT.Broker != "" {
+	if cfg.Messager.Type == "mqtt" && cfg.Messager.MQTT.Broker != "" {
 		mq, err := NewMQTTMessager(&MQTTConfig{
-			Broker:   cfg.Messaging.MQTT.Broker,
+			Broker:   cfg.Messager.MQTT.Broker,
 			ClientID: clientID,
-			Username: cfg.Messaging.MQTT.Username,
-			Password: cfg.Messaging.MQTT.Password,
+			Username: cfg.Messager.MQTT.Username,
+			Password: cfg.Messager.MQTT.Password,
 		})
 		if err == nil {
 			return &MessagerManager{IMessager: mq}
 		}
 		if cfg.Deployment.Mode != "" {
-			log.Fatalf("FATAL: MQTT connect failed in distributed mode: %v — broker=%s", err, cfg.Messaging.MQTT.Broker)
+			log.Fatalf("FATAL: MQTT connect failed in distributed mode: %v — broker=%s", err, cfg.Messager.MQTT.Broker)
 		}
-		log.Printf("WARNING: MQTT connect failed (%v), falling back to memory", err)
+		slog.Warn("MQTT connect failed, falling back to memory", "err", err)
 	}
 
 	if cfg.Deployment.Mode != "" {
-		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGING__MQTT__BROKER env var.")
+		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGER__MQTT__BROKER env var.")
 	}
 
-	log.Printf("WARNING: Using in-memory queue (local dev mode)")
+	slog.Warn("Using in-memory queue (local dev mode)")
 	return &MessagerManager{IMessager: NewLocalMessager(1000)}
 }
 

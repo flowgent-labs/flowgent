@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,9 +75,9 @@ type lazyStores struct {
 // StartConsole runs the interactive management console.
 func StartConsole(cfgPath string, verbose bool) {
 	if verbose {
-		log.Printf("Config path: %s", cfgPath)
+		slog.Info("Config path", "path", cfgPath)
 		if v := os.Getenv("FLOWGENT__CONFIG__FILE"); v != "" {
-			log.Printf("Config env:  FLOWGENT__CONFIG__FILE=%s", v)
+			slog.Info("Config env", "FLOWGENT__CONFIG__FILE", v)
 		}
 	}
 
@@ -148,10 +149,10 @@ func StartConsole(cfgPath string, verbose bool) {
 }
 
 func (s *consoleState) initSecretStore() {
-	if s.cfg.Payments == nil {
+	if s.cfg.Wallet == nil {
 		return
 	}
-	mkf := s.cfg.Payments.Wallet.SecretStore.MasterKeyFile
+	mkf := s.cfg.Wallet.SecretStore.MasterKeyFile
 	if mkf == "" {
 		return
 	}
@@ -161,7 +162,7 @@ func (s *consoleState) initSecretStore() {
 	}
 	ss, err := walletproviders.NewDefaultSecretStoreProvider(db, mkf)
 	if err != nil {
-		log.Printf("WARNING: secret store init failed (wallet commands unavailable): %v", err)
+		slog.Warn("secret store init failed (wallet commands unavailable)", "err", err)
 		return
 	}
 	s.secretStore = ss

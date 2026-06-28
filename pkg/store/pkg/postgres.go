@@ -46,7 +46,7 @@ func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error
 	}
 	cols := utils.Columns[T]()
 	rows, err := s.Pool.Query(ctx,
-		fmt.Sprintf("SELECT %s FROM %s WHERE %s=$1 LIMIT 1", cols, s.Table, s.IDCol), id)
+		fmt.Sprintf(`SELECT %s FROM %s WHERE "%s"=$1 LIMIT 1`, cols, s.Table, s.IDCol), id)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, req entities.PageR
 	offset := (req.Page - 1) * req.Size
 
 	rows, err := s.Pool.Query(ctx,
-		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT $1 OFFSET $2", cols, s.Table), req.Size, offset)
+		fmt.Sprintf(`SELECT %s FROM %s ORDER BY "created_at" DESC LIMIT $1 OFFSET $2`, cols, s.Table), req.Size, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -109,12 +109,24 @@ func (s *PostgresGenericStore[T]) Save(ctx context.Context, entity *T) error {
 	updates := make([]string, len(cols))
 	for i, c := range cols {
 		holders[i] = fmt.Sprintf("$%d", i+1)
-		updates[i] = fmt.Sprintf("%s=EXCLUDED.%s", c, c)
+		updates[i] = fmt.Sprintf("%s=EXCLUDED.%s", pqQuote(c), pqQuote(c))
 	}
 	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
-		s.Table, strings.Join(cols, ","), strings.Join(holders, ","), s.IDCol, strings.Join(updates, ","))
+		s.Table, pqQuoteCols(cols), strings.Join(holders, ","), pqQuote(s.IDCol), strings.Join(updates, ","))
 	_, err := s.Pool.Exec(ctx, sql, args...)
 	return err
+}
+
+func pqQuote(ident string) string {
+	return `"` + ident + `"`
+}
+
+func pqQuoteCols(cols []string) string {
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = pqQuote(c)
+	}
+	return strings.Join(quoted, ",")
 }
 
 func (s *PostgresGenericStore[T]) Delete(ctx context.Context, id string) error {
@@ -122,7 +134,7 @@ func (s *PostgresGenericStore[T]) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	_, err := s.Pool.Exec(ctx,
-		fmt.Sprintf("UPDATE %s SET del_flag=true, status='DELETED', updated_at=NOW() WHERE %s=$1", s.Table, s.IDCol), id)
+		fmt.Sprintf(`UPDATE %s SET "del_flag"=true, "status"='DELETED', "updated_at"=NOW() WHERE "%s"=$1`, s.Table, s.IDCol), id)
 	return err
 }
 

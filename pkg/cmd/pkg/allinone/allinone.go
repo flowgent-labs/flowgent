@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+
 	"log/slog"
 	"net/http"
 	"net/http/pprof"
@@ -52,7 +52,7 @@ func Start(cfgPath, pidFile string) error {
 		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
-	log.Printf("Flowgent all-in-one starting (pid=%d)", os.Getpid())
+	slog.Info("Flowgent all-in-one starting", "pid", os.Getpid())
 	return startAllInOne(cfgPath)
 }
 
@@ -183,10 +183,11 @@ func startRESTServer(state *allInOneState, agentFlows []entities.AgentFlowInfo,
 	runHandler := handler.NewFlowRunHandler(state.store, nil, state.logger)
 	notifHandler := handler.NewNotifierHandler(state.store, state.logger)
 	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
+	mcpHandler := handler.NewMcpHandler(state.store)
 
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler)
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler)
 
 	var restHandler http.Handler = restMux
 	if len(state.cfg.Auth.AnonymousPaths) > 0 {
@@ -214,8 +215,8 @@ func startRESTServer(state *allInOneState, agentFlows []entities.AgentFlowInfo,
 func startCronScheduler(allFlows []entities.AgentFlowInfo, apiClient *client.FlowgentClient, tenant string) {
 	cronSched := trigger.NewScheduleTrigger()
 	cronSched.RegisterAgentFlows(allFlows, func(ctx context.Context, id string) {
-		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending,
-			Trigger: entities.TriggerInfo{Type: "schedule", Source: "cron"}}
+		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending}
+		run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "cron"})
 		_, _ = apiClient.CreateRun(ctx, tenant, run)
 	})
 	cronSched.Start()
@@ -270,8 +271,8 @@ func startA2AServer(state *allInOneState) *http.Server {
 			BaseEntity: entities.BaseEntity{ID: uuid.NewString()},
 			AgentFlowID: req.AgentFlowID, Version: 1,
 			Status: entities.RunPending, Vars: req.Vars,
-			Trigger: entities.TriggerInfo{Type: "api", Source: "a2a"},
 		}
+		run.SetTrigger(entities.TriggerInfo{Type: "api", Source: "a2a"})
 		if _, err := state.apiClient.CreateRun(r.Context(), state.tenant, run); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -43,11 +43,13 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 	defer slog.Info("slot worker stopped", "tm_id", sw.tmID, "slot_id", sw.id)
 
 	sw.q.Subscribe(ctx, messager.SharedExecPlans(), func(topic string, payload []byte) {
+		slog.Debug("slot worker received execution plan", "slot", sw.id, "len", len(payload))
 		var plan entities.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
 			slog.Error("slot worker cannot unmarshal execution plan", "error", err)
 			return
 		}
+		slog.Debug("slot worker executing plan", "slot", sw.id, "plan", plan.PlanID, "node", plan.NodeID, "type", string(plan.TaskType))
 
 		if sw.metrics != nil {
 			sw.metrics.SlotsBusy.Add(ctx, 1)
@@ -67,6 +69,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			plan.State = entities.Failed
 			plan.Result = &entities.TaskResult{Error: err.Error()}
 		} else {
+			slog.Info("slot worker task succeeded", "slot_id", sw.id, "plan_id", plan.PlanID, "node_id", plan.NodeID)
 			plan.State = entities.Success
 			plan.Result = result
 			plan.FinishedAt = timePtr()
@@ -87,9 +90,7 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			Error:          planResultError(plan.Result),
 		})
 
-		if plan.Result != nil && plan.Result.Output != nil {
-			sw.emitDownstream(ctx, &plan)
-		}
+		sw.emitDownstream(ctx, &plan)
 	})
 
 	<-ctx.Done()

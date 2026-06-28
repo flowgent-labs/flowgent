@@ -49,7 +49,7 @@ func startServer(cfgPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	log.Printf("Flowgent API Server — sole DB client, RESTful CRUD only")
+	slog.Info("Flowgent API Server — sole DB client, RESTful CRUD only")
 	config.LogConfig(serviceCfg)
 	logger := utils.NewLogger(serviceCfg.Logging.Mode, serviceCfg.Logging.Level)
 
@@ -71,7 +71,7 @@ func startServer(cfgPath string) error {
 
 	// ── MQTT for lifecycle event publishing (optional; nil-safe handlers) ──
 	var mqttPublisher handler.MQTTPublisher
-	log.Printf("[apiserver] MQTT lifecycle publishing not yet wired (nil-safe)")
+	slog.Debug("apiserver MQTT lifecycle publishing not yet wired (nil-safe)")
 
 	// ── REST API Handlers ──
 	healthHandler := &handler.HealthHandler{}
@@ -81,12 +81,13 @@ func startServer(cfgPath string) error {
 	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPublisher, logger)
 	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
 	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
+	mcpHandler := handler.NewMcpHandler(storeImpl)
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── REST HTTP Server ──
 	restMux := api.RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler)
 	var restHandler http.Handler = restMux
 	if len(serviceCfg.Auth.AnonymousPaths) > 0 {
 		restHandler = config.AuthMiddleware(serviceCfg.Auth, restMux)

@@ -48,8 +48,8 @@ func (s *FlowRunPostgresStore) Create(ctx context.Context, e *entities.FlowRunIn
 // Update performs a targeted update of mutable columns.
 func (s *FlowRunPostgresStore) Update(ctx context.Context, e *entities.FlowRunInfo) error {
 	_, err := s.inner.Pool.Exec(ctx,
-		`UPDATE orh_flowrun SET status=$1, vars=$2, output=$3, error=$4, started_at=$5, finished_at=$6, shared_memory=$7, updated_at=NOW() WHERE id=$8`,
-		e.Status, e.Vars, e.Output, e.Error, e.StartedAt, e.FinishedAt, e.SharedMemory, e.ID)
+		`UPDATE orh_flowrun SET status=$1, vars=$2, output=$3, error=$4, started_at=$5, finished_at=$6, updated_at=NOW() WHERE id=$7`,
+		e.Status, e.Vars, e.Output, e.Error, e.StartedAt, e.FinishedAt, e.ID)
 	return err
 }
 

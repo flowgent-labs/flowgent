@@ -3,7 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -111,7 +111,7 @@ func (h *FlowDefHandler) Reload(flows []entities.AgentFlowInfo, subFlows map[str
 	}
 	h.mu.Unlock()
 	h.notifyWatchers()
-	log.Printf("[api] flow cache reloaded: %d flows", len(h.agentFlows))
+	slog.Debug("api flow cache reloaded", "count", len(h.agentFlows))
 }
 
 func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -120,8 +120,12 @@ func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	items := defs.Items
+	if items == nil {
+		items = []*entities.AgentFlowVersionInfo{}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(defs)
+	json.NewEncoder(w).Encode(items)
 }
 
 func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +202,8 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "agentflow not found", 404)
 		return
 	}
-	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars, Trigger: trigger}
+	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars}
+	run.SetTrigger(trigger)
 	if err := h.frStore.Create(ctx, run); err != nil {
 		http.Error(w, "internal", 500)
 		return

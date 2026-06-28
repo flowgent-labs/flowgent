@@ -3,7 +3,7 @@
 package client
 
 import (
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -19,15 +19,11 @@ import (
 // policy evaluation, async MQTT signing, and facilitator integration.
 // When payments are disabled, falls back to GenericHttpClient.
 func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlowgentHttpClient {
-	if cfg == nil || cfg.Payments == nil || !cfg.Payments.Enabled {
+	if cfg == nil || cfg.Wallet == nil || !cfg.Wallet.Enabled {
 		return NewGenericHttpClient(30 * time.Second)
 	}
 
-	payCfg := cfg.Payments
-	if payCfg.Wallet.DefaultWallet == "" {
-		log.Printf("WARNING: payments enabled but no default wallet configured, falling back to GenericHttpClient")
-		return NewGenericHttpClient(30 * time.Second)
-	}
+	payCfg := cfg.Wallet
 
 	timeout := resolveTimeout(payCfg)
 
@@ -44,11 +40,11 @@ func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlow
 		var err error
 		sc, err = signclient.NewMqttSignClient(q, cfg.Tenant.DefaultTenant, "", "", 30*time.Second)
 		if err != nil {
-			log.Printf("WARNING: MQTT sign client unavailable: %v", err)
+			slog.Warn("MQTT sign client unavailable, falling back to GenericHttpClient", "err", err)
 			return NewGenericHttpClient(30 * time.Second)
 		}
 	} else {
-		log.Printf("WARNING: no messager available, falling back to GenericHttpClient")
+		slog.Warn("no messager available, falling back to GenericHttpClient")
 		return NewGenericHttpClient(30 * time.Second)
 	}
 
@@ -62,15 +58,12 @@ func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlow
 		MaxRetries:  maxRetries,
 	}, eng, fc, sc, nil)
 
-	client.SetDefaultWallet(payCfg.Wallet.DefaultWallet)
-
-	log.Printf("HttpClient: X402PaymentHttpClient (timeout=%s, facilitator=%s, sign=mqtt)",
-		timeout, facEndpoint)
+	slog.Info("X402PaymentHttpClient created", "timeout", timeout, "facilitator", facEndpoint, "sign", "mqtt")
 
 	return client
 }
 
-func resolveTimeout(payCfg *config.PaymentsConfig) time.Duration {
+func resolveTimeout(payCfg *config.WalletConfig) time.Duration {
 	if payCfg.X402.Timeout != "" {
 		if d, err := time.ParseDuration(payCfg.X402.Timeout); err == nil {
 			return d

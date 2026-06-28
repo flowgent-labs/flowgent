@@ -5,6 +5,7 @@ package notifier
 
 import (
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,7 +26,7 @@ func Start(cfgPath, pidFile string) error {
 		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
-	log.Printf("Flowgent notification service starting (pid=%d)", os.Getpid())
+	slog.Info("Flowgent notification service starting", "pid", os.Getpid())
 	return startService(cfgPath)
 }
 
@@ -42,7 +43,7 @@ func Restart(cfgPath, pidFile string) error {
 		utils.WritePID(pidFile)
 		defer os.Remove(pidFile)
 	}
-	log.Printf("Flowgent notification service restarting (pid=%d)", os.Getpid())
+	slog.Info("Flowgent notification service restarting", "pid", os.Getpid())
 	return startService(cfgPath)
 }
 

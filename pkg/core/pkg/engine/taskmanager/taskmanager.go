@@ -75,6 +75,28 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: cfg.Tenant}
 	llmClient := llm.NewLlmProviderManager(llmLoader)
 
+	// Load MCP server definitions from DB (via apiserver API).
+	mcpLoader := &client.McpProviderClient{Client: apiClient, Tenant: cfg.Tenant}
+	if mcps, err := mcpLoader.ListMCPs(context.Background()); err == nil {
+		slog.Debug("taskmanager loaded MCP servers", "count", len(mcps))
+		for _, m := range mcps {
+			if !m.Enabled || m.Name == "" {
+				slog.Debug("taskmanager skip MCP", "name", m.Name, "enabled", m.Enabled)
+				continue
+			}
+			slog.Debug("taskmanager register MCP", "name", m.Name, "cmd", m.Command, "args", m.Args)
+			mcpMgr.Register(m.Name, m.Command, m.Args, m.Env)
+		}
+	} else {
+		slog.Warn("taskmanager ListMCPs failed", "err", err)
+	}
+	// Also load LLM providers
+	if providers, err := llmLoader.ListProviders(context.Background()); err == nil {
+		slog.Debug("taskmanager loaded LLM providers", "count", len(providers))
+	} else {
+		slog.Warn("taskmanager ListProviders failed", "err", err)
+	}
+
 	router := executor.NewTaskExecutorRouter()
 	router.Register(executor.NewAgentExecutor(llmClient, apiClient, cfg.Tenant))
 	router.Register(&executor.ConditionExecutor{})

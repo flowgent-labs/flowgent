@@ -55,6 +55,20 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = uuid.New().String()
 	p.TenantID = r.PathValue("tenant")
+	if p.ApiKey == "" {
+		if v, ok := p.Credentials["apikey"]; ok {
+			if vs, ok := v.(string); ok {
+				p.ApiKey = vs
+			}
+		}
+	}
+	if p.Status == "" {
+		if p.Enabled {
+			p.Status = "ACTIVE"
+		} else {
+			p.Status = "INACTIVE"
+		}
+	}
 	p.CreatedAt = time.Now()
 	p.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &p); err != nil {
@@ -89,6 +103,20 @@ func (h *LlmProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = r.PathValue("id")
+	if p.ApiKey == "" {
+		if v, ok := p.Credentials["apikey"]; ok {
+			if vs, ok := v.(string); ok {
+				p.ApiKey = vs
+			}
+		}
+	}
+	if p.Status == "" {
+		if p.Enabled {
+			p.Status = "ACTIVE"
+		} else {
+			p.Status = "INACTIVE"
+		}
+	}
 	p.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &p); err != nil {
 		http.Error(w, err.Error(), 500)

@@ -13,7 +13,7 @@ type ApprovalInfo struct {
 	Status         string        `json:"status" yaml:"status"`
 	Approved       *bool         `json:"approved" yaml:"approved"`
 	Comment        string        `json:"comment" yaml:"comment"`
-	Timeout        time.Duration `json:"timeout" yaml:"timeout"`
+	Timeout        time.Duration `json:"timeout" yaml:"timeout" db:"-"`
 	ExpiresAt      *time.Time    `json:"expires_at" yaml:"expires_at"`
 	ResolvedAt     *time.Time    `json:"resolved_at" yaml:"resolved_at"`
 }

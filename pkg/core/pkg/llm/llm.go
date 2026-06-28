@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -34,11 +35,16 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
-				if !dbp.Enabled || dbp.ID == "" {
+				slog.Debug("llm loaded provider", "id", dbp.ID, "type", dbp.Type, "status", dbp.Status, "apiKeyLen", len(dbp.ApiKey))
+				if dbp.Status != "ACTIVE" || dbp.ID == "" {
+					slog.Debug("llm skip provider", "id", dbp.ID, "status", dbp.Status)
 					continue
 				}
 				m.registerDB(*dbp)
 			}
+			slog.Debug("llm registered providers in map", "count", len(m.providers))
+		} else {
+			slog.Warn("llm ListProviders failed", "err", err)
 		}
 	}
 
@@ -46,15 +52,25 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 }
 
 func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
-	// Resolve ApiKey from Credentials map (DB stores credentials as a map, runtime needs the string).
-	if v, ok := dbP.Credentials["apikey"]; ok {
-		if vs, ok := v.(string); ok {
-			dbP.ApiKey = vs
+	// DB stores apikey in the apikey column directly.
+	// Also check Credentials map for backward compatibility.
+	if dbP.ApiKey == "" {
+		if v, ok := dbP.Credentials["apikey"]; ok {
+			if vs, ok := v.(string); ok {
+				dbP.ApiKey = vs
+			}
 		}
+	}
+	// Convert DB timeout_ms (int) to Timeout duration string for provider constructors.
+	if dbP.TimeoutMs > 0 && dbP.Timeout == "" {
+		dbP.Timeout = fmt.Sprintf("%dms", dbP.TimeoutMs)
 	}
 	pc := newProvider(&dbP)
 	if pc != nil {
 		m.providers[dbP.ID] = pc
+		if dbP.Type != "" && dbP.Type != dbP.ID {
+			m.providers[dbP.Type] = pc
+		}
 	}
 }
 

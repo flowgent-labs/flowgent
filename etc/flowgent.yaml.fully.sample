@@ -30,7 +30,7 @@ mgmt:
     server-bind: "0.0.0.0:6669"
   otel:
     enabled: true
-    endpoint: "http://localhost:4317"
+    endpoint: "localhost:4317"
     protocol: grpc                # http/protobuf | http/json | grpc
     timeout: 10000
     sample_rate: 1.0
@@ -118,9 +118,11 @@ storage:
     max-connections: 20
     use-ssl: false
 
-# ── Queue ────────────────────────────────────────────────────────────────────
+# ── Messager ─────────────────────────────────────────────────────────────────
+#    Inter-component message queue. All non-apiserver components (controller,
+#    JM, TM, sandbox, wallet, notifier) communicate via messager.
 #    Type: memory (all-in-one/dev) | mqtt (production/distributed)
-messaging:
+messager:
   type: memory                    # memory | mqtt
   mqtt:
     broker: "tcp://127.0.0.1:1883"
@@ -149,7 +151,7 @@ llm:
       credentials:
         api-key: "<YOUR_BAILIAN_API_KEY>"
         #api-key-file: /path/to/.credentials
-      #proxy: "socks5h://127.0.0.1:1080"   # optional SOCKS5/HTTP proxy for external API
+      #proxy: "socks5h://127.0.0.1:1080"   # optional SOCKS5/HTTP proxy
       models:
         - name: qwen-plus
           temperature: 0.3
@@ -191,6 +193,8 @@ llm:
 #          max_tokens: 8192
 
 # ── Orchestration Engine ─────────────────────────────────────────────────────
+# LLM providers, MCP servers, agents, skills, and agentflows are all DB-backed.
+# Use the management console (flowgent console) or REST API to manage them.
 orchestration:
   max-concurrent-flows: 10
   flow-execution-timeout: 30m
@@ -379,10 +383,16 @@ tenant:
   default_tenant: "default"
   namespace_prefix: "flowgent-"
 
-# ── Payments (x402) ──────────────────────────────────────────────────────────
+# ── Wallet (x402) ────────────────────────────────────────────────────────────
 #    Optional economic layer. Disabled by default — flowgent runs as a pure
 #    orchestration engine without payment features.
-payments:
+#
+#    Architecture: The wallet manager subscribes to unsigned x402 payment
+#    messages via the messager (MQTT or local queue), signs them using the
+#    EOA private key from the secret store, and publishes the signed messages
+#    back. No HTTP endpoint is needed — all communication is through the
+#    messager message bus.
+wallet:
   enabled: false
   policies:
     max_single_payment_usd: 1
@@ -392,15 +402,10 @@ payments:
     require_human_approval_above_usd: 5
     allowed_assets: [USDC]
     allowed_chains: [base, solana]
-  wallet:
-    endpoint: "http://localhost:9901"
-    auth_token: ""
-    auth_token_file: ""
-    default_wallet: "default"
-    secret_store:
-      provider: default                  # default | vault
-      master_key: ""
-      master_key_file: /var/secrets/master.key
+  secret_store:
+    provider: default                  # default | vault
+    master_key: ""
+    master_key_file: /var/secrets/master.key
   x402:
     default_facilitator: "http://localhost:8085"
     timeout: 30s

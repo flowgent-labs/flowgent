@@ -1,18 +1,22 @@
 package entities
 
 // LlmProviderInfo is a persisted LLM provider definition.
+// DB column mapping uses db tags to align with the llm_providers table schema.
 type LlmProviderInfo struct {
 	BaseEntity
 
-	Type        string         `json:"type" yaml:"type"`
-	Enabled     bool           `json:"enabled" yaml:"enabled"`
-	Timeout     string         `json:"timeout" yaml:"timeout"`
-	Endpoint    string         `json:"endpoint" yaml:"endpoint"`
-	Credentials map[string]any `json:"credentials" yaml:"credentials"`
-	Proxy       string         `json:"proxy,omitempty" yaml:"proxy,omitempty"`
-	RateLimit   int            `json:"rate_limit" yaml:"rate_limit"`
-	Models      []LlmModelInfo `json:"models" yaml:"models"`
-	ApiKey      string         `json:"-" yaml:"-"`
+	Type        string         `json:"type" yaml:"type" db:"provider"`
+	Enabled     bool           `json:"enabled" yaml:"enabled" db:"-"`
+	Status      string         `json:"status" yaml:"status" db:"status"`
+	Timeout     string         `json:"timeout" yaml:"timeout" db:"-"`
+	TimeoutMs   int            `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty" db:"timeout_ms"`
+	Endpoint    string         `json:"endpoint" yaml:"endpoint" db:"endpoint"`
+	Credentials map[string]any `json:"credentials" yaml:"credentials" db:"-"`
+	Proxy       string         `json:"proxy,omitempty" yaml:"proxy,omitempty" db:"-"`
+	RateLimit   int            `json:"rate_limit" yaml:"rate_limit" db:"-"`
+	Model       string         `json:"model,omitempty" yaml:"model,omitempty" db:"model"`
+	Models      []LlmModelInfo `json:"models" yaml:"models" db:"models"`
+	ApiKey      string         `json:"apikey" yaml:"apikey" db:"apikey"`
 }
 
 // LlmModelInfo is the model-level definition within a persisted LLM provider.

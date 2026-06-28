@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,7 +30,7 @@ func NewFlowgentClient(baseURL string) *FlowgentClient {
 	if baseURL == "" {
 		baseURL = "http://flowgent-apiserver:9999"
 	}
-	log.Printf("[api-client] using apiserver at %s", baseURL)
+	slog.Info("api client using apiserver", "url", baseURL)
 	return &FlowgentClient{BaseURL: baseURL}
 }
 
@@ -195,7 +195,7 @@ func (c *FlowgentClient) TriggerRun(ctx context.Context, tenant, agentFlowID str
 	if err := readJSON(resp, &out); err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	log.Printf("[api-client] TriggerRun: %s/%s", tenant, agentFlowID)
+	slog.Debug("api client TriggerRun", "tenant", tenant, "agentFlowID", agentFlowID)
 	return &out, nil
 }
 
@@ -482,6 +482,21 @@ func (c *FlowgentClient) ListLLMProviders(ctx context.Context, tenant string) ([
 	return items, nil
 }
 
+// ─── MCP Servers ──────────────────────────────────────────────────
+
+// ListMCPs returns DB-backed MCP server definitions.
+func (c *FlowgentClient) ListMCPs(ctx context.Context, tenant string) ([]*entities.McpInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/mcp", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListMCPs: %w", err)
+	}
+	var items []*entities.McpInfo
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListMCPs: %w", err)
+	}
+	return items, nil
+}
+
 // ─── Watch (long-poll) ───────────────────────────────────────────
 
 // WatchFlows calls GET /api/v1/{tenant}/agentflows/watch?since=N (long-poll).
@@ -618,4 +633,14 @@ type LlmProviderClient struct {
 
 func (a *LlmProviderClient) ListProviders(ctx context.Context) ([]*entities.LlmProviderInfo, error) {
 	return a.Client.ListLLMProviders(ctx, a.Tenant)
+}
+
+// McpProviderClient adapts FlowgentClient for MCP server definition loading.
+type McpProviderClient struct {
+	Client *FlowgentClient
+	Tenant string
+}
+
+func (a *McpProviderClient) ListMCPs(ctx context.Context) ([]*entities.McpInfo, error) {
+	return a.Client.ListMCPs(ctx, a.Tenant)
 }

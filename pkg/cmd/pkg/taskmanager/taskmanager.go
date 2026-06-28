@@ -6,7 +6,7 @@ package taskmanager
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -96,7 +96,7 @@ func startTaskManager(cfgPath string) error {
 	if err := tm.Start(ctx); err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
-	log.Printf("TaskManager %s started (slots=%d)", tmID, slotCount)
+	slog.Info("TaskManager started", "tmID", tmID, "slots", slotCount)
 	utils.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)

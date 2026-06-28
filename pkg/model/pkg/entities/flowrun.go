@@ -19,21 +19,39 @@ const (
 type FlowRunInfo struct {
 	BaseEntity
 
-	AgentFlowID string         `json:"agentflow_id" yaml:"agentflow_id"`
-	Version     int64          `json:"version" yaml:"version"`
-	Status      RunStatus      `json:"status" yaml:"status"`
-	Vars        map[string]any `json:"vars" yaml:"vars"`
-	Output      map[string]any `json:"output" yaml:"output"`
-	Error       string         `json:"error" yaml:"error"`
-	Trigger     TriggerInfo    `json:"trigger" yaml:"trigger"`
-	StartedAt   *time.Time     `json:"started_at" yaml:"started_at"`
-	FinishedAt  *time.Time     `json:"finished_at" yaml:"finished_at"`
+	AgentFlowID    string         `json:"agentflow_id" yaml:"agentflow_id"`
+	Version        int64          `json:"version" yaml:"version"`
+	Status         RunStatus      `json:"status" yaml:"status"`
+	Vars           map[string]any `json:"vars" yaml:"vars"`
+	Output         map[string]any `json:"output" yaml:"output"`
+	Error          string         `json:"error" yaml:"error"`
+	TriggerType    string         `json:"trigger_type,omitempty" yaml:"trigger_type,omitempty" db:"trigger_type"`
+	TriggerSource  string         `json:"trigger_source,omitempty" yaml:"trigger_source,omitempty" db:"trigger_source"`
+	TriggerPayload map[string]any `json:"trigger_payload,omitempty" yaml:"trigger_payload,omitempty" db:"trigger_payload"`
+	StartedAt      *time.Time     `json:"started_at" yaml:"started_at"`
+	FinishedAt     *time.Time     `json:"finished_at" yaml:"finished_at"`
 
-	SharedMemory map[string]any            `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty"`
-	ExecPlans    map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty"`
+	SharedMemory map[string]any            `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty" db:"-"`
+	ExecPlans    map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty" db:"-"`
 
 	Namespace string   `json:"namespace,omitempty"`
 	Priority  Priority `json:"priority,omitempty"`
+}
+
+// SetTrigger populates the flat trigger columns from a TriggerInfo value.
+func (f *FlowRunInfo) SetTrigger(t TriggerInfo) {
+	f.TriggerType = t.Type
+	f.TriggerSource = t.Source
+	f.TriggerPayload = t.Payload
+}
+
+// GetTrigger reconstructs a TriggerInfo from the flat trigger columns.
+func (f *FlowRunInfo) GetTrigger() TriggerInfo {
+	return TriggerInfo{
+		Type:    f.TriggerType,
+		Source:  f.TriggerSource,
+		Payload: f.TriggerPayload,
+	}
 }
 
 // TriggerInfo records how a run was initiated.

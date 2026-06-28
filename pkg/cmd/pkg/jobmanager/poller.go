@@ -2,7 +2,7 @@ package jobmanager
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -25,7 +25,7 @@ func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 		case <-ticker.C:
 			page, err := api.ListRuns(ctx, tenant, string(entities.RunPending), namespace, agentFlowID, 1, 50)
 			if err != nil {
-				log.Printf("[poller] ListRuns error: %v", err)
+				slog.Warn("poller ListRuns failed", "err", err)
 				continue
 			}
 			for _, run := range page.Items {
@@ -42,13 +42,13 @@ func startRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 				if spec == nil {
 					if apiSpec, err := api.GetFlow(ctx, tenant, run.AgentFlowID); err == nil && apiSpec != nil {
 						spec = apiSpec
-						log.Printf("[poller] loaded flow spec via apiserver: %s (nodes=%d)", run.AgentFlowID, len(spec.Nodes))
+						slog.Debug("poller loaded flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
 					}
 				}
 				if spec == nil {
 					continue
 				}
-				log.Printf("[poller] dispatch run=%s flow=%s priority=%s", run.ID[:8], run.AgentFlowID, run.Priority)
+				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "priority", run.Priority)
 				go func(r *entities.FlowRunInfo, sp *entities.AgentFlowInfo) {
 					_ = jm.Submit(ctx, r, sp)
 				}(run, spec)

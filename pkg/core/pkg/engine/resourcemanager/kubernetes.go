@@ -53,6 +53,14 @@ type RMTMState = RMState
 //
 // State is persisted to cache so that on JM failover the new JM can restoreFromCache
 // the current TM/sandbox replica counts and slot allocation without querying K8s.
+// execResult is the TM→JM result published to exec/results.
+type execResult struct {
+	PlanID         string `json:"plan_id"`
+	AgentFlowRunID string `json:"agentflow_run_id"`
+	NodeID         string `json:"node_id"`
+	State          string `json:"state"`
+}
+
 type KubernetesResourceManager struct {
 	q           messager.IMessager
 	cache       cache.ICache
@@ -70,6 +78,11 @@ type KubernetesResourceManager struct {
 	mu           sync.Mutex
 	pendingPlans int64
 	lastActivity time.Time
+
+	// Per-run result routing: Schedule subscribes once per run to
+	// exec/results and routes messages to the waiting plan's channel.
+	runResultsMu sync.Mutex
+	runResults   map[string]map[string]chan execResult // runID → nodeID → chan
 
 	// Sandbox deployment fields
 	sandboxEnabled          bool
@@ -139,6 +152,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	rm := &KubernetesResourceManager{
 		q:           nil, // set via SetQueue
 		cache:       cfg.Cache,
+		runResults:  make(map[string]map[string]chan execResult),
 		namespace:   cfg.K8sNamespace,
 		deployName:  cfg.K8sDeploymentName,
 		kubeClient:  clientset,
@@ -229,8 +243,39 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	ctx, cancel := context.WithTimeout(ctx, s.planTimeout)
 	defer cancel()
 
+	runID := plan.AgentFlowRunID
+	resultCh := make(chan execResult, 1)
+
+	// Subscribe to exec/results for this run (once) and register the plan's
+	// result channel before publishing, so we don't miss the response.
+	s.runResultsMu.Lock()
+	if s.runResults[runID] == nil {
+		s.runResults[runID] = make(map[string]chan execResult)
+		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.TenantID, plan.AgentFlowDefinitionID, runID),
+			func(topic string, payload []byte) {
+				var er execResult
+				if err := json.Unmarshal(payload, &er); err != nil {
+					return
+				}
+				s.runResultsMu.Lock()
+				ch, ok := s.runResults[runID][er.NodeID]
+				if ok {
+					delete(s.runResults[runID], er.NodeID)
+				}
+				s.runResultsMu.Unlock()
+				if ok {
+					select {
+					case ch <- er:
+					default:
+					}
+				}
+			})
+	}
+	s.runResults[runID][plan.NodeID] = resultCh
+	s.runResultsMu.Unlock()
+
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID), &messager.InterMessage{
+	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.TenantID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
 		ID: plan.PlanID,
 		Headers: map[string]string{
 			"task_run_id": plan.AgentFlowRunID,
@@ -238,9 +283,25 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 		},
 		Payload: payload,
 	}); err != nil {
+		s.runResultsMu.Lock()
+		delete(s.runResults[runID], plan.NodeID)
+		s.runResultsMu.Unlock()
 		return nil, fmt.Errorf("kubernetes rm publish: %w", err)
 	}
-	return &entities.TaskResult{Output: map[string]any{"dispatched": true}}, nil
+
+	// Wait for the actual execution result from the TM.
+	select {
+	case <-ctx.Done():
+		s.runResultsMu.Lock()
+		delete(s.runResults[runID], plan.NodeID)
+		s.runResultsMu.Unlock()
+		return nil, fmt.Errorf("kubernetes rm: plan %s timed out waiting for TM result", plan.PlanID)
+	case er := <-resultCh:
+		if er.State == "FAILED" {
+			return nil, fmt.Errorf("plan %s failed", plan.PlanID)
+		}
+		return &entities.TaskResult{Output: map[string]any{"plan_id": er.PlanID, "node_id": er.NodeID, "state": er.State}}, nil
+	}
 }
 
 // ─── Scaling ────────────────────────────────────────────
@@ -444,7 +505,7 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 						Image:           "localhost/flowgent/taskmanager:latest",
 						ImagePullPolicy: corev1.PullNever,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__MESSAGING__MQTT__BROKER", Value: s.mqttBroker},
+							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: s.postgresDSN},
 						},
 						Command: []string{"/app/flowgent", "taskmanager", "start"},
@@ -492,7 +553,7 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 						Image:           s.sandboxImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__MESSAGING__MQTT__BROKER", Value: s.mqttBroker},
+							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__SANDBOX__WORKSPACE", Value: s.sandboxWorkspace},
 						},
 						Command: []string{"/app/flowgent", "sandbox", "start"},

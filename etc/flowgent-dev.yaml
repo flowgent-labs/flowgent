@@ -118,9 +118,9 @@ storage:
     max-connections: 20
     use-ssl: false
 
-# ── Messaging ──────────────────────────────────────────────────────────────────
+# ── Messager ──────────────────────────────────────────────────────────────────
 #    Type: memory (all-in-one/dev) | mqtt (production/distributed)
-messaging:
+messager:
   type: memory                    # memory | mqtt
   mqtt:
     broker: "tcp://127.0.0.1:1883"
@@ -178,10 +178,12 @@ tenant:
   default_tenant: "default"
   namespace_prefix: "flowgent-"
 
-# ── Payments (x402) ──────────────────────────────────────────────────────────
+# ── Wallet (x402) ──────────────────────────────────────────────────
 #    Optional economic layer. Disabled by default — flowgent runs as a pure
 #    orchestration engine without payment features.
-payments:
+#    The wallet manager subscribes to unsigned x402 messages via messager,
+#    signs them with the EOA private key, and publishes signed messages back.
+wallet:
   enabled: false
   policies:
     max_single_payment_usd: 1
@@ -191,15 +193,10 @@ payments:
     require_human_approval_above_usd: 5
     allowed_assets: [USDC]
     allowed_chains: [base, solana]
-  wallet:
-    endpoint: "http://localhost:9901"
-    auth_token: ""
-    auth_token_file: ""
-    default_wallet: "default"
-    secret_store:
-      provider: default                  # default | vault
-      master_key: ""
-      master_key_file: /var/secrets/master.key
+  secret_store:
+    provider: default                  # default | vault
+    master_key: ""
+    master_key_file: /var/secrets/master.key
   x402:
     default_facilitator: "http://localhost:8085"
     timeout: 30s

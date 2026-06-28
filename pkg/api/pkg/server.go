@@ -17,6 +17,7 @@ func RegisterRESTRoutes(
 	notif *handler.NotifierHandler,
 	ws *handler.NotifierWSBridge,
 	llmProvider *handler.LlmProviderHandler,
+	mcpH *handler.McpHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -78,6 +79,13 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{tenant}/llm/providers/{id}", llmProvider.Get)
 	mux.HandleFunc("PUT /api/v1/{tenant}/llm/providers/{id}", llmProvider.Update)
 	mux.HandleFunc("DELETE /api/v1/{tenant}/llm/providers/{id}", llmProvider.Delete)
+
+	// ── MCP Servers (tenant-scoped) ──────────────────────────
+	mux.HandleFunc("GET /api/v1/{tenant}/mcp", mcpH.List)
+	mux.HandleFunc("POST /api/v1/{tenant}/mcp", mcpH.Create)
+	mux.HandleFunc("GET /api/v1/{tenant}/mcp/{name}", mcpH.Get)
+	mux.HandleFunc("PUT /api/v1/{tenant}/mcp/{name}", mcpH.Update)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/mcp/{name}", mcpH.Delete)
 
 	// ── WebSocket (tenant-scoped) ──────────────────────────
 	if ws != nil {

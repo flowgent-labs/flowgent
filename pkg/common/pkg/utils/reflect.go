@@ -27,13 +27,10 @@ func StructFields(entity any) (cols []string, args []any) {
 
 func collectFields(v reflect.Value, cols *[]string, args *[]any, seen map[string]bool, embedded bool) {
 	t := v.Type()
+	// First pass: process non-embedded fields (outer fields shadow embedded ones)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			collectFields(v.Field(i), cols, args, seen, true)
+		if !f.IsExported() || f.Anonymous {
 			continue
 		}
 		col := ColName(f)
@@ -43,6 +40,14 @@ func collectFields(v reflect.Value, cols *[]string, args *[]any, seen map[string
 		seen[col] = true
 		*cols = append(*cols, col)
 		*args = append(*args, v.Field(i).Interface())
+	}
+	// Second pass: process embedded structs (fill in gaps not already covered)
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() || !f.Anonymous || f.Type.Kind() != reflect.Struct {
+			continue
+		}
+		collectFields(v.Field(i), cols, args, seen, true)
 	}
 }
 
@@ -141,13 +146,10 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 
 func collectScanFields(v reflect.Value, entries *[]scanEntry, seen map[string]bool) {
 	t := v.Type()
+	// First pass: process non-embedded fields (outer fields shadow embedded ones)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			collectScanFields(v.Field(i), entries, seen)
+		if !f.IsExported() || f.Anonymous {
 			continue
 		}
 		col := ColName(f)
@@ -161,6 +163,14 @@ func collectScanFields(v reflect.Value, entries *[]scanEntry, seen map[string]bo
 		} else {
 			*entries = append(*entries, scanEntry{ptr: fv.Addr().Interface(), idx: i, json: false})
 		}
+	}
+	// Second pass: process embedded structs (fill in gaps not already covered)
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() || !f.Anonymous || f.Type.Kind() != reflect.Struct {
+			continue
+		}
+		collectScanFields(v.Field(i), entries, seen)
 	}
 }
 

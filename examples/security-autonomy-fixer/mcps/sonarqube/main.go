@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -190,7 +191,7 @@ func parseSonarqubeHandler(ctx context.Context, request mcp.CallToolRequest) (*m
 
 	htmlPath := strings.TrimSuffix(reportPath, ".json") + ".html"
 	if err := generateHTML(issues, htmlPath); err != nil {
-		log.Printf("Warning: failed to generate HTML: %v", err)
+		slog.Warn("failed to generate HTML", "err", err)
 	}
 
 	vulns := convertIssuesToVulnerabilities(issues)

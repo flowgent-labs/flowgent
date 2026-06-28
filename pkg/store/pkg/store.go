@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +26,9 @@ func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 		// Prefer explicit DSN (set via FLOWGENT__STORAGE__POSTGRES__DSN or YAML)
 		if pg.Dsn != "" {
 			pool := NewPostgresPool(context.Background(), pg.Dsn, "public")
+			if err := RunMigrationsPG(pool, "postgres"); err != nil {
+				slog.Warn("PG migrations failed (non-fatal)", "err", err)
+			}
 			return &StoreManager{IStore: &pgStore{Pool: pool}}
 		}
 		ssl := "disable"
@@ -34,6 +38,9 @@ func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, ssl)
 		pool := NewPostgresPool(context.Background(), dsn, "public")
+		if err := RunMigrationsPG(pool, "postgres"); err != nil {
+			slog.Warn("PG migrations failed (non-fatal)", "err", err)
+		}
 		return &StoreManager{IStore: &pgStore{Pool: pool}}
 	}
 

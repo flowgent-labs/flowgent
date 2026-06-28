@@ -3,7 +3,7 @@ package config
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +31,7 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 			result[k] = v
 		}
 		found = true
-		log.Printf("[credentials] loaded tenant-level: %s (%d vars)", tenantPath, len(m))
+		slog.Debug("credentials loaded tenant-level", "path", tenantPath, "vars", len(m))
 	}
 
 	// 2. Flow-level credentials (highest priority — overrides tenant)
@@ -42,7 +42,7 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 				result[k] = v
 			}
 			found = true
-			log.Printf("[credentials] loaded flow-level: %s (%d vars)", flowPath, len(m))
+			slog.Debug("credentials loaded flow-level", "path", flowPath, "vars", len(m))
 		}
 
 		// 3. Inline flow credentials from AgentFlowInfo (highest of all)
@@ -53,7 +53,7 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 	}
 
 	if !found {
-		log.Printf("[credentials] WARNING: no credentials found at %s/{tenant}/secret/.credentials or %s/{tenant}/{flow}/secret/.credentials — components may fail external calls", basePath, basePath)
+		slog.Warn("no credentials found, components may fail external calls", "basePath", basePath)
 	}
 
 	return result
