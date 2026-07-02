@@ -45,8 +45,7 @@ type RMState struct {
 type RMTMState = RMState
 
 // KubernetesResourceManager dispatches plans to TM pods via MQTT with elastic
-// scaling. In session mode (autoScale=false), TMs are admin-managed and scaling
-// is skipped. In application mode (autoScale=true), the JM auto-scales TMs.
+// scaling. The JM auto-scales TMs based on pending plan load.
 //
 // When SandboxEnabled=true, the K8sRM also manages a separate sandbox Deployment
 // with its own scaling loop. Both TM and sandbox pods share the same workspace PVC.
@@ -73,7 +72,6 @@ type KubernetesResourceManager struct {
 	currentTMs  int32
 	idleTimeout time.Duration
 	planTimeout time.Duration
-	autoScale   bool
 
 	mu           sync.Mutex
 	pendingPlans int64
@@ -156,7 +154,6 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		namespace:   cfg.K8sNamespace,
 		deployName:  cfg.K8sDeploymentName,
 		kubeClient:  clientset,
-		autoScale:   cfg.AutoScale,
 		slotsPerTM:  cfg.SlotsPerTM,
 		minTMs:      cfg.MinTMs,
 		maxTMs:      cfg.MaxTMs,
@@ -335,9 +332,6 @@ func (s *KubernetesResourceManager) reconcile(ctx context.Context) {
 }
 
 func (s *KubernetesResourceManager) reconcileTM(ctx context.Context) {
-	if !s.autoScale {
-		return
-	}
 	pending := atomic.LoadInt64(&s.pendingPlans)
 	currentTMs := int(atomic.LoadInt32(&s.currentTMs))
 	currentSlots := currentTMs * s.slotsPerTM
@@ -382,9 +376,6 @@ func (s *KubernetesResourceManager) reconcileTM(ctx context.Context) {
 
 // reconcileSandbox scales sandbox pods based on pending trigger count.
 func (s *KubernetesResourceManager) reconcileSandbox(ctx context.Context) {
-	if !s.autoScale {
-		return
-	}
 	pending := atomic.LoadInt64(&s.sandboxPendingTriggers)
 	currentReplicas := int(atomic.LoadInt32(&s.sandboxCurrentReplicas))
 	currentSlots := currentReplicas * s.sandboxSlotsPerPod

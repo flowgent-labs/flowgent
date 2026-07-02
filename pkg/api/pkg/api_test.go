@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/flowgent-labs/flowgent/api/pkg/swagger"
 )
 
 func TestHealthHandler_Healthz(t *testing.T) {
@@ -20,7 +22,7 @@ func TestHealthHandler_Healthz(t *testing.T) {
 func TestOpenAPIHandler(t *testing.T) {
 	req := httptest.NewRequest("GET", "/_/openapi.yaml", nil)
 	w := httptest.NewRecorder()
-	OpenAPIHandler(w, req)
+	swagger.OpenAPIHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -33,7 +35,7 @@ func TestOpenAPIHandler(t *testing.T) {
 func TestSwaggerUIHandler(t *testing.T) {
 	req := httptest.NewRequest("GET", "/_/swagger-ui", nil)
 	w := httptest.NewRecorder()
-	SwaggerUIHandler(w, req)
+	swagger.SwaggerUIHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -41,7 +43,7 @@ func TestSwaggerUIHandler(t *testing.T) {
 }
 
 func TestOASInfo(t *testing.T) {
-	info := OASInfo()
+	info := swagger.OASInfo()
 	if info["title"] == "" {
 		t.Error("title should not be empty")
 	}

@@ -1,5 +1,5 @@
 # =============================================================================
-#  Flowgent — Fully Annotated Sample Configuration
+#  Flowgent — Fully Annotated Configuration
 #  Copy this file and adjust for your environment.
 # =============================================================================
 service-name: flowgent
@@ -108,6 +108,7 @@ storage:
   sqlite:
     dir: ".flowgent/sqlite"
   postgres:
+    # dsn: "postgres://user:pass@host:5432/db?sslmode=disable"  # alternative to host/port/db/user/password
     host: "127.0.0.1"
     port: 5432
     database: "flowgent"
@@ -138,180 +139,34 @@ lock:
     nodes: ["redis://127.0.0.1:6379"]
     password: "bitnami"
 
-# ── LLM Providers ────────────────────────────────────────────────────────────
-llm:
-  request-timeout: 120s
-  rate-limit:                     # max requests/minute per provider
-    bailian: 60
-    deepseek: 60
-  providers:
-    # -- Aliyun Bailian (DashScope) -------------------------------------------
-    bailian:
-      endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-      credentials:
-        api-key: "<YOUR_BAILIAN_API_KEY>"
-        #api-key-file: /path/to/.credentials
-      #proxy: "socks5h://127.0.0.1:1080"   # optional SOCKS5/HTTP proxy
-      models:
-        - name: qwen-plus
-          temperature: 0.3
-          topk: 5
-          modalities:
-            input: [text]
-            output: [text]
-          thinking:
-            type: enabled
-            budget_tokens: 8192
-        - name: qwen3.5-coder
-          temperature: 0.3
-          topk: 5
-          modalities:
-            input: [text]
-            output: [text]
-          thinking:
-            type: enabled
-            budget_tokens: 8192
-
-    # -- DeepSeek --------------------------------------------------------------
-    deepseek:
-      endpoint: https://api.deepseek.com/v1/chat/completions
-      credentials:
-        api-key: "<YOUR_DEEPSEEK_API_KEY>"
-      #proxy: "socks5h://127.0.0.1:1080"
-      models:
-        - name: deepseek-chat
-          temperature: 0.3
-
-#    # -- Anthropic (optional) -------------------------------------------------
-#    anthropic:
-#      endpoint: https://api.anthropic.com/v1/messages
-#      credentials:
-#        api-key: "<YOUR_ANTHROPIC_API_KEY>"
-#      models:
-#        - name: claude-sonnet-4-6
-#          temperature: 0.3
-#          max_tokens: 8192
-
 # ── Orchestration Engine ─────────────────────────────────────────────────────
-# LLM providers, MCP servers, agents, skills, and agentflows are all DB-backed.
-# Use the management console (flowgent console) or REST API to manage them.
+#    LLM providers, MCP servers, agents, skills, and agentflows are all
+#    DB-backed. Use the management console to manage them:
+#
+#      flowgent console
+#        > import /path/to/import.yaml   # bulk-import resources
+#        > export --all                  # dump all DB resources as YAML
+#
+#    The import/export format supports these top-level keys:
+#      - llm_providers:  LLM provider definitions (model list, API keys, etc.)
+#      - mcps:           MCP server definitions (command, args, env vars)
+#      - agents:         Agent definitions (model, instruction, tools)
+#      - skills:         Skill definitions (sub-agentflow templates)
+#      - agentflows:     AgentFlow definitions (DAG of nodes + edges)
+#
+#    Only these 3 orchestration knobs are in the static config file:
 orchestration:
   max-concurrent-flows: 10
   flow-execution-timeout: 30m
   max-node-retries: 3
 
-  # -- MCP Server Definitions -------------------------------------------------
-  #     These are EXAMPLE MCPs for e2e testing. For production, use dedicated
-  #     MCP implementations with proper authentication and reliability.
-  #     Environment variables set here override inherited proxy/etc. settings
-  #     for the MCP subprocess. Use ALL_PROXY="" to bypass proxy for localhost.
-  mcps:
-    - name: github
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/github-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: sonarqube
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/sonarqube-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        SONARQUBE_URL: "http://localhost:9000"
-        SONARQUBE_TOKEN: "<YOUR_SONARQUBE_TOKEN>"
-        SONARQUBE_PASSWORD: "<YOUR_SONARQUBE_PASSWORD>"
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: sonatype-iq
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/sonatype-iq-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: sonatype-nexus3
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/sonatype-nexus3-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        MCP_UPSTREAM_TOKEN_FILE: /path/to/.credentials
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: confluence
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/confluence-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        CONFLUENCE_BASE_URL: "https://your-domain.atlassian.net/wiki"
-        CONFLUENCE_API_TOKEN: "<YOUR_ATLASSIAN_API_TOKEN>"
-        CONFLUENCE_USER_EMAIL: "<YOUR_EMAIL>"
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-    - name: test
-      enabled: true
-      type: local
-      command: ["sh", "-c", "/bin/test-mcp"]
-      args: ["--transport", "stdio", "-v", "10"]
-      env:
-        TEST_WORKSPACE: "/workspace"
-        ALL_PROXY: ""
-        HTTP_PROXY: ""
-        HTTPS_PROXY: ""
-
-  # -- Agent Definitions -------------------------------------------------------
-  agents:
-    static:
-      enabled: true
-      load-dir: "../examples/agents/"
-      refresh: 30s                  # hot-reload interval
-    standard:
-      enabled: false                # DB-backed agents (future Flowgent UI)
-
-  # -- Skill Definitions -------------------------------------------------------
-  skills:
-    static:
-      enabled: false
-      load-dir: "../examples/skills/"
-      refresh: 30s
-    standard:
-      enabled: false
-
-  # -- AgentFlow Definitions (Layer 2) -----------------------------------------
-  agentflows:
-    static:
-      enabled: true
-      load-dir: "../examples/flows/"
-      refresh: 1m
-    standard:
-      enabled: false                # DB-backed agentflows (future Flowgent UI)
-
 # ── Sandbox — Secure Script Execution Worker ─────────────────────────────────
-#    In standalone/all-in-one mode (deployment.enabled=false), sandbox runs inline
-#    in the TM process. In distributed mode (deployment.enabled=true), sandbox runs
-#    as independent K8s pods managed by JM's K8sRM with pod-level network isolation
-#    (K8s NetworkPolicy/seccomp) plus process-level seccomp-bpf filtering.
+#    In standalone/all-in-one mode (deployment.enabled=false), sandbox runs
+#    inline in the TM process. In distributed mode (deployment.enabled=true),
+#    sandbox runs as independent K8s pods managed by JM's K8sRM with pod-level
+#    network isolation (K8s NetworkPolicy/seccomp) plus process-level
+#    seccomp-bpf filtering.
 sandbox:
-  enabled: false                    # false = inline in TM (standalone/all-in-one)
-                                    # true = independent K8s pods (distributed)
-  image: "flowgent-sandbox:latest"
   workspace: "/var/flowgent/workspace"   # shared PVC, per-{tenant}/{flow_id} subdirs
   policy:
     network:
@@ -339,49 +194,76 @@ sandbox:
       memory: "512Mi"
     slots_per_pod: 4               # concurrent script executions per pod
 
-# ── Notifier Service ─────────────────────────────────────────────────────
+# ── Notifier Service ─────────────────────────────────────────────────────────
+#    Channels are DB-managed via the management console or REST API.
+#    The enabled flag controls whether the notifier process starts at all.
 notifier:
-  enabled: false                    # set true to enable
-  channels:
-    - name: telegram-ops
-      type: telegram
-      enabled: false
-      config:
-        bot_token: "${TELEGRAM_BOT_TOKEN}"
-        chat_id: "-1001234567890"
-    - name: dingtalk-ops
-      type: dingtalk
-      enabled: false
-      config:
-        webhook_url: "${DINGTALK_WEBHOOK_URL}"
-        secret: "${DINGTALK_SECRET}"
-    - name: slack-ops
-      type: slack
-      enabled: false
-      config:
-        webhook_url: "${SLACK_WEBHOOK_URL}"
-        channel: "#flowgent-alerts"
-    # - name: email-ops
-    #   type: email
-    #   enabled: false
-    #   config:
-    #     smtp_host: "smtp.example.com"
-    #     smtp_port: 587
-    #     username: "flowgent@example.com"
-    #     password: "<YOUR_SMTP_PASSWORD>"
-    #     from: "flowgent@example.com"
-    # - name: webhook-generic
-    #   type: webhook
-    #   enabled: false
-    #   config:
-    #     url: "https://hooks.example.com/flowgent"
-    #     headers:
-    #       X-Custom: "value"
+  enabled: false                    # set true to enable the notifier service
+  # Channels are managed via the DB CRUD API, not static config.
+  # Example (for reference only — use `flowgent console` to create):
+  # channels:
+  #   - name: telegram-ops
+  #     type: telegram
+  #     enabled: false
+  #     config:
+  #       bot_token: "${TELEGRAM_BOT_TOKEN}"
+  #       chat_id: "-1001234567890"
+  #   - name: dingtalk-ops
+  #     type: dingtalk
+  #     enabled: false
+  #     config:
+  #       webhook_url: "${DINGTALK_WEBHOOK_URL}"
+  #       secret: "${DINGTALK_SECRET}"
+  #   - name: slack-ops
+  #     type: slack
+  #     enabled: false
+  #     config:
+  #       webhook_url: "${SLACK_WEBHOOK_URL}"
+  #       channel: "#flowgent-alerts"
+  #   - name: email-ops
+  #     type: email
+  #     enabled: false
+  #     config:
+  #       smtp_host: "smtp.example.com"
+  #       smtp_port: 587
+  #       username: "flowgent@example.com"
+  #       password: "<YOUR_SMTP_PASSWORD>"
+  #       from: "flowgent@example.com"
+  #   - name: webhook-generic
+  #     type: webhook
+  #     enabled: false
+  #     config:
+  #       url: "https://hooks.example.com/flowgent"
+  #       headers:
+  #         X-Custom: "value"
 
 # ── Multi-Tenant ─────────────────────────────────────────────────────────────
 tenant:
   default_tenant: "default"
   namespace_prefix: "flowgent-"
+
+# ── Credential Paths ─────────────────────────────────────────────────────────
+#    CSI-mounted credential files hierarchy (tenant + flow level):
+#      {base-path}/{tenant}/secret/.credentials          (tenant-level)
+#      {base-path}/{tenant}/{flow}/secret/.credentials   (flow-level)
+#    Flow-level credentials override tenant-level.
+credential-paths:
+  base-path: "/var/flowgent"
+
+# ── Runtime ──────────────────────────────────────────────────────────────────
+#    Operational parameters typically set via FLOWGENT__RUNTIME__* env vars
+#    rather than in the static config file.
+runtime:
+  api-server-url: "http://apiserver:9999"
+  namespace: "default"
+  # agent-flow-id: ""            # set by JM at deploy time
+  # tm-id: ""                    # set per TM pod
+  tm-deploy: "flowgent-taskmanager"
+  tm-slots: 4
+  # controller-label: ""         # set per controller pod
+  # jm-image: ""                 # JM container image
+  # pod-index: 0                 # set by K8s downward API
+  # pod-total: 1                 # set by K8s downward API
 
 # ── Wallet (x402) ────────────────────────────────────────────────────────────
 #    Optional economic layer. Disabled by default — flowgent runs as a pure
@@ -403,9 +285,17 @@ wallet:
     allowed_assets: [USDC]
     allowed_chains: [base, solana]
   secret_store:
-    provider: default                  # default | vault
+    provider: default                  # default | vault | csi
     master_key: ""
     master_key_file: /var/secrets/master.key
+    # Vault backend (provider: vault)
+    vault:
+      address: ""                      # https://vault.example.com:8200
+      token: ""                        # Vault token (or use token_file)
+      token_file: ""                   # path to file containing Vault token
+      mount_path: "secret"             # KV v2 mount path
+      secret_path: "wallet"            # path under mount for wallet keys
+      role: "flowgent"                 # Vault role for AppRole auth
   x402:
     default_facilitator: "http://localhost:8085"
     timeout: 30s

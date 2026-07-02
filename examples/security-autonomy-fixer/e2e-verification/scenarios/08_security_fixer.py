@@ -1,8 +1,10 @@
 """
-Scenario 07 — Security Fixer V2: Full Pipeline White-Box Verification.
+Scenario 08 — Security Fixer: Full Pipeline White-Box Verification.
 
-Creates and triggers the security-autonomy-fixer-v2 flow, then verifies
-every step in PostgreSQL and EMQX.
+Creates the security-autonomy-fixer flow from the canonical YAML definition,
+triggers it, and verifies every step in PostgreSQL and EMQX.
+
+Covers checklist Layers 5 (Console Import), 6 (Flow Execution), and 7 (Post-Verification).
 """
 
 import requests
@@ -10,69 +12,27 @@ import time
 import sys
 import os
 import json
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import config
 
 API = config.K3S_APISERVER_URL
 TENANT = config.K3S_TENANT
-FLOW_ID = "security-autonomy-fixer-v2"
+FLOW_ID = "security-autonomy-fixer"
 
-# ── V2 flow definition (from examples/security-autonomy-fixer/flows/security-autonomy-fixer-v2.yaml) ──
-V2_FLOW = {
-    "id": FLOW_ID,
-    "priority": "high",
-    "tenant_id": TENANT,
-    "namespace": "flowgent-rengine",
-    "description": "Production security fixer with SonarQube MCP, .cyberbot stateful metadata. PR strategy: new-pr branch per run.",
-    "vars": {"repo": "rengine", "repo_path": "/home/agent/rengine"},
-    "nodes": [
-        {"id": "fetch-issues", "type": "tool", "tool": "sonarqube",
-         "input": {"action": "scan/get_issues", "project_key": "rengine", "severities": "BLOCKER"}},
-        {"id": "analyze-issues", "type": "agent", "agent": "issue-detector",
-         "input": {"repo": "${vars.repo}", "sonarqube_issues": "${fetch-issues}"}},
-        {"id": "generate-fixes", "type": "agent", "agent": "fixer-agent",
-         "input": {"issues": "${analyze-issues.issues}", "repo_path": "${vars.repo_path}"}},
-        {"id": "review-security", "type": "agent", "agent": "security-reviewer",
-         "input": {"patches": "${generate-fixes.patches}"}},
-        {"id": "review-quality", "type": "agent", "agent": "quality-reviewer",
-         "input": {"patches": "${generate-fixes.patches}"}},
-        {"id": "review-arch", "type": "agent", "agent": "arch-reviewer",
-         "input": {"patches": "${generate-fixes.patches}"}},
-        {"id": "vote", "type": "tribunal", "strategy": {"type": "majority"},
-         "input": {"votes": ["${review-security.decision}", "${review-quality.decision}", "${review-arch.decision}"]}},
-        {"id": "supervisor", "type": "supervisor", "agent": "supervisor",
-         "supervisor_config": {"max_retries": 3, "max_nodes": 50, "max_injections": 5,
-                               "allowed_actions": ["continue", "retry", "inject", "abort"]}},
-        {"id": "is-approved", "type": "condition", "expression": "${vote.decision == true}"},
-        {"id": "write-cyberbot", "type": "agent", "agent": "git-agent",
-         "input": {"repo": "${vars.repo}", "repo_path": "${vars.repo_path}",
-                   "vote_decision": "${vote.decision}", "patches": "${generate-fixes.patches}",
-                   "reviewers": [{"name": "security", "decision": "${review-security.decision}"},
-                                 {"name": "quality", "decision": "${review-quality.decision}"},
-                                 {"name": "arch", "decision": "${review-arch.decision}"}]}},
-        {"id": "summary-report", "type": "agent", "agent": "issue-detector",
-         "input": {"cyberbot_metadata": "${write-cyberbot}", "vote_outcome": "${vote.decision}",
-                   "repo": "${vars.repo}"}},
-        {"id": "end", "type": "noop"}
-    ],
-    "edges": [
-        {"from": "fetch-issues", "to": "analyze-issues"},
-        {"from": "analyze-issues", "to": "generate-fixes"},
-        {"from": "generate-fixes", "to": "review-security"},
-        {"from": "generate-fixes", "to": "review-quality"},
-        {"from": "generate-fixes", "to": "review-arch"},
-        {"from": "review-security", "to": "vote"},
-        {"from": "review-quality", "to": "vote"},
-        {"from": "review-arch", "to": "vote"},
-        {"from": "vote", "to": "supervisor"},
-        {"from": "supervisor", "to": "is-approved"},
-        {"from": "is-approved", "to": "write-cyberbot", "condition": True},
-        {"from": "is-approved", "to": "summary-report", "condition": False},
-        {"from": "write-cyberbot", "to": "summary-report"},
-        {"from": "summary-report", "to": "end"}
-    ]
-}
+# Path to the canonical flow YAML (relative to e2e-verification/)
+_FLOW_YAML_PATH = os.path.join(os.path.dirname(__file__), "..", "flows", "security-autonomy-fixer.yaml")
+
+
+def load_flow_from_yaml():
+    """Load flow definition from the canonical YAML file, stripping non-API fields."""
+    with open(_FLOW_YAML_PATH) as f:
+        data = yaml.safe_load(f)
+    # Remove comment-only keys not accepted by the API
+    for key in ("triggers",):
+        data.pop(key, None)
+    return data
 
 
 def pg_connect():
@@ -88,7 +48,6 @@ def pg_connect():
         conn.autocommit = True
         return conn
     except Exception:
-        # Try alternate port
         try:
             alt = dsn.replace("port=5432", "port=5433")
             conn = psycopg2.connect(alt)
@@ -102,13 +61,18 @@ def run():
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
 
-    # ── 1. Create V2 flow definition ────────────────────────────
-    print("\n── [1] Creating V2 flow definition ──")
-    # Delete if already exists (clean slate)
+    # ── Load flow definition ─────────────────────────────────
+    flow_def = load_flow_from_yaml()
+    node_count = len(flow_def.get("nodes", []))
+    edge_count = len(flow_def.get("edges", []))
+    print(f"\n── Loaded flow: {FLOW_ID} ({node_count} nodes, {edge_count} edges)")
+
+    # ── 1. Create flow definition ────────────────────────────
+    print("\n── [1] Creating flow definition ──")
     s.delete(f"{API}/api/v1/{TENANT}/agentflows/{FLOW_ID}")
     time.sleep(0.5)
 
-    r = s.post(f"{API}/api/v1/{TENANT}/agentflows", json=V2_FLOW)
+    r = s.post(f"{API}/api/v1/{TENANT}/agentflows", json=flow_def)
     if r.status_code not in (200, 201):
         print(f"  FAIL: create flow returned {r.status_code}: {r.text[:200]}")
         return
@@ -119,7 +83,6 @@ def run():
     conn = pg_connect()
     if not conn:
         print("  SKIP: cannot connect to PG")
-        conn = None
     else:
         cur = conn.cursor()
         cur.execute(
@@ -200,7 +163,9 @@ def run():
 
         for tbl in tables:
             try:
-                cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name=%s ORDER BY ordinal_position", (tbl,))
+                cur.execute(
+                    f"SELECT column_name FROM information_schema.columns WHERE table_name=%s ORDER BY ordinal_position",
+                    (tbl,))
                 cols = [r[0] for r in cur.fetchall()]
                 cur.execute(f"SELECT COUNT(*) FROM {tbl}")
                 count = cur.fetchone()[0]
@@ -212,7 +177,7 @@ def run():
     print("\n── [8] EMQX: Check for notification messages ──")
     try:
         import paho.mqtt.client as mqtt
-        EMQX = config.EMQX_HOST
+        EMQX_HOST = config.EMQX_HOST
         topic = f"flowgent/notify/queue/{TENANT}/{FLOW_ID}/+"
         messages = []
 
@@ -222,7 +187,7 @@ def run():
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         client.on_message = on_message
         try:
-            client.connect(EMQX, config.EMQX_PORT, 5)
+            client.connect(EMQX_HOST, config.EMQX_PORT, 5)
             client.subscribe("flowgent/notify/queue/#")
             client.loop_start()
             time.sleep(2)
@@ -258,6 +223,5 @@ def run():
     print("\n── Cleanup ──")
     if conn:
         conn.close()
-    # Keep the flow for inspection; delete only on explicit request
     print(f"  Flow {FLOW_ID} left in place for manual inspection")
     print(f"  Run ID: {run_id}")

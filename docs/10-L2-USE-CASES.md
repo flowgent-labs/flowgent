@@ -18,16 +18,11 @@ commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 
 | File | Description |
 |------|-------------|
-| [`security-autonomy-fixer-v1.yaml`](../examples/security-autonomy-fixer/flows/security-autonomy-fixer-v1.yaml) | **V1 Baseline** — 12-phase complete pipeline (discovery → notify) with iterative re-scan loop. GitHub webhook enabled. |
-| [`security-autonomy-fixer-v2.yaml`](../examples/security-autonomy-fixer/flows/security-autonomy-fixer-v2.yaml) | **V2** — Identical to V1 except GitHub PR webhook trigger commented out (pending webhook→SonarQube integration). Deploy this version. |
+| [`security-autonomy-fixer.yaml`](../examples/security-autonomy-fixer/flows/security-autonomy-fixer.yaml) | **Canonical** — 11-phase SonarQube-only remediation pipeline (discovery → notify). No SonatypeIQ dependency. |
 | [`sub-fix.yaml`](../examples/security-autonomy-fixer/flows/sub-fix.yaml) | Sub-flow: analyze → patch → validate for individual issue |
 
 > **E2E testing:**
-> - [E2E-security-fixer-v1.md](../examples/security-autonomy-fixer/docs/E2E-security-fixer-v1.md) — V1 current: webhook simulated, white-box PG/EMQX/Jaeger verification
-
-> - [E2E-security-fixer-v2.md)](../examples/security-autonomy-fixer/docs/E2E-security-fixer-v2.md) — V2 target: real GitHub webhook → SonarQube → fix → re-scan
-
-> **Note:** V3 (iterative re-scan loop) was merged into the baseline. Once webhook→SonarQube integration is deployed, V1 (webhook simulated) can be retired and V2 (real webhook) becomes the single source of truth.
+> - [E2E-security-fixer.md](../examples/security-autonomy-fixer/docs/E2E-security-fixer.md) — White-box PG/EMQX/Jaeger verification checklist (60+ checkpoints across 7 layers)
 
 ### 1.2 Agent Definitions
 
@@ -56,9 +51,7 @@ commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 ```tree
 Supervisor (per-repo)
   ├── Discovery Phase
-  │     ├── SonarQube MCP (SAST — get_issues)
-  │           to fetch top-3 non-quarantined Maven dep versions.
-  │           See §13.4 in architecture doc for design rationale.
+  │     └── SonarQube MCP (SAST — get_issues)
   ├── Analyze → Fix → Review Board (3-round voting)
   │     ├── Security Reviewer
   │     ├── Quality Reviewer
@@ -117,8 +110,7 @@ type (Spring Boot / Flask / React) → commit.
 
 | File | Mode | Backend | Use |
 |------|------|---------|-----|
-| `etc/flowgent-dev.yaml` | All-in-one (single binary) | SQLite + memory queue | Dev / CI |
-| `etc/flowgent.yaml.fully.sample` | Reference (annotated) | Configurable | Starting point for custom configs |
+| `etc/flowgent.yaml` | Reference (annotated) | Configurable | Dev / CI / custom configs |
 | `deploy/helm/flowgent/values.yaml` | Distributed (K8s) | PostgreSQL + MQTT + Redis | Production |
 
 ---

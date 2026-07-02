@@ -222,7 +222,7 @@ func TestE2E_SecurityFixerV2_FullPipeline(t *testing.T) {
 
 	// ── Build the full 14-phase DAG ──────────────────────
 	spec := &entities.AgentFlowInfo{
-		ID:          "security-autonomy-fixer-v2",
+		ID:          "security-autonomy-fixer",
 		Description: "V2 Security Fixer — webhook-triggered, 14-phase pipeline with pre-check gate",
 		Priority:    entities.PriorityHigh,
 		TenantID:    "default",

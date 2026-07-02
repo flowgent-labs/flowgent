@@ -16,7 +16,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
-	sandbox "github.com/flowgent-labs/flowgent/cmd/pkg/sandbox"
+	sandbox "github.com/flowgent-labs/flowgent/sandbox/pkg"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -130,7 +130,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	}
 
 	if !cfg.SandboxDeploymentEnabled && cfg.SandboxMessager != nil {
-		embeddedRunner := sandbox.NewSandboxRunner(
+		embeddedRunner := sandbox.NewFlowgentSandboxManager(
 			cfg.ID+"-sb", cfg.SandboxMessager, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
 		go func() {
 			slog.Info("embedded sandbox runner started", "id", embeddedRunner.GetID())

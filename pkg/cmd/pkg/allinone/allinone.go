@@ -163,7 +163,7 @@ func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
 
 // ─── Notifier ─────────────────────────────────────────────────────
 
-func startNotifier(state *allInOneState) (*notifier.NotifierServer, *handler.NotifierWSBridge) {
+func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *handler.NotifierWSBridge) {
 	notifSvc := notifier.CreateNotifierService(state.apiClient, state.cfg, state.httpClient)
 	if notifSvc == nil {
 		return nil, nil
@@ -318,7 +318,7 @@ func startPprof(state *allInOneState) *http.Server {
 // ─── Shutdown ─────────────────────────────────────────────────────
 
 func waitForShutdown(state *allInOneState, restSrv, a2aSrv, pprofSrv *http.Server,
-	notifSvc *notifier.NotifierServer) error {
+	notifSvc *notifier.FlowgentNotifierManager) error {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

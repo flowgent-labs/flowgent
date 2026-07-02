@@ -1,5 +1,5 @@
 ---
-name: "agentflow-creator"
+name: "scaffold-agentflow-creator"
 description: "AgentFlow Editor (Wizard Mode) — conversational replacement for the future visual editor UI. Describe your workflow in natural language, get validated manifests ready to build & run."
 argument-hint: "Describe your agent workflow in natural language"
 user-invocable: true
@@ -40,7 +40,7 @@ The generated project is **independent** — the user just `docker build && dock
 
 ---
 
-## Reference — Agent YAML (what you generate)
+## Reference (Example) — Agent YAML (what you generate) -
 
 ```yaml
 name: my-agent                # unique id, kebab-case
@@ -69,7 +69,7 @@ instruction: |-
 | `soul` | yes | System persona — who the agent IS |
 | `instruction` | yes | Task spec — what the agent DOES, output schema, constraints |
 
-## Reference — Flow YAML (what you generate)
+## Reference (Example) — Flow YAML (what you generate)
 
 ```yaml
 version: '1.0'
@@ -197,7 +197,7 @@ User describes their workflow in natural language.
 
 Present the parsed structure as a table:
 
-```
+```plaintext
 Here's what I understood:
 
   Step           | Type        | Uses
@@ -236,7 +236,7 @@ Do this for each agent, one at a time. For agents already in `manifests/agents/`
 
 ### Step 4 — Triggers & Variables
 
-```
+```plaintext
 How should this flow start?
 
   A — Schedule (cron expression?)
@@ -251,7 +251,7 @@ Variables to expose:
 
 Present the complete output — file listing + inline YAML content for each file. Example:
 
-```
+```plaintext
 I'll create these files:
 
   my-security-bot/

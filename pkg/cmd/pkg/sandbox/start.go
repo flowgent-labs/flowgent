@@ -1,6 +1,5 @@
-// Package sandbox provides the sandbox daemon entry point and the secure script
-// execution worker (SandboxRunner). Start/Stop/Restart are self-contained to
-// avoid circular dependency with the internal package.
+// Package sandbox provides the sandbox daemon entry point.
+// The core logic lives in pkg/sandbox/pkg/sandboxmanager.go (FlowgentSandboxManager).
 package sandbox
 
 import (
@@ -15,6 +14,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	sandboxpkg "github.com/flowgent-labs/flowgent/sandbox/pkg"
 )
 
 // Start launches the sandbox worker daemon.
@@ -55,7 +55,7 @@ func Restart(pidFile string) error {
 func startService() error {
 	cfgPath := os.Getenv("FLOWGENT__CONFIG__FILE")
 	if cfgPath == "" {
-		cfgPath = "etc/flowgent-dev.yaml"
+		cfgPath = "etc/flowgent.yaml"
 	}
 	svcCfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -76,8 +76,8 @@ func startService() error {
 		workspace = os.TempDir()
 	}
 
-	runner := NewSandboxRunner(podName, queue, "", workspace, svcCfg.Sandbox.Policy)
-	if svcCfg.Deployment.Mode != "" || svcCfg.Sandbox.Deployment.Enabled {
+	runner := sandboxpkg.NewFlowgentSandboxManager(podName, queue, "", workspace, svcCfg.Sandbox.Policy)
+	if svcCfg.Sandbox.Deployment.Enabled {
 		runner.SetDistributed(true)
 	}
 

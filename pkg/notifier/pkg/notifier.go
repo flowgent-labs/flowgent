@@ -23,7 +23,7 @@ type MQTTClient interface {
 	Publish(ctx context.Context, topic string, payload []byte) error
 }
 
-// NotifierServer is the notification & WebSocket push service. It runs:
+// FlowgentNotifierManager is the notification & WebSocket push service. It runs:
 //   - A scanner goroutine that detects pending human approvals
 //   - A WebSocket hub that manages client connections with MQTT-based routing
 //     for clustered multi-pod deployment
@@ -31,7 +31,7 @@ type MQTTClient interface {
 // Each pod subscribes to its own MQTT channel /flowgent/notify/pod/{podID}/ws/+
 // and pushes messages to local WS connections. The scanner publishes to
 // the correct pod's channel based on the subscription routing table.
-type NotifierServer struct {
+type FlowgentNotifierManager struct {
 	client     *client.NotifierClient
 	mqtt       MQTTClient
 	senders    map[string]Sender
@@ -64,12 +64,12 @@ func (c *wsConn) Done() <-chan struct{} { return c.done }
 // Close signals the connection to shut down.
 func (c *wsConn) Close() { close(c.done) }
 
-// NewNotifierServer creates a notification service with the given client and optional MQTT client.
-func NewNotifierServer(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentHttpClient) *NotifierServer {
+// NewFlowgentNotifierManager creates a notification service with the given client and optional MQTT client.
+func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentHttpClient) *FlowgentNotifierManager {
 	hostname, _ := os.Hostname()
 	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
 
-	svc := &NotifierServer{
+	svc := &FlowgentNotifierManager{
 		client:     c,
 		mqtt:       mqtt,
 		senders:    make(map[string]Sender),
@@ -99,10 +99,10 @@ func NewNotifierServer(c *client.NotifierClient, mqtt MQTTClient, httpClient mod
 }
 
 // PodID returns the unique pod identifier for MQTT routing.
-func (s *NotifierServer) PodID() string { return s.podID }
+func (s *FlowgentNotifierManager) PodID() string { return s.podID }
 
 // Start begins the scanner goroutine, MQTT listener, queue consumer, and cleanup loop.
-func (s *NotifierServer) Start(ctx context.Context) error {
+func (s *FlowgentNotifierManager) Start(ctx context.Context) error {
 	if s.mqtt != nil {
 		topicWS := messager.NotifyPodWSWildcard(s.podID)
 		if err := s.mqtt.Subscribe(ctx, topicWS, s.onMQTTMessage); err != nil {
@@ -127,11 +127,11 @@ func (s *NotifierServer) Start(ctx context.Context) error {
 }
 
 // RegisterSender adds or overrides a named sender implementation.
-func (s *NotifierServer) RegisterSender(name string, sender Sender) {
+func (s *FlowgentNotifierManager) RegisterSender(name string, sender Sender) {
 	s.senders[name] = sender
 }
 
-func (s *NotifierServer) onQueueMessage(topic string, payload []byte) {
+func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 	s.logger.Debug("queue message received", "topic", topic)
 
 	var tenantID, flowID string
@@ -155,7 +155,7 @@ func (s *NotifierServer) onQueueMessage(topic string, payload []byte) {
 }
 
 // PublishNotification enqueues a notification to the MQTT queue.
-func (s *NotifierServer) PublishNotification(ctx context.Context, tenantID, agentflowID, title, body string) error {
+func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, tenantID, agentflowID, title, body string) error {
 	if s.mqtt == nil {
 		return fmt.Errorf("notification: mqtt not configured")
 	}
@@ -177,7 +177,7 @@ func (s *NotifierServer) PublishNotification(ctx context.Context, tenantID, agen
 	return s.mqtt.Publish(ctx, topic, payload)
 }
 
-func (s *NotifierServer) onMQTTMessage(topic string, payload []byte) {
+func (s *FlowgentNotifierManager) onMQTTMessage(topic string, payload []byte) {
 	var msg model.WSMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		s.logger.Warn("mqtt message unmarshal", "error", err)
@@ -199,7 +199,7 @@ func (s *NotifierServer) onMQTTMessage(topic string, payload []byte) {
 }
 
 // RegisterWS adds a WebSocket client and creates a subscription route.
-func (s *NotifierServer) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error) {
+func (s *FlowgentNotifierManager) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error) {
 	conn := &wsConn{
 		ID:          uuid.New().String(),
 		AgentFlowID: agentFlowID,
@@ -226,7 +226,7 @@ func (s *NotifierServer) RegisterWS(ctx context.Context, agentFlowID string) (WS
 }
 
 // UnregisterWS removes a WebSocket client and its subscription route.
-func (s *NotifierServer) UnregisterWS(ctx context.Context, wsID string) {
+func (s *FlowgentNotifierManager) UnregisterWS(ctx context.Context, wsID string) {
 	s.mu.Lock()
 	delete(s.wsClients, wsID)
 	s.mu.Unlock()
@@ -234,7 +234,7 @@ func (s *NotifierServer) UnregisterWS(ctx context.Context, wsID string) {
 	_ = s.client.DeleteRoute(ctx, wsID)
 }
 
-func (s *NotifierServer) scanHumanApprovals(ctx context.Context) {
+func (s *FlowgentNotifierManager) scanHumanApprovals(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -283,7 +283,7 @@ func (s *NotifierServer) scanHumanApprovals(ctx context.Context) {
 	}
 }
 
-func (s *NotifierServer) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
+func (s *FlowgentNotifierManager) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
 	routes, err := s.client.GetRoutesByFlow(ctx, agentFlowID)
 	if err != nil {
 		s.logger.Error("lookup subscription routes", "error", err)
@@ -299,7 +299,7 @@ func (s *NotifierServer) pushToSubscribers(ctx context.Context, agentFlowID stri
 	}
 }
 
-func (s *NotifierServer) notifyChannels(ctx context.Context, recipient, title, body string) {
+func (s *FlowgentNotifierManager) notifyChannels(ctx context.Context, recipient, title, body string) {
 	channels, err := s.client.ListChannels(ctx, "")
 	if err != nil {
 		s.logger.Error("list notification channels", "error", err)
@@ -329,7 +329,7 @@ func (s *NotifierServer) notifyChannels(ctx context.Context, recipient, title, b
 	}
 }
 
-func (s *NotifierServer) cleanupLoop(ctx context.Context) {
+func (s *FlowgentNotifierManager) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -349,7 +349,7 @@ func (s *NotifierServer) cleanupLoop(ctx context.Context) {
 }
 
 // Shutdown gracefully stops the notification service.
-func (s *NotifierServer) Shutdown() {
+func (s *FlowgentNotifierManager) Shutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, conn := range s.wsClients {

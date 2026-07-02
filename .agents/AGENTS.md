@@ -1,6 +1,6 @@
 # Project Conventions
 
-## Requirements
+## Development (Requirements)
 
 - **All builds MUST use `make` from the repository root.** `make help` shows all targets.
   Output goes to `bin/`.
@@ -16,7 +16,7 @@
 
 ## Code Quality
 
-- **Any code, config, or documentation change must follow high cohesion, low coupling. Logical structure must be clear — concise without losing core logic. If related dependent modules exist, they MUST be updated synchronously to remain consistent.**
+- **Any Code, config, or documentation change must follow high cohesion, low coupling. Logical structure must be clear — concise without losing core logic. If related dependent modules exist, they MUST be updated synchronously to remain consistent.**
 - Convergent file/directory naming; avoid ad-hoc new directories
 - Go conventions: lowercase packages, exported symbols capitalized, `-er`/`-or` interfaces
 - Program to interfaces; high cohesion, low coupling
@@ -38,7 +38,7 @@
 
 ---
 
-# Documentation Index
+# Documentation Indexing
 
 ## Architecture & Design (L1)
 
@@ -53,9 +53,8 @@
 | Doc | Summary |
 |-----|---------|
 | [docs/10-L2-USE-CASES.md](../docs/10-L2-USE-CASES.md) | Use case catalog; primary: Security Autonomy Fixer (12-phase CI/CD security pipeline) |
-| [examples/security-autonomy-fixer/docs/E2E-security-fixer-v1.md](../examples/security-autonomy-fixer/docs/E2E-security-fixer-v1.md) | V1 E2E: API-triggered pipeline on K3s, white-box PG/MQTT/Jaeger verification |
-| [examples/security-autonomy-fixer/docs/E2E-security-fixer-v2.md](../examples/security-autonomy-fixer/docs/E2E-security-fixer-v2.md) | V2 E2E: GitHub webhook → SonarQube fix, 30-node DAG, external services |
-| [examples/security-autonomy-fixer/docs/SonarQube-Integration.md](../examples/security-autonomy-fixer/docs/SonarQube-Integration.md) | SonarQube v26.4.0 Docker Compose deployment guide |
+| [examples/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md](../examples/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md) | E2E verification context doc for Python scenario suite (runner.py, 8 scenarios) |
+| [examples/security-autonomy-fixer/e2e-verification/SonarQube-Integration.md](../examples/security-autonomy-fixer/e2e-verification/SonarQube-Integration.md) | SonarQube v26.4.0 Docker Compose deployment guide |
 
 ## Skills & MCPs
 
@@ -68,8 +67,8 @@
 ```
 pkg/          Go modules (api, cache, cmd, config, core, messager, model, notifier, sandbox, store, wallet)
 deploy/       Docker (docker/) + Helm chart (helm/flowgent/)
-etc/          Reference config (flowgent-dev.yaml)
-examples/     Primary use case (security-autonomy-fixer: agents, flows, skills, docs, e2e-verification)
+etc/          Reference config (flowgent.yaml)
+examples/     Primary use case (security-autonomy-fixer: agents, flows, skills, e2e-verification)
 docs/         Architecture (01-03 L1) + Use Cases (10 L2)
 tests/        E2E/integration tests
 ```

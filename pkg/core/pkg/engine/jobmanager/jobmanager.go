@@ -39,11 +39,9 @@ func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logg
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
 func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.AgentFlowInfo) error {
-	mode := spec.EffectiveMode()
 	m.logger.Info("jobmanager submit",
 		"run_id", run.ID,
 		"agentflow_id", spec.ID,
-		"mode", mode,
 		"priority", spec.Priority,
 		"tenant", spec.TenantID,
 		"namespace", spec.Namespace,
@@ -52,13 +50,6 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 	run.Priority = spec.Priority
 	run.Namespace = spec.Namespace
 	run.TenantID = spec.TenantID
-
-	if mode == entities.ModeApplication {
-		m.logger.Info("application mode — dedicated cluster", "agentflow_id", spec.ID, "tenant", spec.TenantID)
-		if err := m.rm.Validate(ctx); err != nil {
-			m.logger.Warn("application mode: resource validation failed, falling back to session", "error", err)
-		}
-	}
 
 	master := NewJobMaster(m.state, m.rm, m.logger, m.cfg)
 	return master.Execute(ctx, run, spec)

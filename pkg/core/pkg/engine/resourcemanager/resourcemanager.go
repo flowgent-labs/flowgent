@@ -51,7 +51,6 @@ type ResourceManagerConfig struct {
 	K8sNamespace      string
 	K8sDeploymentName string
 	K8sKubeConfigPath string
-	AutoScale         bool // true=application mode (JM auto-scales TMs), false=session (admin-managed)
 	TMImage           string
 	PlanTimeout       time.Duration
 

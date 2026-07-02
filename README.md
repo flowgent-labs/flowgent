@@ -38,10 +38,10 @@ make build-host-all    # build for all binaries on host
 
 ```bash
 # Development (SQLite + memory queue)
-./bin/flowgent daemon start -c etc/flowgent-dev.yaml
+./bin/flowgent daemon start -c etc/flowgent.yaml
 
 # Use the fully annotated sample as a starting point
-cp etc/flowgent-dev.yaml my-config.yaml
+cp etc/flowgent.yaml my-config.yaml
 ./bin/flowgent daemon start -c my-config.yaml
 ```
 

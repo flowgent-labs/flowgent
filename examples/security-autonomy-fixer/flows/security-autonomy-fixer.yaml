@@ -1,56 +1,41 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Security Autonomy Fixer V2 — V1 Baseline with GitHub Webhook Commented Out
+# Security Autonomy Fixer — SonarQube-Only E2E Remediation Pipeline
 #
-# This file is IDENTICAL to V1 (01-security-autonomy-fix-v1.yaml) except the
-# GitHub PR webhook trigger is commented out (pending webhook→SonarQube
-# integration deployment).
+# This is the canonical security remediation flow for SonarQube SAST findings.
+# It triggers from a GitHub PR webhook (SonarQube CI scan job), fetches issues
+# via the SonarQube MCP, and executes the full fix→review→vote→approve→commit
+# pipeline.
 #
-# V2 adds a SonarQube pre-check gate before commit (vs V1 which commits first):
-#   DISCOVERY → ANALYZE → FIX → REVIEW → VOTE → SUPERVISOR → CONDITION →
-#   HUMAN APPROVAL → PRE-CHECK (scanner + quality gate) →
-#     pass → COMMIT & PR → RE-SCAN → REPORT → NOTIFY
-#     fail → loop back to FIX (max 3 iterations)
+# No SonatypeIQ license is required — this flow is SonarQube-only.
 #
-# Once webhook→SonarQube integration is complete, this file can be removed —
-# V1 becomes the single source of truth. Until then, V2 is what you deploy.
+# Pipeline phases (11 phases):
+#   1. DISCOVERY  — Get latest commit SHA, fetch SonarQube SAST issues
+#   2. ANALYZE    — Parse, normalize, deduplicate, assign severity
+#   3. FIX        — Generate minimal secure patches per issue
+#   4. REVIEW     — Security, quality, architecture review in parallel
+#   5. VOTE       — Deterministic majority vote
+#   6. SUPERVISOR — Safety gate (retry/inject/abort)
+#   7. CONDITION  — Route: approved → human approval, rejected → loop to fix
+#   8. HUMAN      — Async approval gate (24h timeout)
+#   9. COMMIT+PR  — Create branch, push patches, open pull request
+#   10. RE-SCAN   — SonarQube re-analysis, compare pre/post, loop if needed
+#   11. REPORT    — Final summary → notify via PR comment + email + webhook
 #
-# Design decisions documented here:
-#   docs/01-L1-Engine-Architecture.md §13 (Skills = Sub-AgentFlow)
-#   docs/11-L2-E2E-security-fixer-v2.md §5 (White-Box Verification)
-#
-# Key design note — Skill vs MCP Tool for dependency checking:
-#   The "fetch-safe-deps" node uses `type: skill` instead of `type: tool`
-#   (tool: sonatype-nexus3) because Nexus3 open-source / personal deployments
-#   cannot integrate with SonatypeIQ (requires paid license). The Nexus3 UI
-#   won't show firewall status, and the Nexus3 REST API swagger won't return
-#   firewall.status in component listings.
-#
-#   In the user's internal network, a copilot skill wraps gh + nexus3 web API
-#   + gcloud CLI commands to fetch the latest top-3 non-quarantined Maven
-#   dependency versions directly. Flowgent's skill concept is exactly a
-#   sub-AgentFlow — no new abstraction needed. See §13 in architecture doc.
-#
-#   When running Flowgent in an environment WITH SonatypeIQ license, simply
-#   swap this node back to `type: tool, tool: sonatype-nexus3`.
-#
-# V2 difference:
-#   V2 is identical to V1 except the GitHub PR webhook trigger is commented
-#   out (pending webhook→SonarQube integration). All core fix phases remain.
+# Design decisions: docs/01-L1-Engine-Architecture.md §13 (Skills = Sub-AgentFlow)
+# E2E verification:  e2e-verification/E2E-security-fixer.md
 # ═══════════════════════════════════════════════════════════════════════════════
 
-id: security-autonomy-fixer-v2
+id: security-autonomy-fixer
 priority: high
 tenant_id: default
 description: |
-  Complete developer remediation agentflow for security vulnerabilities:
+  SonarQube-only developer remediation agentflow for security vulnerabilities:
 
-  1. DISCOVERY — Fetch latest commit; run SonarQube (SAST), Sonatype IQ (FOSS
-     dependency vulns), and skill-based Nexus3 dependency firewall check.
+  1. DISCOVERY — Fetch latest commit; query SonarQube SAST issues via MCP.
   2. ANALYZE — issue-detector agent parses, normalizes, deduplicates, and
-     assigns severity to all findings.
+     assigns severity to all SonarQube findings.
   3. FIX — fixer-agent analyzes root cause and generates minimal secure patches.
-  4. REVIEW — Three agents (security, quality, architecture) review in parallel,
-     simulating multi-expert peer review.
+  4. REVIEW — Three agents (security, quality, architecture) review in parallel.
   5. VOTE — Deterministic majority vote decides whether to proceed.
   6. SUPERVISOR — Safety gate with bounded retries, injection limits, abort.
   7. CONDITIONAL — Based on vote: proceed to human approval or loop back to fix.
@@ -59,17 +44,14 @@ description: |
   10. RE-SCAN — Trigger SonarQube re-analysis, poll for completion, compare
       pre/post results. If unresolved issues remain → loop back to fix
       (max 3 iterations).
-  11. REPORT — Compile final summary with issues found, fixes applied, PR links.
-  12. NOTIFY — Multi-channel: PR comment, email, webhook (Teams/Slack).
+  11. REPORT — Compile final summary, notify via PR comment + email + webhook.
 
 triggers:
   - type: schedule
     cron: 0 */6 * * *
-  # GitHub PR webhook trigger — commented out until webhook→SonarQube
-  # integration is complete. Uncomment when the webhook receiver is deployed:
-  # - type: webhook
-  #   provider: github
-  #   events: [push, pull_request]
+  - type: webhook
+    provider: github
+    events: [push, pull_request]
   - type: webhook
     provider: gitlab
     events: [push, merge_request]
@@ -84,7 +66,7 @@ vars:
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 1: DISCOVERY — Scan the target repository
+  # PHASE 1: DISCOVERY — Get commit SHA + SonarQube issues
   # ═══════════════════════════════════════════════════════════════
 
   - id: get-commit
@@ -103,42 +85,6 @@ nodes:
       project_key: "${vars.repo}"
       severities: "${vars.target_severities}"
 
-  - id: scan-sonatypeiq
-    type: tool
-    tool: sonatype-iq
-    input:
-      action: get_jobs_by_commit
-      repo: "${vars.repo}"
-      commit_sha: "${get-commit.commit_sha}"
-
-  # ═══════════════════════════════════════════════════════════════
-  # Skill-based Nexus3 dependency firewall check.
-  #
-  # Replaces `type: tool, tool: sonatype-nexus3` because:
-  #   Nexus3 open-source / personal deployment lacks SonatypeIQ license
-  #   integration. The Nexus3 UI shows no firewall status, and the REST
-  #   API swagger doesn't return firewall.status in component listings.
-  #
-  # This skill wraps copilot scripts using gh + nexus3 web API + gcloud
-  # CLI to fetch the latest top-3 non-quarantined Maven dependency
-  # versions directly. In Flowgent, a "skill" IS a sub-AgentFlow
-  # (see docs/01-L1-Engine-Architecture.md §13).
-  #
-  # If running with a licensed SonatypeIQ+Nexus3, swap to:
-  #   type: tool
-  #   tool: sonatype-nexus3
-  #   input:
-  #     action: get_foss_solution
-  #     repo: "${vars.repo}"
-  # ═══════════════════════════════════════════════════════════════
-  - id: fetch-safe-deps
-    type: skill
-    skill: nexus3-retrieval
-    input:
-      repo: "${vars.repo}"
-      maven_coordinates: "${scan-sonatypeiq.maven_coords}"
-      top_n: 3
-
   # ═══════════════════════════════════════════════════════════════
   # PHASE 2: ANALYZE — Parse, normalize, deduplicate findings
   # ═══════════════════════════════════════════════════════════════
@@ -149,11 +95,9 @@ nodes:
     input:
       repo: "${vars.repo}"
       sonarqube_issues: "${scan-sonarqube}"
-      sonatypeiq_issues: "${scan-sonatypeiq}"
-      safe_deps: "${fetch-safe-deps}"
     instruction: |
-      Parse all scan results. For each issue extract:
-      - Source (sonarqube / sonatypeiq / dependency), rule ID, severity
+      Parse the SonarQube scan results. For each issue extract:
+      - Source (sonarqube), rule ID, severity
       - File path, line number, message
       - Deduplicate by file+rule (keep highest severity)
       - Sort by severity (BLOCKER > CRITICAL > MAJOR)
@@ -256,57 +200,7 @@ nodes:
       on_reject: "to: generate-fixes"
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 9: PRE-CHECK — SonarQube scanner pre-upload + quality gate
-  #
-  # Before committing, run sonar-scanner to pre-upload results and check
-  # if the quality gate passes. This avoids wasting CI time on commits
-  # that would fail. If the gate fails, loop back to get latest issues
-  # and re-iterate fixes until the gate passes or max_iterations is hit.
-  # ═══════════════════════════════════════════════════════════════
-
-  - id: precheck-scanner
-    type: tool
-    tool: github
-    input:
-      action: "scan/trigger_analysis"
-      project_key: "${vars.repo}"
-
-  - id: precheck-wait
-    type: sandbox
-    runtime: bash
-    timeout: 120s
-    retry:
-      max: 12
-      initial: 10s
-      max_delay: 10s
-      factor: 1.0
-    script: |
-      #!/bin/bash
-      SQ_URL="${SONARQUBE_URL:-http://localhost:9000}"
-      SQ_TOKEN="${SONARQUBE_TOKEN}"
-      PROJECT_KEY="${vars.repo}"
-      STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
-        "$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1" \
-        2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('tasks',[{}])[0].get('status','PENDING'))" 2>/dev/null || echo "PENDING")
-      if [ "$STATUS" = "SUCCESS" ]; then echo '{"status":"completed"}'; exit 0; fi
-      echo '{"status":"pending"}'; exit 1
-    network_policy:
-      mode: allowlist
-      allowed: ["localhost:9000", "sonarqube:9000"]
-
-  - id: precheck-gate
-    type: tool
-    tool: sonarqube
-    input:
-      action: "scan/get_status"
-      project_key: "${vars.repo}"
-
-  - id: gate-passed
-    type: condition
-    expression: "${precheck-gate.status == success}"
-
-  # ═══════════════════════════════════════════════════════════════
-  # PHASE 10: COMMIT & PR — Push patches to repository
+  # PHASE 9: COMMIT & PR — Push patches to repository
   # ═══════════════════════════════════════════════════════════════
 
   - id: create-branch
@@ -360,12 +254,11 @@ nodes:
         Tribunal majority decision: **${tribunal.decision}**
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 11: RE-SCAN — SonarQube iterative fix verification
+  # PHASE 10: RE-SCAN — SonarQube iterative fix verification
   #
   # After committing fixes, trigger SonarQube re-analysis and check
   # whether target issues are resolved. If not, loop back to
-  # generate-fixes (max 3 iterations). This ensures fixes actually
-  # resolve the reported issues before reporting success.
+  # generate-fixes (max 3 iterations).
   # ═══════════════════════════════════════════════════════════════
 
   - id: trigger-rescan
@@ -386,7 +279,7 @@ nodes:
       factor: 1.0
     script: |
       #!/bin/bash
-      SQ_URL="${SONARQUBE_URL:-http://localhost:9000}"
+      SQ_URL="${SONARQUBE_URL:-http://172.29.235.101:9000}"
       SQ_TOKEN="${SONARQUBE_TOKEN}"
       PROJECT_KEY="${vars.repo}"
       STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
@@ -397,6 +290,7 @@ nodes:
     network_policy:
       mode: allowlist
       allowed:
+        - "172.29.235.101:9000"
         - "localhost:9000"
 
   - id: check-resolved
@@ -417,9 +311,9 @@ nodes:
       max_iterations: "${vars.max_iterations}"
     instruction: |
       Compare pre-fix and post-fix SonarQube issue lists.
-      Count how many of the original issues are now resolved (no longer appear).
-      - ALL target issues resolved → resolution="complete"
-      - SOME resolved but not all → resolution="partial"
+      Count how many of the original issues are now resolved.
+      - ALL resolved → resolution="complete"
+      - SOME resolved → resolution="partial"
       - NONE resolved → resolution="none"
       - iteration >= max_iterations → resolution="max_iterations_reached"
       Output STRICT JSON: {"resolution":"complete|partial|none|max_iterations_reached","resolved_count":N,"remaining_count":N,"resolved_issues":["rule1"],"remaining_issues":["rule2"]}
@@ -429,7 +323,7 @@ nodes:
     expression: "${compare-results.resolution == complete || compare-results.resolution == max_iterations_reached}"
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 12: REPORT — Final summary
+  # PHASE 11: REPORT — Final summary + multi-channel notify
   # ═══════════════════════════════════════════════════════════════
 
   - id: summary-report
@@ -444,17 +338,11 @@ nodes:
       compare_result: "${compare-results}"
       scan_results:
         sonarqube: "${scan-sonarqube}"
-        sonatypeiq: "${scan-sonatypeiq}"
-        safe_deps: "${fetch-safe-deps}"
     instruction: |
       Generate a final summary report in markdown format.
       Include: total issues found, patches applied, review votes,
       fix resolution status, PR link, scan result summaries.
       Output STRICT JSON: {"report":"markdown summary...","status":"completed|partial|failed","issues_found":N,"issues_fixed":N}
-
-  # ═══════════════════════════════════════════════════════════════
-  # PHASE 12: NOTIFY — Multi-channel parallel notification
-  # ═══════════════════════════════════════════════════════════════
 
   - id: notify-pr
     type: tool
@@ -487,11 +375,9 @@ nodes:
     type: noop
 
 edges:
-  # Discovery → Analyze (all scans run in parallel before analyze)
-  - { from: get-commit, to: scan-sonatypeiq }
+  # Discovery → Analyze
+  - { from: get-commit, to: scan-sonarqube }
   - { from: scan-sonarqube, to: aggregate-issues }
-  - { from: scan-sonatypeiq, to: fetch-safe-deps }
-  - { from: fetch-safe-deps, to: aggregate-issues }
 
   # Analyze → Fix
   - { from: aggregate-issues, to: generate-fixes }
@@ -510,25 +396,23 @@ edges:
   - { from: tribunal, to: supervisor-check }
   - { from: supervisor-check, to: is-approved }
 
-  # If approved → Human → Pre-check → Gate decision
+  # If approved → Human → Commit → PR
   - { from: is-approved, to: human-approval, condition: true }
-  - { from: human-approval, to: precheck-scanner }
-  - { from: precheck-scanner, to: precheck-wait }
-  - { from: precheck-wait, to: precheck-gate }
-  - { from: precheck-gate, to: gate-passed }
-  # Gate passed → Commit → PR → Re-scan → Report
-  - { from: gate-passed, to: create-branch, condition: true }
+  - { from: human-approval, to: create-branch }
   - { from: create-branch, to: commit-fixes }
   - { from: commit-fixes, to: create-pr }
-  # Gate failed → Loop back to Fix
-  - { from: gate-passed, to: generate-fixes, condition: false }
+
+  # If vote rejected → Loop back to Fix
+  - { from: is-approved, to: generate-fixes, condition: false }
+
+  # PR → Re-scan → Compare → Loop or Complete
   - { from: create-pr, to: trigger-rescan }
   - { from: trigger-rescan, to: wait-rescan }
   - { from: wait-rescan, to: check-resolved }
   - { from: check-resolved, to: compare-results }
   - { from: compare-results, to: fix-complete }
 
-  # If fix complete → Report → Notify → End
+  # Fix complete → Report → Notify → End
   - { from: fix-complete, to: summary-report, condition: true }
   - { from: summary-report, to: notify-pr }
   - { from: summary-report, to: notify-email }
@@ -537,8 +421,5 @@ edges:
   - { from: notify-email, to: end }
   - { from: notify-teams, to: end }
 
-  # If fix NOT complete AND iteration < max → Loop back to Fix
+  # Fix NOT complete → Loop back to Fix
   - { from: fix-complete, to: generate-fixes, condition: false }
-
-  # If vote rejected → Loop back to Fix
-  - { from: is-approved, to: generate-fixes, condition: false }

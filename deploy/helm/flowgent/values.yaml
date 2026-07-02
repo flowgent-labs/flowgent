@@ -3,16 +3,6 @@
 # ═══════════════════════════════════════════════════════════════
 
 global:
-  # Deployment mode: session | application
-  mode: application
-
-  # Application-mode settings (used by Controller when creating dedicated JMs)
-  application:
-    namespacePrefix: "flowgent"
-    autoCleanup: true
-    taskmanager:
-      slots: 4
-
   image:
     repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent
     tag: latest
@@ -55,6 +45,14 @@ jaeger:
   resources:
     requests: { cpu: "100m", memory: "256Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
+
+# ── Storage — persistent data backend
+storage:
+  type: SQLITE                 # SQLITE | POSTGRE
+
+# ── Distributed Lock Provider ───────────────────────────────
+lock:
+  provider: memory              # memory | postgres | redis
 
 # ── Inter-component Messaging (MQTT) ─────────────────────────
 messaging:
@@ -99,7 +97,7 @@ a2a:
     limits:   { cpu: "500m", memory: "512Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# Controller — [application] Distributed Sharded Flow Driver
+# Controller — Distributed Sharded Flow Driver
 # ═══════════════════════════════════════════════════════════════
 controller:
   replicas: 2
@@ -113,27 +111,6 @@ controller:
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
-
-# ═══════════════════════════════════════════════════════════════
-# JobManager — [session] DAG Orchestration Control Plane
-# ═══════════════════════════════════════════════════════════════
-jobmanager:
-  replicas: 2
-  image: ""
-  resources:
-    requests: { cpu: "100m", memory: "128Mi" }
-    limits:   { cpu: "1", memory: "1Gi" }
-
-# ═══════════════════════════════════════════════════════════════
-# TaskManager — [session] Elastic Worker Pool
-# ═══════════════════════════════════════════════════════════════
-taskmanager:
-  replicas: 2
-  image: ""
-  slots: 4
-  resources:
-    requests: { cpu: "200m", memory: "256Mi" }
-    limits:   { cpu: "2", memory: "2Gi" }
 
 # ═══════════════════════════════════════════════════════════════
 # Secrets — External K8s Secret references for credentials.
@@ -212,20 +189,17 @@ credentialProviders:
     #     fileName: "github-token"
 
 # ═══════════════════════════════════════════════════════════════
-# Sandbox — [session] Secure Script Execution Worker (independent Deployment)
-#   Runs as separate K8s pods (NOT inline in TM). JM's K8sRM manages
-#   both TM and sandbox Deployments with independent scaling.
-#   Shares workspace PVC with TM for script I/O.
+# Sandbox — Secure Script Execution Policy
+#   Policy is used by TM for inline sandbox execution.
+#   K8sRM manages sandbox pods independently in distributed mode.
 # ═══════════════════════════════════════════════════════════════
 sandbox:
-  replicas: 2
-  slots: 4              # concurrent script executions per pod
-  image: ""
   workspace: "/var/flowgent/workspace"
-  workspaceSize: "10Gi"
+  slots: 4
   resources:
-    requests: { cpu: "200m", memory: "256Mi" }
-    limits:   { cpu: "2", memory: "2Gi" }
+    limits:
+      cpu: "2"
+      memory: "2Gi"
   policy:
     network:
       mode: "none"

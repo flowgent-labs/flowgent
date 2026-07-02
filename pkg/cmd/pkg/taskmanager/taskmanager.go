@@ -48,14 +48,9 @@ func startTaskManager(cfgPath string) error {
 	logMode, logLevel := svcCfg.Logging.Mode, svcCfg.Logging.Level
 	logger := utils.NewLogger(logMode, logLevel)
 
-	// Build tmID with mode prefix for heartbeat topic differentiation.
-	mode := "session"
-	if svcCfg != nil && svcCfg.Deployment.Mode != "" {
-		mode = svcCfg.Deployment.Mode
-	}
-	defaultTMID := mode + "-tm-" + utils.Hostname()
-	if flowID := svcCfg.Runtime.AgentFlowID; flowID != "" && mode == "application" {
-		defaultTMID = mode + "-" + svcCfg.Tenant.DefaultTenant + "-" + flowID + "-tm-" + utils.Hostname()
+	defaultTMID := "application-tm-" + utils.Hostname()
+	if flowID := svcCfg.Runtime.AgentFlowID; flowID != "" {
+		defaultTMID = "application-" + svcCfg.Tenant.DefaultTenant + "-" + flowID + "-tm-" + utils.Hostname()
 	}
 	tmID := svcCfg.Runtime.TMID
 	if tmID == "" {

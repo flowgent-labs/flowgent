@@ -49,7 +49,7 @@ build-core:
 
 build-wallet:
 	@mkdir -p $(BIN_DIR)
-	cd pkg/wallet && CGO_ENABLED=0 $(GO) build -v -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent-wallet ./cmd/wallet/
+	cd pkg/wallet && CGO_ENABLED=0 $(GO) build -v -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent-wallet ./pkg/cmd/
 
 # ── Utils ─────────────────────────────────────────────────────────
 

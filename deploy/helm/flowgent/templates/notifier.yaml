@@ -39,7 +39,7 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
-            {{- if eq .Values.global.mode "session" }}
+            {{- if false }}
             - name: workspace
               mountPath: /var/flowgent/workspace
             {{- end }}
@@ -55,7 +55,7 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
-        {{- if eq .Values.global.mode "session" }}
+        {{- if false }}
         - name: workspace
           hostPath:
             path: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" }}

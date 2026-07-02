@@ -1,48 +1,38 @@
-🎯 Flowgent is deploying!
+Flowgent is deploying!
 
 Release: {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
-Mode: {{ .Values.global.mode }}
 
 {{- if .Values.wallet.generatedMasterKey }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔑 Wallet Root Private Key (auto-generated)
+Wallet Root Private Key (auto-generated)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {{ .Values.wallet.generatedMasterKey }}
-⚠️  SAVE THIS KEY. Not stored in plaintext after install.
+SAVE THIS KEY. Not stored in plaintext after install.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {{- end }}
 
 ━━━ Middleware ━━━
 {{- if .Values.postgresql.enabled }}
-  ✅ PostgreSQL       — in-cluster
+  PostgreSQL       — in-cluster
 {{- else }}
-  ⚠️  PostgreSQL       — external (secret: {{ include "flowgent.pgSecretName" . }})
+  PostgreSQL       — external (secret: {{ include "flowgent.pgSecretName" . }})
 {{- end }}
 {{- if .Values.emqx.enabled }}
-  ✅ EMQX             — in-cluster
+  EMQX             — in-cluster
 {{- else }}
-  ⚠️  EMQX             — external (secret: {{ include "flowgent.mqttSecretName" . }})
+  EMQX             — external (secret: {{ include "flowgent.mqttSecretName" . }})
 {{- end }}
 {{- if .Values.redis.enabled }}
-  ✅ Redis            — in-cluster
+  Redis            — in-cluster
 {{- else }}
-  ⚠️  Redis            — external (secret: {{ .Values.redis.externalSecret }})
+  Redis            — external (secret: {{ .Values.redis.externalSecret }})
 {{- end }}
 
 ━━━ Components ━━━
-{{- if eq .Values.global.mode "session" }}
-━━━ Session Mode — Shared Pool ━━━
-  API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
-  JobManager       — {{ .Values.jobmanager.replicas }} replicas
-  TaskManager      — {{ .Values.taskmanager.replicas }} replicas × {{ .Values.taskmanager.slots }} slots (inline sandbox)
-  Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
-{{- else }}
-━━━ Application Mode — Controller-Managed ━━━
   API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
   Controller       — {{ .Values.controller.replicas }} replicas
   Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
-{{- end }}
 {{- if .Values.a2a.enabled }}
   A2A             — {{ .Values.a2a.replicas }} replicas, :{{ .Values.a2a.service.port }}
 {{- end }}
@@ -69,8 +59,4 @@ Mode: {{ .Values.global.mode }}
   kubectl create secret generic {{ .Values.redis.externalSecret }} \
     --from-literal=nodes='redis://host:6379' \
     --from-literal=password='your-password'
-{{- end }}
-{{- if eq .Values.global.mode "session" }}
-━━━ Scale ━━━
-  helm upgrade {{ .Release.Name }} . --set taskmanager.replicas=8
 {{- end }}

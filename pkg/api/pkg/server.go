@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/api/pkg/handler"
+	"github.com/flowgent-labs/flowgent/api/pkg/swagger"
 )
 
 // RegisterRESTRoutes returns a ServeMux with all REST API routes.
@@ -23,8 +24,8 @@ func RegisterRESTRoutes(
 
 	// ── Health & Spec ──────────────────────────────────────
 	mux.HandleFunc("GET /_/healthz", health.Healthz)
-	mux.HandleFunc("GET /_/openapi.yaml", OpenAPIHandler)
-	mux.HandleFunc("GET /_/swagger-ui", SwaggerUIHandler)
+	mux.HandleFunc("GET /_/openapi.yaml", swagger.OpenAPIHandler)
+	mux.HandleFunc("GET /_/swagger-ui", swagger.SwaggerUIHandler)
 
 	// ── Agents (tenant-scoped) ─────────────────────────────
 	mux.HandleFunc("GET /api/v1/{tenant}/agents", agentDef.List)

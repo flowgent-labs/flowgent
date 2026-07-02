@@ -3,22 +3,25 @@
 Flowgent E2E Verification Runner.
 
 Usage:
-  python3 tests/verification/runner.py [--scenario N] [--list] [--api URL] [--pg DSN]
+  python3 runner.py [-s N] [-l] [--api URL] [--pg DSN]
 
 Examples:
-  python3 tests/verification/runner.py                          # all scenarios, localhost defaults
-  python3 tests/verification/runner.py -s 03                    # only flow execution scenario
-  python3 tests/verification/runner.py -l                       # list available scenarios
-  python3 tests/verification/runner.py --api http://10.0.0.1:9999 --pg postgres://u:p@h/db
-  FLOWGENT_K3S_APISERVER=http://k3s:9999 python3 runner.py      # env var override
+  python3 runner.py                          # all scenarios
+  python3 runner.py -s 01                    # preflight only
+  python3 runner.py -s 08                    # security fixer only
+  python3 runner.py -l                       # list scenarios
+  python3 runner.py --api http://10.0.0.1:9999 --pg postgres://u:p@h/db
+  FLOWGENT_K3S_APISERVER=http://k3s:9999 python3 runner.py
 
 Scenarios:
-  01 — REST API CRUD + Trigger + Run Lifecycle
-  02 — A2A Protocol (Agent Card + Task Submit)
-  03 — Flow Execution (Agent / Tribunal / Supervisor nodes)
-  04 — PG Storage (Run & Definition Persistence)
-  05 — Jaeger OTEL (Trace Export Verification)
-  06 — Notifier MQTT (EMQX Message Publishing)
+  01 — Pre-Deployment & Infrastructure (L1-L3): K3s, Helm, Pod Readiness
+  02 — REST API CRUD + Trigger + Run Lifecycle
+  03 — A2A Protocol (Agent Card + Task Submit)
+  04 — Flow Execution (Agent / Tribunal / Supervisor nodes)
+  05 — PG Storage (Run & Definition Persistence)
+  06 — Jaeger OTEL (Trace Export Verification)
+  07 — Notifier MQTT (EMQX Message Publishing)
+  08 — Security Fixer (Full Pipeline White-Box)
 
 Config: see config.py for all FLOWGENT_* environment variables.
 """
@@ -34,13 +37,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 import config
 
 SCENARIOS = {
-    "01": ("REST API CRUD + Trigger + Run Lifecycle",       "scenarios.01_rest_api"),
-    "02": ("A2A Protocol — Agent Card + Task Submit",      "scenarios.02_a2a"),
-    "03": ("Flow Execution — Agent / Tribunal / Supervisor / Human", "scenarios.03_flow_execution"),
-    "04": ("PG Storage — Run & Definition Persistence",    "scenarios.04_pg_storage"),
-    "05": ("Jaeger OTEL — Trace Export Verification",      "scenarios.05_jaeger_tracing"),
-    "06": ("Notifier MQTT — EMQX Message Publishing",      "scenarios.06_notifier_mqtt"),
-    "07": ("Security Fixer V2 — Full Pipeline White-Box",   "scenarios.07_security_fixer_v2"),
+    "01": ("Pre-Deployment & Infrastructure (L1-L3)",      "scenarios.01_preflight"),
+    "02": ("REST API CRUD + Trigger + Run Lifecycle",       "scenarios.02_rest_api"),
+    "03": ("A2A Protocol — Agent Card + Task Submit",      "scenarios.03_a2a"),
+    "04": ("Flow Execution — Agent / Tribunal / Supervisor", "scenarios.04_flow_execution"),
+    "05": ("PG Storage — Run & Definition Persistence",    "scenarios.05_pg_storage"),
+    "06": ("Jaeger OTEL — Trace Export Verification",      "scenarios.06_jaeger_tracing"),
+    "07": ("Notifier MQTT — EMQX Message Publishing",      "scenarios.07_notifier_mqtt"),
+    "08": ("Security Fixer — Full Pipeline White-Box",     "scenarios.08_security_fixer"),
 }
 
 
@@ -53,17 +57,19 @@ def run_scenario(num, name, module_path):
         mod = importlib.import_module(module_path)
         mod.run()
         elapsed = time.time() - start
-        print(f"  ✅ PASS ({elapsed:.1f}s)")
+        print(f"  PASS ({elapsed:.1f}s)")
         return True
     except Exception as e:
         elapsed = time.time() - start
-        print(f"  ❌ FAIL ({elapsed:.1f}s): {e}")
+        print(f"  FAIL ({elapsed:.1f}s): {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
 def main():
     parser = argparse.ArgumentParser(description="Flowgent E2E Verification Runner")
-    parser.add_argument("--scenario", "-s", help="Run specific scenario (e.g. 01, 02)")
+    parser.add_argument("--scenario", "-s", help="Run specific scenario (e.g. 01, 08)")
     parser.add_argument("--list", "-l", action="store_true", help="List available scenarios")
     parser.add_argument("--api", help=f"K3s API server URL (default: {config.K3S_APISERVER_URL})")
     parser.add_argument("--pg", help=f"PG DSN (default: {config.pg_dsn()})")

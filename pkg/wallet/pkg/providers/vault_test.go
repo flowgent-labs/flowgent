@@ -2,8 +2,6 @@ package providers
 
 import (
 	"testing"
-
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 func TestVaultProvider_New(t *testing.T) {
@@ -30,9 +28,6 @@ func TestVaultProvider_NewMissingToken(t *testing.T) {
 	}
 }
 
-func TestVaultProvider_ImplementsInterface(t *testing.T) {
-	var _ payments.SecretStoreProvider = (*VaultSecretStoreProvider)(nil)
-}
 
 func TestVaultProvider_NotConnected(t *testing.T) {
 	p, _ := NewVaultSecretStoreProvider("https://vault:8200", "tok", "", "", "", "")

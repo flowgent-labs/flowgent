@@ -21,6 +21,59 @@ def run():
     assert r.status_code == 200, f"healthz: {r.status_code}"
     print("  healthz OK")
 
+    # ── Seed MCP Servers ─────────────────────────────────────
+    r = s.post(f"{API}/api/v1/{TENANT}/mcp", json={
+        "name": "github", "enabled": True, "type": "local",
+        "command": ["/app/mcp-server.sh", "github"], "args": [], "env": {},
+    })
+    assert r.status_code in (200, 201), f"create mcp github: {r.status_code}"
+    print(f"  mcp github OK")
+    r = s.post(f"{API}/api/v1/{TENANT}/mcp", json={
+        "name": "sonarqube", "enabled": True, "type": "local",
+        "command": ["/app/mcp-server.sh", "sonarqube"], "args": [], "env": {},
+    })
+    assert r.status_code in (200, 201), f"create mcp sonarqube: {r.status_code}"
+    print("  mcp sonarqube OK")
+
+    # ── Seed LLM Provider ────────────────────────────────────
+    r = s.post(f"{API}/api/v1/{TENANT}/llm/providers", json={
+        "type": "deepseek", "enabled": True, "provider": "deepseek",
+        "endpoint": "https://api.deepseek.com", "apikey": "sk-test",
+        "timeout_ms": 120000, "model": "deepseek-chat",
+        "models": [
+            {"name": "deepseek-chat", "temperature": 0.3, "topk": 0},
+            {"name": "deepseek-reasoner", "temperature": 0.3, "topk": 0},
+        ],
+    })
+    assert r.status_code in (200, 201), f"create llm provider: {r.status_code}"
+    print(f"  llm provider OK: deepseek")
+
+    # ── Seed Agents ──────────────────────────────────────────
+    agents = [
+        {"name": "supervisor", "model": "deepseek/deepseek-chat", "max_tokens": 16384,
+         "temperature": 0.2, "soul": "You are a senior autonomous orchestration controller.",
+         "instruction": 'Decide: {"action":"continue|retry|inject|abort"}'},
+        {"name": "issue-detector", "model": "deepseek/deepseek-chat", "max_tokens": 16384,
+         "temperature": 0.3, "soul": "You are a senior DevSecOps expert.",
+         "instruction": 'Output JSON: {"issues":[...]}'},
+        {"name": "fixer-agent", "model": "deepseek/deepseek-chat", "max_tokens": 16384,
+         "temperature": 0.3, "soul": "You are a secure coding expert.",
+         "instruction": 'Output JSON: {"patches":[...]}'},
+        {"name": "security-reviewer", "model": "deepseek/deepseek-chat", "max_tokens": 16384,
+         "temperature": 0.3, "soul": "You are a strict security reviewer.",
+         "instruction": 'Output JSON: {"decision":true|false}'},
+        {"name": "quality-reviewer", "model": "deepseek/deepseek-chat", "max_tokens": 16384,
+         "temperature": 0.3, "soul": "You are a code quality reviewer.",
+         "instruction": 'Output JSON: {"decision":true|false}'},
+        {"name": "arch-reviewer", "model": "deepseek/deepseek-chat", "max_tokens": 16384,
+         "temperature": 0.3, "soul": "You are an architecture reviewer.",
+         "instruction": 'Output JSON: {"decision":true|false}'},
+    ]
+    for agent in agents:
+        r = s.post(f"{API}/api/v1/{TENANT}/agents", json=agent)
+        assert r.status_code in (200, 201), f"create agent {agent['name']}: {r.status_code}"
+    print(f"  agents OK: {len(agents)} created")
+
     # ── Create Flow ─────────────────────────────────────────
     flow_id = "vrf-rest-01"
     r = s.post(f"{API}/api/v1/{TENANT}/agentflows", json={

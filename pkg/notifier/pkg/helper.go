@@ -9,9 +9,9 @@ import (
 	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// NotifToWSAdapter adapts notifier.NotifierServer to the api.WSBridge interface.
+// NotifToWSAdapter adapts notifier.FlowgentNotifierManager to the api.WSBridge interface.
 type NotifToWSAdapter struct {
-	Svc *NotifierServer
+	Svc *FlowgentNotifierManager
 }
 
 func (a *NotifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (handler.WSConn, error) {
@@ -24,8 +24,8 @@ func (a *NotifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (
 
 func (a *NotifToWSAdapter) PodID() string { return a.Svc.PodID() }
 
-// CreateNotifierService builds a notifier.NotifierServer from config, or nil if disabled.
-func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfig, httpClient model.IFlowgentHttpClient) *NotifierServer {
+// CreateNotifierService builds a notifier.FlowgentNotifierManager from config, or nil if disabled.
+func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfig, httpClient model.IFlowgentHttpClient) *FlowgentNotifierManager {
 	if !cfg.Notifier.Enabled {
 		return nil
 	}
@@ -34,5 +34,5 @@ func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfi
 		tenant = "default"
 	}
 	notifierClient := client.NewNotifierClient(api, tenant)
-	return NewNotifierServer(notifierClient, nil, httpClient)
+	return NewFlowgentNotifierManager(notifierClient, nil, httpClient)
 }

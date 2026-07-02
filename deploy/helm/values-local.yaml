@@ -1,6 +1,0 @@
-# Local k3s deployment overrides
-global:
-  image:
-    repository: localhost/flowgent
-    tag: latest
-    pullPolicy: IfNotPresent

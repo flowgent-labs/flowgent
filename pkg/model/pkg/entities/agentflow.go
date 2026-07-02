@@ -27,13 +27,7 @@ type AgentFlowInfo struct {
 }
 
 func (s *AgentFlowInfo) EffectiveMode() ExecutionMode {
-	if s.Mode != "" {
-		return s.Mode
-	}
-	if s.Priority.IsApplication() {
-		return ModeApplication
-	}
-	return ModeSession
+	return ModeApplication
 }
 
 // TriggerDef defines a trigger for an agentflow (schedule or webhook).

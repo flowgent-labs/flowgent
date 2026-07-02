@@ -11,8 +11,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // VaultSecretStoreProvider retrieves wallet private keys from HashiCorp Vault
@@ -238,4 +236,3 @@ func (p *VaultSecretStoreProvider) Address() string {
 	return p.address
 }
 
-var _ payments.SecretStoreProvider = (*VaultSecretStoreProvider)(nil)

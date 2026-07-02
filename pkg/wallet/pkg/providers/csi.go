@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // CSISecretStoreProvider reads private keys from CSI-mounted credential files.
@@ -133,4 +131,3 @@ func (p *CSISecretStoreProvider) ListSecrets(_ context.Context, prefix string) (
 	return names, nil
 }
 
-var _ payments.SecretStoreProvider = (*CSISecretStoreProvider)(nil)

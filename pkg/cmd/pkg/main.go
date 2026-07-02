@@ -186,9 +186,7 @@ var controllerCmd = &cobra.Command{
 	Short: "Distributed sharded flow driver",
 	Long: `Start, stop, or restart a Controller that polls agentflow definitions from
 PostgreSQL and drives execution via hash-mod sharding across N pods.
-
-Session mode: inserts PENDING runs for the shared JM pool.
-Application mode: creates dedicated K8s JM Deployment + PENDING run.`,
+Creates dedicated per-flow K8s JM Deployments.`,
 }
 
 var controllerStartCmd = &cobra.Command{

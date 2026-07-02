@@ -285,13 +285,13 @@ func NewMessagerManager(cfg *config.FlowgentConfig, clientID string) *MessagerMa
 		if err == nil {
 			return &MessagerManager{IMessager: mq}
 		}
-		if cfg.Deployment.Mode != "" {
-			log.Fatalf("FATAL: MQTT connect failed in distributed mode: %v — broker=%s", err, cfg.Messager.MQTT.Broker)
+		if cfg.Messager.MQTT.Broker != "" {
+			log.Fatalf("FATAL: MQTT connect failed: %v — broker=%s", err, cfg.Messager.MQTT.Broker)
 		}
 		slog.Warn("MQTT connect failed, falling back to memory", "err", err)
 	}
 
-	if cfg.Deployment.Mode != "" {
+	if cfg.Messager.Type == "mqtt" && cfg.Messager.MQTT.Broker == "" {
 		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGER__MQTT__BROKER env var.")
 	}
 

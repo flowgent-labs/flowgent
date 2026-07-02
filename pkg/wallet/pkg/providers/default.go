@@ -12,8 +12,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 // DefaultSecretStoreProvider stores encrypted secrets in SQLite or Postgres.
@@ -151,4 +149,3 @@ func (s *DefaultSecretStoreProvider) decrypt(ciphertext []byte) ([]byte, error) 
 	return s.gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-var _ payments.SecretStoreProvider = (*DefaultSecretStoreProvider)(nil)

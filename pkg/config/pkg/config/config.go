@@ -24,7 +24,6 @@ import (
 // are now DB-backed and managed via the management console or REST API.
 type FlowgentConfig struct {
 	ServiceName         string                `json:"service-name" yaml:"service-name"`
-	Deployment          DeploymentConfig      `json:"deployment" yaml:"deployment"`
 	Server              ServerConfig          `json:"server" yaml:"server"`
 	A2A                 A2AConfig             `json:"a2a" yaml:"a2a"`
 	Mgmt                MgmtConfig            `json:"mgmt" yaml:"mgmt"`
@@ -33,7 +32,7 @@ type FlowgentConfig struct {
 	Cache               CacheConfig           `json:"cache" yaml:"cache"`
 	Storage             StorageConfig         `json:"storage" yaml:"storage"`
 	Orchestration       OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
-	Messager            MessagerConfig        `json:"messaging" yaml:"messaging"`
+	Messager            MessagerConfig        `json:"messager" yaml:"messager"`
 	Lock                LockConfig            `json:"lock" yaml:"lock"`
 	Sandbox             SandboxConfig         `json:"sandbox" yaml:"sandbox"`
 	Wallet              *WalletConfig         `json:"wallet" yaml:"wallet"`
@@ -42,11 +41,6 @@ type FlowgentConfig struct {
 	Tenant              TenantConfig          `json:"tenant" yaml:"tenant"`
 	Runtime             RuntimeConfig         `json:"runtime" yaml:"runtime"`
 	ResolvedCredentials map[string]string     `json:"-" yaml:"-"`
-}
-
-// DeploymentConfig sets the execution mode: session or application.
-type DeploymentConfig struct {
-	Mode string `json:"mode" yaml:"mode"` // "session" | "application"
 }
 
 // ─── Server ──────────────────────────────────────────────────

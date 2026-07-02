@@ -65,11 +65,6 @@ func startJobManager(cfgPath string) error {
 
 	var rm resourcemanager.ResourceManager
 	jmNamespace := svcCfg.Runtime.Namespace
-	mode := "session"
-	if svcCfg != nil && svcCfg.Deployment.Mode != "" {
-		mode = svcCfg.Deployment.Mode
-	}
-	appMode := mode == "application"
 
 	k8sNamespace := svcCfg.Runtime.Namespace
 	if k8sNamespace == "" {
@@ -87,7 +82,6 @@ func startJobManager(cfgPath string) error {
 			TaskState:         taskClient,
 			ApprovalInfo:     humanClient,
 			Logger:            logger, Messager: q,
-			AutoScale:         appMode,
 			MQTTBroker:        svcCfg.Messager.MQTT.Broker,
 			PostgresDSN:       svcCfg.Storage.Postgres.Dsn,
 			APIServerURL:      svcCfg.Runtime.APIServerURL,
@@ -113,7 +107,7 @@ func startJobManager(cfgPath string) error {
 	agentFlowID := svcCfg.Runtime.AgentFlowID
 
 	flows := make(map[string]*entities.AgentFlowInfo)
-	if appMode && agentFlowID != "" {
+	if agentFlowID != "" {
 		apiFlows, err := apiClient.ListFlows(context.Background(), tenant)
 		if err == nil {
 			for i := range apiFlows {
@@ -135,11 +129,11 @@ func startJobManager(cfgPath string) error {
 		}
 	}
 
-	slog.Debug("jobmanager loaded flows", "count", len(flows), "agentFlowID", agentFlowID, "appMode", appMode)
+	slog.Debug("jobmanager loaded flows", "count", len(flows), "agentFlowID", agentFlowID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go startRunPoller(ctx, apiClient, tenant, jm, flows, jmNamespace, agentFlowID)
-	slog.Info("JobManager started", "scheduler", rm.Provider(), "namespace", jmNamespace, "agentFlow", agentFlowID, "autoScale", appMode)
+	slog.Info("JobManager started", "scheduler", rm.Provider(), "namespace", jmNamespace, "agentFlow", agentFlowID)
 	utils.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)

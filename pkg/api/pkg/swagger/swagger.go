@@ -1,4 +1,4 @@
-package api
+package swagger
 
 import (
 	_ "embed"

@@ -7,8 +7,6 @@ metadata:
 data:
   flowgent.yaml: |
     service-name: {{ include "flowgent.name" . }}
-    deployment:
-      mode: {{ .Values.global.mode | quote }}
     server:
       host: "0.0.0.0"
       port: {{ .Values.apiserver.service.restPort }}
@@ -47,7 +45,11 @@ data:
         ttl: 3600000
         eviction-policy: LRU
     storage:
-      type: POSTGRE
+      type: {{ .Values.storage.type | default "SQLITE" | quote }}
+      {{- if eq (.Values.storage.type | default "SQLITE") "SQLITE" }}
+      sqlite:
+        dir: .flowgent/sqlite
+      {{- end }}
     {{- if .Values.postgresql.enabled }}
       postgres:
         host: "{{ include "flowgent.fullname" . }}-postgresql"
@@ -62,21 +64,22 @@ data:
       max-concurrent-flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
       flow-execution-timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
       max-node-retries: {{ .Values.orchestration.maxNodeRetries | default 3 }}
-    messaging:
+    messager:
       type: {{ .Values.messaging.type | quote }}
       mqtt:
         broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
         client_id: "flowgent"
     lock:
-      provider: postgres
+      provider: {{ .Values.lock.provider | default "memory" | quote }}
     notifier:
       enabled: {{ .Values.notifier.enabled }}
     credential-paths:
       base-path: {{ .Values.global.credentialPaths.basePath | default "/var/flowgent" | quote }}
-    payments:
-      wallet:
-        secret_store:
-          master_key_file: {{ .Values.wallet.keyFile | default "/var/secrets/flowgent/master.key" | quote }}
+    wallet:
+      enabled: {{ .Values.wallet.enabled | default false }}
+      secret_store:
+        provider: default
+        master_key_file: {{ .Values.wallet.keyFile | default "/var/secrets/flowgent/master.key" | quote }}
     sandbox:
       workspace: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
       policy:

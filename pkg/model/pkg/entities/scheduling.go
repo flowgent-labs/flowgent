@@ -4,7 +4,6 @@ package entities
 type ExecutionMode string
 
 const (
-	ModeSession     ExecutionMode = "session"
 	ModeApplication ExecutionMode = "application"
 )
 

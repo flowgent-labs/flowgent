@@ -75,5 +75,5 @@ get-available-versions:
    - 更新 `skill.yaml` — 使用单个 sandbox node 调用脚本
    - 更新 `SKILL.md` — 文档
 4. 更新 `Makefile` — 移除 sonatypeiq/nexus3 MCP 构建目标
-5. 更新 `etc/flowgent-dev.yaml` — 移除对应 MCP 配置
+5. 更新 `etc/flowgent.yaml.sample` — 移除对应 MCP 配置
 6. 更新 `docs/` 中相关引用

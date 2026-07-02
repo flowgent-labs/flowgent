@@ -1157,6 +1157,9 @@ func (s *consoleState) importData(data *ExportData) ([]int, error) {
 		m.TenantID = s.tenant
 		m.CreatedAt = time.Now()
 		m.UpdatedAt = time.Now()
+		if m.ID == "" {
+			m.ID = uuid.New().String()
+		}
 		if err := ls.mcps.Save(s.ctx, m); err != nil {
 			return counts, fmt.Errorf("mcp %s: %w", m.Name, err)
 		}
@@ -1179,6 +1182,9 @@ func (s *consoleState) importData(data *ExportData) ([]int, error) {
 		a.TenantID = s.tenant
 		a.CreatedAt = time.Now()
 		a.UpdatedAt = time.Now()
+		if a.ID == "" {
+			a.ID = uuid.New().String()
+		}
 		if err := ls.agents.Save(s.ctx, a); err != nil {
 			return counts, fmt.Errorf("agent %s: %w", a.Name, err)
 		}

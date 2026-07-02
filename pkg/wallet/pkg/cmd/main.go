@@ -7,12 +7,18 @@
 package main
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	walletcmd "github.com/flowgent-labs/flowgent/wallet/cmd"
+	"github.com/flowgent-labs/flowgent/wallet/pkg"
 )
 
 var (
@@ -49,7 +55,7 @@ var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return walletcmd.RunWallet("start", walletListen, walletDB, cfgPath)
+		return runWallet("start", walletListen, walletDB, cfgPath)
 	},
 }
 
@@ -57,7 +63,7 @@ var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return walletcmd.RunWallet("stop", "", "", "")
+		return runWallet("stop", "", "", "")
 	},
 }
 
@@ -65,7 +71,7 @@ var restartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the wallet daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return walletcmd.RunWallet("restart", walletListen, walletDB, cfgPath)
+		return runWallet("restart", walletListen, walletDB, cfgPath)
 	},
 }
 
@@ -73,7 +79,7 @@ var genKeyCmd = &cobra.Command{
 	Use:   "generate-key",
 	Short: "Generate a new Ed25519 wallet keypair",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return walletcmd.RunWalletGenKey(keyFormat, keyEncoding)
+		return runWalletGenKey(keyFormat, keyEncoding)
 	},
 }
 
@@ -93,5 +99,57 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// runWallet creates a FlowgentWalletManager and starts the wallet service.
+func runWallet(action, listen, db, cfgPath string) error {
+	switch action {
+	case "start":
+		wm, err := payments.NewFlowgentWalletManager(cfgPath, listen, db)
+		if err != nil {
+			return fmt.Errorf("create wallet manager: %w", err)
+		}
+		return wm.Start(context.Background())
+	case "stop":
+		return fmt.Errorf("stop: send SIGTERM to the wallet process")
+	case "restart":
+		return fmt.Errorf("restart: not supported — stop the process and start a new one")
+	default:
+		return fmt.Errorf("unknown wallet action: %s", action)
+	}
+}
+
+// runWalletGenKey generates a new Ed25519 keypair.
+func runWalletGenKey(format, encoding string) error {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("key generation failed: %w", err)
+	}
+
+	pubStr := encodeKey(pub, encoding)
+	privStr := encodeKey(priv, encoding)
+
+	switch format {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]string{
+			"public_key":  pubStr,
+			"private_key": privStr,
+		})
+	default:
+		fmt.Printf("Public key:  %s\n", pubStr)
+		fmt.Printf("Private key: %s\n", privStr)
+		return nil
+	}
+}
+
+func encodeKey(key []byte, enc string) string {
+	switch enc {
+	case "base64":
+		return base64.StdEncoding.EncodeToString(key)
+	default:
+		return hex.EncodeToString(key)
 	}
 }

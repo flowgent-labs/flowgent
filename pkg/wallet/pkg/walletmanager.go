@@ -1,8 +1,10 @@
-// Package walletmanager implements the WalletManager — the main wallet service class.
-// It subscribes to unsigned x402 payment signing requests via MQTT, signs them
-// using the EOA private key from the configured secret store, and publishes the
-// signed result back. It also exposes an HTTP API for key management.
-package walletmanager
+// Package payments implements wallet key management and x402 payment signing.
+//
+// FlowgentWalletManager is the main wallet service. It subscribes to unsigned x402
+// payment signing requests via MQTT, signs them using the EOA private key from the
+// configured secret store, and publishes the signed result back. It also exposes an
+// HTTP API for key management.
+package payments
 
 import (
 	"context"
@@ -27,28 +29,27 @@ import (
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
-	"github.com/flowgent-labs/flowgent/wallet/pkg"
 	"github.com/flowgent-labs/flowgent/wallet/pkg/providers"
 )
 
-// WalletManager is the main wallet service. It listens for unsigned payment
+// FlowgentWalletManager is the main wallet service. It listens for unsigned payment
 // signing requests via MQTT, signs them with the EOA private key, and publishes
 // the signed result. It also serves an HTTP API for key CRUD operations.
-type WalletManager struct {
+type FlowgentWalletManager struct {
 	cfg          *config.FlowgentConfig
 	listenAddr   string
 	dbPath       string
 
-	secretStore  payments.SecretStoreProvider
+	secretStore  SecretStoreProvider
 	messager     messager.IMessager
 	httpServer   *http.Server
 	providerName string
 	db           *sql.DB
 }
 
-// New creates a new WalletManager. It initializes the secret store provider
+// NewFlowgentWalletManager creates a new FlowgentWalletManager. It initializes the secret store provider
 // based on config (CSI, Vault, or AES-256-GCM encrypted SQLite).
-func New(cfgPath, listenAddr, dbPath string) (*WalletManager, error) {
+func NewFlowgentWalletManager(cfgPath, listenAddr, dbPath string) (*FlowgentWalletManager, error) {
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		return nil, err
@@ -60,7 +61,7 @@ func New(cfgPath, listenAddr, dbPath string) (*WalletManager, error) {
 		return nil, fmt.Errorf("create secret store: %w", err)
 	}
 
-	wm := &WalletManager{
+	wm := &FlowgentWalletManager{
 		cfg:          cfg,
 		listenAddr:   listenAddr,
 		dbPath:       dbPath,
@@ -75,7 +76,7 @@ func New(cfgPath, listenAddr, dbPath string) (*WalletManager, error) {
 // Start starts the WalletManager. It subscribes to unsigned payment signing
 // requests via MQTT, starts the HTTP key management API, and blocks until
 // a shutdown signal is received.
-func (wm *WalletManager) Start(ctx context.Context) error {
+func (wm *FlowgentWalletManager) Start(ctx context.Context) error {
 	if wm.db != nil {
 		defer wm.db.Close()
 	}
@@ -136,7 +137,7 @@ func (wm *WalletManager) Start(ctx context.Context) error {
 // handleSignRequest is the MQTT callback for sign/request topics.
 // It receives unsigned payment payloads from TaskManager pods, signs them
 // using the wallet's EOA private key, and publishes the result back.
-func (wm *WalletManager) handleSignRequest(topic string, payload []byte) {
+func (wm *FlowgentWalletManager) handleSignRequest(topic string, payload []byte) {
 	var req messager.SignRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		slog.Warn("WalletManager invalid sign request", "err", err)
@@ -172,7 +173,7 @@ func (wm *WalletManager) handleSignRequest(topic string, payload []byte) {
 	}
 }
 
-func (wm *WalletManager) publishSignError(req messager.SignRequest, errMsg string) {
+func (wm *FlowgentWalletManager) publishSignError(req messager.SignRequest, errMsg string) {
 	slog.Warn("WalletManager sign request failed", "requestID", req.RequestID, "error", errMsg)
 	resp := messager.SignResponse{
 		RequestID: req.RequestID,
@@ -191,11 +192,11 @@ func (wm *WalletManager) publishSignError(req messager.SignRequest, errMsg strin
 
 // ── HTTP handlers ─────────────────────────────────────────────
 
-func (wm *WalletManager) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (wm *WalletManager) handleSign(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleSign(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -221,7 +222,7 @@ func (wm *WalletManager) handleSign(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (wm *WalletManager) handleAddress(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleAddress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -239,13 +240,13 @@ func (wm *WalletManager) handleAddress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (wm *WalletManager) handleBalance(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleBalance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"balance": decimal.Zero.String(),
 	})
 }
 
-func (wm *WalletManager) handleListKeys(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := wm.secretStore.ListSecrets(r.Context(), "wallet:")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -274,7 +275,7 @@ func (wm *WalletManager) handleListKeys(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (wm *WalletManager) handleGetKey(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleGetKey(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	keyBytes, err := wm.secretStore.GetSecret(r.Context(), "wallet:"+name)
 	if err != nil {
@@ -289,7 +290,7 @@ func (wm *WalletManager) handleGetKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (wm *WalletManager) handleCreateKey(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name       string `json:"name"`
 		PrivateKey string `json:"private_key,omitempty"`
@@ -347,7 +348,7 @@ func (wm *WalletManager) handleCreateKey(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (wm *WalletManager) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
+func (wm *FlowgentWalletManager) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := wm.secretStore.DeleteSecret(r.Context(), "wallet:"+name); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -393,7 +394,7 @@ func resolveStoreConfig(cfg *config.FlowgentConfig) storeConfig {
 	return c
 }
 
-func createSecretStore(sc storeConfig, dbPath string) (payments.SecretStoreProvider, *sql.DB, error) {
+func createSecretStore(sc storeConfig, dbPath string) (SecretStoreProvider, *sql.DB, error) {
 	switch sc.provider {
 	case "csi":
 		slog.Info("Wallet secret store: CSI", "base", sc.csiBasePath)

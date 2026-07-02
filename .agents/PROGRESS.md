@@ -70,7 +70,7 @@ sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
 
 - **Module:** `github.com/flowgent-labs/flowgent` (Go 1.26)
 - **Entry:** `src/cmd/flowgent/main.go` — 11 subcommands via Cobra
-- **Config:** `etc/flowgent-dev.yaml` (dev), `etc/flowgent.yaml.fully.sample` (reference)
+- **Config:** `etc/flowgent.yaml` (annotated reference)
 - **Deploy:** Helm chart at `deploy/helm/flowgent/` (7 microservices incl. sandbox), Docker images at `deploy/docker/`
 
 ### 1.2 CLI Subcommands (11 total)

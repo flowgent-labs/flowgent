@@ -10,7 +10,7 @@ require (
 	github.com/flowgent-labs/flowgent/messager v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	// github.com/flowgent-labs/flowgent/notifier v0.0.0 // UNUSED
-	// github.com/flowgent-labs/flowgent/sandbox v0.0.0  // UNUSED
+	github.com/flowgent-labs/flowgent/sandbox v0.0.0
 	github.com/flowgent-labs/flowgent/store v0.0.0
 	// github.com/flowgent-labs/flowgent/wallet v0.0.0   // UNUSED
 	github.com/google/uuid v1.6.0
