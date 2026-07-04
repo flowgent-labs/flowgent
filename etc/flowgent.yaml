@@ -67,9 +67,37 @@ auth:
   oidc:
     enabled: false
     client-id: "<YOUR_OIDC_CLIENT_ID>"
+    client-secret: "<YOUR_OIDC_CLIENT_SECRET>"
     issue-url: "https://iam.wl4g.com/realms/master"
     redirect-url: "http://wl4g.local:10000/serve/auth/callback/oidc"
     scope: "openid profile email"
+  ldap:
+    enabled: false
+    url: "ldap://ad.example.com:389"               # LDAP server URL (ldap:// or ldaps://)
+    base-dn: "dc=example,dc=com"                    # root base DN
+    bind-dn: "cn=admin,dc=example,dc=com"           # service account DN
+    bind-password: "${LDAP_BIND_PASSWORD}"           # service account password
+    domains:                                         # AD multi-domain search
+      - base-dn: "dc=corp,dc=example,dc=com"
+        user-search-filter: "(sAMAccountName=%s)"
+      - base-dn: "dc=eng,dc=example,dc=com"
+        user-search-filter: "(uid=%s)"
+    role-mapping:                                    # AD group/domain → Flowgent role
+      - match: "cn=FlowgentAdmins,ou=groups,dc=corp,dc=example,dc=com"
+        role: "admin"
+      - match: "cn=FlowgentOps,ou=groups,dc=corp,dc=example,dc=com"
+        role: "operator"
+      - match: "dc=eng,dc=example,dc=com"
+        role: "viewer"
+    # ── Optional (defaults shown) ──
+    user-search-filter: "(uid=%s)"                   # default: (cn=%s)
+    username-attribute: "uid"                        # default: cn
+    email-attribute: "mail"                          # default: mail
+    display-name-attribute: "cn"                     # default: cn
+    group-search-base: "ou=groups,dc=example,dc=com" # for group→role resolution
+    group-search-filter: "(member=%s)"               # default: (member=%s)
+    group-name-attribute: "cn"                       # default: cn
+    insecure-skip-verify: false
   github:
     enabled: true
     client-id: "<YOUR_GITHUB_CLIENT_ID>"

@@ -40,8 +40,8 @@ build-image-all-in-one:
 
 build-all: build-core build-wallet
 	@mkdir -p $(BIN_DIR)
-	cd examples/security-autonomy-fixer/mcps/github && GOWORK=off CGO_ENABLED=0 $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/github-mcp .
-	cd examples/security-autonomy-fixer/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/sonarqube-mcp .
+	cd examples/security-autonomy-fixer/config/mcps/github && GOWORK=off CGO_ENABLED=0 $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/github-mcp .
+	cd examples/security-autonomy-fixer/config/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/sonarqube-mcp .
 
 build-core:
 	@mkdir -p $(BIN_DIR)

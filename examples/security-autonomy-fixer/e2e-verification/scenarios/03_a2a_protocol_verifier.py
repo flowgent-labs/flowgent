@@ -1,10 +1,10 @@
 """
-Scenario 02 — A2A Protocol: Agent Card + Task Submit.
+Scenario 03 — A2A Protocol: Agent Card + Task Submit.
 """
 
 import requests
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Config now in runner.py
 import config
 
 A2A = config.K3S_A2A_URL

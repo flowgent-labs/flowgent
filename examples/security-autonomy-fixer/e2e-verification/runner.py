@@ -2,28 +2,35 @@
 """
 Flowgent E2E Verification Runner.
 
+Scenarios are ordered by functional module execution time (runtime dependency):
+
+  01 Infra        -> cluster / Helm / pods ready
+  02 API Server   -> CRUD + lifecycle events
+  03 A2A          -> agent card / task submit
+  04 Controller   -> Application mode: create JM pods
+  05 Engine       -> DAG scheduling / voting (after JM exists)
+  06 Basic Nodes  -> node executors (after engine can dispatch)
+  07 Messager     -> MQTT topics + sandbox chain
+  08 Notifier     -> multi-channel delivery
+  09 Wallet       -> x402 key mgmt + MQTT signing (optional)
+  10 OTEL         -> Jaeger span coverage (after flow can run)
+  11 E2E Fixer    -> capstone: full security-autonomy-fixer pipeline
+
 Usage:
   python3 runner.py [-s N] [-l] [--api URL] [--pg DSN]
 
 Examples:
   python3 runner.py                          # all scenarios
-  python3 runner.py -s 01                    # preflight only
-  python3 runner.py -s 08                    # security fixer only
+  python3 runner.py -s 01                    # infrastructure checks
+  python3 runner.py -s 04                    # controller (JM lifecycle)
+  python3 runner.py -s 05                    # engine DAG
+  python3 runner.py -s 09                    # wallet signing
+  python3 runner.py -s 10                    # OTEL / Jaeger
+  python3 runner.py -s 11                    # E2E security fixer capstone
   python3 runner.py -l                       # list scenarios
   python3 runner.py --api http://10.0.0.1:9999 --pg postgres://u:p@h/db
-  FLOWGENT_K3S_APISERVER=http://k3s:9999 python3 runner.py
 
-Scenarios:
-  01 — Pre-Deployment & Infrastructure (L1-L3): K3s, Helm, Pod Readiness
-  02 — REST API CRUD + Trigger + Run Lifecycle
-  03 — A2A Protocol (Agent Card + Task Submit)
-  04 — Flow Execution (Agent / Tribunal / Supervisor nodes)
-  05 — PG Storage (Run & Definition Persistence)
-  06 — Jaeger OTEL (Trace Export Verification)
-  07 — Notifier MQTT (EMQX Message Publishing)
-  08 — Security Fixer (Full Pipeline White-Box)
-
-Config: see config.py for all FLOWGENT_* environment variables.
+All configuration via environment variables (FLOWGENT_* prefix).
 """
 
 import sys
@@ -31,20 +38,21 @@ import os
 import argparse
 import importlib
 import time
-
-sys.path.insert(0, os.path.dirname(__file__))
-
 import config
 
+
 SCENARIOS = {
-    "01": ("Pre-Deployment & Infrastructure (L1-L3)",      "scenarios.01_preflight"),
-    "02": ("REST API CRUD + Trigger + Run Lifecycle",       "scenarios.02_rest_api"),
-    "03": ("A2A Protocol — Agent Card + Task Submit",      "scenarios.03_a2a"),
-    "04": ("Flow Execution — Agent / Tribunal / Supervisor", "scenarios.04_flow_execution"),
-    "05": ("PG Storage — Run & Definition Persistence",    "scenarios.05_pg_storage"),
-    "06": ("Jaeger OTEL — Trace Export Verification",      "scenarios.06_jaeger_tracing"),
-    "07": ("Notifier MQTT — EMQX Message Publishing",      "scenarios.07_notifier_mqtt"),
-    "08": ("Security Fixer — Full Pipeline White-Box",     "scenarios.08_security_fixer"),
+    "01": ("Infrastructure — Pre-Deployment & Pod Readiness",  "scenarios.01_infra_verifier"),
+    "02": ("API Server — REST CRUD + Lifecycle Events",        "scenarios.02_apiserver_verifier"),
+    "03": ("A2A Protocol — Agent Card & Task Submit",          "scenarios.03_a2a_protocol_verifier"),
+    "04": ("Controller — Application Mode Lifecycle",          "scenarios.04_controller_verifier"),
+    "05": ("Engine — DAG Scheduling + Voting Strategies",      "scenarios.05_engine_verifier"),
+    "06": ("Basic Nodes — Agent/Tribunal/Supervisor",          "scenarios.06_basic_nodes_verifier"),
+    "07": ("Messager — MQTT Topics + Sandbox Chain",           "scenarios.07_messager_verifier"),
+    "08": ("Notifier — Multi-Channel Delivery",                "scenarios.08_notifier_verifier"),
+    "09": ("Wallet — x402 Key Management + MQTT Signing",      "scenarios.09_wallet_verifier"),
+    "10": ("OTEL — Jaeger Span Coverage",                      "scenarios.10_otel_verifier"),
+    "11": ("E2E — Security Fixer Full Pipeline (capstone)",    "scenarios.11_e2e_security_fixer"),
 }
 
 
@@ -69,7 +77,7 @@ def run_scenario(num, name, module_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Flowgent E2E Verification Runner")
-    parser.add_argument("--scenario", "-s", help="Run specific scenario (e.g. 01, 08)")
+    parser.add_argument("--scenario", "-s", help="Run specific scenario (e.g. 01, 04, 11)")
     parser.add_argument("--list", "-l", action="store_true", help="List available scenarios")
     parser.add_argument("--api", help=f"K3s API server URL (default: {config.K3S_APISERVER_URL})")
     parser.add_argument("--pg", help=f"PG DSN (default: {config.pg_dsn()})")
@@ -88,10 +96,12 @@ def main():
         host_db = parts[1].split("/")
         host_port = host_db[0].split(":")
         config.PG_USER = user_pass[0]
-        config.PG_PASSWORD = user_pass[1]
+        if len(user_pass) > 1:
+            config.PG_PASSWORD = user_pass[1]
         config.PG_HOST = host_port[0]
-        config.PG_PORT = int(host_port[1]) if len(host_port) > 1 else 5432
-        config.PG_DATABASE = host_db[1].split("?")[0] if len(host_db) > 1 else "flowgent"
+        if len(host_port) > 1:
+            config.PG_PORT = int(host_port[1])
+        config.PG_DATABASE = host_db[1].split("?")[0]
 
     print(f"API:  {config.K3S_APISERVER_URL}")
     print(f"PG:   {config.pg_dsn()}")

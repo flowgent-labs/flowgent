@@ -15,7 +15,7 @@ import os
 import json
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Config now in runner.py
 import config
 
 NAMESPACE = config.K3S_NAMESPACE

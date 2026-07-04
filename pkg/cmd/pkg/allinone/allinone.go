@@ -190,9 +190,12 @@ func startRESTServer(state *allInOneState, agentFlows []entities.AgentFlowInfo,
 		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler)
 
 	var restHandler http.Handler = restMux
-	if len(state.cfg.Auth.AnonymousPaths) > 0 {
-		restHandler = config.AuthMiddleware(state.cfg.Auth, restMux)
+	authMiddleware, err := api.SetupAuth(state.cfg.Auth, restMux)
+	if err != nil {
+		slog.Error("auth setup failed", "error", err)
+		os.Exit(1)
 	}
+	restHandler = authMiddleware(restMux)
 
 	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
 	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)

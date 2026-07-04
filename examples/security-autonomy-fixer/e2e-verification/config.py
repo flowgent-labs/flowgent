@@ -35,6 +35,11 @@ JAEGER_OTLP    = os.getenv("FLOWGENT_JAEGER_OTLP", "http://localhost:4318")
 SONARQUBE_URL   = os.getenv("FLOWGENT_SONARQUBE_URL",   "http://localhost:9000")
 SONARQUBE_TOKEN = os.getenv("FLOWGENT_SONARQUBE_TOKEN", "")
 
+# ── Wallet (x402 signing daemon) ─────────────────────────────────
+#    HTTP key-management API + async MQTT signing (sign/request→sign/response).
+WALLET_URL    = os.getenv("FLOWGENT_WALLET_URL",    "http://localhost:9901")
+WALLET_NAME   = os.getenv("FLOWGENT_WALLET_NAME",   "default")
+
 # ── K3s / kubectl paths ──────────────────────────────────────────
 KUBECTL_BIN = os.getenv("KUBECTL_BIN", "kubectl")
 HELM_BIN    = os.getenv("HELM_BIN", "helm")

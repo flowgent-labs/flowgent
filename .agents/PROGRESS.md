@@ -146,9 +146,9 @@ Factory `NewResourceManager()` falls back to local if K8s is unreachable. Matche
 
 Matches docs. Lock has 3 implementations (richer than documented).
 
-### 2.4 Payments (`src/payments/`)
+### 2.4 Wallet / x402 (`pkg/core/pkg/client`, `pkg/wallet/pkg`)
 
-x402 economic layer: wallet key management, facilitator client, spending policies, payment approvals, receipts, PWF runtime. Matches `docs/02`.
+x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pkg/client`, with wallet key management and MQTT signing in `pkg/wallet/pkg`. Matches `docs/02`.
 
 ### 2.5 Sandbox (`src/engine/sandbox/`) — NEW 2026-05-23
 
@@ -195,10 +195,8 @@ x402 economic layer: wallet key management, facilitator client, spending policie
 | # | Issue | Where |
 |---|-------|-------|
 | 10 | `docs/00` references `src/internal/`, `src/web/`, `src/worker/`, `src/util/` — never existed | Historical draft |
-| 11 | `docs/02` references `src/cmd/core/wallet.go`, `src/cmd/core/main.go` — actual path is `src/cmd/flowgent/` | Renamed after doc write |
-| 12 | `docs/02` references `deploy/docker-compose.all-in-one.yml` — doesn't exist | |
-| 13 | `docs/20` references `deploy/Dockerfile.jobmanager` — doesn't exist | |
-| 14 | `docs/20` references `src/store/store_agents.go` — doesn't exist | |
+| 11 | `docs/20` references `deploy/Dockerfile.jobmanager` — doesn't exist | |
+| 12 | `docs/20` references `src/store/store_agents.go` — doesn't exist | |
 
 ---
 
@@ -208,7 +206,7 @@ x402 economic layer: wallet key management, facilitator client, spending policie
 |-----|---------|--------|
 | `00-Initial-Design-Draft.md` | Original human-authored spec (2026-05-10) | Historical — old terminology, keep as reference |
 | `01-L1-Engine-Architecture.md` | Engine architecture (merged skills/sandbox/config §13-16) | Current — some gaps (see §3) |
-| `02-L1-x402-Economic-Support.md` | x402 payment protocol support | Current — some stale paths |
+| `02-L1-x402-Economic-Support.md` | x402 payment protocol support | Current — aligned to `pkg/core/pkg/client` + `pkg/wallet/pkg` |
 | `04-DEPLOY-Build-Deps-Images.md` | Docker build guide for facilitator/anvil/solana | Current |
 | `10-USE-CASES.md` | Use case catalog linking to examples/ configs | Current |
 | `20-TEST-e2e-guide.md` | E2E test guide | Current — some stale paths |
@@ -260,5 +258,4 @@ src/
 2. **Drop or implement `flowgent sandbox` CLI**, align with docs
 3. **Fix `docs/01` §6.1** — add `skill` and `join` to node type table; rename `agentflow` → `subflow` or vice versa for consistency
 4. **Fix `docs/20`** — DeepSeek env var, stale file references (`etc/flows/` → `examples/flows/`)
-5. **Fix `docs/02`** — stale paths (`src/cmd/core/` → `src/cmd/flowgent/`, docker-compose reference)
-6. **Decide on `etc/` vs `examples/`** — if `etc/` is runtime config and `examples/` is sample configs, document the distinction clearly
+5. **Decide on `etc/` vs `examples/`** — if `etc/` is runtime config and `examples/` is sample configs, document the distinction clearly

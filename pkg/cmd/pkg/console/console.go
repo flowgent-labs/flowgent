@@ -97,7 +97,7 @@ func StartConsole(cfgPath string, verbose bool) {
 	rl := liner.NewLiner()
 	defer rl.Close()
 	rl.SetCtrlCAborts(true)
-	historyFile := filepath.Join(os.Getenv("HOME"), ".flowagent", "console_history")
+	historyFile := filepath.Join(os.Getenv("HOME"), ".flowgent", "console_history")
 	if f, err := os.Open(historyFile); err == nil {
 		rl.ReadHistory(f)
 		f.Close()

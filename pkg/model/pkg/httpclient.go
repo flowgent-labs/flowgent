@@ -12,8 +12,8 @@ import (
 // components. All outbound HTTP calls MUST use this interface rather than
 // raw *http.Client or http.DefaultClient.
 //
-// At startup, one of two implementations is injected based on the payments
-// config (payments.enabled):
+// At startup, one of two implementations is injected based on wallet
+// config (wallet.enabled):
 //   - GenericHttpClient — standard HTTP with timeouts and tracing
 //   - X402PaymentHttpClient — wraps GenericHttpClient with x402 payment handling
 type IFlowgentHttpClient interface {

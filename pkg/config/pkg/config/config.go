@@ -113,15 +113,47 @@ type AuthConfig struct {
 	JWTPublicKey   string           `json:"jwt-public-key" yaml:"jwt-public-key"`
 	AnonymousPaths []string         `json:"anonymous-paths" yaml:"anonymous-paths"`
 	OIDC           OIDCConfig       `json:"oidc" yaml:"oidc"`
+	LDAP           LDAPConfig       `json:"ldap" yaml:"ldap"`
 	GitHub         GitHubAuthConfig `json:"github" yaml:"github"`
 }
 
 type OIDCConfig struct {
 	Enabled     bool   `json:"enabled" yaml:"enabled"`
 	ClientID    string `json:"client-id" yaml:"client-id"`
+	ClientSecret string `json:"client-secret" yaml:"client-secret"`
 	IssueURL    string `json:"issue-url" yaml:"issue-url"`
 	RedirectURL string `json:"redirect-url" yaml:"redirect-url"`
 	Scope       string `json:"scope" yaml:"scope"`
+}
+
+type LDAPConfig struct {
+	Enabled              bool               `json:"enabled" yaml:"enabled"`
+	URL                  string             `json:"url" yaml:"url"`                             // ldap[s]://host:port
+	BaseDN               string             `json:"base-dn" yaml:"base-dn"`                     // root base DN
+	BindDN               string             `json:"bind-dn" yaml:"bind-dn"`                     // service account DN
+	BindPassword         string             `json:"bind-password" yaml:"bind-password"`         // service account password
+	Domains              []LDAPDomainConfig `json:"domains" yaml:"domains"`                     // AD multi-domain search
+	RoleMapping          []LDAPRoleMapping  `json:"role-mapping" yaml:"role-mapping"`           // AD group/domain → role
+	UserSearchFilter     string             `json:"user-search-filter" yaml:"user-search-filter"` // default: (cn=%s)
+	UsernameAttribute    string             `json:"username-attribute" yaml:"username-attribute"` // default: cn
+	EmailAttribute       string             `json:"email-attribute" yaml:"email-attribute"`       // default: mail
+	DisplayNameAttribute string             `json:"display-name-attribute" yaml:"display-name-attribute"` // default: cn
+	GroupSearchBase      string             `json:"group-search-base" yaml:"group-search-base"`   // optional: for group→role resolution
+	GroupSearchFilter    string             `json:"group-search-filter" yaml:"group-search-filter"` // default: (member=%s)
+	GroupNameAttribute   string             `json:"group-name-attribute" yaml:"group-name-attribute"` // default: cn
+	InsecureSkipVerify   bool               `json:"insecure-skip-verify" yaml:"insecure-skip-verify"`
+}
+
+// LDAPDomainConfig defines an AD domain to search for users.
+type LDAPDomainConfig struct {
+	BaseDN           string `json:"base-dn" yaml:"base-dn"`
+	UserSearchFilter string `json:"user-search-filter" yaml:"user-search-filter"` // e.g. (sAMAccountName=%s)
+}
+
+// LDAPRoleMapping maps an AD group DN or domain base DN to a Flowgent built-in role.
+type LDAPRoleMapping struct {
+	Match string `json:"match" yaml:"match"` // AD group DN or domain base DN
+	Role  string `json:"role" yaml:"role"`   // admin | operator | viewer
 }
 
 type GitHubAuthConfig struct {

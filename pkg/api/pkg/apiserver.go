@@ -72,9 +72,11 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
 		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler)
 	var restHandler http.Handler = restMux
-	if len(cfg.Auth.AnonymousPaths) > 0 {
-		restHandler = config.AuthMiddleware(cfg.Auth, restMux)
+	authMiddleware, err := SetupAuth(cfg.Auth, restMux)
+	if err != nil {
+		return nil, fmt.Errorf("auth setup: %w", err)
 	}
+	restHandler = authMiddleware(restMux)
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
 	if readTO == 0 {

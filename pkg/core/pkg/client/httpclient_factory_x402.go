@@ -15,7 +15,7 @@ import (
 )
 
 // NewHttpClient creates the appropriate IFlowgentHttpClient based on config.
-// When payments.enabled is true, returns an X402PaymentHttpClient with
+// When wallet.enabled is true, returns an X402PaymentHttpClient with
 // policy evaluation, async MQTT signing, and facilitator integration.
 // When payments are disabled, falls back to GenericHttpClient.
 func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlowgentHttpClient {

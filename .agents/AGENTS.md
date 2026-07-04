@@ -54,13 +54,13 @@
 |-----|---------|
 | [docs/10-L2-USE-CASES.md](../docs/10-L2-USE-CASES.md) | Use case catalog; primary: Security Autonomy Fixer (12-phase CI/CD security pipeline) |
 | [examples/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md](../examples/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md) | E2E verification context doc for Python scenario suite (runner.py, 8 scenarios) |
-| [examples/security-autonomy-fixer/e2e-verification/SonarQube-Integration.md](../examples/security-autonomy-fixer/e2e-verification/SonarQube-Integration.md) | SonarQube v26.4.0 Docker Compose deployment guide |
+| [examples/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md](../examples/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md) | SonarQube v26.4.0 Docker Compose deployment guide |
 
 ## Skills & MCPs
 
 | Doc | Summary |
 |-----|---------|
-| [examples/security-autonomy-fixer/skills/nexus3-retrieval/SKILL.md](../examples/security-autonomy-fixer/skills/nexus3-retrieval/SKILL.md) | nexus3-retrieval skill: AI-agent tool catalog for Nexus3 REST API + SonatypeIQ |
+| [examples/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md](../examples/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md) | nexus3-retrieval skill: AI-agent tool catalog for Nexus3 REST API + SonatypeIQ |
 
 ## Key Directories
 

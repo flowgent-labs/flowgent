@@ -18,30 +18,30 @@ commit PR → SonarQube re-scan (max 3 iterations) → report → notify.
 
 | File | Description |
 |------|-------------|
-| [`security-autonomy-fixer.yaml`](../examples/security-autonomy-fixer/flows/security-autonomy-fixer.yaml) | **Canonical** — 11-phase SonarQube-only remediation pipeline (discovery → notify). No SonatypeIQ dependency. |
-| [`sub-fix.yaml`](../examples/security-autonomy-fixer/flows/sub-fix.yaml) | Sub-flow: analyze → patch → validate for individual issue |
+| [`security-autonomy-fixer.yaml`](../examples/security-autonomy-fixer/config/flows/security-autonomy-fixer.yaml) | **Canonical** — 11-phase SonarQube-only remediation pipeline (discovery → notify). No SonatypeIQ dependency. |
+| [`sub-fix.yaml`](../examples/security-autonomy-fixer/config/flows/sub-fix.yaml) | Sub-flow: analyze → patch → validate for individual issue |
 
 > **E2E testing:**
-> - [E2E-security-fixer.md](../examples/security-autonomy-fixer/docs/E2E-security-fixer.md) — White-box PG/EMQX/Jaeger verification checklist (60+ checkpoints across 7 layers)
+> - [VERIFICATION.md](../examples/security-autonomy-fixer/e2e-verification/VERIFICATION.md) — White-box PG/EMQX/Jaeger verification checklist, including wallet x402 signing checks
 
 ### 1.2 Agent Definitions
 
 | File | Agent | Role |
 |------|-------|------|
-| [`agents/01-supervisor.yaml`](../examples/security-autonomy-fixer/agents/01-supervisor.yaml) | supervisor | Orchestration controller, enforces safety |
-| [`agents/02-issue-detector.yaml`](../examples/security-autonomy-fixer/agents/02-issue-detector.yaml) | issue-detector | Parses scan results, normalizes findings |
-| [`agents/03-fixer-agent.yaml`](../examples/security-autonomy-fixer/agents/03-fixer-agent.yaml) | fixer-agent | Generates minimal secure patches |
-| [`agents/04-security-reviewer.yaml`](../examples/security-autonomy-fixer/agents/04-security-reviewer.yaml) | security-reviewer | Reviews fixes for security correctness |
-| [`agents/05-quality-reviewer.yaml`](../examples/security-autonomy-fixer/agents/05-quality-reviewer.yaml) | quality-reviewer | Reviews code quality |
-| [`agents/06-arch-reviewer.yaml`](../examples/security-autonomy-fixer/agents/06-arch-reviewer.yaml) | arch-reviewer | Reviews architectural impact |
-| [`agents/10-git-agent.yaml`](../examples/security-autonomy-fixer/agents/07-git-agent.yaml) | git-agent | Git operations (branch, commit, PR) |
+| [`agents/01-supervisor.yaml`](../examples/security-autonomy-fixer/config/agents/01-supervisor.yaml) | supervisor | Orchestration controller, enforces safety |
+| [`agents/02-issue-detector.yaml`](../examples/security-autonomy-fixer/config/agents/02-issue-detector.yaml) | issue-detector | Parses scan results, normalizes findings |
+| [`agents/03-fixer-agent.yaml`](../examples/security-autonomy-fixer/config/agents/03-fixer-agent.yaml) | fixer-agent | Generates minimal secure patches |
+| [`agents/04-security-reviewer.yaml`](../examples/security-autonomy-fixer/config/agents/04-security-reviewer.yaml) | security-reviewer | Reviews fixes for security correctness |
+| [`agents/05-quality-reviewer.yaml`](../examples/security-autonomy-fixer/config/agents/05-quality-reviewer.yaml) | quality-reviewer | Reviews code quality |
+| [`agents/06-arch-reviewer.yaml`](../examples/security-autonomy-fixer/config/agents/06-arch-reviewer.yaml) | arch-reviewer | Reviews architectural impact |
+| [`agents/07-git-agent.yaml`](../examples/security-autonomy-fixer/config/agents/07-git-agent.yaml) | git-agent | Git operations (branch, commit, PR) |
 
 ### 1.3 MCP Tools & Skills Used
 
 | Server/Skill | Tools | Source |
 |--------------|-------|--------|
-| GitHub | `get_latest_commit`, `create_branch`, `commit_and_push`, `create_pull_request` | `examples/mcps/github/` |
-| SonarQube | `scan/get_issues`, `scan/trigger_analysis`, `scan/get_status` | `examples/mcps/sonarqube/` |
+| GitHub | `get_latest_commit`, `create_branch`, `commit_and_push`, `create_pull_request` | `examples/security-autonomy-fixer/config/mcps/github/` |
+| SonarQube | `scan/get_issues`, `scan/trigger_analysis`, `scan/get_status` | `examples/security-autonomy-fixer/config/mcps/sonarqube/` |
 
 
 ### 1.3 Architecture
@@ -84,23 +84,23 @@ type (Spring Boot / Flask / React) → commit.
 
 | File | Description |
 |------|-------------|
-| [`autotest-generation-v1.yaml`](../examples/autotest-generation/flows/autotest-generation-v1.yaml) | V1: AutoTest generation pipeline |
+| [`autotest-generator-v1.yaml`](../examples/autotest-generator/config/flows/autotest-generator-v1.yaml) | V1: AutoTest generation pipeline |
 
 ### 2.2 Agent Definitions
 
 | File | Agent | Role |
 |------|-------|------|
-| [`01-requirement-analyst.yaml`](../examples/autotest-generation/agents/01-requirement-analyst.yaml) | requirement-analyst | Analyze Confluence requirements → structured dev plan |
-| [`02-test-planner.yaml`](../examples/autotest-generation/agents/02-test-planner.yaml) | test-planner | Design test scenarios from dev plan |
-| [`03-test-generator.yaml`](../examples/autotest-generation/agents/03-test-generator.yaml) | test-generator | Generate Cucumber feature files |
+| [`01-requirement-analyst.yaml`](../examples/autotest-generator/config/agents/01-requirement-analyst.yaml) | requirement-analyst | Analyze Confluence requirements → structured dev plan |
+| [`02-test-planner.yaml`](../examples/autotest-generator/config/agents/02-test-planner.yaml) | test-planner | Design test scenarios from dev plan |
+| [`03-test-generator.yaml`](../examples/autotest-generator/config/agents/03-test-generator.yaml) | test-generator | Generate Cucumber feature files |
 
 ### 2.3 MCP Tools Used
 
 | MCP Server | Tools | Source |
 |------------|-------|--------|
-| Confluence | `analyze_requirements`, `plan_tests`, `generate_cucumber` | `examples/autotest-generation/mcps/confluence/` (external) |
+| Confluence | `analyze_requirements`, `plan_tests`, `generate_cucumber` | `examples/autotest-generator/config/mcps/confluence/` (external) |
 
-> Note: The `examples/autotest-generation/mcps/test/` directory was removed. AutoTest generation uses the
+> Note: The `examples/autotest-generator/config/mcps/test/` directory was removed. AutoTest generation uses the
 > Confluence MCP for requirement fetching. Test planning and Cucumber generation are
 > handled by the `test-planner` and `test-generator` agents directly.
 

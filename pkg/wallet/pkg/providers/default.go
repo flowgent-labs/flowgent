@@ -16,8 +16,8 @@ import (
 
 // DefaultSecretStoreProvider stores encrypted secrets in SQLite or Postgres.
 // Secrets are encrypted with AES-256-GCM. The master key comes from the
-// flowgent.yaml config (payments.wallet.secret_store.master_key or
-// master_key_file), where ${VAR} placeholders are expanded from CSI credentials.
+// flowgent.yaml config (wallet.secret_store.master_key_file), where ${VAR}
+// placeholders are expanded from CSI credentials.
 type DefaultSecretStoreProvider struct {
 	db        *sql.DB
 	gcm       cipher.AEAD
@@ -25,7 +25,7 @@ type DefaultSecretStoreProvider struct {
 }
 
 // NewDefaultSecretStoreProvider creates a new default secret store.
-// masterKeyFile comes from config (payments.wallet.secret_store.master_key_file).
+// masterKeyFile comes from config (wallet.secret_store.master_key_file).
 func NewDefaultSecretStoreProvider(db *sql.DB, masterKeyFile string) (*DefaultSecretStoreProvider, error) {
 	key, err := resolveMasterKey(masterKeyFile)
 	if err != nil {
@@ -65,7 +65,7 @@ func resolveMasterKey(masterKeyFile string) ([]byte, error) {
 		}
 		return []byte(strings.TrimSpace(string(data))), nil
 	}
-	return nil, fmt.Errorf("no master key configured: set payments.wallet.secret_store.master_key_file in flowgent.yaml")
+	return nil, fmt.Errorf("no master key configured: set wallet.secret_store.master_key_file in flowgent.yaml")
 }
 
 func (s *DefaultSecretStoreProvider) migrate(ctx context.Context) error {

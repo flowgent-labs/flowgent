@@ -13,7 +13,7 @@ required for local x402 payment development and testing.
 **Fork:** <https://github.com/wl4g-blockchain/x402-rs>
 **Upstream:** <https://github.com/x402-rs/x402-rs> (v1.4.9)
 **Image:** `registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9`
-**Go SDK (reference):** <https://github.com/wl4g-blockchain/coinbase-x402-sdk> → `src/payments/x402sdk/`
+**Go integration:** `pkg/core/pkg/client/` (`x402.go`, `x402_httpclient.go`, `facilitator/`)
 
 Official x402 protocol facilitator. Handles payment verification and onchain settlement
 with multi-chain support (EVM, Solana, Aptos).
