@@ -20,6 +20,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flowgent-labs/flowgent/api/pkg"
+	"github.com/flowgent-labs/flowgent/api/pkg/auth"
+	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
+	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -177,7 +180,7 @@ func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *ha
 func startRESTServer(state *allInOneState, agentFlows []entities.AgentFlowInfo,
 	subFlows map[string]entities.AgentFlowInfo, wsBridge *handler.NotifierWSBridge) (*http.Server, *handler.FlowDefHandler) {
 
-	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows)
+	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Tenant.NamespacePrefix, state.cfg.Tenant.DefaultTenant)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	humanHandler := handler.NewHumanHandler(state.store, nil, state.logger)
 	runHandler := handler.NewFlowRunHandler(state.store, nil, state.logger)
@@ -190,12 +193,14 @@ func startRESTServer(state *allInOneState, agentFlows []entities.AgentFlowInfo,
 		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler)
 
 	var restHandler http.Handler = restMux
-	authMiddleware, err := api.SetupAuth(state.cfg.Auth, restMux)
+	authSvc, err := auth.NewService(state.cfg.Auth)
 	if err != nil {
-		slog.Error("auth setup failed", "error", err)
+		slog.Error("auth service setup failed", "error", err)
 		os.Exit(1)
 	}
-	restHandler = authMiddleware(restMux)
+		authSvc.Register(oidc.NewService(state.cfg.Auth.OIDC, authSvc.TokenService()))
+		authSvc.Register(ldap.NewService(state.cfg.Auth.LDAP, authSvc.TokenService()))
+		restHandler = authSvc.Middleware()(restMux)
 
 	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
 	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)

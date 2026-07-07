@@ -26,6 +26,12 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 id: security-autonomy-fixer
+# priority=high is the only value the API currently accepts — Session mode
+# (a shared JM/TM pool) is temporarily disabled to simplify troubleshooting,
+# so every flow runs in Application mode: the Controller creates a dedicated
+# per-flow JM Deployment, and POST /agentflows/trigger routes the run to that
+# flow's dedicated namespace (see pkg/api/pkg/handler/flow_def.go
+# TriggerWithVars / applicationNamespace). See entities.Priority doc comment.
 priority: high
 tenant_id: default
 description: |
@@ -60,9 +66,13 @@ vars:
   repo: "rengine"
   repo_path: "/home/agent/rengine"
   max_iterations: 3
+  iteration: 0  # Engine must auto-increment this on each loop-back to generate-fixes
   target_severities: "BLOCKER,CRITICAL,MAJOR"
+  sonarqube_url: "http://172.29.235.101:9000"
   notify_email_to: "security-team@company.com"
   notify_webhook_url: "https://outlook.office.com/webhook/xxxxx"
+  # run_id, tenant_id, and flow_id are built-in runtime variables injected
+  # by the engine — they do not need to be defined here.
 
 nodes:
   # ═══════════════════════════════════════════════════════════════
@@ -186,7 +196,7 @@ nodes:
 
   - id: is-approved
     type: condition
-    expression: "${tribunal.decision == true}"
+    expression: "${tribunal.decision} == true"
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 8: HUMAN APPROVAL — Async approval gate
@@ -197,7 +207,7 @@ nodes:
     approval:
       timeout: 24h
       on_approve: continue
-      on_reject: "to: generate-fixes"
+      on_reject: abort  # Engine resolveAction only supports: continue|abort|skip
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 9: COMMIT & PR — Push patches to repository
@@ -279,7 +289,7 @@ nodes:
       factor: 1.0
     script: |
       #!/bin/bash
-      SQ_URL="${SONARQUBE_URL:-http://172.29.235.101:9000}"
+      SQ_URL="${SONARQUBE_URL:-${vars.sonarqube_url}}"
       SQ_TOKEN="${SONARQUBE_TOKEN}"
       PROJECT_KEY="${vars.repo}"
       STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
@@ -290,8 +300,7 @@ nodes:
     network_policy:
       mode: allowlist
       allowed:
-        - "172.29.235.101:9000"
-        - "localhost:9000"
+        - "${vars.sonarqube_url}"
 
   - id: check-resolved
     type: tool
@@ -320,7 +329,7 @@ nodes:
 
   - id: fix-complete
     type: condition
-    expression: "${compare-results.resolution == complete || compare-results.resolution == max_iterations_reached}"
+    expression: "${compare-results.resolution} == 'complete' || ${compare-results.resolution} == 'max_iterations_reached'"
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 11: REPORT — Final summary + multi-channel notify
@@ -355,7 +364,9 @@ nodes:
 
   - id: notify-email
     type: tool
-    tool: github
+    tool: notifier
+    # NOTE: Requires a dedicated email notifier MCP server (e.g. SMTP relay).
+    # Replace 'tool: notifier' with the actual MCP server name.
     input:
       action: send_email
       to: "${vars.notify_email_to}"
@@ -364,7 +375,9 @@ nodes:
 
   - id: notify-teams
     type: tool
-    tool: github
+    tool: notifier
+    # NOTE: Requires a dedicated webhook notifier MCP server (e.g. Teams/Slack).
+    # Replace 'tool: notifier' with the actual MCP server name.
     input:
       action: webhook_notify
       webhook_url: "${vars.notify_webhook_url}"
@@ -397,6 +410,7 @@ edges:
   - { from: supervisor-check, to: is-approved }
 
   # If approved → Human → Commit → PR
+  # (Human node on_reject: abort stops the flow; no separate edge needed)
   - { from: is-approved, to: human-approval, condition: true }
   - { from: human-approval, to: create-branch }
   - { from: create-branch, to: commit-fixes }

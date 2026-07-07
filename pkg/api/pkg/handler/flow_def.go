@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -24,17 +25,27 @@ var flowDefTracer = tracing.Tracer("flowgent/api/flowdef")
 
 // FlowDefHandler manages flow definition CRUD, watch API, and in-memory cache.
 type FlowDefHandler struct {
-	store        store.IStore
-	afStore      agentflow.IAgentFlowStore
-	frStore      flowrun.IFlowRunStore
-	logger       *utils.Logger
-	agentFlows   map[string]*entities.AgentFlowInfo
-	mu           sync.RWMutex
-	watchVersion int64
-	watchChs     []chan struct{}
+	store           store.IStore
+	afStore         agentflow.IAgentFlowStore
+	frStore         flowrun.IFlowRunStore
+	logger          *utils.Logger
+	agentFlows      map[string]*entities.AgentFlowInfo
+	namespacePrefix string
+	defaultTenant   string
+	mu              sync.RWMutex
+	watchVersion    int64
+	watchChs        []chan struct{}
 }
 
-func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.AgentFlowInfo, subFlows map[string]entities.AgentFlowInfo) *FlowDefHandler {
+// NewFlowDefHandler creates a FlowDefHandler. namespacePrefix is used to
+// compute the default per-tenant K8s namespace for flows that don't set an
+// explicit Namespace — it must match tenant.namespace_prefix so that Trigger
+// (Path A) routes runs into the same namespace the Controller uses when
+// creating the dedicated JM Deployment (see
+// pkg/controller/pkg/controller.go applicationNamespace). defaultTenant is
+// the fallback tenant ID (tenant.default_tenant) used when a flow spec
+// doesn't carry its own TenantID.
+func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.AgentFlowInfo, subFlows map[string]entities.AgentFlowInfo, namespacePrefix string, defaultTenant string) *FlowDefHandler {
 	afMap := make(map[string]*entities.AgentFlowInfo)
 	for i := range agentFlows {
 		afMap[agentFlows[i].ID] = &agentFlows[i]
@@ -53,7 +64,46 @@ func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entiti
 		afStore = agentflow.NewAgentFlowSQLiteStore(db)
 		frStore = flowrun.NewFlowRunSQLiteStore(db)
 	}
-	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, logger: logger, agentFlows: afMap, watchVersion: 1}
+	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, logger: logger, agentFlows: afMap, namespacePrefix: defaultNamespacePrefix(namespacePrefix), defaultTenant: defaultTenantID(defaultTenant), watchVersion: 1}
+}
+
+// defaultNamespacePrefix falls back to "flowgent-" when unset, so
+// Application-mode routing never derives an unprefixed (and potentially
+// colliding) namespace.
+func defaultNamespacePrefix(prefix string) string {
+	if prefix == "" {
+		return "flowgent-"
+	}
+	return prefix
+}
+
+// defaultTenantID falls back to "default" when unset, mirroring the
+// tenant-fallback convention used by every cmd/ entrypoint (see e.g.
+// pkg/cmd/pkg/controller/controller.go) — cfg.Tenant.DefaultTenant has no
+// viper default of its own (pkg/config/pkg/config.go TenantConfig), so an
+// omitted tenant: block in the ConfigMap must still resolve consistently
+// here and in the Controller (applicationNamespace / c.tenant).
+func defaultTenantID(tenant string) string {
+	if tenant == "" {
+		return "default"
+	}
+	return tenant
+}
+
+// normalizePriority defaults an unset Priority to PriorityHigh and rejects
+// any other value. Session mode (low/medium priorities) is currently
+// disabled — see entities.Priority doc comment — so PriorityHigh is the only
+// value the API accepts; this keeps the field reserved on the wire/schema
+// for a future Session-mode reintroduction without silently accepting values
+// that nothing in the Controller/JM would honor.
+func normalizePriority(p entities.Priority) (entities.Priority, error) {
+	if p == "" {
+		return entities.PriorityHigh, nil
+	}
+	if p != entities.PriorityHigh {
+		return "", fmt.Errorf("priority %q is not supported (Session mode is disabled; only %q is currently accepted)", p, entities.PriorityHigh)
+	}
+	return p, nil
 }
 
 func (h *FlowDefHandler) notifyWatchers() {
@@ -139,6 +189,12 @@ func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id required", 400)
 		return
 	}
+	priority, err := normalizePriority(spec.Priority)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	spec.Priority = priority
 	spec.TenantID = tenant
 	createdBy, _ := r.Context().Value(CtxUserID).(string)
 	if err := h.afStore.SaveSpec(r.Context(), &spec, createdBy, "API create"); err != nil {
@@ -169,6 +225,12 @@ func (h *FlowDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", 400)
 		return
 	}
+	priority, err := normalizePriority(spec.Priority)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	spec.Priority = priority
 	spec.ID, spec.TenantID = id, tenant
 	createdBy, _ := r.Context().Value(CtxUserID).(string)
 	if err := h.afStore.SaveSpec(r.Context(), &spec, createdBy, "API update"); err != nil {
@@ -202,7 +264,14 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "agentflow not found", 404)
 		return
 	}
-	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars}
+	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars, Priority: spec.Priority}
+	// Every flow has a dedicated per-flow JM Deployment that only polls its
+	// own namespace (see pkg/controller/pkg/controller.go
+	// ensureApplicationInfra / applicationNamespace) — Session mode (a
+	// shared JM pool picking up namespace="" runs) is currently disabled.
+	// Route the run there instead of namespace="", which nothing would ever
+	// pick up.
+	run.Namespace = h.applicationNamespace(spec)
 	run.SetTrigger(trigger)
 	if err := h.frStore.Create(ctx, run); err != nil {
 		http.Error(w, "internal", 500)
@@ -210,6 +279,24 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"run_id": run.ID, "status": string(run.Status), "tenant": r.PathValue("tenant"), "agentflow_id": agentFlowID})
+}
+
+// applicationNamespace mirrors pkg/controller/pkg/controller.go's
+// applicationNamespace so Trigger (Path A) and the Controller (Path B) agree
+// on which namespace a given Application-mode flow's dedicated JM lives in.
+// Per §1.3/§4.3 of docs/01-L1-Engine-Architecture.md, tenant isolation is
+// per-TENANT namespace (not per-flow) — every flow belonging to the same
+// tenant shares one namespace, with each flow's dedicated JM Deployment
+// disambiguated by name (flowgent-jobmanager-{tenantId}-{flowId}).
+func (h *FlowDefHandler) applicationNamespace(spec *entities.AgentFlowInfo) string {
+	if spec.Namespace != "" {
+		return spec.Namespace
+	}
+	tenantID := spec.TenantID
+	if tenantID == "" {
+		tenantID = h.defaultTenant
+	}
+	return h.namespacePrefix + tenantID
 }
 
 func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {

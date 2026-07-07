@@ -27,7 +27,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
-const glauthAddr = "localhost:389"
+const glauthAddr = "localhost:3389"
 const glauthBaseDN = "dc=example,dc=com"
 
 // ldapAvailable checks if the GLAuth test server is reachable.
@@ -67,7 +67,7 @@ func TestE2E_LDAP_Authenticate_Success(t *testing.T) {
 
 	cfg := testLDAPConfig()
 	tokenService := mustTokenService(t)
-	provider := ldap_auth.NewProvider(cfg, tokenService)
+	provider := ldap_auth.NewService(cfg, tokenService)
 
 	for _, tu := range testUsers {
 		t.Run(tu.username, func(t *testing.T) {
@@ -76,11 +76,7 @@ func TestE2E_LDAP_Authenticate_Success(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/auth/login/ldap", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
-
-			// Register routes and serve
-			mux := http.NewServeMux()
-			provider.RegisterRoutes(mux)
-			mux.ServeHTTP(w, req)
+			provider.ServeHTTP(w, req)
 
 			resp := w.Result()
 			defer resp.Body.Close()
@@ -126,16 +122,14 @@ func TestE2E_LDAP_Authenticate_InvalidPassword(t *testing.T) {
 
 	cfg := testLDAPConfig()
 	tokenService := mustTokenService(t)
-	provider := ldap_auth.NewProvider(cfg, tokenService)
+	provider := ldap_auth.NewService(cfg, tokenService)
 
 	body := `{"username":"jdoe","password":"wrong_password"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/login/ldap", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	mux := http.NewServeMux()
-	provider.RegisterRoutes(mux)
-	mux.ServeHTTP(w, req)
+	provider.ServeHTTP(w, req)
 
 	resp := w.Result()
 	defer resp.Body.Close()
@@ -152,16 +146,14 @@ func TestE2E_LDAP_Authenticate_NonexistentUser(t *testing.T) {
 
 	cfg := testLDAPConfig()
 	tokenService := mustTokenService(t)
-	provider := ldap_auth.NewProvider(cfg, tokenService)
+	provider := ldap_auth.NewService(cfg, tokenService)
 
 	body := `{"username":"nonexistent","password":"password123"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/login/ldap", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	mux := http.NewServeMux()
-	provider.RegisterRoutes(mux)
-	mux.ServeHTTP(w, req)
+	provider.ServeHTTP(w, req)
 
 	resp := w.Result()
 	defer resp.Body.Close()
@@ -180,7 +172,7 @@ func TestE2E_LDAP_JWTTokenValidation(t *testing.T) {
 
 	cfg := testLDAPConfig()
 	tokenService := mustTokenService(t)
-	provider := ldap_auth.NewProvider(cfg, tokenService)
+	provider := ldap_auth.NewService(cfg, tokenService)
 
 	// Login to get a token
 	body := `{"username":"jdoe","password":"password123"}`
@@ -188,9 +180,7 @@ func TestE2E_LDAP_JWTTokenValidation(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	mux := http.NewServeMux()
-	provider.RegisterRoutes(mux)
-	mux.ServeHTTP(w, req)
+	provider.ServeHTTP(w, req)
 
 	var result map[string]any
 	json.NewDecoder(w.Result().Body).Decode(&result)
@@ -253,16 +243,16 @@ func TestE2E_LDAP_DirectSearch_MultiDomain(t *testing.T) {
 	defer conn.Close()
 
 	// Bind as service account
-	if err := conn.Bind("cn=svc-flowgent,ou=Users,"+glauthBaseDN, "password123"); err != nil {
+	if err := conn.Bind("cn=svc-flowgent,"+glauthBaseDN, "password123"); err != nil {
 		t.Fatalf("bind: %v", err)
 	}
 
 	// Search for a user
 	req := ldap_auth.SearchRequest{
-		BaseDN:     "ou=Users," + glauthBaseDN,
+		BaseDN:     glauthBaseDN,
 		Scope:      ldap_auth.ScopeWholeSubtree,
 		Filter:     "(cn=jdoe)",
-		Attributes: []string{"cn", "mail", "sAMAccountName", "memberOf", "dn"},
+		Attributes: []string{"cn", "mail", "givenName", "memberOf", "dn"},
 		SizeLimit:  1,
 		TimeLimit:  5,
 	}
@@ -285,6 +275,9 @@ func TestE2E_LDAP_DirectSearch_MultiDomain(t *testing.T) {
 	if mail := entry.Attributes["mail"]; len(mail) == 0 || mail[0] != "jdoe@corp.example.com" {
 		t.Errorf("mail = %v, want [jdoe@corp.example.com]", mail)
 	}
+	if name := entry.Attributes["cn"]; len(name) == 0 || name[0] != "jdoe" {
+		t.Errorf("cn = %v, want [jdoe]", name)
+	}
 }
 
 // ── Test: Anonymous paths pass through ───────────────────────────
@@ -299,7 +292,7 @@ func TestE2E_LDAP_Middleware_AnonymousPaths(t *testing.T) {
 
 	cfg := config.AuthConfig{
 		JWTAlgorithm:   "ES256",
-		AnonymousPaths: []string{"/public/**", "/_/healthz"},
+		AnonymousPaths: []string{"/public/**", "/_/healthz", "/_/healthz/**"},
 	}
 	middleware := auth.Middleware(cfg, tokenService)
 	wrappedHandler := middleware(anonymousHandler)
@@ -342,16 +335,14 @@ func TestE2E_LDAP_RoleMapping(t *testing.T) {
 			}
 
 			tokenService := mustTokenService(t)
-			providerWithToken := ldap_auth.NewProvider(cfg, tokenService)
+			providerWithToken := ldap_auth.NewService(cfg, tokenService)
 
 			body := fmt.Sprintf(`{"username":"%s","password":"%s"}`, tu.username, tu.password)
 			req := httptest.NewRequest(http.MethodPost, "/auth/login/ldap", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
-			mux := http.NewServeMux()
-			providerWithToken.RegisterRoutes(mux)
-			mux.ServeHTTP(w, req)
+			providerWithToken.ServeHTTP(w, req)
 
 			var result map[string]any
 			json.NewDecoder(w.Result().Body).Decode(&result)
@@ -372,14 +363,14 @@ func TestE2E_LDAP_RoleMapping(t *testing.T) {
 
 func testLDAPConfig() config.LDAPConfig {
 	return config.LDAPConfig{
-		Enabled:              true,
-		URL:                  "ldap://" + glauthAddr,
-		BaseDN:               glauthBaseDN,
-		BindDN:               "cn=svc-flowgent,ou=Users," + glauthBaseDN,
-		BindPassword:         "password123",
+		Enabled:      true,
+		URL:          "ldap://" + glauthAddr,
+		BaseDN:       glauthBaseDN,
+		BindDN:       "cn=svc-flowgent," + glauthBaseDN,
+		BindPassword: "password123",
 		Domains: []config.LDAPDomainConfig{
 			{
-				BaseDN:           "ou=Users," + glauthBaseDN,
+				BaseDN:           "dc=example,dc=com",
 				UserSearchFilter: "(cn=%s)",
 			},
 		},
@@ -387,27 +378,27 @@ func testLDAPConfig() config.LDAPConfig {
 		UsernameAttribute:    "cn",
 		EmailAttribute:       "mail",
 		DisplayNameAttribute: "givenname",
-		GroupSearchBase:      "ou=Groups," + glauthBaseDN,
-		GroupSearchFilter:    "(member=%s)",
-		GroupNameAttribute:   "cn",
+		GroupSearchBase:      "ou=groups,dc=example,dc=com",
+		GroupSearchFilter:    "(uniqueMember=%s)",
+		GroupNameAttribute:   "ou",
 		InsecureSkipVerify:   false,
 		RoleMapping: []config.LDAPRoleMapping{
-			{Match: "cn=FlowgentAdmins,ou=Groups," + glauthBaseDN, Role: "admin"},
-			{Match: "cn=FlowgentOps,ou=Groups," + glauthBaseDN, Role: "operator"},
+			{Match: "FlowgentAdmins", Role: "admin"},
+			{Match: "FlowgentOps", Role: "operator"},
 		},
 	}
 }
 
-// testJWTKeyPair generates a valid ES256 key pair for testing.
+// testJWTKeyPair contains a valid ES256 (P-256) key pair for testing.
 const testPrivateKey = `-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIG8CqL8QhK7qHkQxDqPXR6lHHqGqHxLQRXkWXhvQEBBaoAoGCCqGSM49
-AwEHoUQDQgAEi0LkNlTJKq3Vh0OJhFq1HKLhBWmBSfCRUHU3VLRgqDr0Nh9ZENG0
-nL2dFk6h6gQ8rGqEtQJYKUOBGFqXMrFNnQ==
+MHcCAQEEIICo+88pwIcpxYaJQngpUwxWR4huhj3dd9yUyGM3936eoAoGCCqGSM49
+AwEHoUQDQgAEipUhjeQH8TLc1KXQ+NZjfovpdZLuPRdwgkS1x97sRQJ44gVNZW0h
+6qqAmNRYMzoW/cS87D5yB1tSV/PtFC0E9A==
 -----END EC PRIVATE KEY-----`
 
 const testPublicKey = `-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEi0LkNlTJKq3Vh0OJhFq1HKLhBWmB
-SfCRUHU3VLRgqDr0Nh9ZENG0nL2dFk6h6gQ8rGqEtQJYKUOBGFqXMrFNnQ==
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEipUhjeQH8TLc1KXQ+NZjfovpdZLu
+PRdwgkS1x97sRQJ44gVNZW0h6qqAmNRYMzoW/cS87D5yB1tSV/PtFC0E9A==
 -----END PUBLIC KEY-----`
 
 func mustTokenService(t *testing.T) *auth.TokenService {
@@ -444,7 +435,7 @@ func TestE2E_LDAP_ServerConnectivity(t *testing.T) {
 	}
 
 	// Try service account bind
-	err = conn.Bind("cn=svc-flowgent,ou=Users,"+glauthBaseDN, "password123")
+	err = conn.Bind("cn=svc-flowgent,"+glauthBaseDN, "password123")
 	if err != nil {
 		t.Fatalf("service account bind failed: %v", err)
 	}
@@ -452,7 +443,7 @@ func TestE2E_LDAP_ServerConnectivity(t *testing.T) {
 	// Search for known users
 	for _, tu := range testUsers {
 		req := ldap_auth.SearchRequest{
-			BaseDN:     "ou=Users," + glauthBaseDN,
+			BaseDN:     glauthBaseDN,
 			Scope:      ldap_auth.ScopeWholeSubtree,
 			Filter:     fmt.Sprintf("(cn=%s)", tu.username),
 			Attributes: []string{"cn", "mail"},

@@ -2,10 +2,10 @@
 """
 Scenario 07 — Messager Module: MQTT Topics + Sandbox Chain
 
-Validates MQTT topic connectivity and message routing for all 15 topics,
+Validates MQTT topic connectivity and message routing for all 14 topics,
 plus complete Skill/Sandbox execution chain (TM → Sandbox → TM → JM).
 
-Topic Coverage (15 topics):
+Topic Coverage (14 topics, all prefixed flowgent/v1/):
 1.  exec/plans           - JM → TM ($share/tm-pool)
 2.  exec/results         - TM → JM (state callback)
 3.  sandbox/trigger      - TM → Sandbox ($share/sandbox-pool)
@@ -31,6 +31,7 @@ import sys
 import time
 import json
 import uuid
+import base64
 import requests
 from typing import Dict, Any, Optional, List
 
@@ -74,13 +75,22 @@ class MQTTTester:
     def _on_message(self, client, userdata, msg):
         topic = msg.topic
         try:
-            payload = json.loads(msg.payload.decode())
-        except:
+            envelope = json.loads(msg.payload.decode())
+        except Exception:
             payload = msg.payload.decode()
-        
+        else:
+            # Decode InterMessage envelope: extract inner JSON payload
+            if isinstance(envelope, dict) and "payload" in envelope:
+                try:
+                    inner = json.loads(base64.b64decode(envelope["payload"]).decode())
+                    envelope = inner
+                except Exception:
+                    pass  # Not base64-encoded JSON — leave as-is
+            payload = envelope
+
         if topic not in self.messages:
             self.messages[topic] = []
-        
+
         self.messages[topic].append({
             "payload": payload,
             "timestamp": time.time(),
@@ -90,22 +100,43 @@ class MQTTTester:
         """Subscribe to topic"""
         self.client.subscribe(topic)
     
-    def publish(self, topic: str, payload: Dict):
-        """Publish message"""
-        self.client.publish(topic, json.dumps(payload), qos=1)
+    def publish(self, topic: str, inner_payload: Dict, envelope_id: str = None):
+        """Publish message with InterMessage envelope (base64-encoded inner payload).
+
+        This mirrors the real InterMessage wire format used by all Flowgent
+        components (messager.go InterMessage struct with Payload []byte).
+        """
+        inner_json = json.dumps(inner_payload)
+        envelope = {
+            "id": envelope_id or str(uuid.uuid4())[:8],
+            "payload": base64.b64encode(inner_json.encode()).decode(),
+        }
+        self.client.publish(topic, json.dumps(envelope), qos=1)
     
     def wait_for_message(self, topic_filter: str, timeout: int = 5) -> Optional[Dict]:
-        """Wait for message matching topic filter"""
+        """Wait for message matching topic filter.
+
+        Strips $share/{group}/ prefix before matching because MQTT brokers
+        deliver messages with the actual publish topic, not the subscription
+        topic that includes $share/.
+        """
+        # Normalize: strip $share/{group}/ prefix for matching
+        match_filter = topic_filter
+        if topic_filter.startswith('$share/'):
+            # $share/{group}/rest/of/topic → rest/of/topic
+            parts = topic_filter.split('/', 2)
+            match_filter = parts[2] if len(parts) > 2 else topic_filter
+
         start = time.time()
-        
+
         while time.time() - start < timeout:
             for topic, msgs in self.messages.items():
-                if topic_filter in topic or self._topic_matches(topic_filter, topic):
+                if match_filter in topic or self._topic_matches(match_filter, topic):
                     if msgs:
                         msg = msgs.pop(0)
                         return {"topic": topic, **msg}
             time.sleep(0.1)
-        
+
         return None
     
     def _topic_matches(self, pattern: str, topic: str) -> bool:
@@ -367,13 +398,27 @@ def run():
             "name": "sign/request (TM → Wallet)",
             "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sign/request",
             "subscribe": f"$share/wallet-pool/flowgent/v1/+/flows/+/runs/+/sign/request",
-            "payload": {"request_id": rand_id(), "wallet": "default", "payload": "unsigned"},
+            "payload": {
+                "tenant_id": tenant,
+                "flow_id": flow_id,
+                "run_id": run_id,
+                "request_id": rand_id(),
+                "wallet": "default",
+                "payload": "unsigned",
+            },
         },
         {
             "name": "sign/response (Wallet → TM)",
             "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sign/response",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/sign/response",
-            "payload": {"request_id": rand_id(), "signature": "a" * 128},
+            "payload": {
+                "tenant_id": tenant,
+                "flow_id": flow_id,
+                "run_id": run_id,
+                "request_id": rand_id(),
+                "wallet": "default",
+                "signature": "a" * 128,
+            },
         },
         {
             "name": "heartbeat/{tmId} (TM → JM)",

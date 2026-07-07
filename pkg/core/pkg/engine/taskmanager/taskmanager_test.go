@@ -1,17 +1,26 @@
 package taskmanager
 
 import (
+	"context"
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/tests/testutil"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
+
+// fakeTaskState is a no-op TaskStateStore for unit tests that don't
+// exercise persistence (TM calls SaveTask unconditionally — see
+// taskmanager.go/taskworker.go — so a nil interface would panic).
+type fakeTaskState struct{}
+
+func (fakeTaskState) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error { return nil }
 
 func TestNewTaskManager_Defaults(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		ID:    "test-tm",
-		Store: testutil.NewMockStore(),
-		Queue: testutil.NewTestQueue(),
+		ID:       "test-tm",
+		State:    fakeTaskState{},
+		Messager: messager.NewLocalMessager(10),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -31,8 +40,8 @@ func TestNewTaskManager_Defaults(t *testing.T) {
 func TestNewTaskManager_ZeroSlotCount(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
 		SlotCount: 0,
-		Store:     testutil.NewMockStore(),
-		Queue:     testutil.NewTestQueue(),
+		State:     fakeTaskState{},
+		Messager:  messager.NewLocalMessager(10),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +54,7 @@ func TestNewTaskManager_ZeroSlotCount(t *testing.T) {
 func TestNewTaskManager_CustomSlots(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
 		ID: "tm-custom", SlotCount: 3,
-		Store: testutil.NewMockStore(), Queue: testutil.NewTestQueue(),
+		State: fakeTaskState{}, Messager: messager.NewLocalMessager(10),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +66,7 @@ func TestNewTaskManager_CustomSlots(t *testing.T) {
 
 func TestNewTaskManager_AutoID(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		Store: testutil.NewMockStore(), Queue: testutil.NewTestQueue(),
+		State: fakeTaskState{}, Messager: messager.NewLocalMessager(10),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,9 +79,9 @@ func TestNewTaskManager_AutoID(t *testing.T) {
 func TestTaskManager_StartStop(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
 		ID: "tm-startstop", SlotCount: 2,
-		Store:  testutil.NewMockStore(),
-		Queue:  testutil.NewTestQueue(),
-		Logger: utils.NewLogger("JSON", "DEBUG"),
+		State:    fakeTaskState{},
+		Messager: messager.NewLocalMessager(10),
+		Logger:   utils.NewLogger("JSON", "DEBUG"),
 	})
 	if err != nil {
 		t.Fatal(err)

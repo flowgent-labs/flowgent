@@ -49,7 +49,7 @@ ENV TZ=Asia/Shanghai
 COPY --from=builder-flowgent /out/flowgent /app/flowgent
 COPY --from=builder-github-mcp /out/github-mcp /usr/local/bin/github-mcp
 COPY --from=builder-sonarqube-mcp /out/sonarqube-mcp /usr/local/bin/sonarqube-mcp
-COPY deploy/docker/mcp-server.sh /app/mcp-server.sh
+COPY examples/security-autonomy-fixer/config/mcps/mock-server.sh /app/mcp-server.sh
 RUN chmod +x /app/mcp-server.sh
 COPY examples/ /app/examples/
 COPY etc/ /app/etc/

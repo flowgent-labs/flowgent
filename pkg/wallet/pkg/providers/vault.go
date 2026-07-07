@@ -31,13 +31,11 @@ type VaultSecretStoreProvider struct {
 }
 
 // NewVaultSecretStoreProvider creates a new Vault-backed secret store provider.
-// Token is resolved from the direct value, VAULT_TOKEN env var, or token_file.
+// Token is resolved from the config-provided value (wallet.secretStore.vault.token,
+// overridable via FLOWGENT__WALLET__SECRETSTORE__VAULT__TOKEN) or tokenFile.
 func NewVaultSecretStoreProvider(address, token, tokenFile, mountPath, secretPath, role string) (*VaultSecretStoreProvider, error) {
 	if address == "" {
 		return nil, fmt.Errorf("vault address is required")
-	}
-	if token == "" {
-		token = os.Getenv("VAULT_TOKEN")
 	}
 	if token == "" && tokenFile != "" {
 		data, err := os.ReadFile(tokenFile)
@@ -47,7 +45,7 @@ func NewVaultSecretStoreProvider(address, token, tokenFile, mountPath, secretPat
 		token = strings.TrimSpace(string(data))
 	}
 	if token == "" {
-		return nil, fmt.Errorf("vault token is required: set address/token or VAULT_TOKEN env")
+		return nil, fmt.Errorf("vault token is required: set wallet.secretStore.vault.token or tokenFile")
 	}
 	if mountPath == "" {
 		mountPath = "secret"

@@ -46,25 +46,48 @@ def rand_id() -> str:
 
 
 def create_flow(flow_def: Dict) -> str:
-    """Create flow and return flow ID"""
+    """Create flow and return the logical agentflow_id (for use with /agentflows/trigger).
+
+    flow_def must be a flat entities.AgentFlowInfo shape ("id"/"nodes"/"edges" at
+    top level) — POST /agentflows decodes the body directly into that struct
+    (see pkg/api/pkg/handler/flow_def.go Create), there is no nested "definition".
+
+    priority defaults to "high" here — it is currently the only value the API
+    accepts (Session mode / shared JM-TM pool is temporarily disabled; see
+    entities.Priority doc comment and VERIFICATION.md). Every flow runs in
+    Application mode: FlowDefHandler.TriggerWithVars (Path A, used by
+    trigger_flow() below) routes the run to the flow's dedicated per-flow
+    namespace (flowgent-{flowID} by default) to match the dedicated JM
+    Deployment the Controller creates for it. The Controller reconciles
+    (creates the dedicated JM Deployment) on a ~10s tick, so allow a few
+    seconds after create_flow() before the run actually starts executing.
+    """
+    flow_def.setdefault("priority", "high")
     resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/agentflows", json=flow_def, timeout=10)
     if resp.status_code not in [200, 201]:
         raise Exception(f"Flow creation failed: {resp.status_code} {resp.text}")
-    
-    return resp.json().get("id")
+    return flow_def["id"]
 
 
-def trigger_flow(flow_id: str, vars: Dict = None) -> str:
-    """Trigger flow and return run ID"""
-    payload = {"agentflow_id": flow_id}
-    if vars:
-        payload["vars"] = vars
-    
-    resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/runs", json=payload, timeout=10)
+def trigger_flow(agentflow_id: str, flow_vars: Dict = None) -> str:
+    """Trigger flow via canonical /agentflows/trigger endpoint and return run_id."""
+    payload = {"agentflow_id": agentflow_id}
+    if flow_vars:
+        payload["vars"] = flow_vars
+
+    resp = requests.post(
+        f"{API_BASE}/api/v1/{TENANT}/agentflows/trigger",
+        json=payload,
+        timeout=10,
+    )
     if resp.status_code not in [200, 201]:
         raise Exception(f"Trigger failed: {resp.status_code} {resp.text}")
-    
-    return resp.json().get("id")
+
+    data = resp.json()
+    run_id = data.get("run_id") or data.get("id")
+    if not run_id:
+        raise Exception(f"No run_id in trigger response: {data}")
+    return run_id
 
 
 def wait_for_run_completion(run_id: str, timeout: int = 60) -> str:
@@ -99,19 +122,16 @@ def test_linear_chain() -> bool:
     
     try:
         flow_def = {
-            "agentflow_id": f"test-linear-{rand_id()}",
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "A", "type": "noop"},
-                    {"id": "B", "type": "noop"},
-                    {"id": "C", "type": "noop"},
-                ],
-                "edges": [
-                    {"from": "A", "to": "B"},
-                    {"from": "B", "to": "C"},
-                ],
-            },
+            "id": f"test-linear-{rand_id()}",
+            "nodes": [
+                {"id": "A", "type": "noop"},
+                {"id": "B", "type": "noop"},
+                {"id": "C", "type": "noop"},
+            ],
+            "edges": [
+                {"from": "A", "to": "B"},
+                {"from": "B", "to": "C"},
+            ],
         }
         
         flow_id = create_flow(flow_def)
@@ -142,25 +162,22 @@ def test_parallel_fanout() -> bool:
     
     try:
         flow_def = {
-            "agentflow_id": f"test-parallel-{rand_id()}",
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "A", "type": "noop"},
-                    {"id": "B1", "type": "noop"},
-                    {"id": "B2", "type": "noop"},
-                    {"id": "B3", "type": "noop"},
-                    {"id": "C", "type": "noop"},
-                ],
-                "edges": [
-                    {"from": "A", "to": "B1"},
-                    {"from": "A", "to": "B2"},
-                    {"from": "A", "to": "B3"},
-                    {"from": "B1", "to": "C"},
-                    {"from": "B2", "to": "C"},
-                    {"from": "B3", "to": "C"},
-                ],
-            },
+            "id": f"test-parallel-{rand_id()}",
+            "nodes": [
+                {"id": "A", "type": "noop"},
+                {"id": "B1", "type": "noop"},
+                {"id": "B2", "type": "noop"},
+                {"id": "B3", "type": "noop"},
+                {"id": "C", "type": "noop"},
+            ],
+            "edges": [
+                {"from": "A", "to": "B1"},
+                {"from": "A", "to": "B2"},
+                {"from": "A", "to": "B3"},
+                {"from": "B1", "to": "C"},
+                {"from": "B2", "to": "C"},
+                {"from": "B3", "to": "C"},
+            ],
         }
         
         flow_id = create_flow(flow_def)
@@ -204,21 +221,18 @@ def test_condition_routing() -> bool:
     
     try:
         flow_def = {
-            "agentflow_id": f"test-condition-{rand_id()}",
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "A", "type": "noop", "input": {"score": 0.9}},
-                    {"id": "cond", "type": "condition", "expression": "${A.score} > 0.8"},
-                    {"id": "B", "type": "noop"},  # true path
-                    {"id": "C", "type": "noop"},  # false path
-                ],
-                "edges": [
-                    {"from": "A", "to": "cond"},
-                    {"from": "cond", "to": "B", "condition": True},
-                    {"from": "cond", "to": "C", "condition": False},
-                ],
-            },
+            "id": f"test-condition-{rand_id()}",
+            "nodes": [
+                {"id": "A", "type": "noop", "input": {"score": 0.9}},
+                {"id": "cond", "type": "condition", "expression": "${A.score} > 0.8"},
+                {"id": "B", "type": "noop"},  # true path
+                {"id": "C", "type": "noop"},  # false path
+            ],
+            "edges": [
+                {"from": "A", "to": "cond"},
+                {"from": "cond", "to": "B", "condition": True},
+                {"from": "cond", "to": "C", "condition": False},
+            ],
         }
         
         flow_id = create_flow(flow_def)
@@ -237,8 +251,8 @@ def test_condition_routing() -> bool:
         
         # Verify C skipped (false path)
         c_task = next((t for t in tasks if t["node_id"] == "C"), None)
-        if c_task and c_task["status"] == "COMPLETED":
-            raise AssertionError("C (false path) should be skipped")
+        if c_task and c_task["status"] in ("COMPLETED", "RUNNING"):
+            raise AssertionError(f"C (false path) should be skipped, got {c_task['status']}")
         
         print(f"        ✓ Condition routing verified")
         return True
@@ -267,24 +281,21 @@ def test_map_iteration() -> bool:
     print(f"\n    • Testing Map Iteration (A → map(B) → C)...")
     try:
         flow_def = {
-            "agentflow_id": f"test-map-{rand_id()}",
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "A", "type": "noop", "input": {"items": ["x", "y", "z"]}},
-                    {
-                        "id": "mapB",
-                        "type": "map",
-                        "source": "${A.items}",
-                        "node": {"id": "B", "type": "noop", "input": {"item": "${item}"}},
-                    },
-                    {"id": "C", "type": "noop"},
-                ],
-                "edges": [
-                    {"from": "A", "to": "mapB"},
-                    {"from": "mapB", "to": "C"},
-                ],
-            },
+            "id": f"test-map-{rand_id()}",
+            "nodes": [
+                {"id": "A", "type": "noop", "input": {"items": ["x", "y", "z"]}},
+                {
+                    "id": "mapB",
+                    "type": "map",
+                    "source": "${A.items}",
+                    "node": {"id": "B", "type": "noop", "input": {"item": "${item}"}},
+                },
+                {"id": "C", "type": "noop"},
+            ],
+            "edges": [
+                {"from": "A", "to": "mapB"},
+                {"from": "mapB", "to": "C"},
+            ],
         }
         flow_id = create_flow(flow_def)
         run_id = trigger_flow(flow_id)
@@ -309,32 +320,26 @@ def test_agentflow_nesting() -> bool:
     parent_id = f"test-parent-{rand_id()}"
     try:
         sub_flow = {
-            "agentflow_id": sub_id,
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "B", "type": "noop"},
-                    {"id": "C", "type": "noop"},
-                ],
-                "edges": [{"from": "B", "to": "C"}],
-            },
+            "id": sub_id,
+            "nodes": [
+                {"id": "B", "type": "noop"},
+                {"id": "C", "type": "noop"},
+            ],
+            "edges": [{"from": "B", "to": "C"}],
         }
         create_flow(sub_flow)
 
         parent_flow = {
-            "agentflow_id": parent_id,
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "A", "type": "noop"},
-                    {"id": "sub", "type": "agentflow", "agentflow": sub_id},
-                    {"id": "D", "type": "noop"},
-                ],
-                "edges": [
-                    {"from": "A", "to": "sub"},
-                    {"from": "sub", "to": "D"},
-                ],
-            },
+            "id": parent_id,
+            "nodes": [
+                {"id": "A", "type": "noop"},
+                {"id": "sub", "type": "agentflow", "agentflow": sub_id},
+                {"id": "D", "type": "noop"},
+            ],
+            "edges": [
+                {"from": "A", "to": "sub"},
+                {"from": "sub", "to": "D"},
+            ],
         }
         create_flow(parent_flow)
         run_id = trigger_flow(parent_id)
@@ -357,31 +362,28 @@ def test_supervisor_gate() -> bool:
     print(f"\n    • Testing Supervisor Gate (A → B → supervisor → end)...")
     try:
         flow_def = {
-            "agentflow_id": f"test-supervisor-{rand_id()}",
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "A", "type": "noop"},
-                    {"id": "B", "type": "noop"},
-                    {
-                        "id": "supervisor",
-                        "type": "supervisor",
-                        "agent": "supervisor",
-                        "supervisor_config": {
-                            "max_retries": 1,
-                            "max_nodes": 5,
-                            "max_injections": 1,
-                            "allowed_actions": ["continue", "abort"],
-                        },
+            "id": f"test-supervisor-{rand_id()}",
+            "nodes": [
+                {"id": "A", "type": "noop"},
+                {"id": "B", "type": "noop"},
+                {
+                    "id": "supervisor",
+                    "type": "supervisor",
+                    "agent": "supervisor",
+                    "supervisor_config": {
+                        "max_retries": 1,
+                        "max_nodes": 5,
+                        "max_injections": 1,
+                        "allowed_actions": ["continue", "abort"],
                     },
-                    {"id": "end", "type": "noop"},
-                ],
-                "edges": [
-                    {"from": "A", "to": "B"},
-                    {"from": "B", "to": "supervisor"},
-                    {"from": "supervisor", "to": "end"},
-                ],
-            },
+                },
+                {"id": "end", "type": "noop"},
+            ],
+            "edges": [
+                {"from": "A", "to": "B"},
+                {"from": "B", "to": "supervisor"},
+                {"from": "supervisor", "to": "end"},
+            ],
         }
         flow_id = create_flow(flow_def)
         run_id = trigger_flow(flow_id)
@@ -428,9 +430,9 @@ def test_tribunal_strategy(strategy: str, votes: List[bool], expected: bool, wei
         edges.append({"from": "tribunal", "to": "result"})
 
         flow_def = {
-            "agentflow_id": f"test-tribunal-{strategy}-{rand_id()}",
-            "version": 1,
-            "definition": {"nodes": nodes, "edges": edges},
+            "id": f"test-tribunal-{strategy}-{rand_id()}",
+            "nodes": nodes,
+            "edges": edges,
         }
         flow_id = create_flow(flow_def)
         run_id = trigger_flow(flow_id)
@@ -458,38 +460,35 @@ def test_tribunal_majority() -> bool:
     print(f"\n    • Testing Tribunal Majority Voting...")
     
     try:
-        # This would require creating actual agent nodes that return vote decisions
-        # For now, we test the logic with a simplified flow
+        # Create flow with noop voters connected to a tribunal node,
+        # trigger execution, and verify majority voting outcome.
         
         flow_def = {
-            "agentflow_id": f"test-tribunal-{rand_id()}",
-            "version": 1,
-            "definition": {
-                "nodes": [
-                    {"id": "vote1", "type": "noop", "input": {"decision": True}},
-                    {"id": "vote2", "type": "noop", "input": {"decision": True}},
-                    {"id": "vote3", "type": "noop", "input": {"decision": False}},
-                    {
-                        "id": "tribunal",
-                        "type": "tribunal",
-                        "strategy": {"type": "majority"},
-                        "input": {
-                            "votes": [
-                                "${vote1.decision}",
-                                "${vote2.decision}",
-                                "${vote3.decision}",
-                            ]
-                        },
+            "id": f"test-tribunal-{rand_id()}",
+            "nodes": [
+                {"id": "vote1", "type": "noop", "input": {"decision": True}},
+                {"id": "vote2", "type": "noop", "input": {"decision": True}},
+                {"id": "vote3", "type": "noop", "input": {"decision": False}},
+                {
+                    "id": "tribunal",
+                    "type": "tribunal",
+                    "strategy": {"type": "majority"},
+                    "input": {
+                        "votes": [
+                            "${vote1.decision}",
+                            "${vote2.decision}",
+                            "${vote3.decision}",
+                        ]
                     },
-                    {"id": "result", "type": "noop"},
-                ],
-                "edges": [
-                    {"from": "vote1", "to": "tribunal"},
-                    {"from": "vote2", "to": "tribunal"},
-                    {"from": "vote3", "to": "tribunal"},
-                    {"from": "tribunal", "to": "result"},
-                ],
-            },
+                },
+                {"id": "result", "type": "noop"},
+            ],
+            "edges": [
+                {"from": "vote1", "to": "tribunal"},
+                {"from": "vote2", "to": "tribunal"},
+                {"from": "vote3", "to": "tribunal"},
+                {"from": "tribunal", "to": "result"},
+            ],
         }
         
         flow_id = create_flow(flow_def)

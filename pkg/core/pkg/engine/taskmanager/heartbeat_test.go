@@ -5,11 +5,10 @@ import (
 	"time"
 
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
-	"github.com/flowgent-labs/flowgent/tests/testutil"
 )
 
 func TestHeartbeatMonitor_RecordAndExpire(t *testing.T) {
-	q := testutil.NewTestQueue()
+	q := messager.NewLocalMessager(10)
 	hm := NewHeartbeatMonitor(q, 100*time.Millisecond)
 
 	hm.recordBeat(&messager.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
@@ -36,7 +35,7 @@ func TestHeartbeatMonitor_RecordAndExpire(t *testing.T) {
 }
 
 func TestHeartbeatMonitor_KeepAlive(t *testing.T) {
-	q := testutil.NewTestQueue()
+	q := messager.NewLocalMessager(10)
 	hm := NewHeartbeatMonitor(q, 100*time.Millisecond)
 
 	hm.recordBeat(&messager.Heartbeat{TMID: "tm-1", Timestamp: time.Now()})
@@ -54,7 +53,7 @@ func TestHeartbeatMonitor_KeepAlive(t *testing.T) {
 }
 
 func TestHeartbeatMonitor_DefaultTimeout(t *testing.T) {
-	q := testutil.NewTestQueue()
+	q := messager.NewLocalMessager(10)
 	hm := NewHeartbeatMonitor(q, 0) // zero → use defaultLeaseTimeout
 	if hm.leaseTimeout != defaultLeaseTimeout {
 		t.Fatalf("expected default lease timeout %v, got %v", defaultLeaseTimeout, hm.leaseTimeout)
@@ -62,7 +61,7 @@ func TestHeartbeatMonitor_DefaultTimeout(t *testing.T) {
 }
 
 func TestHeartbeatMonitor_EmptyState(t *testing.T) {
-	q := testutil.NewTestQueue()
+	q := messager.NewLocalMessager(10)
 	hm := NewHeartbeatMonitor(q, time.Second)
 	if len(hm.ActiveTMs()) != 0 {
 		t.Fatal("expected 0 active TMs initially")

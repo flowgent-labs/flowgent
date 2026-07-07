@@ -1,6 +1,8 @@
-// Package auth provides a unified authentication layer with pluggable providers.
-// Each provider (OIDC, LDAP) lives in its own sub-package, implements the
-// AuthProvider interface, and is independently configurable.
+// Package auth provides a unified authentication layer with pluggable backends.
+//
+// AuthService is the central orchestrator: it holds the JWT TokenService, manages
+// backend services (OIDC, LDAP), and produces JWT validation middleware that
+// internally routes auth requests to the correct backend.
 package auth
 
 import (
@@ -31,7 +33,7 @@ const (
 
 // ── UserInfo ─────────────────────────────────────────────────────
 
-// UserInfo is the normalized user representation returned by all auth providers.
+// UserInfo is the normalized user representation returned by all auth backends.
 type UserInfo struct {
 	UserID      string
 	Username    string
@@ -42,13 +44,116 @@ type UserInfo struct {
 	Extra       map[string]any
 }
 
-// ── AuthProvider interface ────────────────────────────────────────
+// ── AuthProviderService interface ──────────────────────────────────
 
-// AuthProvider is implemented by every authentication provider (OIDC, LDAP, etc.).
-type AuthProvider interface {
+// AuthProviderService is implemented by every authentication backend (OIDC, LDAP).
+type AuthProviderService interface {
 	Name() string
 	Enabled() bool
-	RegisterRoutes(mux *http.ServeMux)
+	CanHandle(r *http.Request) bool
+	ServeHTTP(w http.ResponseWriter, r *http.Request)
+}
+
+// ── AuthService ────────────────────────────────────────────────────
+
+// AuthService is the central authentication orchestrator.
+type AuthService struct {
+	cfg          config.AuthConfig
+	tokenService *TokenService
+	providers    []AuthProviderService
+}
+
+// NewService creates an AuthService and initializes the JWT TokenService.
+func NewService(cfg config.AuthConfig) (*AuthService, error) {
+	ts, err := NewTokenService(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthService{cfg: cfg, tokenService: ts}, nil
+}
+
+// TokenService returns the shared JWT token service.
+func (s *AuthService) TokenService() *TokenService { return s.tokenService }
+
+// Register adds an authentication backend service.
+func (s *AuthService) Register(p AuthProviderService) {
+	s.providers = append(s.providers, p)
+	slog.Info("auth: backend registered", "name", p.Name())
+}
+
+// Middleware returns an http.Handler that:
+//  1. Routes auth requests (login/callback) to the correct backend service
+//  2. Passes through anonymous paths without authentication
+//  3. Validates JWT Bearer tokens on all other requests
+//  4. Injects UserInfo into the request context
+func (s *AuthService) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Step 1: Route to auth backend if the request matches one
+			for _, p := range s.providers {
+				if p.Enabled() && p.CanHandle(r) {
+					p.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// Step 2: Pass through anonymous paths
+			for _, p := range s.cfg.AnonymousPaths {
+				if matchGlob(p, r.URL.Path) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// Step 3: JWT validation
+			alg := s.tokenService.Algorithm()
+			publicKey := s.tokenService.PublicKey()
+
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				writeAuthError(w, "Authorization header is required")
+				return
+			}
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				writeAuthError(w, "Invalid Authorization header format")
+				return
+			}
+
+			claims := &jwt.RegisteredClaims{}
+			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (any, error) {
+				if t.Method.Alg() != alg {
+					return nil, fmt.Errorf("unexpected signing algorithm: %s", t.Method.Alg())
+				}
+				return publicKey, nil
+			})
+			if err != nil || !token.Valid {
+				writeAuthError(w, "Invalid or expired token")
+				return
+			}
+
+			user := &UserInfo{
+				UserID: claims.Subject,
+				Extra:  make(map[string]any),
+			}
+			if uid, ok := token.Header["uid"].(string); ok {
+				user.UserID = uid
+			}
+			if uname, ok := token.Header["uname"].(string); ok {
+				user.Username = uname
+			}
+			if role, ok := token.Header["role"].(string); ok {
+				user.Role = role
+			}
+
+			ctx := context.WithValue(r.Context(), CtxJWTClaims, claims)
+			ctx = context.WithValue(ctx, CtxUserID, user.UserID)
+			ctx = context.WithValue(ctx, CtxUserRole, user.Role)
+
+			slog.Debug("auth: JWT validated", "user", user.UserID, "username", user.Username)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
 // ── JWT Token Service ─────────────────────────────────────────────
@@ -150,12 +255,11 @@ func (s *TokenService) PublicKey() any { return s.publicKey }
 // Algorithm returns the configured JWT signing algorithm.
 func (s *TokenService) Algorithm() string { return s.algorithm }
 
-// ── Auth Middleware ────────────────────────────────────────────────
+// ── Standalone JWT Middleware ─────────────────────────────────────
 
-// Middleware returns an http.Handler wrapper that:
-//  1. Passes through anonymous paths without authentication
-//  2. Validates JWT Bearer tokens on all other requests
-//  3. Injects UserInfo into the request context
+// Middleware returns an http.Handler wrapper that validates JWT Bearer tokens.
+// Use AuthService.Middleware() for the full middleware that also routes to
+// auth backends. This standalone version only does JWT + anonymous paths.
 func Middleware(cfg config.AuthConfig, tokenService *TokenService) func(http.Handler) http.Handler {
 	anonymousPaths := cfg.AnonymousPaths
 	alg := tokenService.Algorithm()
@@ -259,8 +363,8 @@ func matchGlob(pattern, path string) bool {
 	if pattern == path {
 		return true
 	}
-	if len(pattern) > 2 && pattern[len(pattern)-2:] == "/**" {
-		pfx := pattern[:len(pattern)-2]
+	if len(pattern) >= 3 && pattern[len(pattern)-3:] == "/**" {
+		pfx := pattern[:len(pattern)-3]
 		return len(path) >= len(pfx) && path[:len(pfx)] == pfx
 	}
 	return false
@@ -272,7 +376,7 @@ func writeAuthError(w http.ResponseWriter, msg string) {
 	fmt.Fprintf(w, `{"success":false,"message":"%s"}`, msg)
 }
 
-// WriteJSON writes a JSON response. Exported for provider sub-packages.
+// WriteJSON writes a JSON response. Exported for backend sub-packages.
 func WriteJSON(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

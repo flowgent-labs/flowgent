@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
@@ -78,12 +79,13 @@ type scanner interface{ Scan(dest ...any) error }
 func scanApproval(s scanner) (*entities.ApprovalInfo, error) {
 	var e entities.ApprovalInfo
 	var expiresAt, resolvedAt sql.NullTime
+	var createdAtStr, updatedAtStr string
 	err := s.Scan(
 		&e.ID, &e.Token, &e.AgentFlowRunID, &e.TaskRunID, &e.Status,
 		&e.Approved, &e.Comment, &e.Timeout,
 		&expiresAt, &resolvedAt,
 		&e.Description, &e.TenantID,
-		&e.CreatedAt, &e.CreatedBy, &e.UpdatedAt, &e.UpdatedBy, &e.DelFlag,
+		&createdAtStr, &e.CreatedBy, &updatedAtStr, &e.UpdatedBy, &e.DelFlag,
 	)
 	if err != nil {
 		return nil, err
@@ -93,6 +95,15 @@ func scanApproval(s scanner) (*entities.ApprovalInfo, error) {
 	}
 	if resolvedAt.Valid {
 		e.ResolvedAt = &resolvedAt.Time
+	}
+	// created_at/updated_at come back as TEXT (SQLite has no native
+	// timestamp type) — database/sql cannot scan a string directly into
+	// *time.Time, so parse it explicitly (mirrors utils.ScanStruct).
+	if t, err := utils.ParseTime(createdAtStr); err == nil {
+		e.CreatedAt = t
+	}
+	if t, err := utils.ParseTime(updatedAtStr); err == nil {
+		e.UpdatedAt = t
 	}
 	return &e, nil
 }

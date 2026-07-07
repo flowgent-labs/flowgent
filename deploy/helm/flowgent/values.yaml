@@ -254,3 +254,19 @@ orchestration:
   maxConcurrentFlows: 10
   flowExecutionTimeout: "30m"
   maxNodeRetries: 3
+
+# ═══════════════════════════════════════════════════════════════
+# Tenant — multi-tenancy defaults
+#
+# namespacePrefix MUST match between the apiserver (Trigger routing) and the
+# Controller (per-tenant JM Deployment namespace placement — every flow's
+# dedicated JM Deployment lives in its tenant's shared namespace,
+# "{namespacePrefix}{tenantID}") — see pkg/controller/pkg/controller.go
+# applicationNamespace doc comment. Both already fall back to "flowgent-" in
+# Go if left unset here, but setting it explicitly keeps the rendered
+# ConfigMap self-documenting and in sync with etc/flowgent.yaml (the
+# non-Helm default config).
+# ═══════════════════════════════════════════════════════════════
+tenant:
+  defaultTenant: "default"
+  namespacePrefix: "flowgent-"

@@ -12,6 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/api/pkg/auth"
+	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
+	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -58,7 +61,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 
 	// ── Handlers ──
 	healthHandler := &handler.HealthHandler{}
-	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows)
+	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Tenant.NamespacePrefix, cfg.Tenant.DefaultTenant)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
 	humanHandler := handler.NewHumanHandler(storeImpl, nil, logger)
 	runHandler := handler.NewFlowRunHandler(storeImpl, nil, logger)
@@ -72,11 +75,13 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
 		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler)
 	var restHandler http.Handler = restMux
-	authMiddleware, err := SetupAuth(cfg.Auth, restMux)
+	authSvc, err := auth.NewService(cfg.Auth)
 	if err != nil {
-		return nil, fmt.Errorf("auth setup: %w", err)
+		return nil, fmt.Errorf("auth service: %w", err)
 	}
-	restHandler = authMiddleware(restMux)
+	authSvc.Register(oidc.NewService(cfg.Auth.OIDC, authSvc.TokenService()))
+	authSvc.Register(ldap.NewService(cfg.Auth.LDAP, authSvc.TokenService()))
+	restHandler = authSvc.Middleware()(restMux)
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
 	if readTO == 0 {

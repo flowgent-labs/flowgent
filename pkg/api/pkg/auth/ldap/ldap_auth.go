@@ -17,27 +17,32 @@ import (
 
 // ── Provider ──────────────────────────────────────────────────────
 
-// Provider implements auth.AuthProvider for enterprise LDAP/AD authentication.
-type Provider struct {
+// Service implements auth.AuthProviderService for enterprise LDAP/AD authentication.
+type Service struct {
 	cfg          config.LDAPConfig
 	tokenService *auth.TokenService
 }
 
-// NewProvider creates an LDAP auth provider.
-func NewProvider(cfg config.LDAPConfig, tokenService *auth.TokenService) *Provider {
-	return &Provider{cfg: cfg, tokenService: tokenService}
+// NewService creates an LDAP auth service.
+func NewService(cfg config.LDAPConfig, tokenService *auth.TokenService) *Service {
+	return &Service{cfg: cfg, tokenService: tokenService}
 }
 
-func (p *Provider) Name() string  { return "ldap" }
-func (p *Provider) Enabled() bool { return p.cfg.Enabled }
+func (p *Service) Name() string  { return "ldap" }
+func (p *Service) Enabled() bool { return p.cfg.Enabled }
 
-// RegisterRoutes registers LDAP login endpoint (direct username/password).
-func (p *Provider) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /auth/login/ldap", p.handleLogin)
+// CanHandle reports whether this service handles the given request.
+func (p *Service) CanHandle(r *http.Request) bool {
+	return r.URL.Path == "/auth/login/ldap" && r.Method == http.MethodPost
+}
+
+// ServeHTTP handles LDAP authentication requests.
+func (p *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.handleLogin(w, r)
 }
 
 // handleLogin processes a username/password login against LDAP/AD.
-func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
+func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	username, password, err := parseCredentials(r)
 	if err != nil {
 		auth.WriteJSON(w, http.StatusBadRequest,
@@ -75,7 +80,7 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // authenticate validates credentials against LDAP directory.
 // Multi-domain: tries each configured domain until the user is found and authenticated.
-func (p *Provider) authenticate(r *http.Request, username, password string) (*auth.UserInfo, error) {
+func (p *Service) authenticate(r *http.Request, username, password string) (*auth.UserInfo, error) {
 	conn, err := p.dial()
 	if err != nil {
 		return nil, fmt.Errorf("ldap: dial: %w", err)
@@ -111,7 +116,7 @@ func (p *Provider) authenticate(r *http.Request, username, password string) (*au
 }
 
 // searchUser searches for a user across all configured domains.
-func (p *Provider) searchUser(conn LDAPConnection, username string) (string, *ldapEntry, string, error) {
+func (p *Service) searchUser(conn LDAPConnection, username string) (string, *ldapEntry, string, error) {
 	attr := p.usernameAttribute()
 	attrs := []string{attr, p.emailAttribute(), p.displayNameAttribute(), "dn", "memberOf"}
 
@@ -145,7 +150,7 @@ func (p *Provider) searchUser(conn LDAPConnection, username string) (string, *ld
 
 // domains returns the configured AD domains, falling back to a single-domain
 // representation derived from BaseDN and UserSearchFilter.
-func (p *Provider) domains() []config.LDAPDomainConfig {
+func (p *Service) domains() []config.LDAPDomainConfig {
 	if len(p.cfg.Domains) > 0 {
 		return p.cfg.Domains
 	}
@@ -158,42 +163,42 @@ func (p *Provider) domains() []config.LDAPDomainConfig {
 	return nil
 }
 
-func (p *Provider) usernameAttribute() string {
+func (p *Service) usernameAttribute() string {
 	if p.cfg.UsernameAttribute != "" {
 		return p.cfg.UsernameAttribute
 	}
 	return "cn"
 }
 
-func (p *Provider) emailAttribute() string {
+func (p *Service) emailAttribute() string {
 	if p.cfg.EmailAttribute != "" {
 		return p.cfg.EmailAttribute
 	}
 	return "mail"
 }
 
-func (p *Provider) displayNameAttribute() string {
+func (p *Service) displayNameAttribute() string {
 	if p.cfg.DisplayNameAttribute != "" {
 		return p.cfg.DisplayNameAttribute
 	}
 	return "cn"
 }
 
-func (p *Provider) groupNameAttribute() string {
+func (p *Service) groupNameAttribute() string {
 	if p.cfg.GroupNameAttribute != "" {
 		return p.cfg.GroupNameAttribute
 	}
 	return "cn"
 }
 
-func (p *Provider) userSearchFilter() string {
+func (p *Service) userSearchFilter() string {
 	if p.cfg.UserSearchFilter != "" {
 		return p.cfg.UserSearchFilter
 	}
 	return "(cn=%s)"
 }
 
-func (p *Provider) groupSearchFilter() string {
+func (p *Service) groupSearchFilter() string {
 	if p.cfg.GroupSearchFilter != "" {
 		return p.cfg.GroupSearchFilter
 	}
@@ -201,7 +206,7 @@ func (p *Provider) groupSearchFilter() string {
 }
 
 // buildUserInfo extracts user attributes from an LDAP entry.
-func (p *Provider) buildUserInfo(entry *ldapEntry, username, domain string) *auth.UserInfo {
+func (p *Service) buildUserInfo(entry *ldapEntry, username, domain string) *auth.UserInfo {
 	user := &auth.UserInfo{
 		UserID:      getAttr(entry, p.usernameAttribute(), username),
 		Username:    getAttr(entry, p.usernameAttribute(), username),
@@ -219,7 +224,7 @@ func (p *Provider) buildUserInfo(entry *ldapEntry, username, domain string) *aut
 }
 
 // resolveRole maps AD group memberships and/or the matched domain to a Flowgent role.
-func (p *Provider) resolveRole(groups []string, matchedDomain string) string {
+func (p *Service) resolveRole(groups []string, matchedDomain string) string {
 	for _, mapping := range p.cfg.RoleMapping {
 		// Check group-based mappings
 		for _, g := range groups {
@@ -238,7 +243,7 @@ func (p *Provider) resolveRole(groups []string, matchedDomain string) string {
 }
 
 // resolveGroups searches for groups the user belongs to.
-func (p *Provider) resolveGroups(conn LDAPConnection, userDN, username string) []string {
+func (p *Service) resolveGroups(conn LDAPConnection, userDN, username string) []string {
 	if p.cfg.GroupSearchBase == "" {
 		return nil
 	}
@@ -267,11 +272,11 @@ func (p *Provider) resolveGroups(conn LDAPConnection, userDN, username string) [
 
 // ── Connection layer ──────────────────────────────────────────────
 
-func (p *Provider) dial() (LDAPConnection, error) {
+func (p *Service) dial() (LDAPConnection, error) {
 	return DialURL(p.cfg.URL, 5*time.Second, p.cfg.InsecureSkipVerify)
 }
 
-func (p *Provider) requestTimeoutSeconds() int { return 10 }
+func (p *Service) requestTimeoutSeconds() int { return 10 }
 
 // ── Helpers ───────────────────────────────────────────────────────
 

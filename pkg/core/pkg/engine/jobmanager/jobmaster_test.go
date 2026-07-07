@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"time"
 )
 
 func TestJobManager_BasicTopology(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
 
 	ready := jm.Ready()
@@ -37,7 +35,7 @@ func TestJobManager_BasicTopology(t *testing.T) {
 }
 
 func TestJobManager_ParallelReady(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"A", "C"}})
 
 	ready := jm.Ready()
@@ -53,7 +51,7 @@ func TestJobManager_ParallelReady(t *testing.T) {
 }
 
 func TestJobManager_Skip(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
 	jm.Skip("B")
 
@@ -70,7 +68,7 @@ func TestJobManager_Skip(t *testing.T) {
 }
 
 func TestJobManager_Fail(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B"}, [][2]string{{"A", "B"}})
 	jm.Fail("A")
 
@@ -85,7 +83,7 @@ func TestJobManager_Fail(t *testing.T) {
 }
 
 func TestJobManager_Inject(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B"}, [][2]string{{"A", "B"}})
 	jm.Done("A")
 
@@ -102,7 +100,7 @@ func TestJobManager_Inject(t *testing.T) {
 }
 
 func TestJobManager_EdgeCondition(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "cond", "B", "C"},
 		[][2]string{{"A", "cond"}, {"cond", "B"}, {"cond", "C"}})
 
@@ -127,7 +125,7 @@ func TestJobManager_EdgeCondition(t *testing.T) {
 }
 
 func TestJobManager_ConditionResult(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &config.FlowgentConfig{Orchestration: config.OrchestrationConfig{FlowExecutionTimeout: "30m"}})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "cond", "B"}, [][2]string{{"A", "cond"}, {"cond", "B"}})
 	jm.SetConditionResult("cond", true)
 

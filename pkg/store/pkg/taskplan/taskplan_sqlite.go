@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
@@ -51,9 +52,13 @@ func (s *TaskPlanSQLiteStore) CreateTaskRun(ctx context.Context, e *entities.Tas
 }
 
 func (s *TaskPlanSQLiteStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
-	_, err := s.inner.Conn.ExecContext(ctx,
+	output, err := json.Marshal(e.Output)
+	if err != nil {
+		return err
+	}
+	_, err = s.inner.Conn.ExecContext(ctx,
 		`UPDATE task_runs SET status=?1, output=?2, error=?3, retry_count=?4, started_at=?5, finished_at=?6, updated_at=CURRENT_TIMESTAMP WHERE id=?7`,
-		string(e.Status), e.Output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt, e.ID)
+		string(e.Status), output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt, e.ID)
 	return err
 }
 
@@ -80,6 +85,7 @@ func scanTaskRun(s scanner) (*entities.TaskRunInfo, error) {
 	var e entities.TaskRunInfo
 	var inputStr, outputStr sql.NullString
 	var startedAt, finishedAt sql.NullTime
+	var createdAtStr, updatedAtStr string
 	err := s.Scan(
 		&e.ID, &e.AgentFlowRunID, &e.NodeID, &e.Status,
 		&inputStr, &outputStr, &e.Error,
@@ -87,7 +93,7 @@ func scanTaskRun(s scanner) (*entities.TaskRunInfo, error) {
 		&e.ParentTaskRunID, &e.Sequence,
 		&startedAt, &finishedAt,
 		&e.Description, &e.TenantID,
-		&e.CreatedAt, &e.CreatedBy, &e.UpdatedAt, &e.UpdatedBy, &e.DelFlag,
+		&createdAtStr, &e.CreatedBy, &updatedAtStr, &e.UpdatedBy, &e.DelFlag,
 	)
 	if err != nil {
 		return nil, err
@@ -103,6 +109,15 @@ func scanTaskRun(s scanner) (*entities.TaskRunInfo, error) {
 	}
 	if finishedAt.Valid {
 		e.FinishedAt = &finishedAt.Time
+	}
+	// created_at/updated_at come back as TEXT (SQLite has no native
+	// timestamp type) — database/sql cannot scan a string directly into
+	// *time.Time, so parse it explicitly (mirrors utils.ScanStruct).
+	if t, err := utils.ParseTime(createdAtStr); err == nil {
+		e.CreatedAt = t
+	}
+	if t, err := utils.ParseTime(updatedAtStr); err == nil {
+		e.UpdatedAt = t
 	}
 	return &e, nil
 }

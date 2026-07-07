@@ -162,7 +162,7 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 			continue
 		}
 		ent := entries[ei]
-		t, err := parseTime(*s)
+		t, err := ParseTime(*s)
 		if err == nil {
 			ent.fv.Set(reflect.ValueOf(t))
 		}
@@ -202,8 +202,8 @@ func collectScanFields(v reflect.Value, entries *[]scanEntry, seen map[string]bo
 	}
 }
 
-// parseTime attempts to parse a string into time.Time using common SQLite formats.
-func parseTime(s string) (time.Time, error) {
+// ParseTime attempts to parse a string into time.Time using common SQLite formats.
+func ParseTime(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02 15:04:05",
 		"2006-01-02T15:04:05Z",

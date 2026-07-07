@@ -2,12 +2,10 @@ package cache
 
 import (
 	"testing"
-
-	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
 func TestRedisCache_Standalone(t *testing.T) {
-	rc, err := NewRedisCache(&config.RedisCacheConfig{
+	rc, err := NewRedisCache(&RedisCacheConfig{
 		Nodes:    []string{"redis://127.0.0.1:6379"},
 		Username: "default",
 		Retries:  3,
@@ -26,7 +24,7 @@ func TestRedisCache_Standalone(t *testing.T) {
 }
 
 func TestRedisCache_ClusterDetection(t *testing.T) {
-	rc, err := NewRedisCache(&config.RedisCacheConfig{
+	rc, err := NewRedisCache(&RedisCacheConfig{
 		Nodes: []string{"redis://10.0.0.1:6379", "redis://10.0.0.2:6379", "redis://10.0.0.3:6379"},
 	})
 	if err != nil {

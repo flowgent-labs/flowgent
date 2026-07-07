@@ -15,33 +15,43 @@ import (
 
 // ── Provider ──────────────────────────────────────────────────────
 
-// Provider implements auth.AuthProvider for OpenID Connect authentication.
-type Provider struct {
+// Service implements auth.AuthProviderService for OpenID Connect authentication.
+type Service struct {
 	cfg          config.OIDCConfig
 	tokenService *auth.TokenService
 	client       *oidcClient
 }
 
-// NewProvider creates an OIDC auth provider.
-func NewProvider(cfg config.OIDCConfig, tokenService *auth.TokenService) *Provider {
-	return &Provider{
+// NewService creates an OIDC auth service.
+func NewService(cfg config.OIDCConfig, tokenService *auth.TokenService) *Service {
+	return &Service{
 		cfg:          cfg,
 		tokenService: tokenService,
 		client:       newOIDCClient(cfg),
 	}
 }
 
-func (p *Provider) Name() string  { return "oidc" }
-func (p *Provider) Enabled() bool { return p.cfg.Enabled }
+func (p *Service) Name() string  { return "oidc" }
+func (p *Service) Enabled() bool { return p.cfg.Enabled }
 
-// RegisterRoutes registers OIDC login and callback endpoints.
-func (p *Provider) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /auth/login/oidc", p.handleLogin)
-	mux.HandleFunc("GET /auth/callback/oidc", p.handleCallback)
+// CanHandle reports whether this service handles the given request.
+func (p *Service) CanHandle(r *http.Request) bool {
+	return (r.URL.Path == "/auth/login/oidc" || r.URL.Path == "/auth/callback/oidc") &&
+		r.Method == http.MethodGet
+}
+
+// ServeHTTP routes OIDC requests to the appropriate handler.
+func (p *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/auth/login/oidc":
+		p.handleLogin(w, r)
+	case "/auth/callback/oidc":
+		p.handleCallback(w, r)
+	}
 }
 
 // handleLogin initiates the OIDC authorization code flow.
-func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
+func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	authURL, state, err := p.client.buildAuthURL(r.Context())
 	if err != nil {
 		slog.Error("oidc: build auth URL failed", "error", err)
@@ -50,12 +60,13 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isTLS := r.TLS != nil
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oidc_state",
 		Value:    state,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   isTLS,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   600,
 	})
@@ -65,7 +76,7 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCallback processes the OIDC authorization callback.
-func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
+func (p *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 	stateCookie, err := r.Cookie("oidc_state")
 	if err != nil || r.URL.Query().Get("state") != stateCookie.Value {
 		auth.WriteJSON(w, http.StatusBadRequest,

@@ -2,6 +2,7 @@ package flowrun
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -45,11 +46,21 @@ func (s *FlowRunPostgresStore) Create(ctx context.Context, e *entities.FlowRunIn
 	return s.inner.Save(ctx, e)
 }
 
-// Update performs a targeted update of mutable columns.
+// Update performs a targeted update of mutable columns. Vars/Output are
+// JSON-encoded explicitly (rather than relying on pgx's jsonb type
+// inference) to mirror FlowRunSQLiteStore.Update and stay driver-agnostic.
 func (s *FlowRunPostgresStore) Update(ctx context.Context, e *entities.FlowRunInfo) error {
-	_, err := s.inner.Pool.Exec(ctx,
+	vars, err := json.Marshal(e.Vars)
+	if err != nil {
+		return err
+	}
+	output, err := json.Marshal(e.Output)
+	if err != nil {
+		return err
+	}
+	_, err = s.inner.Pool.Exec(ctx,
 		`UPDATE orh_flowrun SET status=$1, vars=$2, output=$3, error=$4, started_at=$5, finished_at=$6, updated_at=NOW() WHERE id=$7`,
-		e.Status, e.Vars, e.Output, e.Error, e.StartedAt, e.FinishedAt, e.ID)
+		e.Status, vars, output, e.Error, e.StartedAt, e.FinishedAt, e.ID)
 	return err
 }
 

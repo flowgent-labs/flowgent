@@ -13,6 +13,14 @@ K3S_A2A_URL       = os.getenv("FLOWGENT_K3S_A2A",       "http://localhost:9992")
 K3S_KUBECONFIG    = os.getenv("KUBECONFIG",              os.path.expanduser("~/.kube/config"))
 K3S_NAMESPACE     = os.getenv("FLOWGENT_K3S_NAMESPACE",  "default")
 K3S_TENANT        = os.getenv("FLOWGENT_K3S_TENANT",     "default")
+# Must match tenant.namespace_prefix (etc/flowgent.yaml / helm values.yaml
+# tenant.namespacePrefix, both default "flowgent-") — this is the PREFIX of
+# where the Controller places each flow's dedicated JM Deployment (Application
+# mode): namespace = "{prefix}{tenant_id}" (per-TENANT, not per-flow — every
+# flow of the same tenant shares one namespace), NOT K3S_NAMESPACE. See
+# pkg/controller/pkg/controller.go applicationNamespace / pkg/api/pkg/handler/
+# flow_def.go applicationNamespace.
+K3S_APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K3S_APP_NAMESPACE_PREFIX", "flowgent-")
 
 # ── PostgreSQL ───────────────────────────────────────────────────
 PG_HOST     = os.getenv("FLOWGENT_PG_HOST",     "localhost")

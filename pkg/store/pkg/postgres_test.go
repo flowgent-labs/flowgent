@@ -1,4 +1,8 @@
-package store
+package store_test
+
+// See sqlite_test.go for why this is an external (store_test) package: the
+// per-entity stores below import store.PostgresGenericStore from the parent
+// "store" package, so an in-package test here would create an import cycle.
 
 import (
 	"context"
@@ -6,6 +10,9 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	store "github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
 )
 
 func testPGDSN() string {
@@ -15,57 +22,37 @@ func testPGDSN() string {
 	return ""
 }
 
-func TestPostgresStore_Init(t *testing.T) {
+func TestPostgresPool_Init(t *testing.T) {
 	dsn := testPGDSN()
 	if dsn == "" {
 		t.Skip("TEST_PG_DSN not set, skipping Postgres integration test")
 	}
-	s := NewPostgresStore(dsn)
-	if err := s.Init(context.Background()); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	defer s.Close()
-	if s.DB() == nil {
-		t.Fatal("DB should not be nil")
+	pool := store.NewPostgresPool(context.Background(), dsn, "public")
+	defer pool.Close()
+	if err := pool.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
 	}
 }
 
-func TestPostgresStore_PoolConfig(t *testing.T) {
+func TestPostgresStore_FlowRunCRUD(t *testing.T) {
 	dsn := testPGDSN()
 	if dsn == "" {
 		t.Skip("TEST_PG_DSN not set")
 	}
-	s := NewPostgresStore(dsn)
-	s.SetPoolConfig(3, 10)
-	s.SetSchema("public")
-	s.Init(context.Background())
-	defer s.Close()
-	// Verify pool config applied
-	stats := s.db.Stats()
-	if stats.MaxOpenConnections != 10 {
-		t.Logf("MaxOpenConnections: %d (may differ based on driver)", stats.MaxOpenConnections)
-	}
-}
-
-func TestPostgresStore_AgentFlowRunCRUD(t *testing.T) {
-	dsn := testPGDSN()
-	if dsn == "" {
-		t.Skip("TEST_PG_DSN not set")
-	}
-	s := NewPostgresStore(dsn)
-	s.Init(context.Background())
-	defer s.Close()
+	pool := store.NewPostgresPool(context.Background(), dsn, "public")
+	defer pool.Close()
 	ctx := context.Background()
+	s := flowrun.NewFlowRunPostgresStore(pool)
 
 	run := &entities.FlowRunInfo{
 		AgentFlowID: "pg-test-flow", Version: 1, Status: entities.RunPending,
-		Trigger: entities.TriggerInfo{Type: "manual", Source: "pg-ut"},
 	}
-	if err := s.CreateFlowRun(ctx, run); err != nil {
+	run.SetTrigger(entities.TriggerInfo{Type: "manual", Source: "pg-ut"})
+	if err := s.Create(ctx, run); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := s.GetFlowRun(ctx, run.ID)
+	got, err := s.Get(ctx, run.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -73,18 +60,17 @@ func TestPostgresStore_AgentFlowRunCRUD(t *testing.T) {
 		t.Errorf("expected pg-test-flow, got %s", got.AgentFlowID)
 	}
 
-	runs, _ := s.ListFlowRuns(ctx, "pg-test-flow", 10)
-	if len(runs) != 1 {
-		t.Errorf("expected 1 run, got %d", len(runs))
+	run.Status = entities.RunCompleted
+	if err := s.Update(ctx, run); err != nil {
+		t.Fatalf("Update: %v", err)
 	}
 
-	run.Status = entities.RunCompleted
-	s.UpdateFlowRun(ctx, run)
-
-	// Empty filter lists all
-	allRuns, _ := s.ListFlowRuns(ctx, "", 100)
-	if len(allRuns) < 1 {
-		t.Errorf("expected at least 1 run with empty filter, got %d", len(allRuns))
+	page, err := s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if page.TotalCount < 1 {
+		t.Errorf("expected at least 1 run with empty filter, got %d", page.TotalCount)
 	}
 }
 
@@ -93,25 +79,26 @@ func TestPostgresStore_TaskRunCRUD(t *testing.T) {
 	if dsn == "" {
 		t.Skip("TEST_PG_DSN not set")
 	}
-	s := NewPostgresStore(dsn)
-	s.Init(context.Background())
-	defer s.Close()
+	pool := store.NewPostgresPool(context.Background(), dsn, "public")
+	defer pool.Close()
 	ctx := context.Background()
+	frStore := flowrun.NewFlowRunPostgresStore(pool)
+	tpStore := taskplan.NewTaskPlanPostgresStore(pool)
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
-	s.CreateFlowRun(ctx, run)
+	frStore.Create(ctx, run)
 
 	task := &entities.TaskRunInfo{
 		AgentFlowRunID: run.ID, NodeID: "n1", Status: entities.TaskPending, ExecID: "pg-exec-1",
 	}
-	s.CreateTaskRun(ctx, task)
-	s.UpdateTaskRun(ctx, task)
+	tpStore.CreateTaskRun(ctx, task)
+	tpStore.UpdateTaskRun(ctx, task)
 
-	_, err := s.ListTaskRunsByFlow(ctx, run.ID)
+	_, err := tpStore.ListByFlowRun(ctx, run.ID)
 	if err != nil {
-		t.Fatalf("GetTaskRuns: %v", err)
+		t.Fatalf("ListByFlowRun: %v", err)
 	}
-	_, err = s.GetTaskRunByExecID(ctx, "pg-exec-1")
+	_, err = tpStore.GetByExecID(ctx, "pg-exec-1")
 	if err != nil {
 		t.Fatalf("GetByExecID: %v", err)
 	}

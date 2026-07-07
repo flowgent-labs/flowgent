@@ -182,13 +182,35 @@ def run():
         print(f"  [3.3] Apiserver healthz: not reachable — {e}")
 
     # ── L3.9: Check logs for errors ────────────────────────
-    for component in ["apiserver", "jobmanager"]:
-        result = kubectl(["logs", "-l", f"app.kubernetes.io/name={component}",
+    # jobmanager/taskmanager are NOT Helm-deployed — Session mode (a shared,
+    # Helm-managed JM/TM pool) is temporarily disabled (see VERIFICATION.md).
+    # They only exist as dedicated, Controller-created per-flow Deployments
+    # once any flow is created (label flowgent.io/mode=application, not
+    # app.kubernetes.io/name=jobmanager). Only check components that are
+    # actually always-on Helm Deployments here; scenario 04 checks dedicated
+    # JM pod logs separately once a test flow exists.
+    for component in ["apiserver", "controller", "notifier"]:
+        # Deployments are labeled app.kubernetes.io/component={component}, not
+        # app.kubernetes.io/name (which is always the chart name "flowgent" —
+        # see deploy/helm/flowgent/templates/apiserver.yaml etc).
+        result = kubectl(["logs", "-l", f"app.kubernetes.io/component={component}",
                            "-n", NAMESPACE, "--tail=20"], check=False)
+        if not result.stdout.strip():
+            print(f"  [3.9] {component} logs: no matching pods (may not be enabled) — SKIP")
+            continue
         errors = sum(1 for line in result.stdout.splitlines()
                      if any(kw in line.lower() for kw in ("error", "fatal", "panic")))
         label = "WARN" if errors > 0 else "OK"
         print(f"  [3.9] {component} logs (last 20 lines): {errors} error/fatal/panic — {label}")
+
+    # ── L3.10: Dedicated per-flow JM pods (Application mode) ───────
+    jm_pods = kubectl_json(["get", "pods", "-n", NAMESPACE, "-A",
+                            "-l", "flowgent.io/mode=application"])
+    if jm_pods and jm_pods.get("items"):
+        print(f"  [3.10] {len(jm_pods['items'])} dedicated per-flow JM pod(s) found "
+              f"(leftover from a previous run? see Environment Reset in VERIFICATION.md)")
+    else:
+        print(f"  [3.10] No dedicated per-flow JM pods (expected — none created yet)")
 
     # ── Summary ────────────────────────────────────────────
     print(f"\n  Preflight check complete — verify items flagged WARN above.")

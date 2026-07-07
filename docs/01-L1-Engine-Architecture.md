@@ -96,6 +96,17 @@ PHASE 3 — Execution (Async)                       │
 
 ### 1.1 Session vs Application — Helm Deployment Matrix
 
+> **⚠️ Current implementation status**: Session mode is **temporarily disabled**
+> to simplify troubleshooting. The Helm chart no longer deploys a shared
+> jobmanager/taskmanager pool, the Controller no longer creates `namespace=""`
+> runs, and `entities.Priority` only accepts `"high"` (see its doc comment in
+> `pkg/model/pkg/entities/scheduling.go`) — every agentflow currently runs in
+> **Application mode** (a dedicated per-flow JM Deployment). The `Priority`
+> field and the Session-mode design below are intentionally kept/documented
+> as **reserved** for a future reintroduction, but do not reflect the current
+> runtime behavior; treat every "Session" row/branch in this section (and in
+> §4.2/§4.3, §9.2, §10.2) as historical/future-facing, not active.
+
 Both modes use the **same binary, same poller, same DAG execution logic**.
 The difference is **which components Helm pre-deploys** vs. **which are created dynamically at runtime**.
 
@@ -431,22 +442,31 @@ vars). Only processes flows where `shard == pod_index`.
 
 ### 4.2 Reconciliation Loop
 
+> ⚠️ Session mode currently disabled (see §1.1) — step 3 always takes the
+> Application branch (3a) regardless of priority; the peer snapshot from
+> step 1 is fetched once per tick and reused for every flow's shard check
+> and for JM Deployment GC (`pkg/controller/pkg/controller.go` `reconcile`).
+
 ```
 Every 10s:
   1. IDiscoveryClient.DiscoverPeers(labelSelector)
   2. apiClient.ListFlows(tenant) → latest version per flow_id
   3. For each flow where shard(flow_id) == my_index:
-     a. priority=grade → Application: create K8s JM Deployment + create PENDING run via API
-     b. else → Session: create PENDING run via apiClient.CreateRun (namespace="")
+     a. Application: create/ensure K8s JM Deployment + create PENDING run via API
+     b. (reserved) Session: create PENDING run via apiClient.CreateRun (namespace="")
   4. Poll runs for completion via API, clean up
 ```
 
 ### 4.3 Dispatch Detail
 
+> ⚠️ Session mode currently disabled (see §1.1) — the `low/medium/high` row
+> below is not reachable; `entities.Priority` only accepts `"high"`, which
+> takes the Application row.
+
 | Priority | Mode | Controller Action | Who Executes |
 |----------|------|-------------------|--------------|
-| low/medium/high | Session | Create PENDING run via `apiClient.CreateRun` (namespace="") → shared JM picks up | Admin-managed TM pool |
-| grade | Application | Create K8s JM Deployment + create PENDING run via API (namespace={tenant}) → dedicated JM picks up | JM auto-scales TMs via K8sRM |
+| low/medium (reserved, not accepted) | Session | Create PENDING run via `apiClient.CreateRun` (namespace="") → shared JM picks up | Admin-managed TM pool |
+| high | Application | Create K8s JM Deployment + create PENDING run via API (namespace={tenant}) → dedicated JM picks up | JM auto-scales TMs via K8sRM |
 
 ### 4.4 Dual Format: Static YAML vs DB JSON
 
@@ -693,7 +713,11 @@ flowgent all-in-one start -c etc/flowgent.yaml
 Single process: API Server + JM + TM (StandaloneRM, goroutine pool). SQLite + Memory
 cache. For development and small-scale standalone testing only.
 
-### 9.2 Distributed K8s (Session Mode)
+### 9.2 Distributed K8s (Session Mode) — ⚠️ reserved, not currently deployable
+
+Session mode is temporarily disabled (see §1.1): the Helm chart no longer
+ships `jobmanager`/`taskmanager` shared-pool templates, so this section
+describes the reserved design, not a runnable `helm install` today.
 
 ```bash
 helm install flowgent deploy/helm/flowgent \
@@ -706,11 +730,19 @@ helm install flowgent deploy/helm/flowgent \
 12 pods (6×2), PG + EMQX + Redis backend. JM HA via IDiscoveryClient leader
 election. TM capacity admin-managed via Helm.
 
-### 9.3 Application Mode (VIP Dedicated Cluster)
+### 9.3 Application Mode (VIP Dedicated Cluster) — current default (only mode)
 
-Controller detects `priority=grade` flow → creates dedicated K8s JM Deployment
-(`flowgent-jobmanager-{tenantId}-{flowId}-{runId}-{hash}`) in tenant namespace → JM auto-scales TMs.
-Flow completes → Controller cleans up Deployment.
+Controller detects a flow (every flow, since `priority` only accepts `"high"`
+while Session mode is disabled) → creates dedicated K8s JM Deployment
+(`flowgent-jobmanager-{tenantId}-{flowId}` — see `applicationNamespace` in
+`pkg/controller/pkg/controller.go`) in the flow's **tenant** namespace
+(`{namespace_prefix}{tenantId}`, per §1.3 — every flow of the same tenant
+shares one namespace; Helm does not pre-create it, `ensureApplicationInfra`
+lazily creates it on first dispatch of any flow for that tenant) → JM
+auto-scales TMs. Flow completes → Controller cleans up the Deployment (the
+tenant namespace itself is left behind, since other flows of the same tenant
+may still be using it — see VERIFICATION.md Environment Reset for manual
+cleanup).
 
 ---
 
@@ -734,17 +766,19 @@ There are two paths to trigger a run:
 
 ### 10.2 Path B: Controller Dispatch (Fully Async)
 
+> ⚠️ Session mode currently disabled (see §1.1) — only the Application branch
+> below actually runs.
+
 ```
 1. CONTROLLER POLL
    → Controller polls apiserver ListFlows every 10s
-   → Hash-mod shard: only processes owned flows
+   → Hash-mod shard: only processes owned flows (peer snapshot fetched once/tick)
    → Detects flow trigger condition (cron / interval / on-new-definition)
-   → Session mode: FlowgentClient.CreateRun (PENDING, namespace="")
-   → Application mode: kubectl create deploy flowgent-jobmanager-{tenantId}-{flowId}-{runId}-{hash}
-                       + FlowgentClient.CreateRun (PENDING, namespace={tenant})
+   → (reserved) Session mode: FlowgentClient.CreateRun (PENDING, namespace="")
+   → Application mode: ensure K8s Deployment flowgent-jobmanager-{tenantId}-{flowId}
+                       + FlowgentClient.CreateRun (PENDING, namespace={flow's dedicated ns})
 
 2. JM POLL
-   → Shared JM picks up namespace="" runs
    → Dedicated JM picks up its own namespace runs
    → jm.Submit(run, spec) spawns JobMaster
 ```

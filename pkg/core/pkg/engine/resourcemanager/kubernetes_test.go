@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/tests/testutil"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,7 +51,7 @@ func TestKubernetesResourceManager_Validate_NoQueue(t *testing.T) {
 
 func TestKubernetesResourceManager_Validate_WithQueue(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
-	q := testutil.NewTestQueue()
+	q := messager.NewLocalMessager(10)
 	rm := &KubernetesResourceManager{
 		q: q, kubeClient: fakeClient, namespace: "default",
 		deployName: "flowgent-taskmanager",

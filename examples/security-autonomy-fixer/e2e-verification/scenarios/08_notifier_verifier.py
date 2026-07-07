@@ -159,12 +159,12 @@ def run():
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         client.on_message = on_message
         client.connect(EMQX, EMQX_PORT, 10)
-        client.subscribe("flowgent/notify/queue/#")
+        client.subscribe("$share/notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event")
         client.loop_start()
         time.sleep(2)
         client.loop_stop()
         client.disconnect()
-        print(f"      ✓ Subscribed to flowgent/notify/queue/# ({len(messages)} messages)")
+        print(f"      ✓ Subscribed to notify/event ({len(messages)} messages)")
         results["Notify Queue"] = True
     except Exception as e:
         print(f"      ⚠ Notify queue subscription: {e}")

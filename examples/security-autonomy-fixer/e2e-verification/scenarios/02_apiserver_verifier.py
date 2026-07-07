@@ -159,11 +159,20 @@ class MQTTTestClient:
             self.client.disconnect()
 
 
-def test_crud_entity(entity_name: str, table_name: str, base_path: str, 
-                     id_field: str, create_payload: Dict, update_payload: Dict) -> bool:
-    """Test CRUD operations for a single entity"""
+def test_crud_entity(entity_name: str, table_name: str, base_path: str,
+                     id_field: str, create_payload: Dict, update_payload: Dict,
+                     pg_id_col: str = None) -> bool:
+    """Test CRUD operations for a single entity.
+
+    id_field is the JSON key identifying the resource in REST responses (used
+    for the URL path and LIST lookups). pg_id_col is the underlying SQL column
+    name to filter on directly, when it differs from id_field (e.g. AgentFlow:
+    REST responses use "id" but the orh_agentflow table's lookup column is
+    "agentflow_id" — see pkg/store/pkg/agentflow/agentflow_postgres.go).
+    """
     print(f"\n  → Testing {entity_name} CRUD...")
-    
+
+    pg_id_col = pg_id_col or id_field
     created_id = None
     pg_conn = get_pg_connection()
     
@@ -183,7 +192,7 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         # Verify PG persistence
         if pg_conn:
             cursor = pg_conn.cursor()
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {id_field}=%s AND del_flag=false", (created_id,))
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {pg_id_col}=%s AND del_flag=false", (created_id,))
             count = cursor.fetchone()[0]
             if count != 1:
                 raise AssertionError(f"PG persistence failed: count={count}")
@@ -225,7 +234,7 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         # Verify updated_at changed
         if pg_conn:
             cursor = pg_conn.cursor()
-            cursor.execute(f"SELECT updated_at > created_at FROM {table_name} WHERE {id_field}=%s", (created_id,))
+            cursor.execute(f"SELECT updated_at > created_at FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
             updated = cursor.fetchone()[0]
             if not updated:
                 raise AssertionError(f"updated_at not changed")
@@ -241,7 +250,7 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         # Verify soft delete
         if pg_conn:
             cursor = pg_conn.cursor()
-            cursor.execute(f"SELECT del_flag FROM {table_name} WHERE {id_field}=%s", (created_id,))
+            cursor.execute(f"SELECT del_flag FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
             result = cursor.fetchone()
             if not result or not result[0]:
                 raise AssertionError(f"Soft delete failed")
@@ -283,13 +292,11 @@ def test_flow_lifecycle_events() -> bool:
         # Test 1: CREATE → ctrl/flow/updated (action=created)
         print(f"    • Testing CREATE event...")
         flow_id = "test-flow-" + rand_id()
+        # Flat AgentFlowInfo shape — see test_crud_entity's AgentFlow comment above.
         payload = {
-            "agentflow_id": flow_id,
-            "version": 1,
-            "definition": {
-                "nodes": [{"id": "n1", "type": "noop"}],
-                "edges": [],
-            },
+            "id": flow_id,
+            "nodes": [{"id": "n1", "type": "noop"}],
+            "edges": [],
         }
         
         resp = http_request("POST", f"/api/v1/{TENANT}/agentflows", payload)
@@ -358,9 +365,9 @@ def test_flow_run_crud() -> bool:
     pg_conn = get_pg_connection()
     try:
         resp = http_request("POST", f"/api/v1/{TENANT}/agentflows", {
-            "agentflow_id": flow_id,
-            "version": 1,
-            "definition": {"nodes": [{"id": "n1", "type": "noop"}], "edges": []},
+            "id": flow_id,
+            "nodes": [{"id": "n1", "type": "noop"}],
+            "edges": [],
         })
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"setup flow failed: {resp['status_code']}")
@@ -413,9 +420,9 @@ def test_task_run_nested() -> bool:
     task_id = None
     try:
         resp = http_request("POST", f"/api/v1/{TENANT}/agentflows", {
-            "agentflow_id": flow_id,
-            "version": 1,
-            "definition": {"nodes": [{"id": "n1", "type": "noop"}], "edges": []},
+            "id": flow_id,
+            "nodes": [{"id": "n1", "type": "noop"}],
+            "edges": [],
         })
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"setup flow failed: {resp['status_code']}")
@@ -540,14 +547,22 @@ def run():
     # Entity test definitions
     entities = [
         {
+            # POST /agentflows decodes the request body directly into
+            # entities.AgentFlowInfo (pkg/api/pkg/handler/flow_def.go Create) —
+            # a FLAT shape with "id"/"nodes"/"edges" at top level, NOT the
+            # {"agentflow_id", "version", "definition": {...}} DB row shape
+            # (that shape is only used internally by AgentFlowVersionInfo).
+            # REST responses key the flow by "id", but the orh_agentflow table
+            # stores/looks it up by the "agentflow_id" column, hence pg_id_col.
             "name": "AgentFlow",
             "table": "orh_agentflow",
             "base_path": f"/api/v1/{TENANT}/agentflows",
             "id_field": "id",
+            "pg_id_col": "agentflow_id",
             "create": {
-                "agentflow_id": f"test-flow-{rand_id()}",
-                "version": 1,
-                "definition": {"nodes": [], "edges": []},
+                "id": f"test-flow-{rand_id()}",
+                "nodes": [],
+                "edges": [],
             },
             "update": {"description": "updated"},
         },
@@ -614,6 +629,7 @@ def run():
             entity["id_field"],
             entity["create"],
             entity["update"],
+            pg_id_col=entity.get("pg_id_col"),
         )
     
     # Run lifecycle event tests

@@ -2,7 +2,6 @@ package tracing
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -22,14 +21,12 @@ type Provider struct {
 }
 
 // NewProvider initializes OTEL tracing and metrics from config.
-// OTLP endpoint defaults to OTEL_EXPORTER_OTLP_ENDPOINT env var, falling back to localhost:4317.
+// The OTLP endpoint comes from otelCfg.Endpoint (env overrides are applied centrally
+// by config.Load via FLOWGENT__OTEL__ENDPOINT), falling back to localhost:4317.
 func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *OTELConfig, metricsCfg *MetricsConfig) (*Provider, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" && otelCfg != nil && otelCfg.Endpoint != "" {
+	endpoint := "localhost:4317"
+	if otelCfg != nil && otelCfg.Endpoint != "" {
 		endpoint = otelCfg.Endpoint
-	}
-	if endpoint == "" {
-		endpoint = "localhost:4317"
 	}
 
 	exp, err := otlptracehttp.New(ctx,

@@ -81,7 +81,7 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
   value: {{ include "flowgent.databaseUrl" . | quote }}
 {{- end }}
 {{- if .Values.emqx.enabled }}
-- name: FLOWGENT__MESSAGING__MQTT__BROKER
+- name: FLOWGENT__MESSAGER__MQTT__BROKER
   value: {{ include "flowgent.mqttBroker" . | quote }}
 {{- end }}
 {{- end }}

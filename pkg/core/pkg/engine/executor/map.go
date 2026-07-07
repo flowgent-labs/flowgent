@@ -3,9 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
 	"sync"
 	"time"
 )
@@ -26,13 +24,11 @@ func (e *MapExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan,
 // ─── MapRunner (kept for inline fan-out within map nodes) ─
 
 type MapRunner struct {
-	store  store.IStore
-	logger *utils.Logger
-	mu     sync.Mutex
+	mu sync.Mutex
 }
 
-func newMapRunner(store store.IStore, logger *utils.Logger) *MapRunner {
-	return &MapRunner{store: store, logger: logger}
+func newMapRunner() *MapRunner {
+	return &MapRunner{}
 }
 
 func (m *MapRunner) runMap(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any, router *TaskExecutorRouter) error {

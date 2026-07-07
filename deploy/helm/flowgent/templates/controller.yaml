@@ -32,6 +32,38 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.controller.serviceAccount.name }}
     namespace: {{ .Release.Namespace }}
+---
+# Dedicated per-flow JM Deployments (Application mode) land in their
+# tenant's namespace (flowgent-{tenantID} — every flow of the same tenant
+# shares one namespace), so the Controller needs a ClusterRole to
+# create/list/delete Deployments across namespaces (buildJMDeployment /
+# gcOrphanedJMDeployments in pkg/controller), plus get/create on namespaces
+# themselves — ensureApplicationInfra lazily creates the tenant namespace on
+# first dispatch of any of its flows, since Helm does not pre-create it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.controller.serviceAccount.name }}-cluster
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.controller.serviceAccount.name }}-cluster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.controller.serviceAccount.name }}-cluster
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.controller.serviceAccount.name }}
+    namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
 apiVersion: apps/v1
@@ -70,6 +102,8 @@ spec:
               value: "app.kubernetes.io/component=controller"
             - name: FLOWGENT__RUNTIME__JM_IMAGE
               value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+            - name: FLOWGENT__RUNTIME__JM_CONFIG_MAP
+              value: "{{ include "flowgent.fullname" . }}-config"
             - name: POD_NAME
               valueFrom:
                 fieldRef:

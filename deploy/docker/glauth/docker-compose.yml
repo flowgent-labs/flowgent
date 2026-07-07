@@ -2,7 +2,7 @@ version: "3.8"
 services:
   # ── GLAuth LDAP server ──────────────────────────────────────────
   glauth:
-    image: ghcr.io/glauth/glauth:latest
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0
     container_name: glauth
     restart: unless-stopped
     deploy:
@@ -10,12 +10,11 @@ services:
         limits: { cpus: "0.5", memory: "256M" }
         reservations: { cpus: "0.25", memory: "128M" }
     ports:
-      - "389:389"
+      - "3389:389"    # host port >=443 to avoid rootless podman issue
     networks:
       - glauth-net
     volumes:
       - ./config.cfg:/app/config/config.cfg:ro
-    command: ["--config", "/app/config/config.cfg"]
     healthcheck:
       test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:389 -b dc=example,dc=com -s base 2>/dev/null || exit 1"]
       interval: 10s
@@ -36,12 +35,12 @@ services:
       - |
         echo ">> Verifying GLAuth LDAP server..."
         apk add --no-cache openldap-clients > /dev/null 2>&1
-        for i in $(seq 1 10); do
+        for i in $$(seq 1 10); do
           if ldapsearch -x -H ldap://glauth:389 -b "dc=example,dc=com" -D "cn=svc-flowgent,ou=Users,dc=example,dc=com" -w password123 "(cn=jdoe)" dn 2>/dev/null | grep -q "jdoe"; then
             echo "  LDAP server ready, user search OK"
             break
           fi
-          echo "  waiting for LDAP... ($i)"
+          echo "  waiting for LDAP... ($$i)"
           sleep 2
         done
         echo ""

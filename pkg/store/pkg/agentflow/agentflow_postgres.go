@@ -43,9 +43,15 @@ func (s *AgentFlowPostgresStore) Delete(ctx context.Context, id string) error {
 }
 
 // Custom queries
+
+// GetVersion selects only the columns entities.AgentFlowVersionInfo actually
+// has fields for (via utils.Columns) — orh_agentflow's schema carries extra
+// columns (checksum, priority, namespace, mode, labels) that predate this
+// entity and aren't scanned here.
 func (s *AgentFlowPostgresStore) GetVersion(ctx context.Context, id string, ver int64) (*entities.AgentFlowVersionInfo, error) {
+	cols := utils.Columns[entities.AgentFlowVersionInfo]()
 	rows, err := s.inner.Pool.Query(ctx,
-		"SELECT id,agentflow_id,version,definition,checksum,comment,priority,namespace,mode,labels,description,tenant_id,status,created_at,created_by,updated_at,updated_by,del_flag FROM orh_agentflow WHERE agentflow_id=$1 AND version=$2", id, ver)
+		"SELECT "+cols+" FROM orh_agentflow WHERE agentflow_id=$1 AND version=$2", id, ver)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package taskplan
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -55,9 +56,13 @@ func (s *TaskPlanPostgresStore) CreateTaskRun(ctx context.Context, e *entities.T
 }
 
 func (s *TaskPlanPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
-	_, err := s.inner.Pool.Exec(ctx,
+	output, err := json.Marshal(e.Output)
+	if err != nil {
+		return err
+	}
+	_, err = s.inner.Pool.Exec(ctx,
 		`UPDATE task_runs SET status=$1, output=$2, error=$3, retry_count=$4, started_at=$5, finished_at=$6, updated_at=NOW() WHERE id=$7`,
-		e.Status, e.Output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt, e.ID)
+		e.Status, output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt, e.ID)
 	return err
 }
 

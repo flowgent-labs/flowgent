@@ -28,7 +28,9 @@
 ## Test Code Organization
 
 - Only `*_test.go` files alongside source under `pkg/`
-- All E2E/integration tests under `tests/`; shared code in `tests/testutil/`
+- All E2E/integration tests under `tests/`; unit-test mocks/fixtures live
+  next to their package (no shared `tests/testutil/` — Go modules under
+  `pkg/` don't share a test-only module dependency)
 - E2E scenario files named `01-xxx` format
 
 ## Cost Awareness

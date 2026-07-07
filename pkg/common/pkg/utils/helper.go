@@ -54,21 +54,3 @@ func Hostname() string {
 	}
 	return h
 }
-
-// EnvOr returns the env value or a default.
-func EnvOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-// EnvIntOr returns the env int value or a default.
-func EnvIntOr(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}

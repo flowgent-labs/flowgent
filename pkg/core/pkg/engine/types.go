@@ -2,8 +2,6 @@ package engine
 
 import (
 	"context"
-
-	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // Provider identifies the resource management backend.
@@ -24,6 +22,7 @@ type LLMClient interface {
 	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64) (string, error)
 }
 
-// Store is the persistence layer interface used by all engine components.
-// This is an alias of store.IStore — the canonical definition lives in src/store/.
-type Store = store.IStore
+// Note: pkg/core does not import pkg/store directly — only the apiserver connects
+// to the database (see docs/01-L1-Engine-Architecture.md §1). Non-apiserver
+// components (JM, TM, controller, sandbox, notifier) persist state exclusively
+// via FlowgentClient (REST) or MQTT.

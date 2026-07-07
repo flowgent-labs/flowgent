@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	ldapv3 "github.com/go-ldap/ldap/v3"
 )
 
 // ── LDAP connection interface & types ─────────────────────────────
@@ -45,28 +47,7 @@ type ldapEntry struct {
 	Attributes map[string][]string
 }
 
-// ── Dial function registry ────────────────────────────────────────
-//
-// The default (stub) implementations are set here. When built with -tags ldap,
-// ldap_client_real.go overrides these in its init() with real go-ldap adapters.
-
-type dialFunc func(network, addr string, timeout time.Duration) (LDAPConnection, error)
-type dialTLSFunc func(network, addr string, config *tls.Config, timeout time.Duration) (LDAPConnection, error)
-
-var (
-	dialLDAPFunc    dialFunc    = stubDial
-	dialLDAPTLSFunc dialTLSFunc = stubDialTLS
-)
-
-// dialLDAP delegates to the registered dial function.
-func dialLDAP(network, addr string, timeout time.Duration) (LDAPConnection, error) {
-	return dialLDAPFunc(network, addr, timeout)
-}
-
-// dialLDAPTLS delegates to the registered TLS dial function.
-func dialLDAPTLS(network, addr string, config *tls.Config, timeout time.Duration) (LDAPConnection, error) {
-	return dialLDAPTLSFunc(network, addr, config, timeout)
-}
+// ── Dial & connection adapter ─────────────────────────────────────
 
 // DialURL parses an LDAP URL (ldap://host:port or ldaps://host:port) and connects.
 func DialURL(rawURL string, timeout time.Duration, insecureSkipVerify bool) (LDAPConnection, error) {
@@ -85,33 +66,60 @@ func DialURL(rawURL string, timeout time.Duration, insecureSkipVerify bool) (LDA
 	}
 
 	if u.Scheme == "ldaps" {
-		return dialLDAPTLSFunc("tcp", host, &tls.Config{
+		return dialTLS("tcp", host, &tls.Config{
 			InsecureSkipVerify: insecureSkipVerify,
 			MinVersion:         tls.VersionTLS12,
 		}, timeout)
 	}
-	return dialLDAPFunc("tcp", host, timeout)
+	return dial("tcp", host, timeout)
 }
 
-// ── Stub implementations (default, no -tags ldap) ─────────────────
+type goLdapConn struct{ conn *ldapv3.Conn }
 
-type stubConn struct{}
+func (c *goLdapConn) Bind(dn, password string) error { return c.conn.Bind(dn, password) }
 
-func (s *stubConn) Bind(_, _ string) error {
-	return fmt.Errorf("ldap: not available — rebuild with -tags ldap and add github.com/go-ldap/ldap/v3")
+func (c *goLdapConn) Search(req *SearchRequest) (*SearchResult, error) {
+	scope := req.Scope
+	if scope == 0 {
+		scope = ldapv3.ScopeWholeSubtree
+	}
+	searchReq := ldapv3.NewSearchRequest(
+		req.BaseDN, scope, ldapv3.NeverDerefAliases,
+		req.SizeLimit, req.TimeLimit, false,
+		req.Filter, req.Attributes, nil,
+	)
+	result, err := c.conn.Search(searchReq)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]*ldapEntry, 0, len(result.Entries))
+	for _, e := range result.Entries {
+		attrs := make(map[string][]string, len(e.Attributes))
+		for _, a := range e.Attributes {
+			attrs[a.Name] = a.Values
+		}
+		entries = append(entries, &ldapEntry{DN: e.DN, Attributes: attrs})
+	}
+	return &SearchResult{Entries: entries}, nil
 }
-func (s *stubConn) Search(_ *SearchRequest) (*SearchResult, error) {
-	return nil, fmt.Errorf("ldap: not available — rebuild with -tags ldap")
-}
-func (s *stubConn) StartTLS(_ *tls.Config) error {
-	return fmt.Errorf("ldap: not available — rebuild with -tags ldap")
-}
-func (s *stubConn) Close() error { return nil }
 
-func stubDial(network, addr string, timeout time.Duration) (LDAPConnection, error) {
-	return nil, fmt.Errorf("ldap: not available — rebuild with -tags ldap (addr=%s)", addr)
+func (c *goLdapConn) StartTLS(config *tls.Config) error { return c.conn.StartTLS(config) }
+func (c *goLdapConn) Close() error                       { return c.conn.Close() }
+
+func dial(network, addr string, timeout time.Duration) (LDAPConnection, error) {
+	conn, err := ldapv3.Dial(network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("ldap: dial %s: %w", addr, err)
+	}
+	conn.SetTimeout(timeout)
+	return &goLdapConn{conn: conn}, nil
 }
 
-func stubDialTLS(network, addr string, config *tls.Config, timeout time.Duration) (LDAPConnection, error) {
-	return nil, fmt.Errorf("ldap: not available — rebuild with -tags ldap (addr=%s)", addr)
+func dialTLS(network, addr string, config *tls.Config, timeout time.Duration) (LDAPConnection, error) {
+	conn, err := ldapv3.DialTLS(network, addr, config)
+	if err != nil {
+		return nil, fmt.Errorf("ldap: dial TLS %s: %w", addr, err)
+	}
+	conn.SetTimeout(timeout)
+	return &goLdapConn{conn: conn}, nil
 }

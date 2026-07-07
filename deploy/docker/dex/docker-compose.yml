@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  dex:
+    image: docker.io/dexidp/dex:v2.41.1
+    container_name: dex
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.yaml:/etc/dex/config.yaml:ro
+    command: dex serve /etc/dex/config.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5556/dex/.well-known/openid-configuration || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s

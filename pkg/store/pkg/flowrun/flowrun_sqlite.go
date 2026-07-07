@@ -3,6 +3,7 @@ package flowrun
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -44,11 +45,21 @@ func (s *FlowRunSQLiteStore) Create(ctx context.Context, e *entities.FlowRunInfo
 	return s.inner.Save(ctx, e)
 }
 
-// Update performs a targeted update of mutable columns.
+// Update performs a targeted update of mutable columns. Vars/Output are
+// JSON-encoded before binding — database/sql (unlike pgx) has no built-in
+// support for map[string]any parameters.
 func (s *FlowRunSQLiteStore) Update(ctx context.Context, e *entities.FlowRunInfo) error {
-	_, err := s.inner.Conn.ExecContext(ctx,
-		`UPDATE orh_flowrun SET status=?1, vars=?2, output=?3, error=?4, started_at=?5, finished_at=?6, shared_memory=?7, updated_at=CURRENT_TIMESTAMP WHERE id=?8`,
-		string(e.Status), e.Vars, e.Output, e.Error, e.StartedAt, e.FinishedAt, e.SharedMemory, e.ID)
+	vars, err := json.Marshal(e.Vars)
+	if err != nil {
+		return err
+	}
+	output, err := json.Marshal(e.Output)
+	if err != nil {
+		return err
+	}
+	_, err = s.inner.Conn.ExecContext(ctx,
+		`UPDATE orh_flowrun SET status=?1, vars=?2, output=?3, error=?4, started_at=?5, finished_at=?6, updated_at=CURRENT_TIMESTAMP WHERE id=?7`,
+		string(e.Status), vars, output, e.Error, e.StartedAt, e.FinishedAt, e.ID)
 	return err
 }
 

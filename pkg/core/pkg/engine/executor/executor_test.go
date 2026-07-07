@@ -60,8 +60,14 @@ func TestNoopExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != nil && result.Output != nil {
-		t.Error("noop should return nil output")
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	// Noop still reports a non-nil output ({"result": true}) so downstream
+	// nodes/conditions can observe that this passthrough node ran — see
+	// NoopExecutor.Execute.
+	if got, ok := result.Output["result"]; !ok || got != true {
+		t.Errorf("expected Output[\"result\"]=true, got %v", result.Output)
 	}
 }
 

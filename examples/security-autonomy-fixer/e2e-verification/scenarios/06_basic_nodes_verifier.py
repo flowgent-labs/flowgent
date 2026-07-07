@@ -33,44 +33,51 @@ def run():
     s.headers["Content-Type"] = "application/json"
 
     # ── Create Flow with all node types ────────────────────
+    # POST /agentflows decodes the body directly into entities.AgentFlowInfo — a
+    # flat shape with "id"/"nodes"/"edges" at the top level (see
+    # pkg/api/pkg/handler/flow_def.go Create), not a nested "definition" object.
+    #
+    # priority=high is currently the only value the API accepts (Session
+    # mode is temporarily disabled; see 05_engine_verifier.py's
+    # create_flow() docstring for the full rationale). Every flow, including
+    # this one, runs in Application mode: FlowDefHandler.TriggerWithVars
+    # routes the triggered run to the flow's dedicated per-flow JM namespace.
     flow = {
-        "agentflow_id": FLOW_ID,
-        "version": 1,
+        "id": FLOW_ID,
         "description": "Verification flow: agent + tribunal + supervisor + human",
-        "definition": {
-            "nodes": [
-                {"id": "start", "type": "agent", "agent": "issue-detector", "input": {"test": True}},
-                {
-                    "id": "vote",
-                    "type": "tribunal",
-                    "strategy": {"type": "majority"},
-                    "input": {"votes": ["${start.decision}", "${start.decision}", "${start.decision}"]},
+        "priority": "high",
+        "nodes": [
+            {"id": "start", "type": "agent", "agent": "issue-detector", "input": {"test": True}},
+            {
+                "id": "vote",
+                "type": "tribunal",
+                "strategy": {"type": "majority"},
+                "input": {"votes": ["${start.decision}", "${start.decision}", "${start.decision}"]},
+            },
+            {
+                "id": "supervisor",
+                "type": "supervisor",
+                "agent": "supervisor",
+                "supervisor_config": {
+                    "max_retries": 2,
+                    "max_nodes": 10,
+                    "max_injections": 2,
+                    "allowed_actions": ["continue", "retry", "abort"],
                 },
-                {
-                    "id": "supervisor",
-                    "type": "supervisor",
-                    "agent": "supervisor",
-                    "supervisor_config": {
-                        "max_retries": 2,
-                        "max_nodes": 10,
-                        "max_injections": 2,
-                        "allowed_actions": ["continue", "retry", "abort"],
-                    },
-                },
-                {
-                    "id": "human",
-                    "type": "human",
-                    "approval": {"timeout": "5m", "on_approve": "continue", "on_reject": "abort"},
-                },
-                {"id": "end", "type": "noop"},
-            ],
-            "edges": [
-                {"from": "start", "to": "vote"},
-                {"from": "vote", "to": "supervisor"},
-                {"from": "supervisor", "to": "human"},
-                {"from": "human", "to": "end"},
-            ],
-        },
+            },
+            {
+                "id": "human",
+                "type": "human",
+                "approval": {"timeout": "5m", "on_approve": "continue", "on_reject": "abort"},
+            },
+            {"id": "end", "type": "noop"},
+        ],
+        "edges": [
+            {"from": "start", "to": "vote"},
+            {"from": "vote", "to": "supervisor"},
+            {"from": "supervisor", "to": "human"},
+            {"from": "human", "to": "end"},
+        ],
     }
 
     s.delete(f"{API}/api/v1/{TENANT}/agentflows/{FLOW_ID}")

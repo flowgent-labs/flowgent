@@ -16,6 +16,10 @@ This is the **end-to-end capstone** scenario. Run it **after** module verifiers
 
 What this script does
 ---------------------
+0. Seed agent/MCP definitions the flow's `type: agent`/`type: tool` nodes
+   resolve against at runtime (see seed_agents_and_mcps() below) — without
+   this, every such node fails immediately with "not found" and the flow
+   never gets past DISCOVERY's tool calls.
 1. Load the canonical `security-autonomy-fixer.yaml` (24 nodes, 11 phases).
 2. POST flow definition via API Server (`/agentflows`).
 3. Trigger a run and poll status via REST.
@@ -49,9 +53,81 @@ FLOW_TIMEOUT_S = config.FLOW_TIMEOUT_S
 POLL_INTERVAL_S = config.POLL_INTERVAL_S
 
 # Canonical flow YAML: scenarios/ -> security-autonomy-fixer/config/flows/
-_FLOW_YAML_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "config", "flows", "security-autonomy-fixer.yaml"
-)
+_CONFIG_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+_FLOW_YAML_PATH = os.path.join(_CONFIG_ROOT, "flows", "security-autonomy-fixer.yaml")
+_AGENTS_DIR = os.path.join(_CONFIG_ROOT, "agents")
+
+# Every "type: agent" node (AgentExecutor.Execute -> client.GetAgent) and
+# "type: tool" node (ToolExecutor.Execute -> McpManager.CallTool, populated
+# from TaskManager's ListMCPs() at TM startup — see
+# pkg/core/pkg/engine/taskmanager/taskmanager.go NewTaskManager) resolves
+# against apiserver-registered definitions, NOT the config/agents|mcps YAML
+# files directly — those are only templates. Without seeding them via REST
+# first, every agent/tool node in the flow fails immediately with "agent/MCP
+# not found", so DISCOVERY/ANALYZE/FIX/REVIEW never actually execute and this
+# capstone degenerates into a PENDING-forever or near-instant-FAILED run.
+#
+# By default the github/sonarqube MCPs are registered from the production
+# configs (config/mcps/{github,sonarqube}/*.yaml), matching how this flow
+# actually runs in production — REQUIRES the github-mcp/sonarqube-mcp
+# binaries to be present in the JM/TM container image plus real
+# GITHUB_TOKEN/SONARQUBE_TOKEN credentials and a reachable SonarQube server
+# (see config/mcps/{github,sonarqube}/*.yaml env: blocks) — without these the
+# tool nodes will register fine but fail at call time. Set
+# FLOWGENT_E2E_USE_REAL_MCP=false to instead point both MCPs at the mock
+# JSON-RPC stdio server baked into the flowgent-core image
+# (deploy/docker/Dockerfile.core COPYs config/mcps/mock-server.sh to
+# /app/mcp-server.sh) for a credential-free smoke run.
+_USE_REAL_MCP = os.getenv("FLOWGENT_E2E_USE_REAL_MCP", "true").lower() == "true"
+_MOCK_MCP_COMMAND = ["/app/mcp-server.sh"]
+
+
+def _get_or_post(s, get_path, post_path, payload, kind):
+    """Idempotently register a definition: GET first (name is UNIQUE in
+    llm_agent/llm_mcp — see migration/postgres/*/01_init.ddl.sql), POST only
+    if missing, so re-running this scenario doesn't 500 on a duplicate-name
+    constraint violation."""
+    r = s.get(f"{API}{get_path}")
+    if r.status_code == 200:
+        return True
+    r = s.post(f"{API}{post_path}", json=payload)
+    if r.status_code not in (200, 201):
+        print(f"  WARN: failed to register {kind} {payload.get('name')}: {r.status_code} {r.text[:160]}")
+        return False
+    return True
+
+
+def seed_agents_and_mcps(s):
+    """Register the agent/MCP definitions the canonical flow depends on
+    (see module docstring above _AGENTS_DIR) — idempotent, safe to call on
+    every run."""
+    print("\n-- [0] Seeding agent + MCP definitions (prerequisite for agent/tool nodes) --")
+    agent_count = 0
+    for fname in sorted(os.listdir(_AGENTS_DIR)):
+        if not fname.endswith(".yaml"):
+            continue
+        with open(os.path.join(_AGENTS_DIR, fname)) as f:
+            agent_def = yaml.safe_load(f)
+        name = agent_def.get("name")
+        if not name:
+            continue
+        if _get_or_post(s, f"/api/v1/{TENANT}/agents/{name}", f"/api/v1/{TENANT}/agents", agent_def, "agent"):
+            agent_count += 1
+    print(f"  OK {agent_count} agent definition(s) registered (from {_AGENTS_DIR})")
+
+    mcp_count = 0
+    for mode in ("github", "sonarqube"):
+        if _USE_REAL_MCP:
+            mcp_path = os.path.join(_CONFIG_ROOT, "mcps", mode, f"{mode}.yaml")
+            with open(mcp_path) as f:
+                mcp_def = yaml.safe_load(f)
+        else:
+            mcp_def = {"name": mode, "enabled": True, "type": "stdio",
+                       "command": _MOCK_MCP_COMMAND, "args": [mode], "env": {}}
+        if _get_or_post(s, f"/api/v1/{TENANT}/mcp/{mode}", f"/api/v1/{TENANT}/mcp", mcp_def, "mcp"):
+            mcp_count += 1
+    print(f"  OK {mcp_count} MCP server(s) registered "
+          f"({'real config/mcps/*/*.yaml' if _USE_REAL_MCP else 'mock /app/mcp-server.sh'})")
 
 # 11 phases × key nodes (matches config/flows/security-autonomy-fixer.yaml)
 PHASE_NODES = {
@@ -152,6 +228,8 @@ def run():
 
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
+
+    seed_agents_and_mcps(s)
 
     flow_def = load_flow_from_yaml()
     node_count = len(flow_def.get("nodes", []))
@@ -301,7 +379,10 @@ def run():
         client.on_message = on_message
         try:
             client.connect(config.EMQX_HOST, config.EMQX_PORT, 5)
-            client.subscribe("flowgent/notify/queue/#")
+            # Real topic shape (pkg/messager/pkg/messager.go NotifyEventTopic /
+            # NotifyResultTopic): flowgent/v1/{tenant}/flows/{flow}/runs/{run}/notify/*.
+            # There is no "flowgent/notify/queue/#" topic in the codebase.
+            client.subscribe(f"flowgent/v1/{TENANT}/flows/{FLOW_ID}/runs/{run_id}/notify/#")
             client.loop_start()
             time.sleep(2)
             client.loop_stop()

@@ -7,13 +7,22 @@ complete distributed traces visible in Jaeger UI.
 
 Requirements:
 - Jaeger Query API accessible (default: http://localhost:16686)
-- Security Fixer flow fully executed (scenario 11)
 - OTEL exporter configured in flowgent pods
 
+Note: this scenario is self-sufficient — it (re)creates the canonical
+security-autonomy-fixer flow definition itself (idempotent upsert) before
+triggering it, rather than depending on scenario 11 having run first. The
+flow YAML sets priority=high (see security-autonomy-fixer.yaml's comment) —
+currently the only value the API accepts, since Session mode is temporarily
+disabled — so FlowDefHandler.TriggerWithVars routes the run to the flow's
+dedicated per-flow JM namespace, which is where the Controller's dedicated
+JM Deployment for it actually polls.
+
 Verification Strategy:
-1. Trigger complete Security Fixer flow
-2. Query Jaeger for trace by run_id
-3. Verify all 24 nodes have minimum 7 spans each:
+1. Ensure the Security Fixer flow definition exists (idempotent create)
+2. Trigger complete Security Fixer flow
+3. Query Jaeger for trace by run_id
+4. Verify all 24 nodes have minimum 7 spans each:
    - JM-DispatchPlan
    - TM-ConsumeExecPlan
    - SlotWorker-Execute{Type}
@@ -21,14 +30,16 @@ Verification Strategy:
    - API-PUT-/tasks
    - MQTT-Publish-ExecResult
    - JM-ReceiveExecResult
-4. Verify parent-child span relationships
-5. Verify phase-level grouping and critical path
+5. Verify parent-child span relationships
+6. Verify phase-level grouping and critical path
 """
 
+import os
 import sys
 import time
 import json
 import requests
+import yaml
 from typing import List, Dict, Any, Optional
 
 sys.path.insert(0, '..')
@@ -37,6 +48,56 @@ import config
 JAEGER_API = config.JAEGER_UI_URL
 API_BASE = config.K3S_APISERVER_URL
 TENANT = config.K3S_TENANT
+
+# Canonical flow YAML: scenarios/ -> security-autonomy-fixer/config/flows/
+_CONFIG_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+_FLOW_YAML_PATH = os.path.join(_CONFIG_ROOT, "flows", "security-autonomy-fixer.yaml")
+_AGENTS_DIR = os.path.join(_CONFIG_ROOT, "agents")
+
+# See 11_e2e_security_fixer.py's module docstring / seed_agents_and_mcps for
+# the full rationale: agent/tool nodes resolve against apiserver-registered
+# definitions (not the YAML files directly), so without seeding them here
+# every node past DISCOVERY's tool calls fails with "agent/MCP not found".
+# Defaults to the production MCP configs (real credentials/binaries required
+# — see 11_e2e_security_fixer.py); set FLOWGENT_E2E_USE_REAL_MCP=false for a
+# credential-free mock run.
+_USE_REAL_MCP = os.getenv("FLOWGENT_E2E_USE_REAL_MCP", "true").lower() == "true"
+_MOCK_MCP_COMMAND = ["/app/mcp-server.sh"]
+
+
+def _get_or_post(get_path, post_path, payload, kind):
+    r = requests.get(f"{API_BASE}{get_path}")
+    if r.status_code == 200:
+        return True
+    r = requests.post(f"{API_BASE}{post_path}", json=payload)
+    if r.status_code not in (200, 201):
+        print(f"  ⚠ failed to register {kind} {payload.get('name')}: {r.status_code} {r.text[:160]}")
+        return False
+    return True
+
+
+def seed_agents_and_mcps():
+    """Idempotently register the agent/MCP definitions the canonical flow
+    depends on — see 11_e2e_security_fixer.py for the full rationale."""
+    print("  → Seeding agent + MCP definitions...")
+    for fname in sorted(os.listdir(_AGENTS_DIR)):
+        if not fname.endswith(".yaml"):
+            continue
+        with open(os.path.join(_AGENTS_DIR, fname)) as f:
+            agent_def = yaml.safe_load(f)
+        name = agent_def.get("name")
+        if name:
+            _get_or_post(f"/api/v1/{TENANT}/agents/{name}", f"/api/v1/{TENANT}/agents", agent_def, "agent")
+
+    for mode in ("github", "sonarqube"):
+        if _USE_REAL_MCP:
+            with open(os.path.join(_CONFIG_ROOT, "mcps", mode, f"{mode}.yaml")) as f:
+                mcp_def = yaml.safe_load(f)
+        else:
+            mcp_def = {"name": mode, "enabled": True, "type": "stdio",
+                       "command": _MOCK_MCP_COMMAND, "args": [mode], "env": {}}
+        _get_or_post(f"/api/v1/{TENANT}/mcp/{mode}", f"/api/v1/{TENANT}/mcp", mcp_def, "mcp")
+    print("  ✓ Agent + MCP definitions ready")
 
 # Security Fixer 24 nodes grouped by 11 phases (matches flows/security-autonomy-fixer.yaml)
 FLOW_PHASES = {
@@ -64,6 +125,18 @@ REQUIRED_SPAN_OPERATIONS = [
     "MQTT-Publish-ExecResult",
     "JM-ReceiveExecResult",
 ]
+
+
+def ensure_security_fixer_flow_exists():
+    """Idempotently (re)create the canonical flow definition (see module docstring)."""
+    print("  → Ensuring security-autonomy-fixer flow definition exists...")
+    with open(_FLOW_YAML_PATH) as f:
+        flow_def = yaml.safe_load(f)
+    flow_def.pop("triggers", None)
+    resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/agentflows", json=flow_def, timeout=10)
+    if resp.status_code not in (200, 201):
+        raise Exception(f"Flow upsert failed: {resp.status_code} {resp.text}")
+    print(f"  ✓ Flow definition ready: {flow_def.get('id')} (priority={flow_def.get('priority')})")
 
 
 def trigger_security_fixer() -> str:
@@ -238,7 +311,9 @@ def run():
     print("  Scenario 10: OTEL Tracing — Complete 24-Node Span Coverage")
     print("="*60)
     
-    # Step 1: Trigger flow
+    # Step 1: Ensure agents/MCPs + flow exist, then trigger it
+    seed_agents_and_mcps()
+    ensure_security_fixer_flow_exists()
     run_id = trigger_security_fixer()
     
     # Step 2: Wait for completion
