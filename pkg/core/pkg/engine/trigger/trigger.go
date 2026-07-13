@@ -25,7 +25,7 @@ func NewScheduleTrigger() *ScheduleTrigger {
 	}
 }
 
-func (s *ScheduleTrigger) RegisterAgentFlows(flows []entities.AgentFlowInfo, triggerFn func(context.Context, string)) {
+func (s *ScheduleTrigger) RegisterAgentFlows(flows []entities.FlowInfo, triggerFn func(context.Context, string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range flows {

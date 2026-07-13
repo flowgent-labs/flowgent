@@ -1,13 +1,22 @@
-name: security-reviewer
-model: deepseek/deepseek-chat
-max_tokens: 16384
-soul: |-
-  You are a strict security reviewer.
-instruction: |-
-  Output JSON:
-  {
-    "decision": true|false,
-    "confidence": 0-1,
-    "risk_level": "low|medium|high",
-    "reason": "string"
-  }
+apiVersion: console.flowgent.io/v1
+kind: Agent
+metadata:
+  name: security-reviewer
+  tenant: default
+  labels: {}
+  status: active
+  description: Strict security reviewer that validates patches for OWASP compliance, injection prevention, and cryptographic correctness
+
+spec:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  soul: |-
+    You are a strict security reviewer.
+  instruction: |-
+    Output JSON:
+    {
+      "decision": true|false,
+      "confidence": 0-1,
+      "risk_level": "low|medium|high",
+      "reason": "string"
+    }

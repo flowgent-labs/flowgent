@@ -205,7 +205,7 @@ def test_flow_create_lifecycle() -> bool:
         # flow (see controller.go dispatchFlow / entities.Priority doc
         # comment) regardless of priority; it is set explicitly here anyway
         # for clarity and to guard against the default ever changing.
-        # POST /agentflows decodes the body directly into entities.AgentFlowInfo —
+        # POST /flows decodes the body directly into entities.FlowInfo —
         # a flat shape ("id"/"nodes"/"edges"/"priority" at top level), not a
         # nested "definition" object (see pkg/api/pkg/handler/flow_def.go Create).
         payload = {
@@ -215,7 +215,7 @@ def test_flow_create_lifecycle() -> bool:
             "priority": "high",
         }
 
-        resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/agentflows", json=payload, timeout=10)
+        resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/flows", json=payload, timeout=10)
         if resp.status_code not in [200, 201]:
             raise AssertionError(f"Flow creation failed: {resp.status_code} {resp.text}")
 
@@ -296,7 +296,7 @@ def test_flow_create_lifecycle() -> bool:
         # Step 5: Cleanup - delete flow
         print(f"    • Step 5: Deleting AgentFlow...")
         
-        resp = requests.delete(f"{API_BASE}/api/v1/{TENANT}/agentflows/{created_id}", timeout=10)
+        resp = requests.delete(f"{API_BASE}/api/v1/{TENANT}/flows/{created_id}", timeout=10)
         if resp.status_code not in [200, 204]:
             print(f"      ⚠ Flow deletion returned {resp.status_code}")
         
@@ -379,7 +379,7 @@ def test_flow_update_lifecycle() -> bool:
             "edges": [],
             "priority": "high",
         }
-        resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/agentflows", json=payload, timeout=10)
+        resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/flows", json=payload, timeout=10)
         if resp.status_code not in [200, 201]:
             raise AssertionError(f"Flow creation failed: {resp.status_code}")
         created_id = resp.json().get("id")
@@ -391,7 +391,7 @@ def test_flow_update_lifecycle() -> bool:
         before_gen = before.get("metadata", {}).get("generation", 0) if before else 0
 
         resp = requests.put(
-            f"{API_BASE}/api/v1/{TENANT}/agentflows/{created_id}",
+            f"{API_BASE}/api/v1/{TENANT}/flows/{created_id}",
             json={"description": "updated by e2e verifier", "version": 2},
             timeout=10,
         )
@@ -407,7 +407,7 @@ def test_flow_update_lifecycle() -> bool:
         else:
             print(f"      ⚠ Deployment generation unchanged (Controller may reconcile async)")
 
-        resp = requests.delete(f"{API_BASE}/api/v1/{TENANT}/agentflows/{created_id}", timeout=10)
+        resp = requests.delete(f"{API_BASE}/api/v1/{TENANT}/flows/{created_id}", timeout=10)
         if resp.status_code not in [200, 204]:
             print(f"      ⚠ Flow deletion returned {resp.status_code}")
         wait_for_deployment_deleted(deployment_name, namespace=jm_namespace, timeout=60)

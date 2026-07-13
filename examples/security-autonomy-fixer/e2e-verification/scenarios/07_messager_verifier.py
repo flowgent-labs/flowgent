@@ -212,11 +212,11 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         # Step 1: Subscribe to all relevant topics
         print(f"    • Step 1: Setting up subscriptions...")
         
-        # Shared subscription for TM (simulating TM pool)
-        tester.subscribe(f"$share/tm-pool/flowgent/v1/+/flows/+/runs/+/exec/plans")
-        
-        # Shared subscription for Sandbox (simulating sandbox pool)
-        tester.subscribe(f"$share/sandbox-pool/flowgent/v1/+/flows/+/runs/+/sandbox/trigger")
+        # Shared subscription for TM (simulating TM pool, unique group to avoid real TM)
+        tester.subscribe(f"$share/e2e-tm-pool/flowgent/v1/+/flows/+/runs/+/exec/plans")
+
+        # Shared subscription for Sandbox (simulating sandbox pool, unique group)
+        tester.subscribe(f"$share/e2e-sandbox-pool/flowgent/v1/+/flows/+/runs/+/sandbox/trigger")
         
         # Point-to-point for sandbox result (TM receives)
         tester.subscribe(f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/result")
@@ -254,7 +254,8 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         
         # Step 3: TM receives ExecutionPlan
         print(f"    • Step 3: TM receives exec/plans...")
-        msg = tester.wait_for_message("exec/plans", timeout=3)
+        exec_plans_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/plans"
+        msg = tester.wait_for_message(exec_plans_topic, timeout=3)
         if not msg:
             raise AssertionError("TM did not receive ExecutionPlan")
         
@@ -278,7 +279,8 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         
         # Step 5: Sandbox receives trigger
         print(f"    • Step 5: Sandbox receives trigger...")
-        msg = tester.wait_for_message("sandbox/trigger", timeout=3)
+        sb_trigger_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
+        msg = tester.wait_for_message(sb_trigger_topic, timeout=3)
         if not msg:
             raise AssertionError("Sandbox did not receive trigger")
         
@@ -301,7 +303,8 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         
         # Step 7: TM receives sandbox result
         print(f"    • Step 7: TM receives sandbox/result...")
-        msg = tester.wait_for_message("sandbox/result", timeout=3)
+        sb_result_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/result"
+        msg = tester.wait_for_message(sb_result_topic, timeout=3)
         if not msg:
             raise AssertionError("TM did not receive sandbox result")
         
@@ -332,10 +335,11 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         
         # Step 10: JM receives state callback
         print(f"    • Step 10: JM receives exec/results...")
-        msg = tester.wait_for_message("exec/results", timeout=3)
+        exec_results_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/results"
+        msg = tester.wait_for_message(exec_results_topic, timeout=5)
         if not msg:
             raise AssertionError("JM did not receive exec result")
-        
+
         received_state = json.loads(msg["payload"]["payload"])
         if received_state["state"] != "COMPLETED":
             raise AssertionError(f"Unexpected state: {received_state['state']}")
@@ -373,7 +377,7 @@ def run():
         {
             "name": "exec/plans (JM → TM)",
             "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/plans",
-            "subscribe": f"$share/tm-pool/flowgent/v1/+/flows/+/runs/+/exec/plans",
+            "subscribe": f"$share/e2e-tm-pool/flowgent/v1/+/flows/+/runs/+/exec/plans",
             "payload": {"plan_id": rand_id(), "task_type": "agent"},
         },
         {
@@ -385,7 +389,7 @@ def run():
         {
             "name": "notify/event (Publisher → Notifier)",
             "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/notify/event",
-            "subscribe": f"$share/notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event",
+            "subscribe": f"$share/e2e-notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event",
             "payload": {"channel": "webhook", "message": "test notification"},
         },
         {
@@ -397,7 +401,7 @@ def run():
         {
             "name": "sign/request (TM → Wallet)",
             "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sign/request",
-            "subscribe": f"$share/wallet-pool/flowgent/v1/+/flows/+/runs/+/sign/request",
+            "subscribe": f"$share/e2e-wallet-pool/flowgent/v1/+/flows/+/runs/+/sign/request",
             "payload": {
                 "tenant_id": tenant,
                 "flow_id": flow_id,

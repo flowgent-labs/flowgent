@@ -6,9 +6,9 @@ require (
 	github.com/a2aproject/a2a-go v0.3.15
 	github.com/flowgent-labs/flowgent/a2a v0.0.0
 	github.com/flowgent-labs/flowgent/api v0.0.0
-	// github.com/flowgent-labs/flowgent/cache v0.0.0  // UNUSED
 	github.com/flowgent-labs/flowgent/common v0.0.0
 	github.com/flowgent-labs/flowgent/config v0.0.0
+	github.com/flowgent-labs/flowgent/console v0.0.0
 	github.com/flowgent-labs/flowgent/controller v0.0.0
 	github.com/flowgent-labs/flowgent/core v0.0.0
 	github.com/flowgent-labs/flowgent/messager v0.0.0
@@ -32,6 +32,7 @@ replace (
 	github.com/flowgent-labs/flowgent/cache => ../cache
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/config => ../config
+	github.com/flowgent-labs/flowgent/console => ../console
 	github.com/flowgent-labs/flowgent/controller => ../controller
 	github.com/flowgent-labs/flowgent/core => ../core
 	github.com/flowgent-labs/flowgent/messager => ../messager

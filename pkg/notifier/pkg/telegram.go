@@ -16,12 +16,12 @@ import (
 type TelegramSender struct {
 	BotToken string `json:"bot_token"`
 	ChatID   string `json:"chat_id"`
-	client   model.IFlowgentHttpClient
+	client   model.IFlowgentAPIClient
 }
 
 func (s *TelegramSender) Type() string { return "telegram" }
 
-func (s *TelegramSender) SetHTTPClient(c model.IFlowgentHttpClient) { s.client = c }
+func (s *TelegramSender) SetHTTPClient(c model.IFlowgentAPIClient) { s.client = c }
 
 func (s *TelegramSender) Validate() error {
 	if s.BotToken == "" {

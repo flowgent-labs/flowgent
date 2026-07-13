@@ -296,6 +296,7 @@ type RuntimeConfig struct {
 	TMSlots         int    `json:"tm_slots" yaml:"tm_slots"`
 	ControllerLabel string `json:"controller_label" yaml:"controller_label"`
 	JMImage         string `json:"jm_image" yaml:"jm_image"`
+	TMImage         string `json:"tm_image" yaml:"tm_image"`
 	JMConfigMap     string `json:"jm_config_map" yaml:"jm_config_map"`
 	PodIndex        int    `json:"pod_index" yaml:"pod_index"`
 	PodTotal        int    `json:"pod_total" yaml:"pod_total"`
@@ -677,11 +678,11 @@ func expandString(s string) string {
 // New code should load from the management console or REST API.
 
 func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentInfo, error) { return nil, nil }
-func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.AgentFlowInfo, map[string]entities.AgentFlowInfo, error) {
-	return nil, make(map[string]entities.AgentFlowInfo), nil
+func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
+	return nil, make(map[string]entities.FlowInfo), nil
 }
-func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.AgentFlowInfo, map[string]entities.AgentFlowInfo, error) {
-	return nil, make(map[string]entities.AgentFlowInfo), nil
+func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
+	return nil, make(map[string]entities.FlowInfo), nil
 }
 
 // LogConfig prints key configuration details (masks sensitive fields).

@@ -79,19 +79,49 @@ func (h *McpHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *McpHandler) Update(w http.ResponseWriter, r *http.Request) {
-	var m entities.McpInfo
-	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+	name := r.PathValue("name")
+
+	existing, err := h.store.Get(r.Context(), name)
+	if err != nil || existing == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+
+	var updates entities.McpInfo
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	m.Name = r.PathValue("name")
-	m.UpdatedAt = time.Now()
-	if err := h.store.Save(r.Context(), &m); err != nil {
-		http.Error(w, err.Error(), 500)
+
+	if updates.Type != "" {
+		existing.Type = updates.Type
+	}
+	if updates.URL != "" {
+		existing.URL = updates.URL
+	}
+	if updates.Headers != nil {
+		existing.Headers = updates.Headers
+	}
+	if updates.Command != nil {
+		existing.Command = updates.Command
+	}
+	if updates.Args != nil {
+		existing.Args = updates.Args
+	}
+	if updates.Env != nil {
+		existing.Env = updates.Env
+	}
+	// Enabled is a bool — use a pointer or check if the JSON explicitly set it.
+	// For now, always apply the value from the request body.
+	existing.Enabled = updates.Enabled
+	existing.UpdatedAt = time.Now()
+
+	if err := h.store.Save(r.Context(), existing); err != nil {
+		http.Error(w, "Save err: name='"+name+"' existing.Name='"+existing.Name+"' id='"+existing.ID+"' -> "+err.Error(), 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(m)
+	json.NewEncoder(w).Encode(existing)
 }
 
 func (h *McpHandler) Delete(w http.ResponseWriter, r *http.Request) {

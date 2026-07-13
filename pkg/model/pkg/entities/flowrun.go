@@ -34,8 +34,9 @@ type FlowRunInfo struct {
 	SharedMemory map[string]any            `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty" db:"-"`
 	ExecPlans    map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty" db:"-"`
 
-	Namespace string   `json:"namespace,omitempty"`
-	Priority  Priority `json:"priority,omitempty"`
+	Namespace string            `json:"namespace,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Priority  Priority          `json:"priority,omitempty"`
 }
 
 // SetTrigger populates the flat trigger columns from a TriggerInfo value.

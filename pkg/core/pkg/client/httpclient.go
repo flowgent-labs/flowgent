@@ -12,7 +12,7 @@ import (
 
 // GenericHttpClient is the standard HTTP client implementation. It wraps
 // *http.Client with reasonable defaults (timeouts, connection pooling).
-// This is the default IFlowgentHttpClient injected when payments are disabled.
+// This is the default IFlowgentAPIClient injected when payments are disabled.
 type GenericHttpClient struct {
 	client *http.Client
 }
@@ -73,4 +73,4 @@ func readBody(resp *http.Response) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-var _ model.IFlowgentHttpClient = (*GenericHttpClient)(nil)
+var _ model.IFlowgentAPIClient = (*GenericHttpClient)(nil)

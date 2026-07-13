@@ -97,6 +97,7 @@ type KubernetesResourceManager struct {
 	mqttBroker   string
 	postgresDSN  string
 	apiServerURL string
+	tmImage      string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -172,6 +173,8 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		sandboxPolicy:          cfg.SandboxPolicy,
 		mqttBroker:             cfg.MQTTBroker,
 		postgresDSN:            cfg.PostgresDSN,
+		apiServerURL:           cfg.APIServerURL,
+		tmImage:                cfg.TMImage,
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -493,14 +496,25 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:            "taskmanager",
-						Image:           "localhost/flowgent/taskmanager:latest",
-						ImagePullPolicy: corev1.PullNever,
+						Image:           s.tmImage,
+						ImagePullPolicy: corev1.PullIfNotPresent,
 						Env: []corev1.EnvVar{
 							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: s.postgresDSN},
+							{Name: "FLOWGENT__RUNTIME__API_SERVER_URL", Value: s.apiServerURL},
 						},
-						Command: []string{"/app/flowgent", "taskmanager", "start"},
+						Command: []string{"/app/flowgent", "taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"},
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: "config", MountPath: "/etc/flowgent"},
+						},
 					}},
+					Volumes: []corev1.Volume{
+						{Name: "config", VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{Name: "flowgent-config"},
+							},
+						}},
+					},
 				},
 			},
 		},

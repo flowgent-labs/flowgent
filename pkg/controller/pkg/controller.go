@@ -162,25 +162,25 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 		return
 	}
 
-	seen := make(map[string]*entities.AgentFlowInfo)
+	seen := make(map[string]*entities.FlowInfo)
 	versionOf := make(map[string]int64)
 	for _, v := range versions {
-		if _, exists := seen[v.AgentFlowID]; exists {
+		if _, exists := seen[v.FlowID]; exists {
 			continue
 		}
-		var spec entities.AgentFlowInfo
+		var spec entities.FlowInfo
 		if err := json.Unmarshal(v.Definition, &spec); err != nil {
-			c.logger.Warn("Skipping invalid agentflow definition", "agentflow_id", v.AgentFlowID, "error", err)
+			c.logger.Warn("Skipping invalid flow definition", "flow_id", v.FlowID, "error", err)
 			continue
 		}
 		if spec.ID == "" {
 			continue
 		}
-		seen[v.AgentFlowID] = &spec
-		versionOf[v.AgentFlowID] = v.Version
+		seen[v.FlowID] = &spec
+		versionOf[v.FlowID] = v.Version
 	}
 
-	var ownedFlows []entities.AgentFlowInfo
+	var ownedFlows []entities.FlowInfo
 	for flowID, spec := range seen {
 		if !c.ownsFlow(peers, flowID) {
 			continue
@@ -199,7 +199,7 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 		// condition (docs/01-L1-Engine-Architecture.md §4.2). Without this
 		// guard the Controller would create a brand-new FlowRun for every
 		// known flow on every pollInterval tick, forever. Explicit runs
-		// otherwise come from Path A (POST /agentflows/trigger) or the cron
+		// otherwise come from Path A (POST /flows/trigger) or the cron
 		// triggers registered below.
 		if !c.shouldDispatch(flowID, versionOf[flowID]) {
 			continue
@@ -248,7 +248,7 @@ func (c *FlowgentController) triggerScheduledRun(ctx context.Context, flowID str
 	c.createApplicationRun(ctx, spec)
 }
 
-func (c *FlowgentController) dispatchFlow(ctx context.Context, spec *entities.AgentFlowInfo) {
+func (c *FlowgentController) dispatchFlow(ctx context.Context, spec *entities.FlowInfo) {
 	flowCtx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	c.running[spec.ID] = cancel
@@ -272,7 +272,7 @@ func (c *FlowgentController) dispatchFlow(ctx context.Context, spec *entities.Ag
 // exists for this flow, in its tenant's shared namespace. Idempotent — safe
 // to call on every reconcile tick, independent of whether a run is
 // dispatched.
-func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *entities.AgentFlowInfo) {
+func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *entities.FlowInfo) {
 	ns := c.applicationNamespace(spec)
 	tenantID := c.dispatchTenant(spec)
 
@@ -327,7 +327,7 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 // createApplicationRun creates a PENDING run scoped to the flow's tenant
 // namespace, so only its dedicated JM (which polls that namespace) picks it
 // up.
-func (c *FlowgentController) createApplicationRun(ctx context.Context, spec *entities.AgentFlowInfo) {
+func (c *FlowgentController) createApplicationRun(ctx context.Context, spec *entities.FlowInfo) {
 	ns := c.applicationNamespace(spec)
 	tenantID := c.dispatchTenant(spec)
 	run := &entities.FlowRunInfo{
@@ -364,7 +364,7 @@ func (c *FlowgentController) createApplicationRun(ctx context.Context, spec *ent
 // doesn't carry its own TenantID. Without this shared fallback the two
 // components would silently disagree on the namespace and Application-mode
 // runs would never be picked up by their dedicated JM.
-func (c *FlowgentController) applicationNamespace(spec *entities.AgentFlowInfo) string {
+func (c *FlowgentController) applicationNamespace(spec *entities.FlowInfo) string {
 	if spec.Namespace != "" {
 		return spec.Namespace
 	}
@@ -377,7 +377,7 @@ func (c *FlowgentController) applicationNamespace(spec *entities.AgentFlowInfo) 
 // pkg/cmd/pkg/controller/controller.go, always non-empty) to, as a last
 // resort, "default" — mirroring handler.defaultTenantID's fallback so the
 // two components never disagree even in a misconfigured edge case.
-func (c *FlowgentController) dispatchTenant(spec *entities.AgentFlowInfo) string {
+func (c *FlowgentController) dispatchTenant(spec *entities.FlowInfo) string {
 	if spec.TenantID != "" {
 		return spec.TenantID
 	}
@@ -396,7 +396,7 @@ func defaultNamespacePrefix(prefix string) string {
 	return prefix
 }
 
-func (c *FlowgentController) buildJMDeployment(name, namespace, tenantID string, spec *entities.AgentFlowInfo) *appsv1.Deployment {
+func (c *FlowgentController) buildJMDeployment(name, namespace, tenantID string, spec *entities.FlowInfo) *appsv1.Deployment {
 	replicas := int32(1)
 	labels := map[string]string{
 		"app":                "flowgent-jobmanager",
@@ -461,7 +461,7 @@ func (c *FlowgentController) jmConfigMapName() string {
 // (docs/01-L1-Engine-Architecture.md §9.3). peers is the same reconcile-tick
 // peer snapshot used for dispatch ownership above, so GC and dispatch agree
 // on which pod owns which flow within a tick.
-func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen map[string]*entities.AgentFlowInfo, peers []discovery.Peer) {
+func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen map[string]*entities.FlowInfo, peers []discovery.Peer) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return // not running in K8s — nothing to garbage-collect

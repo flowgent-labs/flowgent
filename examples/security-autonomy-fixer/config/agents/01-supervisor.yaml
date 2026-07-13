@@ -1,15 +1,24 @@
-name: supervisor
-model: deepseek/deepseek-chat
-max_tokens: 16384
-temperature: 0.2
-soul: |-
-  You are a senior autonomous orchestration controller. Output ONLY a JSON object.
-instruction: |-
-  Decide the next action based on the execution state:
-  - "continue" if everything looks good, proceed to next node
-  - "retry" if a node should be re-executed
-  - "inject" to add extra review
-  - "abort" if execution is unsafe
+apiVersion: console.flowgent.io/v1
+kind: Agent
+metadata:
+  name: supervisor
+  tenant: default
+  labels: {}
+  status: active
+  description: Senior autonomous orchestration controller that plans, routs, and supervises the security fix pipeline
 
-  Reply with ONLY a JSON object, no other text:
-  {"action":"continue","target":"","reason":"brief explanation"}
+spec:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  temperature: 0.2
+  soul: |-
+    You are a senior autonomous orchestration controller. Output ONLY a JSON object.
+  instruction: |-
+    Decide the next action based on the execution state:
+    - "continue" if everything looks good, proceed to next node
+    - "retry" if a node should be re-executed
+    - "inject" to add extra review
+    - "abort" if execution is unsafe
+
+    Reply with ONLY a JSON object, no other text:
+    {"action":"continue","target":"","reason":"brief explanation"}

@@ -54,7 +54,7 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		},
 	})
 
-	spec := &entities.AgentFlowInfo{
+	spec := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "my-flow"},
 		Priority:   entities.PriorityHigh,
 	}
@@ -117,29 +117,29 @@ func TestApplicationNamespace(t *testing.T) {
 	})
 
 	t.Run("uses explicit namespace when set", func(t *testing.T) {
-		spec := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}, Namespace: "custom-ns"}
+		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}, Namespace: "custom-ns"}
 		if got := c.applicationNamespace(spec); got != "custom-ns" {
 			t.Errorf("applicationNamespace() = %q, want %q", got, "custom-ns")
 		}
 	})
 
 	t.Run("derives from namespacePrefix + tenant ID without double dash", func(t *testing.T) {
-		spec := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow", TenantID: "acme"}}
+		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow", TenantID: "acme"}}
 		if got := c.applicationNamespace(spec); got != "flowgent-acme" {
 			t.Errorf("applicationNamespace() = %q, want %q", got, "flowgent-acme")
 		}
 	})
 
 	t.Run("two flows of the same tenant share one namespace", func(t *testing.T) {
-		spec1 := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", TenantID: "acme"}}
-		spec2 := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", TenantID: "acme"}}
+		spec1 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", TenantID: "acme"}}
+		spec2 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", TenantID: "acme"}}
 		if ns1, ns2 := c.applicationNamespace(spec1), c.applicationNamespace(spec2); ns1 != ns2 {
 			t.Errorf("expected same-tenant flows to share a namespace, got %q vs %q", ns1, ns2)
 		}
 	})
 
 	t.Run("falls back to controller's default tenant when spec.TenantID is unset", func(t *testing.T) {
-		spec := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}}
+		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}}
 		if got := c.applicationNamespace(spec); got != "flowgent-default" {
 			t.Errorf("applicationNamespace() = %q, want %q", got, "flowgent-default")
 		}

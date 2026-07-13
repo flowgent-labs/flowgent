@@ -7,7 +7,7 @@ import (
 )
 
 // TestApplicationNamespace is a regression test for a bug where Trigger
-// (Path A, POST /agentflows/trigger) always created runs with namespace="",
+// (Path A, POST /flows/trigger) always created runs with namespace="",
 // so flows triggered via the canonical /trigger endpoint were never picked
 // up by their dedicated per-flow JM (which only polls its tenant's
 // namespace) and would hang forever, since every flow now runs in
@@ -29,7 +29,7 @@ func TestApplicationNamespace(t *testing.T) {
 	h := &FlowDefHandler{namespacePrefix: "flowgent-", defaultTenant: "default"}
 
 	t.Run("uses explicit namespace when set", func(t *testing.T) {
-		spec := &entities.AgentFlowInfo{
+		spec := &entities.FlowInfo{
 			BaseEntity: entities.BaseEntity{ID: "my-flow"},
 			Namespace:  "custom-ns",
 		}
@@ -39,7 +39,7 @@ func TestApplicationNamespace(t *testing.T) {
 	})
 
 	t.Run("derives from namespacePrefix + tenant ID without double dash", func(t *testing.T) {
-		spec := &entities.AgentFlowInfo{
+		spec := &entities.FlowInfo{
 			BaseEntity: entities.BaseEntity{ID: "my-flow", TenantID: "acme"},
 		}
 		want := "flowgent-acme"
@@ -49,8 +49,8 @@ func TestApplicationNamespace(t *testing.T) {
 	})
 
 	t.Run("two flows of the same tenant share one namespace", func(t *testing.T) {
-		spec1 := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", TenantID: "acme"}}
-		spec2 := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", TenantID: "acme"}}
+		spec1 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", TenantID: "acme"}}
+		spec2 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", TenantID: "acme"}}
 		ns1, ns2 := h.applicationNamespace(spec1), h.applicationNamespace(spec2)
 		if ns1 != ns2 {
 			t.Errorf("expected same-tenant flows to share a namespace, got %q vs %q", ns1, ns2)
@@ -58,7 +58,7 @@ func TestApplicationNamespace(t *testing.T) {
 	})
 
 	t.Run("falls back to defaultTenant when spec.TenantID is unset", func(t *testing.T) {
-		spec := &entities.AgentFlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}}
+		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}}
 		want := "flowgent-default"
 		if got := h.applicationNamespace(spec); got != want {
 			t.Errorf("applicationNamespace() = %q, want %q", got, want)

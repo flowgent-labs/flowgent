@@ -1,0 +1,37 @@
+name: E2E Verification
+on: [push, pull_request]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup K3s
+        run: |
+          curl -sfL https://get.k3s.io | sh -
+          sudo k3s kubectl wait --for=condition=Ready node --all --timeout=60s
+      
+      - name: Deploy Flowgent
+        run: |
+          make build-image-core
+          docker save flowgent-core:latest | sudo k3s ctr images import -
+          helm install flowgent deploy/helm/flowgent -n default
+          kubectl wait --for=condition=Ready pod -l app=flowgent-apiserver --timeout=60s
+      
+      - name: Run E2E Tests
+        run: |
+          cd examples/security-autonomy-fixer/e2e-verification
+          python3 runner.py
+      
+      - name: Collect Logs
+        if: failure()
+        run: |
+          kubectl logs deploy/flowgent-apiserver > apiserver.log
+          kubectl logs deploy/flowgent-taskmanager > taskmanager.log
+      
+      - uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: logs
+          path: "*.log"

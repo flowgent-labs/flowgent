@@ -12,6 +12,6 @@ import (
 
 // NewHttpClient creates a GenericHttpClient. x402 payment support is not
 // compiled in this build (use -tags x402 to enable).
-func NewHttpClient(_ *config.FlowgentConfig, _ messager.IMessager) model.IFlowgentHttpClient {
+func NewHttpClient(_ *config.FlowgentConfig, _ messager.IMessager) model.IFlowgentAPIClient {
 	return NewGenericHttpClient(30 * time.Second)
 }

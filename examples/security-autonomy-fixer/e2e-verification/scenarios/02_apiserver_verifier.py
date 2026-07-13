@@ -6,7 +6,7 @@ Validates complete REST API coverage for all entities and MQTT lifecycle
 event publishing for flow/run state changes.
 
 Entity Coverage (9 entities) — paths/tables match pkg/api/pkg/server.go + pkg/store:
-1. AgentFlow   - orh_agentflow      - /api/v1/{tenant}/agentflows
+1. AgentFlow   - orh_agentflow      - /api/v1/{tenant}/flows
 2. FlowRun     - orh_flowrun        - /api/v1/{tenant}/runs
 3. TaskRun     - task_runs          - /api/v1/{tenant}/runs/{run_id}/tasks
 4. Agent       - llm_agent          - /api/v1/{tenant}/agents
@@ -75,9 +75,13 @@ def http_request(method: str, path: str, payload: Optional[Dict] = None, timeout
         else:
             raise ValueError(f"Unsupported method: {method}")
         
+        try:
+            data = resp.json() if resp.text and resp.status_code != 204 else {}
+        except Exception:
+            data = resp.text
         return {
             "status_code": resp.status_code,
-            "data": resp.json() if resp.text and resp.status_code != 204 else {},
+            "data": data,
             "text": resp.text,
         }
     except Exception as e:
@@ -161,7 +165,7 @@ class MQTTTestClient:
 
 def test_crud_entity(entity_name: str, table_name: str, base_path: str,
                      id_field: str, create_payload: Dict, update_payload: Dict,
-                     pg_id_col: str = None) -> bool:
+                     pg_id_col: str = None, update_check_sql: str = None) -> bool:
     """Test CRUD operations for a single entity.
 
     id_field is the JSON key identifying the resource in REST responses (used
@@ -169,26 +173,29 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
     name to filter on directly, when it differs from id_field (e.g. AgentFlow:
     REST responses use "id" but the orh_agentflow table's lookup column is
     "agentflow_id" — see pkg/store/pkg/agentflow/agentflow_postgres.go).
+
+    update_check_sql overrides the default "updated_at > created_at" check
+    (e.g. for versioned tables where UPDATE creates a new row).
     """
     print(f"\n  → Testing {entity_name} CRUD...")
 
     pg_id_col = pg_id_col or id_field
     created_id = None
     pg_conn = get_pg_connection()
-    
+
     try:
         # CREATE
         print(f"    • CREATE...")
         resp = http_request("POST", base_path, create_payload)
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"CREATE failed: {resp['status_code']} {resp.get('text')}")
-        
+
         created_id = resp["data"].get(id_field) or resp["data"].get("id")
         if not created_id:
             raise AssertionError(f"No {id_field} in response: {resp['data']}")
-        
+
         print(f"      ✓ Created: {id_field}={created_id}")
-        
+
         # Verify PG persistence
         if pg_conn:
             cursor = pg_conn.cursor()
@@ -197,48 +204,54 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
             if count != 1:
                 raise AssertionError(f"PG persistence failed: count={count}")
             print(f"      ✓ PG persistence verified")
-        
+
         # READ (single)
         print(f"    • READ...")
         resp = http_request("GET", f"{base_path}/{created_id}")
         if resp["status_code"] != 200:
             raise AssertionError(f"GET failed: {resp['status_code']}")
-        
+
         if resp["data"].get(id_field) != created_id:
             raise AssertionError(f"GET returned wrong {id_field}")
-        
+
         print(f"      ✓ Read verified")
-        
+
         # LIST
         print(f"    • LIST...")
         resp = http_request("GET", f"{base_path}?limit=10")
         if resp["status_code"] != 200:
             raise AssertionError(f"LIST failed: {resp['status_code']}")
-        
-        items = resp["data"].get("items") or resp["data"]
+
+        items = resp["data"] if isinstance(resp["data"], list) else resp["data"].get("items", [])
         if not isinstance(items, list):
             raise AssertionError(f"LIST did not return array")
-        
-        found = any(item.get(id_field) == created_id for item in items)
+
+        found = any(item.get(pg_id_col) == created_id or item.get(id_field) == created_id for item in items)
         if not found:
             raise AssertionError(f"Created item not in LIST")
-        
+
         print(f"      ✓ List verified (count={len(items)})")
-        
+
         # UPDATE
         print(f"    • UPDATE...")
         resp = http_request("PUT", f"{base_path}/{created_id}", update_payload)
         if resp["status_code"] != 200:
             raise AssertionError(f"UPDATE failed: {resp['status_code']}")
-        
-        # Verify updated_at changed
+
+        # Verify update occurred (custom check for versioned tables)
         if pg_conn:
             cursor = pg_conn.cursor()
-            cursor.execute(f"SELECT updated_at > created_at FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
-            updated = cursor.fetchone()[0]
-            if not updated:
-                raise AssertionError(f"updated_at not changed")
-        
+            if update_check_sql:
+                cursor.execute(update_check_sql, (created_id,))
+                result = cursor.fetchone()[0]
+                if not result:
+                    raise AssertionError(f"update check failed")
+            else:
+                cursor.execute(f"SELECT updated_at > created_at FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
+                updated = cursor.fetchone()[0]
+                if not updated:
+                    raise AssertionError(f"updated_at not changed")
+
         print(f"      ✓ Update verified")
         
         # DELETE (soft delete)
@@ -292,14 +305,14 @@ def test_flow_lifecycle_events() -> bool:
         # Test 1: CREATE → ctrl/flow/updated (action=created)
         print(f"    • Testing CREATE event...")
         flow_id = "test-flow-" + rand_id()
-        # Flat AgentFlowInfo shape — see test_crud_entity's AgentFlow comment above.
+        # Flat FlowInfo shape — see test_crud_entity's AgentFlow comment above.
         payload = {
             "id": flow_id,
             "nodes": [{"id": "n1", "type": "noop"}],
             "edges": [],
         }
         
-        resp = http_request("POST", f"/api/v1/{TENANT}/agentflows", payload)
+        resp = http_request("POST", f"/api/v1/{TENANT}/flows", payload)
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"Flow creation failed: {resp['status_code']}")
         
@@ -324,7 +337,7 @@ def test_flow_lifecycle_events() -> bool:
             "description": "updated description",
         }
         
-        resp = http_request("PUT", f"/api/v1/{TENANT}/agentflows/{created_id}", update_payload)
+        resp = http_request("PUT", f"/api/v1/{TENANT}/flows/{created_id}", update_payload)
         if resp["status_code"] != 200:
             raise AssertionError(f"Flow update failed: {resp['status_code']}")
         
@@ -336,7 +349,7 @@ def test_flow_lifecycle_events() -> bool:
         
         # Test 3: DELETE → ctrl/flow/deleted
         print(f"    • Testing DELETE event...")
-        resp = http_request("DELETE", f"/api/v1/{TENANT}/agentflows/{created_id}")
+        resp = http_request("DELETE", f"/api/v1/{TENANT}/flows/{created_id}")
         if resp["status_code"] not in [200, 204]:
             raise AssertionError(f"Flow deletion failed: {resp['status_code']}")
         
@@ -364,7 +377,7 @@ def test_flow_run_crud() -> bool:
     created_run_id = None
     pg_conn = get_pg_connection()
     try:
-        resp = http_request("POST", f"/api/v1/{TENANT}/agentflows", {
+        resp = http_request("POST", f"/api/v1/{TENANT}/flows", {
             "id": flow_id,
             "nodes": [{"id": "n1", "type": "noop"}],
             "edges": [],
@@ -419,7 +432,7 @@ def test_task_run_nested() -> bool:
     run_id = None
     task_id = None
     try:
-        resp = http_request("POST", f"/api/v1/{TENANT}/agentflows", {
+        resp = http_request("POST", f"/api/v1/{TENANT}/flows", {
             "id": flow_id,
             "nodes": [{"id": "n1", "type": "noop"}],
             "edges": [],
@@ -547,16 +560,19 @@ def run():
     # Entity test definitions
     entities = [
         {
-            # POST /agentflows decodes the request body directly into
-            # entities.AgentFlowInfo (pkg/api/pkg/handler/flow_def.go Create) —
+            # POST /flows decodes the request body directly into
+            # entities.FlowInfo (pkg/api/pkg/handler/flow_def.go Create) —
             # a FLAT shape with "id"/"nodes"/"edges" at top level, NOT the
             # {"agentflow_id", "version", "definition": {...}} DB row shape
-            # (that shape is only used internally by AgentFlowVersionInfo).
+            # (that shape is only used internally by FlowVersionInfo).
             # REST responses key the flow by "id", but the orh_agentflow table
             # stores/looks it up by the "agentflow_id" column, hence pg_id_col.
+            # orh_agentflow is versioned: UPDATE creates a new version row
+            # (both created_at/updated_at set to same time), so the default
+            # "updated_at > created_at" check doesn't apply.
             "name": "AgentFlow",
             "table": "orh_agentflow",
-            "base_path": f"/api/v1/{TENANT}/agentflows",
+            "base_path": f"/api/v1/{TENANT}/flows",
             "id_field": "id",
             "pg_id_col": "agentflow_id",
             "create": {
@@ -565,6 +581,7 @@ def run():
                 "edges": [],
             },
             "update": {"description": "updated"},
+            "update_check_sql": "SELECT COUNT(*) >= 2 FROM orh_agentflow WHERE agentflow_id=%s",
         },
         {
             "name": "Agent",
@@ -630,6 +647,7 @@ def run():
             entity["create"],
             entity["update"],
             pg_id_col=entity.get("pg_id_col"),
+            update_check_sql=entity.get("update_check_sql"),
         )
     
     # Run lifecycle event tests

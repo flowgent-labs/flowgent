@@ -1,5 +1,14 @@
-name: arch-reviewer
-model: deepseek/deepseek-chat
-max_tokens: 16384
-soul: |-
-  You are an architecture reviewer.
+apiVersion: console.flowgent.io/v1
+kind: Agent
+metadata:
+  name: arch-reviewer
+  tenant: default
+  labels: {}
+  status: active
+  description: Architecture reviewer that validates patches against system design principles, coupling, and cohesion
+
+spec:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  soul: |-
+    You are an architecture reviewer.

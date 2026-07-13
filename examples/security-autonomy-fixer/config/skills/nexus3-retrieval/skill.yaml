@@ -1,69 +1,50 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Skill: nexus3-retrieval
-#
-# Queries Nexus3 REST API + SonatypeIQ Web UI API to find the top-N latest
-# non-quarantined Maven dependency versions. Replaces the (now deleted)
-# examples/mcps/nexus3 + examples/mcps/sonatypeiq MCP tools.
-#
-# Design: .agent/nexus3-iq-skill-design.md
-# Rationale: docs/01-L1-Engine-Architecture.md §13.4
-#
-# This skill is PURE QUERY — it returns a version list without modifying any
-# project files. The parent flow's subsequent DAG nodes decide what to do
-# with the results (analyze → human approve → commit fix).
-#
-# Directory layout:
-#   skill.yaml       — this file
-#   SKILL.md         — docs + agent instructions
-#   scripts/nexus3-iq.sh — single script with subcommands
-#   references/      — API reference
-#   workspace/       — runtime scratch
-# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: console.flowgent.io/v1
+kind: Skill
+metadata:
+  name: nexus3-retrieval
+  tenant: default
+  labels:
+    type: dependency-firewall
+    runtime: bash-python
+  status: active
+  description: Query Nexus3 and SonatypeIQ to fetch top-N non-quarantined Maven dependency versions with firewall status
 
-id: nexus3-retrieval
-kind: skill
-summary: >-
-  Fetch top-N non-quarantined Maven dependency versions from Nexus3
-  with SonatypeIQ firewall status (replaces nexus3 + sonatypeiq MCPs)
-
-vars:
-  nexus3_url: "http://nexus3:8081"
-  sonatypeiq_url: "http://sonatypeiq:8070"
-  default_top_n: 5
-
-nodes:
-  - id: query-versions
-    type: sandbox
-    runtime: bash
-    timeout: 30s
-    script: |
-      #!/bin/bash
-      # Runs nexus3-iq.sh get-available-versions
-      SCRIPT_DIR="/workspace/nexus3-retrieval/scripts"
-      cd "$SCRIPT_DIR" 2>/dev/null || cd "$(dirname "$0")"
-      bash nexus3-iq.sh get-available-versions \
-        "${INPUT_GROUP_ID}" "${INPUT_ARTIFACT_ID}" "${INPUT_CURRENT_VERSION:-}"
-    network_policy:
-      mode: allowlist
-      allowed:
-        - "nexus3:8081"
-        - "sonatypeiq:8070"
-
-  - id: filter-results
-    type: agent
-    agent: issue-detector
-    input:
-      raw_result: "${query-versions}"
-      top_n: "${vars.default_top_n}"
-    instruction: |
-      Parse the version query result. If warning is non-empty, flag it.
-      Sort: recommended versions first, then by firewall=allow, then version desc.
-      Return top-N versions as STRICT JSON:
-      {"versions":[{"version":"...","firewall":"allow|unknown","recommended":true|false,"source":"iq|nexus3"}]}
-
-  - id: end
-    type: noop
-
-edges:
-  - { from: query-versions, to: filter-results }
-  - { from: filter-results, to: end }
+spec:
+  id: nexus3-retrieval
+  vars:
+    nexus3_url: "http://nexus3:8081"
+    sonatypeiq_url: "http://sonatypeiq:8070"
+    default_top_n: 5
+  nodes:
+    - id: query-versions
+      type: sandbox
+      runtime: bash
+      timeout: 30s
+      script: |
+        #!/bin/bash
+        # Runs nexus3-iq.sh get-available-versions
+        SCRIPT_DIR="/workspace/nexus3-retrieval/scripts"
+        cd "$SCRIPT_DIR" 2>/dev/null || cd "$(dirname "$0")"
+        bash nexus3-iq.sh get-available-versions \
+          "${INPUT_GROUP_ID}" "${INPUT_ARTIFACT_ID}" "${INPUT_CURRENT_VERSION:-}"
+      network_policy:
+        mode: allowlist
+        allowed:
+          - "nexus3:8081"
+          - "sonatypeiq:8070"
+    - id: filter-results
+      type: agent
+      agent: issue-detector
+      input:
+        raw_result: "${query-versions}"
+        top_n: "${vars.default_top_n}"
+      instruction: |
+        Parse the version query result. If warning is non-empty, flag it.
+        Sort: recommended versions first, then by firewall=allow, then version desc.
+        Return top-N versions as STRICT JSON:
+        {"versions":[{"version":"...","firewall":"allow|unknown","recommended":true|false,"source":"iq|nexus3"}]}
+    - id: end
+      type: noop
+  edges:
+    - { from: query-versions, to: filter-results }
+    - { from: filter-results, to: end }

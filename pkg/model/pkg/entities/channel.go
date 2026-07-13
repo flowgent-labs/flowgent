@@ -15,8 +15,9 @@ const (
 type NotifyChannelInfo struct {
 	BaseEntity
 
-	Name    string            `json:"name"`
-	Type    NotifyChannelType `json:"type"`
-	Config  map[string]any    `json:"config"`
-	Enabled bool              `json:"enabled"`
+	Name        string            `json:"name"`
+	ChannelType NotifyChannelType `json:"type" db:"channel_type"`
+	Config      map[string]any    `json:"config"`
+	Enabled     bool              `json:"enabled"`
+	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 }

@@ -30,7 +30,7 @@ type X402Config struct {
 }
 
 // X402PaymentHttpClient is a self-contained, pluggable implementation of
-// IFlowgentHttpClient with transparent x402 payment handling. When a server
+// IFlowgentAPIClient with transparent x402 payment handling. When a server
 // returns 402 Payment Required, the full payment flow (policy check, signing,
 // facilitator settlement) is handled transparently and the request is retried
 // with the payment token.
@@ -192,4 +192,4 @@ func (c *X402PaymentHttpClient) Post(ctx context.Context, url string, body []byt
 	return c.Do(req)
 }
 
-var _ model.IFlowgentHttpClient = (*X402PaymentHttpClient)(nil)
+var _ model.IFlowgentAPIClient = (*X402PaymentHttpClient)(nil)

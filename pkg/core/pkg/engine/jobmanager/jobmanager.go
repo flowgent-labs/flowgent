@@ -2,9 +2,11 @@ package jobmanager
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
@@ -38,7 +40,7 @@ func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logg
 }
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
-func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.AgentFlowInfo) error {
+func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
 	m.logger.Info("jobmanager submit",
 		"run_id", run.ID,
 		"agentflow_id", spec.ID,
@@ -53,4 +55,48 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 
 	master := NewJobMaster(m.state, m.rm, m.logger, m.cfg)
 	return master.Execute(ctx, run, spec)
+}
+
+// StartRunPoller polls for pending AgentFlowRuns via the apiserver API
+// and dispatches them via the JobManager.
+func StartRunPoller(ctx context.Context, api *client.FlowgentClient, tenant string,
+	jm *JobManager, flows map[string]*entities.FlowInfo,
+	namespace, agentFlowID string) {
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			page, err := api.ListRuns(ctx, tenant, string(entities.RunPending), namespace, agentFlowID, 1, 50)
+			if err != nil {
+				slog.Warn("poller ListRuns failed", "err", err)
+				continue
+			}
+			for _, run := range page.Items {
+				if run.Status != entities.RunPending {
+					continue
+				}
+				if namespace != "" && run.Namespace != namespace {
+					continue
+				}
+				spec := flows[run.AgentFlowID]
+				if spec == nil {
+					if apiSpec, err := api.GetFlow(ctx, tenant, run.AgentFlowID); err == nil && apiSpec != nil {
+						spec = apiSpec
+						slog.Debug("poller loaded flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
+					}
+				}
+				if spec == nil {
+					continue
+				}
+				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "priority", run.Priority)
+				go func(r *entities.FlowRunInfo, sp *entities.FlowInfo) {
+					_ = jm.Submit(ctx, r, sp)
+				}(run, spec)
+			}
+		}
+	}
 }

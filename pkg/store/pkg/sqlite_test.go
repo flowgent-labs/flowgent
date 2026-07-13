@@ -20,7 +20,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	store "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	"github.com/flowgent-labs/flowgent/store/pkg/approval"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
@@ -198,11 +198,11 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	conn := store.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
-	s := agentflow.NewAgentFlowSQLiteStore(conn)
+	s := flow.NewFlowSQLiteStore(conn)
 
-	def := &entities.AgentFlowVersionInfo{
+	def := &entities.FlowVersionInfo{
 		BaseEntity:  entities.BaseEntity{CreatedBy: "test"},
-		AgentFlowID: "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
+		FlowID: "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
 		Comment: "initial",
 	}
 	if err := s.Save(ctx, def); err != nil {
@@ -221,8 +221,8 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetVersion: %v", err)
 	}
-	if gotVer.AgentFlowID != "flow-1" {
-		t.Errorf("expected flow-1, got %s", gotVer.AgentFlowID)
+	if gotVer.FlowID != "flow-1" {
+		t.Errorf("expected flow-1, got %s", gotVer.FlowID)
 	}
 
 	page, err := s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})

@@ -20,12 +20,12 @@ import (
 type DingTalkSender struct {
 	WebhookURL string `json:"webhook_url"`
 	Secret     string `json:"secret"`
-	client     model.IFlowgentHttpClient
+	client     model.IFlowgentAPIClient
 }
 
 func (s *DingTalkSender) Type() string { return "dingtalk" }
 
-func (s *DingTalkSender) SetHTTPClient(c model.IFlowgentHttpClient) { s.client = c }
+func (s *DingTalkSender) SetHTTPClient(c model.IFlowgentAPIClient) { s.client = c }
 
 func (s *DingTalkSender) Validate() error {
 	if s.WebhookURL == "" {

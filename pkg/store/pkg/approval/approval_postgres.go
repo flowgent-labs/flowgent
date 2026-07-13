@@ -2,12 +2,13 @@ package approval
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -37,10 +38,13 @@ func (s *ApprovalPostgresStore) Delete(ctx context.Context, token string) error 
 	return s.inner.Delete(ctx, token)
 }
 
-// CreateApproval generates id/token and sets timestamps before inserting.
+// CreateApproval generates id and sets timestamps before inserting.
+// Token is only generated if not already provided by the caller.
 func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, e *entities.ApprovalInfo) error {
 	e.ID = uuid.New().String()
-	e.Token = uuid.New().String()
+	if e.Token == "" {
+		e.Token = uuid.New().String()
+	}
 	now := time.Now().UTC()
 	e.CreatedAt = now
 	e.UpdatedAt = now
@@ -57,11 +61,20 @@ func (s *ApprovalPostgresStore) UpdateApproval(ctx context.Context, e *entities.
 
 // ListPending returns all approvals with status 'PENDING'.
 func (s *ApprovalPostgresStore) ListPending(ctx context.Context) ([]*entities.ApprovalInfo, error) {
+	cols := utils.Columns[entities.ApprovalInfo]()
 	rows, err := s.inner.Pool.Query(ctx,
-		"SELECT * FROM human_approvals WHERE status='PENDING' ORDER BY created_at DESC")
+		fmt.Sprintf(`SELECT %s FROM human_approvals WHERE status='PENDING' ORDER BY created_at DESC`, cols))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[entities.ApprovalInfo])
+	var out []*entities.ApprovalInfo
+	for rows.Next() {
+		e := new(entities.ApprovalInfo)
+		if err := utils.ScanStruct(rows, e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

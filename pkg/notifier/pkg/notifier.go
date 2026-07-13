@@ -37,7 +37,7 @@ type FlowgentNotifierManager struct {
 	senders    map[string]Sender
 	podID      string
 	wsClients  map[string]*wsConn
-	httpClient model.IFlowgentHttpClient
+	httpClient model.IFlowgentAPIClient
 	mu         sync.RWMutex
 	logger     *slog.Logger
 }
@@ -65,7 +65,7 @@ func (c *wsConn) Done() <-chan struct{} { return c.done }
 func (c *wsConn) Close() { close(c.done) }
 
 // NewFlowgentNotifierManager creates a notification service with the given client and optional MQTT client.
-func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentHttpClient) *FlowgentNotifierManager {
+func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentAPIClient) *FlowgentNotifierManager {
 	hostname, _ := os.Hostname()
 	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
 
@@ -89,7 +89,7 @@ func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpC
 	// Inject HTTP client into senders that support it.
 	if httpClient != nil {
 		for _, sender := range svc.senders {
-			if s, ok := sender.(interface{ SetHTTPClient(model.IFlowgentHttpClient) }); ok {
+			if s, ok := sender.(interface{ SetHTTPClient(model.IFlowgentAPIClient) }); ok {
 				s.SetHTTPClient(httpClient)
 			}
 		}
@@ -310,9 +310,9 @@ func (s *FlowgentNotifierManager) notifyChannels(ctx context.Context, recipient,
 		if !ch.Enabled {
 			continue
 		}
-		sender, ok := s.senders[string(ch.Type)]
+		sender, ok := s.senders[string(ch.ChannelType)]
 		if !ok {
-			s.logger.Warn("unknown channel type", "type", ch.Type)
+			s.logger.Warn("unknown channel type", "type", ch.ChannelType)
 			continue
 		}
 

@@ -21,7 +21,7 @@ What this script does
    this, every such node fails immediately with "not found" and the flow
    never gets past DISCOVERY's tool calls.
 1. Load the canonical `security-autonomy-fixer.yaml` (24 nodes, 11 phases).
-2. POST flow definition via API Server (`/agentflows`).
+2. POST flow definition via API Server (`/flows`).
 3. Trigger a run and poll status via REST.
 4. White-box checks:
    - PostgreSQL: `orh_agentflow`, `orh_flowrun`, `task_runs`
@@ -44,6 +44,7 @@ import os
 import json
 import yaml
 
+sys.path.insert(0, '..')
 import config
 
 API = config.K3S_APISERVER_URL
@@ -238,10 +239,10 @@ def run():
 
     # -- 1. Create flow definition --
     print("\n-- [1] Creating flow definition (API) --")
-    s.delete(f"{API}/api/v1/{TENANT}/agentflows/{FLOW_ID}")
+    s.delete(f"{API}/api/v1/{TENANT}/flows/{FLOW_ID}")
     time.sleep(0.5)
 
-    r = s.post(f"{API}/api/v1/{TENANT}/agentflows", json=flow_def)
+    r = s.post(f"{API}/api/v1/{TENANT}/flows", json=flow_def)
     if r.status_code not in (200, 201):
         raise AssertionError(f"create flow returned {r.status_code}: {r.text[:200]}")
     print(f"  OK CREATE: {FLOW_ID} (status={r.status_code})")
@@ -266,7 +267,7 @@ def run():
     # -- 3. Trigger run --
     print("\n-- [3] Triggering flow (API) --")
     r = s.post(
-        f"{API}/api/v1/{TENANT}/agentflows/trigger",
+        f"{API}/api/v1/{TENANT}/flows/trigger",
         json={"agentflow_id": FLOW_ID, "vars": {}, "trigger": {"type": "api"}},
     )
     if r.status_code != 200:

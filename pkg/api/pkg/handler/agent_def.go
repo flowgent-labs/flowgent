@@ -9,25 +9,25 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentdef"
+	"github.com/flowgent-labs/flowgent/store/pkg/agent"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AgentDefHandler manages dynamic agent CRUD via REST API.
 type AgentDefHandler struct {
-	store  agentdef.IAgentDefStore
+	store  agent.IAgentInfoStore
 	logger *utils.Logger
 }
 
 // NewAgentDefHandler creates an agent CRUD handler.
 func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
-	var agStore agentdef.IAgentDefStore
+	var agStore agent.IAgentInfoStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
-		agStore = agentdef.NewAgentDefPostgresStore(db)
+		agStore = agent.NewAgentPostgresStore(db)
 	case *sql.DB:
-		agStore = agentdef.NewAgentDefSQLiteStore(db)
+		agStore = agent.NewAgentSQLiteStore(db)
 	}
 	return &AgentDefHandler{store: agStore, logger: logger}
 }
@@ -87,20 +87,45 @@ func (h *AgentDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	tenant := r.PathValue("tenant")
-	var agent entities.AgentInfo
-	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
+
+	existing, err := h.store.Get(r.Context(), name)
+	if err != nil || existing == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	var updates entities.AgentInfo
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	agent.Name = name
-	agent.TenantID = tenant
-	if err := h.store.Save(r.Context(), &agent); err != nil {
+
+	// Merge: preserve existing values, apply non-zero updates
+	if updates.Soul != "" {
+		existing.Soul = updates.Soul
+	}
+	if updates.Instruction != "" {
+		existing.Instruction = updates.Instruction
+	}
+	if updates.Model != "" {
+		existing.Model = updates.Model
+	}
+	if updates.Temperature != nil {
+		existing.Temperature = updates.Temperature
+	}
+	if updates.MaxTokens != 0 {
+		existing.MaxTokens = updates.MaxTokens
+	}
+	existing.TenantID = tenant
+	existing.UpdatedAt = time.Now()
+
+	if err := h.store.Save(r.Context(), existing); err != nil {
 		h.logger.Error("update agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(agent)
+	json.NewEncoder(w).Encode(existing)
 }
 
 // Delete removes an agent definition.

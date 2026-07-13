@@ -1,16 +1,32 @@
 # E2E Verification — Security Autonomy Fixer
 
-**Status**: 📋 **TEST PLAN** (Implementation Ready)  
-**Version**: v3.1  
-**Date**: 2026-07-05
+**Status**: 🔬 **IN VERIFICATION** (Testing with real PR)  
+**Version**: v3.2  
+**Date**: 2026-07-13
 
-This document describes the complete end-to-end verification strategy for the Security Autonomy Fixer use case, covering 11 phases, 24 nodes, and all inter-component communication paths.
+> **IMPORTANT: Core Goal of This Verification: Test the Flowgent `security-autonomy-fixer` agent flow can AUTONOMOUSLY discover, analyze, fix, review, and create a PR for real SonarQube security issues — MUST fix to `rengine` by Flowgent this agent flow, but NOT you directly fixing the target project's vulnerabilities.**
+
+> This document describes the complete end-to-end verification strategy for the Security Autonomy Fixer use case, covering 11 phases, 24 nodes, and all inter-component communication paths.
+
+## Core Purpose
+
+**The goal is NOT to manually fix the target project's SonarQube vulnerabilities.**
+The goal is to **verify that Flowgent's security-autonomy-fixer workflow can AUTONOMOUSLY
+discover, analyze, fix, review, and create a PR** for security issues found by SonarQube —
+using a real-world PR as the test input.
+
+The test subject is the **Flowgent workflow itself**, not the target project's code quality.
+
+**Test PR**: https://github.com/wl4g/rengine/pull/4 (branch: `fix/flowgent_sec_auto_fix`)
+- 3 files changed, +111/−1 lines
+- Adds SonarQube quality gate CI check, removes deprecated `sonar.language` property
+- Target project `rengine` has 10 open SonarQube issues (vulnerabilities + bugs), last analyzed 2026-07-11
 
 **Note**: This is a comprehensive test plan. Scenario scripts are ready for execution but not yet run. All verification checkpoints are designed based on v3.0 architecture decisions.
 
 ---
 
-## Quick Start
+## Verification Required
 
 ```bash
 # Run all verification scenarios
@@ -39,6 +55,52 @@ python3 runner.py --api http://10.0.0.1:9999 --pg postgres://u:p@h/db
 **Environment:** K3s single-node, namespace `default`, Application mode only  
 **Flow:** `security-autonomy-fixer` (24 nodes, 11 phases)  
 **SonarQube:** `http://172.29.235.101:9000`
+
+## ⛔ MANDATORY: Use `runner.py` for ALL E2E Verification Execution
+
+**The `runner.py` script is the SOLE entry point for running any and all E2E verification
+scenarios. Do NOT manually execute individual scenario files or attempt ad-hoc
+infrastructure setup, deployment, or testing outside of `runner.py`.**
+
+### Rules (non-negotiable):
+
+1. **All scenario execution MUST go through `runner.py`** — `python3 runner.py -s NN`
+2. **The runner.py orchestrates everything** — it imports and runs each scenario's
+   `run()` function in the correct order, tracks pass/fail status, and reports results.
+3. **No manual infrastructure steps** — do not manually run `helm install`, `kubectl`,
+   `make build-image-core`, or any other setup commands outside of what a scenario
+   script does internally. The scenario scripts (especially `01_infra_verifier.py`)
+   are responsible for verifying infrastructure readiness.
+4. **If a scenario fails**, fix the root cause (code, config, or infrastructure),
+   then re-run that scenario via `runner.py -s NN`. Do NOT manually patch things and
+   skip the scenario check.
+5. **Before running any scenario**, ensure the environment is clean per the
+   [Environment Reset](#environment-reset-required-before-every-real-e2e-run) section
+   below.
+6. **⛔ NO MOCK SERVICES — all external APIs MUST be called for real.** The only
+   external services involved are **GitHub API** (via `https://api.githubcopilot.com/mcp/`)
+   and **SonarQube API** (via `http://172.29.235.101:18080/mcp` → upstream
+   `http://172.29.235.101:9000`). K3s/K8s, EMQX, PostgreSQL, and Redis are local
+   infrastructure (not mock targets). SonarQube MCP authentication is backend static
+   bearer token — the MCP client (TM) does not handle auth. No mock server, stub,
+   or simulated API may be introduced for any scenario. If a test discovers a
+   missing external API endpoint or capability, **do NOT create a mock — ask first**.
+
+### Why this matters:
+- Scenarios are designed as **verification checkpoints**, not as loose scripts.
+  Each one validates specific architecture invariants (table names, MQTT topics,
+  state-only callbacks, etc.) that manual steps cannot reliably verify.
+- Bypassing `runner.py` and manually fixing infrastructure hides bugs in the
+  deployment automation (Helm chart, configmap template, image build, etc.).
+- The runner provides a single source of truth for pass/fail across all 11 scenarios.
+
+### Quick reference:
+```bash
+python3 runner.py           # All 11 scenarios (ordered)
+python3 runner.py -s 01     # Infrastructure only
+python3 runner.py -s 11     # E2E capstone only
+python3 runner.py -l        # List all scenarios
+```
 
 **⚠️ Every real (non-mocked) run of this suite against a live cluster MUST start
 from a clean redeploy.** See [Environment Reset](#environment-reset-required-before-every-real-e2e-run)
@@ -221,7 +283,7 @@ helm install flowgent deploy/helm/flowgent \
 **Entity Coverage**:
 | Entity | Table | REST Path | Key Tests |
 |--------|-------|-----------|-----------|
-| AgentFlow | `orh_agentflow` | `/api/v1/{tenant}/agentflows` | CRUD, versioning, soft delete |
+| AgentFlow | `orh_agentflow` | `/api/v1/{tenant}/flows` | CRUD, versioning, soft delete |
 | FlowRun | `orh_flowrun` | `/api/v1/{tenant}/runs` | Trigger, status transitions |
 | TaskRun | `task_runs` | `/api/v1/{tenant}/runs/{run_id}/tasks` | Nested CRUD, output persistence |
 | Agent | `llm_agent` | `/api/v1/{tenant}/agents` | Name uniqueness |
@@ -232,34 +294,13 @@ helm install flowgent deploy/helm/flowgent \
 | Channel | `nfy_channel` | `/api/v1/{tenant}/notifications/channels` | Multi-channel config |
 
 **Lifecycle Event Validation**:
-- ✅ `POST /agentflows` → MQTT `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated` (action=created)
-- ✅ `PUT /agentflows/{id}` → MQTT `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated` (action=updated, version++)
-- ✅ `DELETE /agentflows/{id}` → MQTT `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/deleted` (soft delete)
+- ✅ `POST /flows` → MQTT `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated` (action=created)
+- ✅ `PUT /flows/{id}` → MQTT `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated` (action=updated, version++)
+- ✅ `DELETE /flows/{id}` → MQTT `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/deleted` (soft delete)
 - ✅ `POST /runs` → MQTT `flowgent/v1/{tenant}/flows/{id}/runs/{rid}/ctrl/run/created`
 - ✅ `PUT /runs/{id}` → MQTT `flowgent/v1/{tenant}/flows/{id}/runs/{rid}/ctrl/run/status` (status transitions)
 
 **Command**: `python3 runner.py -s 02`
-
-**Key Assertions**:
-```python
-# CREATE + PG persistence
-resp = POST("/api/v1/default/agentflows", payload)
-assert resp.status_code == 201
-assert db.query("SELECT COUNT(*) FROM orh_agentflow WHERE id=$1", resp.id) == 1
-
-# MQTT event published (full topic: flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated)
-mqtt_msg = mqtt_client.wait_for_message("ctrl/flow/updated", timeout=3)
-assert mqtt_msg["action"] == "created"
-assert mqtt_msg["agentflow_id"] == resp.id
-
-# UPDATE increments version
-resp = PUT(f"/api/v1/default/agentflows/{flow_id}", {"description": "updated"})
-assert resp.data["version"] == 2
-
-# DELETE soft-deletes
-DELETE(f"/api/v1/default/agentflows/{flow_id}")
-assert db.query("SELECT del_flag FROM orh_agentflow WHERE id=$1", flow_id) == True
-```
 
 ---
 
@@ -275,17 +316,6 @@ assert db.query("SELECT del_flag FROM orh_agentflow WHERE id=$1", flow_id) == Tr
 
 **Command**: `python3 runner.py -s 03`
 
-**Key Assertions**:
-```python
-# Agent card discovery
-r = GET(f"{A2A_URL}/.well-known/agent.json")
-assert "skills" in r.json()
-
-# Task submission (flow may not exist — non-critical)
-r = POST(f"{A2A_URL}/a2a/tasks", {"agentflow_id": "vrf-a2a-02", "input": {"test": True}})
-# 200 = success, 404 = flow not registered — both acceptable
-```
-
 **Note**: This scenario has a lightweight implementation. A2A is validated for connectivity; deep protocol compliance testing requires a registered flow.
 
 ---
@@ -300,42 +330,6 @@ r = POST(f"{A2A_URL}/a2a/tasks", {"agentflow_id": "vrf-a2a-02", "input": {"test"
 3. **Flow Deleted** → Controller garbage-collects JM/TM/Sandbox Deployments
 
 **Command**: `python3 runner.py -s 04`
-
-**Test Flow**:
-```python
-# 1. Create Flow via API (flat AgentFlowInfo shape — "id" not "agentflow_id",
-#    see pkg/api/pkg/handler/flow_def.go Create)
-flow_id = "test-flow-" + uuid4()
-POST("/api/v1/default/agentflows", {"id": flow_id, "nodes": [...], "edges": [...]})
-
-# 2. Verify JM Deployment created by Controller. IMPORTANT: it lands in the
-#    flow's TENANT namespace ("flowgent-default" by default —
-#    tenant.namespace_prefix + tenant_id, per docs §1.3/§4.3 — every flow of
-#    the same tenant shares one namespace, disambiguated by Deployment name —
-#    see controller.go applicationNamespace), NOT in the "default" (K8s)
-#    namespace where the Controller/apiserver pods run.
-jm_ns = f"flowgent-default"  # {namespace_prefix}{tenant_id}, tenant_id="default" here
-k8s.wait_for_deployment(f"flowgent-jobmanager-default-{flow_id}", namespace=jm_ns, timeout=30)
-deployment = k8s.get_deployment(f"flowgent-jobmanager-default-{flow_id}", namespace=jm_ns)
-assert deployment.spec.replicas == 1
-assert deployment.spec.template.spec.containers[0].env["FLOWGENT__RUNTIME__AGENT_FLOW_ID"] == flow_id
-
-# 3. Verify JM Pod running
-pods = k8s.get_pods(namespace=jm_ns, label_selector=f"app=flowgent-jobmanager,flowgent.io/flow={flow_id}")
-assert len(pods) == 1
-assert pods[0].status.phase == "Running"
-
-# 4. Update flow → verify deployment generation increments
-PUT(f"/api/v1/default/agentflows/{flow_id}", {"description": "updated", "version": 2})
-after = k8s.get_deployment(f"flowgent-jobmanager-default-{flow_id}", namespace=jm_ns)
-assert after.metadata.generation >= before.metadata.generation
-
-# 5. Delete Flow → verify Controller garbage-collects resources (the
-#    Deployment only — the tenant namespace itself is left behind since other
-#    flows of the same tenant may still use it, see Environment Reset step 2b)
-DELETE(f"/api/v1/default/agentflows/{flow_id}")
-k8s.wait_for_deployment_deleted(f"flowgent-jobmanager-default-{flow_id}", namespace=jm_ns, timeout=60)
-```
 
 **Note**: This scenario focuses on K8s Deployment lifecycle verification. MQTT `ctrl/*` events are validated separately in scenario 07.
 
@@ -359,70 +353,20 @@ k8s.wait_for_deployment_deleted(f"flowgent-jobmanager-default-{flow_id}", namesp
 - `noop` — Pass-through
 - (implicit) `join` — Fan-in aggregation (runtime task type, not a DAG node type)
 
-**DAG Topology Tests**:
-```python
-# 1. Linear chain (A → B → C)
-flow = {"nodes": [noop("A"), noop("B"), noop("C")], "edges": [("A","B"), ("B","C")]}
-run_id = trigger_flow(flow)
-wait_for_completion(run_id)
-assert get_task_sequence(run_id) == ["A", "B", "C"]
-
-# 2. Parallel fan-out (A → [B1, B2, B3] → C)
-flow = {
-    "nodes": [noop("A"), noop("B1"), noop("B2"), noop("B3"), noop("C")],
-    "edges": [("A","B1"), ("A","B2"), ("A","B3"), ("B1","C"), ("B2","C"), ("B3","C")]
-}
-run_id = trigger_flow(flow)
-tasks = get_tasks(run_id)
-assert {"A", "B1", "B2", "B3", "C"} == {t["node_id"] for t in tasks if t["status"] == "COMPLETED"}
-
-# 3. Condition routing (A → cond → [B (true), C (false)])
-flow = {
-    "nodes": [noop("A", input={"score": 0.9}), condition("cond", expr="${A.score} > 0.8"),
-              noop("B"), noop("C")],
-    "edges": [("A","cond"), ("cond","B",True), ("cond","C",False)]
-}
-run_id = trigger_flow(flow)
-tasks = get_tasks(run_id)
-assert find_task("B", tasks)["status"] == "COMPLETED"
-assert find_task("C", tasks) is None  # skipped
-
-# 4. Tribunal voting (3 voters → tribunal → result)
-flow = {
-    "nodes": [
-        noop("vote1", input={"decision": True}),
-        noop("vote2", input={"decision": True}),
-        noop("vote3", input={"decision": False}),
-        tribunal("tribunal", strategy="majority"),
-        noop("result")
-    ],
-    "edges": [("vote1","tribunal"), ("vote2","tribunal"), ("vote3","tribunal"), ("tribunal","result")]
-}
-run_id = trigger_flow(flow)
-vote_task = find_task("tribunal", get_tasks(run_id))
-assert vote_task["output"]["decision"] == True
-```
-
-**Tribunal Strategy Tests**:
-```python
-# Majority (2/3)
-assert evaluate_tribunal([True, True, False], "majority") == True
-assert evaluate_tribunal([True, False, False], "majority") == False
-
-# Unanimous (3/3)
-assert evaluate_tribunal([True, True, True], "unanimous") == True
-assert evaluate_tribunal([True, True, False], "unanimous") == False
-
-# Veto (any False → reject)
-assert evaluate_tribunal([True, True, False], "veto") == False
-assert evaluate_tribunal([True, True, True], "veto") == True
-
-# Weighted ([0.5, 0.3, 0.2], threshold > 0.5)
-assert evaluate_tribunal([True, False, True], "weighted", weights=[0.5,0.3,0.2]) == True  # 0.7 > 0.5
-assert evaluate_tribunal([False, True, True], "weighted", weights=[0.5,0.3,0.2]) == False # 0.5 ≯ 0.5
-```
-
 **Command**: `python3 runner.py -s 05`
+
+**Coverage Gap**: Scenario 05 validates DAG topologies at the REST API level
+(create flow, trigger, wait for completion, check task order). It does **not**
+validate the internal MQTT round-trip mechanism (subscribe-before-publish,
+per-node channel routing, blocking Schedule()) or the iteration loop pattern
+described in `docs/01-L1-Engine-Architecture.md` §3.4. These internals are
+validated by Go unit tests (`pkg/core/pkg/engine/jobmanager/` and
+`pkg/core/pkg/engine/resourcemanager/`) and are indirectly exercised by the
+topology tests — if the iteration loop or result routing were broken, the
+linear chain and fan-out tests would hang or produce wrong task ordering. A
+future scenario could add MQTT-level introspection (subscribing to
+`exec/plans` and `exec/results` topics during a test flow) to explicitly
+verify the subscribe-before-publish ordering and per-node channel routing.
 
 ---
 
@@ -436,24 +380,6 @@ assert evaluate_tribunal([False, True, True], "weighted", weights=[0.5,0.3,0.2])
 - `supervisor` — Safety gate with retry/injection/abort constraints
 
 **Command**: `python3 runner.py -s 06`
-
-**Test Flow** (4 nodes):
-```python
-flow = {
-    "nodes": [
-        {"id": "start", "type": "agent", "agent": "issue-detector"},
-        {"id": "vote", "type": "tribunal", "strategy": {"type": "majority"}},
-        {"id": "supervisor", "type": "supervisor", "agent": "supervisor",
-         "supervisor_config": {"max_retries": 2, "max_nodes": 10, "max_injections": 2}},
-        {"id": "end", "type": "noop"}
-    ],
-    "edges": [("start","vote"), ("vote","supervisor"), ("supervisor","end")]
-}
-run_id = trigger_flow(flow)
-wait_for_completion(run_id)
-tasks = get_tasks(run_id)
-assert len(tasks) == 4
-```
 
 **Note**: This scenario has a lightweight implementation covering the three most common node types. Full node-type coverage (12 types) is validated in scenario 05 (DAG topology tests). Additional node types (`tool`, `skill`, `sandbox`, `human`, `map`, `agentflow`) are exercised in combination during the E2E capstone (scenario 11).
 
@@ -497,29 +423,6 @@ JM → flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/plans → TM
 
 **Command**: `python3 runner.py -s 07`
 
-**Key Assertions**:
-```python
-# Topic 1-2: JM → TM → JM (state callback)
-plan = ExecutionPlan(task_type="agent", node_id="test-node")
-mqtt.publish("flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/plans", wrap_envelope(plan))
-result = mqtt.wait_for("flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results", timeout=5)
-assert result["node_id"] == "test-node"
-assert result["state"] in ["COMPLETED", "FAILED"]
-
-# Topic 3-4: TM → Sandbox → TM (full chain)
-sandbox_req = {"plan_id": "p1", "runtime": "python3", "script": "print('ok')"}
-mqtt.publish("flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/trigger", wrap_envelope(sandbox_req))
-sandbox_res = mqtt.wait_for("flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result", timeout=10)
-assert sandbox_res["exit_code"] == 0
-assert "ok" in sandbox_res["stdout"]
-
-# Verify state-only callback (no output data in exec/results)
-received = unwrap_envelope(msg)
-if "output" in received or "stdout" in received:
-    print("FAIL: exec/results contains data (expected state-only)")
-    return False
-```
-
 **Note**: This scenario self-publishes and self-subscribes to verify EMQX routing. It does NOT test that real JM/TM/Sandbox components publish to the correct topics — that requires a running flow (validated in scenario 11).
 
 ---
@@ -534,19 +437,6 @@ if "output" in received or "stdout" in received:
 - ✅ Messages received on the notification topic (opportunistic)
 
 **Command**: `python3 runner.py -s 08`
-
-**Key Assertions**:
-```python
-# EMQX status check
-r = GET(f"http://{EMQX_HOST}:{EMQX_DASHBOARD}/api/v5/status")
-assert r.json()["status"] == "running"
-
-# Subscribe to notification wildcard topic
-client.subscribe("$share/notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event")
-# Wait briefly for any notification traffic
-time.sleep(3)
-# Report messages captured
-```
 
 **Note**: This scenario has a lightweight implementation. It verifies EMQX connectivity and topic subscription but does not trigger actual notification delivery. Full multi-channel delivery tests (Telegram, DingTalk, Slack, Email, Webhook, WebSocket SSE) require external service credentials and are validated manually or in the E2E capstone (scenario 11, which reaches the notify phase).
 
@@ -566,22 +456,6 @@ The wallet service is intentionally a **signing boundary**, not an x402 runtime.
 - `POST /api/v1/wallet/sign`
 - MQTT `sign/request` → `sign/response` using the real `InterMessage` envelope
 - Boundary assertion: `sign/response` contains signature/error only, not x402 intent/policy/facilitator fields
-
-**Key Assertions**:
-```python
-sign_req = {
-    "request_id": req_id,
-    "wallet": wallet_name,
-    "payload": "unsigned-x402-payment-payload",
-    "tenant_id": tenant,
-    "flow_id": flow_id,
-    "run_id": run_id,
-}
-mqtt.publish("flowgent/v1/{tenant}/flows/{flow}/runs/{run}/sign/request", wrap_envelope(sign_req))
-resp = wait_for("flowgent/v1/{tenant}/flows/{flow}/runs/{run}/sign/response")
-assert len(resp["signature"]) == 128  # Ed25519 hex signature
-assert not any(k in resp for k in ["intent", "policy", "facilitator", "amount", "asset"])
-```
 
 ---
 
@@ -609,67 +483,6 @@ assert not any(k in resp for k in ["intent", "policy", "facilitator", "amount", 
 
 See complete 24-node span matrix in `scenarios/10_otel_verifier.py`
 
-**Key Assertions**:
-```python
-# 1. Trigger complete Security Fixer flow
-run_id = POST("/api/v1/default/agentflows/trigger", {"agentflow_id": "security-autonomy-fixer"})
-wait_for_completion(run_id, timeout=600)
-
-# 2. Query Jaeger for trace
-traces = jaeger.find_traces(tags={"flowgent.run_id": run_id})
-assert len(traces) == 1
-trace = traces[0]
-
-# 3. Verify all 24 nodes have complete span coverage
-all_nodes = [node for nodes in FLOW_PHASES.values() for node in nodes]
-for node_id in all_nodes:
-    node_spans = [s for s in trace.spans if s.tags.get("flowgent.node_id") == node_id]
-    assert len(node_spans) >= 7, f"Node {node_id} missing spans"
-    
-    # Verify required spans exist
-    assert find_span(node_spans, "JM-DispatchPlan")
-    assert find_span(node_spans, "TM-ConsumeExecPlan")
-    assert find_span(node_spans, "SlotWorker-Execute*")
-    assert find_span(node_spans, "API-PUT-/tasks")
-    assert find_span(node_spans, "MQTT-Publish-ExecResult")
-    assert find_span(node_spans, "JM-ReceiveExecResult")
-    
-    # Verify parent-child relationships
-    dispatch_span = find_span(node_spans, "JM-DispatchPlan")
-    consume_span = find_span(node_spans, "TM-ConsumeExecPlan")
-    assert consume_span.parent_span_id == dispatch_span.span_id
-
-# 4. Verify phase-level grouping
-phase_spans = {
-    "DISCOVERY": ["get-commit", "scan-sonarqube"],
-    "ANALYZE": ["aggregate-issues"],
-    "FIX": ["generate-fixes"],
-    "REVIEW": ["review-security", "review-quality", "review-arch"],
-    "VOTE": ["tribunal"],
-    "SUPERVISOR": ["supervisor-check"],
-    "CONDITION": ["is-approved"],
-    "HUMAN": ["human-approval"],
-    "COMMIT_PR": ["create-branch", "commit-fixes", "create-pr"],
-    "RESCAN": ["trigger-rescan", "wait-rescan", "check-resolved", "compare-results", "fix-complete"],
-    "REPORT": ["summary-report", "notify-pr", "notify-email", "notify-teams", "end"],
-}
-
-for phase_name, node_ids in phase_spans.items():
-    phase_start = min(find_span(trace, node_id).start_time for node_id in node_ids)
-    phase_end = max(find_span(trace, node_id).end_time for node_id in node_ids)
-    phase_duration = phase_end - phase_start
-    print(f"Phase {phase_name}: {phase_duration.total_seconds():.1f}s")
-
-# 5. Verify critical path (longest dependency chain through the DAG)
-critical_path = [
-    "get-commit", "scan-sonarqube", "aggregate-issues", "generate-fixes",
-    "review-security", "tribunal", "supervisor-check", "is-approved",
-    "human-approval", "create-branch", "commit-fixes", "create-pr",
-    "trigger-rescan", "wait-rescan", "check-resolved", "compare-results",
-    "fix-complete", "summary-report", "notify-pr", "end"
-]
-```
-
 **Jaeger UI Visualization**:
 - Access: `http://localhost:16686`
 - Search: Service=`flowgent`, Tags=`flowgent.run_id={run_id}`
@@ -692,23 +505,31 @@ deep assertions in Controller/Engine/Messager/OTEL verifiers.
 nodes resolve against MCP servers the TaskManager loaded from
 `GET /api/v1/{tenant}/mcp` at startup (see `NewTaskManager` in
 `pkg/core/pkg/engine/taskmanager/taskmanager.go`) — **not** directly from
-`config/agents/*.yaml` / `config/mcps/*/*.yaml`, which are just templates.
+`config/agents/*.yaml` / `config/mcps/README.md`, which are just documentation.
+
+**MCP transport: HTTP-only (Streamable HTTP).** TM pods are backend K8s agents
+with no human interaction — all MCP servers are accessed via HTTP, not stdio
+subprocess. The `McpInfo` entity stores a `url` + optional `headers`, not a
+command vector. See `docs/01-L1-Engine-Architecture.md` §6.2 for design rationale.
+
 `seed_agents_and_mcps()` in `11_e2e_security_fixer.py` (and `10_otel_verifier.py`,
-which triggers the same flow) POSTs every `config/agents/*.yaml` and, by
-default, registers the production `github`/`sonarqube` MCPs from
-`config/mcps/{github,sonarqube}/*.yaml` — matching how this flow actually runs
-in production. This **requires** the real `github-mcp`/`sonarqube-mcp`
-binaries to be present in the JM/TM container image, plus real
-`GITHUB_TOKEN`/`SONARQUBE_TOKEN` credentials and a reachable SonarQube server
-(see those YAML files' `env:` blocks) — without these the tool nodes register
-fine but FAIL at call time. Set `FLOWGENT_E2E_USE_REAL_MCP=false` to instead
-point both MCPs at the mock stdio JSON-RPC server baked into the image
-(`deploy/docker/Dockerfile.core` copies `config/mcps/mock-server.sh` to
-`/app/mcp-server.sh`) for a credential-free smoke run. LLM calls still
-require a real provider registered via `POST /api/v1/{tenant}/llm/providers`
-(e.g. DeepSeek, matching `config/agents/*.yaml`'s `model: deepseek/...`) — there
-is no LLM mock, so `generate-fixes`/review/etc. nodes will legitimately FAIL
-without one; this is tolerated (see step 9 below).
+which triggers the same flow) POSTs every `config/agents/*.yaml` and registers
+two MCP servers:
+
+| MCP Server | URL | Type | Notes |
+|------------|-----|------|-------|
+| **sonarqube** | `http://172.29.235.101:18080/mcp` | `http` | Built with mcpfather (385 tools); Docker container on `:18080` → `:8080`; see `~/sonarqube-mcp/README.md` |
+| **github** | `https://api.githubcopilot.com/mcp/` | `http` | Official GitHub MCP server (remote Streamable HTTP); header `Authorization: Bearer ${GITHUB_TOKEN}`; see `config/mcps/README.md` |
+
+Both servers run as **independent services** — no MCP binaries are bundled into
+the flowgent container image. The TM connects lazily via `McpManager.GetClient()`
+→ `NewStreamableHttpClient(url, WithHTTPHeaders(headers))` on first tool call.
+This requires real `GITHUB_TOKEN`/`SONARQUBE_TOKEN` credentials and a reachable
+SonarQube server. LLM calls still require a real provider registered via
+`POST /api/v1/{tenant}/llm/providers` (e.g. DeepSeek, matching
+`config/agents/*.yaml`'s `model: deepseek/...`) — there is no LLM mock, so
+`generate-fixes`/review/etc. nodes will legitimately FAIL without one; this is
+tolerated (see step 9 below).
 
 **Flow Phases** (11 total):
 1. **DISCOVERY** (2 nodes) — `get-commit`, `scan-sonarqube`
@@ -725,112 +546,6 @@ without one; this is tolerated (see step 9 below).
 
 **Command**: `python3 runner.py -s 11`
 
-**Validation Checkpoints**:
-
-```python
-# Phase 1: DISCOVERY
-run_id = trigger_security_fixer()
-
-# Verify get-commit output
-commit_task = wait_for_task(run_id, "get-commit")
-assert commit_task["status"] == "COMPLETED"
-assert "commit_sha" in commit_task["output"]
-
-# Verify scan-sonarqube issues fetched
-scan_task = wait_for_task(run_id, "scan-sonarqube")
-assert scan_task["status"] == "COMPLETED"
-assert len(scan_task["output"]["issues"]) > 0
-
-# Phase 2: ANALYZE
-analyze_task = wait_for_task(run_id, "aggregate-issues")
-assert analyze_task["output"]["issues"] is list
-assert len(analyze_task["output"]["issues"]) <= 10  # top 10 prioritized
-
-# Phase 3: FIX
-fix_task = wait_for_task(run_id, "generate-fixes")
-assert "patches" in fix_task["output"]
-assert len(fix_task["output"]["patches"]) > 0
-
-# Phase 4: REVIEW (parallel)
-review_tasks = [
-    wait_for_task(run_id, "review-security"),
-    wait_for_task(run_id, "review-quality"),
-    wait_for_task(run_id, "review-arch")
-]
-for task in review_tasks:
-    assert task["status"] == "COMPLETED"
-    assert "decision" in task["output"]
-    assert "confidence" in task["output"]
-
-# Phase 5: VOTE
-vote_task = wait_for_task(run_id, "tribunal")
-assert vote_task["output"]["decision"] in [True, False]
-assert vote_task["output"]["vote_count"]["total"] == 3
-
-# Phase 6: SUPERVISOR
-supervisor_task = wait_for_task(run_id, "supervisor-check")
-assert supervisor_task["status"] == "COMPLETED"
-# Verify supervisor_log entry created
-supervisor_logs = db.query("SELECT * FROM supervisor_log WHERE agentflow_run_id=$1", run_id)
-assert len(supervisor_logs) >= 1
-
-# Phase 7: CONDITION
-condition_task = wait_for_task(run_id, "is-approved")
-approved = condition_task["output"]["result"]
-
-if approved:
-    # Phase 8: HUMAN (mock approval)
-    approval_task = wait_for_task(run_id, "human-approval", timeout=5)
-    approval_token = db.query("SELECT token FROM human_approvals WHERE task_run_id=$1", approval_task["id"])
-    POST(f"/api/v1/human/{approval_token}/approve", {"comment": "Approved by test"})
-    
-    # Verify flow resumed
-    wait_for_task_status(run_id, "human-approval", "COMPLETED", timeout=10)
-    
-    # Phase 9: COMMIT+PR
-    branch_task = wait_for_task(run_id, "create-branch")
-    assert "branch_name" in branch_task["output"]
-    
-    commit_task = wait_for_task(run_id, "commit-fixes")
-    assert commit_task["status"] == "COMPLETED"
-    
-    pr_task = wait_for_task(run_id, "create-pr")
-    assert "pr_url" in pr_task["output"]
-    assert "pr_number" in pr_task["output"]
-    
-    # Phase 10: RE-SCAN (5 nodes)
-    rescan_task = wait_for_task(run_id, "trigger-rescan")
-    wait_task = wait_for_task(run_id, "wait-rescan", timeout=120)  # polls for completion
-    check_task = wait_for_task(run_id, "check-resolved")
-    compare_task = wait_for_task(run_id, "compare-results")
-    fix_complete_task = wait_for_task(run_id, "fix-complete")
-    
-    assert compare_task["output"]["resolution"] in ["complete", "partial", "max_iterations_reached"]
-    assert compare_task["output"]["resolved_count"] >= 0
-    
-    # Phase 11: REPORT (5 nodes)
-    report_task = wait_for_task(run_id, "summary-report")
-    assert "report" in report_task["output"]
-    assert "status" in report_task["output"]
-    
-    # notify-pr, notify-email, notify-teams run in parallel from summary-report
-    notify_pr_task = wait_for_task(run_id, "notify-pr")
-    notify_email_task = wait_for_task(run_id, "notify-email")
-    notify_teams_task = wait_for_task(run_id, "notify-teams")
-    
-    for task in [notify_pr_task, notify_email_task, notify_teams_task]:
-        assert task["status"] in ["COMPLETED", "FAILED"]  # delivery may fail in test env
-
-# Final assertions
-run = GET(f"/api/v1/default/runs/{run_id}")
-assert run["status"] == "COMPLETED"
-assert run["finished_at"] is not None
-
-# Verify execution coverage
-tasks = GET(f"/api/v1/default/runs/{run_id}/tasks")
-executed_nodes = [t["node_id"] for t in tasks if t["status"] in ["COMPLETED", "FAILED"]]
-assert len(executed_nodes) >= 15  # minimum nodes even if loop short-circuits
-```
 
 ---
 
@@ -895,52 +610,6 @@ Expected execution times (K3s single-node, 4 CPU, 8GB RAM):
 
 ---
 
-## CI/CD Integration
-
-### GitHub Actions Example
-
-```yaml
-name: E2E Verification
-on: [push, pull_request]
-
-jobs:
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup K3s
-        run: |
-          curl -sfL https://get.k3s.io | sh -
-          sudo k3s kubectl wait --for=condition=Ready node --all --timeout=60s
-      
-      - name: Deploy Flowgent
-        run: |
-          make build-image-core
-          docker save flowgent-core:latest | sudo k3s ctr images import -
-          helm install flowgent deploy/helm/flowgent -n default
-          kubectl wait --for=condition=Ready pod -l app=flowgent-apiserver --timeout=60s
-      
-      - name: Run E2E Tests
-        run: |
-          cd examples/security-autonomy-fixer/e2e-verification
-          python3 runner.py
-      
-      - name: Collect Logs
-        if: failure()
-        run: |
-          kubectl logs deploy/flowgent-apiserver > apiserver.log
-          kubectl logs deploy/flowgent-taskmanager > taskmanager.log
-      
-      - uses: actions/upload-artifact@v3
-        if: failure()
-        with:
-          name: logs
-          path: "*.log"
-```
-
----
-
 ## Verification Checklist
 
 ### Pre-Execution Requirements
@@ -967,7 +636,7 @@ jobs:
 - [ ] `llm_agent`, `llm_mcp`, `llm_providers` exist
 
 **REST API Paths (Scenario 02)**:
-- [ ] `/api/v1/{tenant}/agentflows` CRUD working
+- [ ] `/api/v1/{tenant}/flows` CRUD working
 - [ ] `/api/v1/{tenant}/agents` CRUD working
 - [ ] `/api/v1/{tenant}/mcp` CRUD working
 - [ ] `/api/v1/{tenant}/llm/providers` CRUD working
@@ -979,6 +648,18 @@ jobs:
 - [ ] Sandbox publishes to `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result` (TM consumes)
 - [ ] TM publishes to `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results` (JM consumes)
 - [ ] **State-only callback**: `exec/results` contains only `{plan_id, node_id, state}`, NO `output`/`stdout`
+- [ ] **Subscribe-before-publish**: K8sRM registers `exec/results` callback BEFORE publishing to `exec/plans`
+- [ ] **Per-node result routing**: each node gets its own `chan execResult`, routed by `er.NodeID`
+
+**DAG Dependency Coordination (Scenario 05 + Architecture §3.4 + §7.1.1)**:
+- [ ] **Topological iteration loop**: JM outer-loop repeatedly calls `Ready()` to discover newly-unblocked nodes
+- [ ] **Blocking Schedule()**: `K8sRM.Schedule()` blocks on a per-node Go channel until TM publishes `exec/results`
+- [ ] **Sequential sibling dispatch**: sibling nodes are dispatched one-at-a-time (blocking), not concurrently
+- [ ] **Dependency chain validation**: A→B→C — B only becomes Ready() after A is Done(); C only after B is Done()
+- [ ] **Conditional edge handling**: dormant conditional edges (`condition` value on edge) do NOT block target in `depsDone()`
+- [ ] **False-branch skip**: after condition node executes, children on false-match branch are `Skip()`ped
+- [ ] **Deadlock detection**: if `Ready()` returns empty but `IsComplete()` is false, JM breaks (nodes left PENDING)
+- [ ] **Node failure propagation**: when a node fails, its children stay blocked → `HasFailed()` → flow terminates
 
 **Data Persistence (Scenario 02 + 07)**:
 - [ ] TM calls `PUT /api/v1/{tenant}/runs/{run_id}/tasks/{task_id}` to persist output data
@@ -986,9 +667,9 @@ jobs:
 - [ ] Frontend queries `/api/v1/{tenant}/runs/{run_id}/tasks/{task_id}` to display results
 
 **Lifecycle Events (Scenario 02)**:
-- [ ] API Server publishes `ctrl/flow/updated` on POST `/agentflows`
-- [ ] API Server publishes `ctrl/flow/updated` on PUT `/agentflows/{id}`
-- [ ] API Server publishes `ctrl/flow/deleted` on DELETE `/agentflows/{id}` (soft delete)
+- [ ] API Server publishes `ctrl/flow/updated` on POST `/flows`
+- [ ] API Server publishes `ctrl/flow/updated` on PUT `/flows/{id}`
+- [ ] API Server publishes `ctrl/flow/deleted` on DELETE `/flows/{id}` (soft delete)
 - [ ] **Only API Server** publishes `ctrl/*` events (TM/JM do not)
 
 **Application Mode (Scenario 04)**:
@@ -1054,7 +735,7 @@ jobs:
   deleted; `Controller.createSessionRun` / the `dispatchFlow` mode branch
   were deleted — every flow now unconditionally dispatches through
   `createApplicationRun` / `ensureApplicationInfra`. The `Priority` field
-  itself is kept (reserved) on `AgentFlowInfo`/`FlowRunInfo` for a possible
+  itself is kept (reserved) on `FlowInfo`/`FlowRunInfo` for a possible
   future Session-mode reintroduction; `PriorityHigh` ("high") is the only
   value the API currently accepts (`handler.normalizePriority`, `Create`/
   `Update` return 400 for anything else).
@@ -1068,7 +749,7 @@ jobs:
   is cleared almost immediately after the fast, synchronous dispatch call
   returns. See `TestShouldDispatchOnNewDefinitionOnly` in
   `pkg/controller/pkg/controller_test.go`.
-- ✅ `POST /agentflows/trigger` (Path A) now unconditionally routes runs to
+- ✅ `POST /flows/trigger` (Path A) now unconditionally routes runs to
   the flow's tenant JM namespace (`pkg/api/pkg/handler/flow_def.go`
   `FlowDefHandler.applicationNamespace`, mirroring the Controller's own
   `applicationNamespace`) — fixed a critical bug where Trigger always
@@ -1095,70 +776,26 @@ jobs:
 - ✅ No `agent_flows` or `flow_runs` tables
 
 **6. REST API Paths**:
-- ✅ AgentFlow path: `/api/v1/{tenant}/agentflows`
+- ✅ AgentFlow path: `/api/v1/{tenant}/flows`
 - ✅ MCP path: `/api/v1/{tenant}/mcp`
 - ✅ Provider path: `/api/v1/{tenant}/llm/providers`
 - ✅ Flow/run/task state path: `/api/v1/{tenant}/runs/...`
 - ✅ Skill: no REST endpoint (import/console only; verified in scenario 02)
 
-**7. Wallet Boundary**:
+**7. DAG Dependency Coordination** (see `docs/01-L1-Engine-Architecture.md` §3.4, §5.2, §7.1.1):
+- ✅ **Outer iteration loop**: `Execute()` runs `for iteration := 1; ; iteration++` — each iteration discovers newly-ready nodes via `Ready()`
+- ✅ **Blocking Schedule()**: `K8sRM.Schedule()` subscribes to `exec/results`, registers per-node `chan execResult`, publishes to `exec/plans`, then **blocks on the channel** — NOT fire-and-forget
+- ✅ **Subscribe-before-publish**: channel registered BEFORE publish to avoid missing TM response
+- ✅ **Per-node result routing**: `runResults[runID][nodeID] = chan execResult` → callback matches `er.NodeID` to route results
+- ✅ **`depsDone()` with dormant conditional edges**: edges with a `condition` value are skipped in dependency check until source node evaluates
+- ✅ **Sequential sibling dispatch**: siblings (B1,B2,B3 all depending on A) are dispatched one-at-a-time, each blocking until TM result
+- ✅ **Deadlock break**: if `Ready()` returns empty but `IsComplete()` is false → loop breaks, nodes left PENDING
+
+**8. Wallet Boundary**:
 - ✅ TM-side x402 client parses HTTP 402 responses and builds unsigned payloads
 - ✅ Wallet receives only `SignRequest` and returns only `SignResponse`
 - ✅ Wallet never evaluates policy or calls the facilitator
 
-### Verification Code Highlights
-
-**State-Only Callback** (`07_messager_verifier.py`):
-```python
-# Step 9: TM → JM state-only callback (full topic: flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results)
-exec_result = {
-    "plan_id": plan_id,
-    "node_id": "sandbox-node",
-    "state": "COMPLETED",  # State only, no data
-}
-mqtt.publish("flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results", wrap_envelope(exec_result))
-
-# Step 10: Verification
-received = unwrap_envelope(msg.payload)
-if "output" in received or "stdout" in received:
-    print("FAIL: exec/results contains data (expected state-only)")
-    return False
-```
-
-**Table Names** (`02_apiserver_verifier.py`):
-```python
-tables = [
-    {"table": "orh_agentflow", "base_path": f"/api/v1/{TENANT}/agentflows"},
-    {"table": "orh_flowrun",   "base_path": f"/api/v1/{TENANT}/runs"},
-    {"table": "llm_agent",     "base_path": f"/api/v1/{TENANT}/agents"},
-    {"table": "llm_mcp",       "base_path": f"/api/v1/{TENANT}/mcp"},
-    {"table": "llm_providers", "base_path": f"/api/v1/{TENANT}/llm/providers"},
-]
-```
-
-**OTEL Span Matrix** (`10_otel_verifier.py`):
-```python
-FLOW_PHASES = {
-    "DISCOVERY": ["get-commit", "scan-sonarqube"],
-    "ANALYZE": ["aggregate-issues"],
-    "FIX": ["generate-fixes"],
-    "REVIEW": ["review-security", "review-quality", "review-arch"],
-    "VOTE": ["tribunal"],
-    "SUPERVISOR": ["supervisor-check"],
-    "CONDITION": ["is-approved"],
-    "HUMAN": ["human-approval"],
-    "COMMIT_PR": ["create-branch", "commit-fixes", "create-pr"],
-    "RESCAN": ["trigger-rescan", "wait-rescan", "check-resolved", "compare-results", "fix-complete"],
-    "REPORT": ["summary-report", "notify-pr", "notify-email", "notify-teams", "end"],
-}
-```
-
-**Wallet Signing Boundary** (`09_wallet_verifier.py`):
-```python
-resp = wait_for("flowgent/v1/{tenant}/flows/{flow}/runs/{run}/sign/response")
-assert "signature" in resp
-assert not any(k in resp for k in ["intent", "policy", "facilitator", "amount", "asset"])
-```
 
 ---
 

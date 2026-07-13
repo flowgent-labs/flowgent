@@ -14,11 +14,11 @@ import (
 	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// NewHttpClient creates the appropriate IFlowgentHttpClient based on config.
+// NewHttpClient creates the appropriate IFlowgentAPIClient based on config.
 // When wallet.enabled is true, returns an X402PaymentHttpClient with
 // policy evaluation, async MQTT signing, and facilitator integration.
 // When payments are disabled, falls back to GenericHttpClient.
-func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlowgentHttpClient {
+func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlowgentAPIClient {
 	if cfg == nil || cfg.Wallet == nil || !cfg.Wallet.Enabled {
 		return NewGenericHttpClient(30 * time.Second)
 	}

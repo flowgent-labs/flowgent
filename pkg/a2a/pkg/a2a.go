@@ -64,7 +64,10 @@ func NewFlowgentA2AServer(cfg *config.FlowgentConfig) *FlowgentA2AServer {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
+	mux.HandleFunc("GET /.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(card)
+	})
 	mux.Handle("/", a2asrv.NewJSONRPCHandler(handler))
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
@@ -136,7 +139,7 @@ type adminRequest struct {
 	Action      string                   `json:"action"`
 	AgentFlowID string                   `json:"agentflow_id,omitempty"`
 	RunID       string                   `json:"run_id,omitempty"`
-	Spec        *entities.AgentFlowInfo  `json:"spec,omitempty"`
+	Spec        *entities.FlowInfo  `json:"spec,omitempty"`
 	Vars        map[string]any           `json:"vars,omitempty"`
 	Tenant      string                   `json:"tenant,omitempty"`
 }
@@ -283,7 +286,7 @@ func parseAdminRequest(msg *a2a.Message) *adminRequest {
 			}
 			if raw, ok := p.Data["spec"]; ok {
 				b, _ := json.Marshal(raw)
-				var spec entities.AgentFlowInfo
+				var spec entities.FlowInfo
 				if json.Unmarshal(b, &spec) == nil {
 					req.Spec = &spec
 				}

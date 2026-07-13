@@ -16,12 +16,12 @@ import (
 type SlackSender struct {
 	WebhookURL string `json:"webhook_url"`
 	Channel    string `json:"channel"`
-	client     model.IFlowgentHttpClient
+	client     model.IFlowgentAPIClient
 }
 
 func (s *SlackSender) Type() string { return "slack" }
 
-func (s *SlackSender) SetHTTPClient(c model.IFlowgentHttpClient) { s.client = c }
+func (s *SlackSender) SetHTTPClient(c model.IFlowgentAPIClient) { s.client = c }
 
 func (s *SlackSender) Validate() error {
 	if s.WebhookURL == "" {

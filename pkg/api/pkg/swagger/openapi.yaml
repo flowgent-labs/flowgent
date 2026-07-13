@@ -6,13 +6,13 @@ info:
 servers:
   - url: /api/v1
 paths:
-  /agentflows:
+  /flows:
     get:
       summary: List agentflow definitions
       operationId: listAgentFlows
       responses:
         '200': { description: AgentFlow definitions }
-  /agentflows/trigger:
+  /flows/trigger:
     post:
       summary: Trigger an agentflow
       operationId: triggerAgentFlow

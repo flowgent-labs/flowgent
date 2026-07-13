@@ -33,7 +33,7 @@ def run():
     s.headers["Content-Type"] = "application/json"
 
     # ── Create Flow with all node types ────────────────────
-    # POST /agentflows decodes the body directly into entities.AgentFlowInfo — a
+    # POST /flows decodes the body directly into entities.FlowInfo — a
     # flat shape with "id"/"nodes"/"edges" at the top level (see
     # pkg/api/pkg/handler/flow_def.go Create), not a nested "definition" object.
     #
@@ -80,14 +80,14 @@ def run():
         ],
     }
 
-    s.delete(f"{API}/api/v1/{TENANT}/agentflows/{FLOW_ID}")
+    s.delete(f"{API}/api/v1/{TENANT}/flows/{FLOW_ID}")
     time.sleep(0.3)
-    r = s.post(f"{API}/api/v1/{TENANT}/agentflows", json=flow)
+    r = s.post(f"{API}/api/v1/{TENANT}/flows", json=flow)
     assert r.status_code in (200, 201), f"create: {r.status_code} {r.text}"
     print(f"  create flow OK: {FLOW_ID}")
 
     # ── Trigger ─────────────────────────────────────────────
-    r = s.post(f"{API}/api/v1/{TENANT}/agentflows/trigger", json={
+    r = s.post(f"{API}/api/v1/{TENANT}/flows/trigger", json={
         "agentflow_id": FLOW_ID, "vars": {}, "trigger": {"type": "api"}
     })
     assert r.status_code == 200, f"trigger: {r.status_code} {r.text}"
@@ -128,5 +128,5 @@ def run():
         print(f"  WARN human node status={task_statuses['human']} (may need manual approval in env)")
 
     # ── Cleanup ─────────────────────────────────────────────
-    s.delete(f"{API}/api/v1/{TENANT}/agentflows/{FLOW_ID}")
+    s.delete(f"{API}/api/v1/{TENANT}/flows/{FLOW_ID}")
     print("  cleanup OK")

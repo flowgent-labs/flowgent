@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agentflow"
+	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,10 +27,11 @@ var flowDefTracer = tracing.Tracer("flowgent/api/flowdef")
 // FlowDefHandler manages flow definition CRUD, watch API, and in-memory cache.
 type FlowDefHandler struct {
 	store           store.IStore
-	afStore         agentflow.IAgentFlowStore
+	afStore         flow.IFlowInfoStore
 	frStore         flowrun.IFlowRunStore
+	mqtt            MQTTPublisher
 	logger          *utils.Logger
-	agentFlows      map[string]*entities.AgentFlowInfo
+	agentFlows      map[string]*entities.FlowInfo
 	namespacePrefix string
 	defaultTenant   string
 	mu              sync.RWMutex
@@ -45,8 +47,8 @@ type FlowDefHandler struct {
 // pkg/controller/pkg/controller.go applicationNamespace). defaultTenant is
 // the fallback tenant ID (tenant.default_tenant) used when a flow spec
 // doesn't carry its own TenantID.
-func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.AgentFlowInfo, subFlows map[string]entities.AgentFlowInfo, namespacePrefix string, defaultTenant string) *FlowDefHandler {
-	afMap := make(map[string]*entities.AgentFlowInfo)
+func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultTenant string, mqtt MQTTPublisher) *FlowDefHandler {
+	afMap := make(map[string]*entities.FlowInfo)
 	for i := range agentFlows {
 		afMap[agentFlows[i].ID] = &agentFlows[i]
 	}
@@ -54,17 +56,17 @@ func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entiti
 		afMap[k] = &v
 	}
 
-	var afStore agentflow.IAgentFlowStore
+	var afStore flow.IFlowInfoStore
 	var frStore flowrun.IFlowRunStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
-		afStore = agentflow.NewAgentFlowPostgresStore(db)
+		afStore = flow.NewFlowPostgresStore(db)
 		frStore = flowrun.NewFlowRunPostgresStore(db)
 	case *sql.DB:
-		afStore = agentflow.NewAgentFlowSQLiteStore(db)
+		afStore = flow.NewFlowSQLiteStore(db)
 		frStore = flowrun.NewFlowRunSQLiteStore(db)
 	}
-	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, logger: logger, agentFlows: afMap, namespacePrefix: defaultNamespacePrefix(namespacePrefix), defaultTenant: defaultTenantID(defaultTenant), watchVersion: 1}
+	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, logger: logger, agentFlows: afMap, namespacePrefix: defaultNamespacePrefix(namespacePrefix), defaultTenant: defaultTenantID(defaultTenant), watchVersion: 1, mqtt: mqtt}
 }
 
 // defaultNamespacePrefix falls back to "flowgent-" when unset, so
@@ -117,6 +119,24 @@ func (h *FlowDefHandler) notifyWatchers() {
 	}
 }
 
+func (h *FlowDefHandler) publishFlowEvent(ctx context.Context, eventType, flowID, tenantID string) {
+	if h.mqtt == nil {
+		return
+	}
+	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/updated", tenantID, flowID)
+	if eventType == "DELETED" {
+		topic = fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/deleted", tenantID, flowID)
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"event_type": eventType,
+		"flow_id":    flowID,
+		"tenant_id":  tenantID,
+	})
+	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
+		slog.Warn("mqtt flow event publish failed", "topic", topic, "error", err)
+	}
+}
+
 func (h *FlowDefHandler) Watch(w http.ResponseWriter, r *http.Request) {
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	h.mu.RLock()
@@ -135,24 +155,24 @@ func (h *FlowDefHandler) Watch(w http.ResponseWriter, r *http.Request) {
 		h.List(w, r)
 	case <-time.After(30 * time.Second):
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"flows": []entities.AgentFlowInfo{}, "version": cur})
+		json.NewEncoder(w).Encode(map[string]interface{}{"flows": []entities.FlowInfo{}, "version": cur})
 	case <-r.Context().Done():
 	}
 }
 
-func (h *FlowDefHandler) AgentFlows() map[string]*entities.AgentFlowInfo {
+func (h *FlowDefHandler) AgentFlows() map[string]*entities.FlowInfo {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	c := make(map[string]*entities.AgentFlowInfo, len(h.agentFlows))
+	c := make(map[string]*entities.FlowInfo, len(h.agentFlows))
 	for k, v := range h.agentFlows {
 		c[k] = v
 	}
 	return c
 }
 
-func (h *FlowDefHandler) Reload(flows []entities.AgentFlowInfo, subFlows map[string]entities.AgentFlowInfo) {
+func (h *FlowDefHandler) Reload(flows []entities.FlowInfo, subFlows map[string]entities.FlowInfo) {
 	h.mu.Lock()
-	h.agentFlows = make(map[string]*entities.AgentFlowInfo)
+	h.agentFlows = make(map[string]*entities.FlowInfo)
 	for i := range flows {
 		h.agentFlows[flows[i].ID] = &flows[i]
 	}
@@ -172,7 +192,7 @@ func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items := defs.Items
 	if items == nil {
-		items = []*entities.AgentFlowVersionInfo{}
+		items = []*entities.FlowVersionInfo{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -180,7 +200,7 @@ func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
-	var spec entities.AgentFlowInfo
+	var spec entities.FlowInfo
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
@@ -201,56 +221,109 @@ func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", 500)
 		return
 	}
+	h.mu.Lock()
 	h.agentFlows[spec.ID] = &spec
+	h.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(spec)
 	h.notifyWatchers()
+	h.publishFlowEvent(r.Context(), "CREATED", spec.ID, tenant)
 }
 
 func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
-	spec, err := h.afStore.GetSpec(r.Context(), r.PathValue("id"))
-	if err != nil || spec == nil {
+	id := r.PathValue("id")
+
+	h.mu.RLock()
+	cached, ok := h.agentFlows[id]
+	h.mu.RUnlock()
+
+	if ok && cached != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cached)
+		return
+	}
+
+	spec, err := h.afStore.GetSpec(r.Context(), id)
+	if err != nil {
+		slog.Error("FlowDefHandler.GetSpec failed", "id", id, "error", err)
 		http.Error(w, "not found", 404)
 		return
 	}
+	if spec == nil {
+		slog.Warn("FlowDefHandler.GetSpec returned nil", "id", id)
+		http.Error(w, "not found", 404)
+		return
+	}
+	// Populate in-memory cache for subsequent reads.
+	h.mu.Lock()
+	h.agentFlows[id] = spec
+	h.mu.Unlock()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(spec)
 }
 
 func (h *FlowDefHandler) Update(w http.ResponseWriter, r *http.Request) {
-	tenant, id := r.PathValue("tenant"), r.PathValue("id")
-	var spec entities.AgentFlowInfo
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+	_, id := r.PathValue("tenant"), r.PathValue("id")
+
+	existing, err := h.afStore.GetSpec(r.Context(), id)
+	if err != nil || existing == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+
+	var updates entities.FlowInfo
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	priority, err := normalizePriority(spec.Priority)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
+
+	if updates.Description != "" {
+		existing.Description = updates.Description
 	}
-	spec.Priority = priority
-	spec.ID, spec.TenantID = id, tenant
+	if updates.Nodes != nil {
+		existing.Nodes = updates.Nodes
+	}
+	if updates.Edges != nil {
+		existing.Edges = updates.Edges
+	}
+	if updates.Priority != "" {
+		priority, err := normalizePriority(updates.Priority)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		existing.Priority = priority
+	}
+	if updates.Vars != nil {
+		existing.Vars = updates.Vars
+	}
+	existing.UpdatedAt = time.Now()
+
 	createdBy, _ := r.Context().Value(CtxUserID).(string)
-	if err := h.afStore.SaveSpec(r.Context(), &spec, createdBy, "API update"); err != nil {
+	if err := h.afStore.SaveSpec(r.Context(), existing, createdBy, "API update"); err != nil {
 		http.Error(w, "internal", 500)
 		return
 	}
-	h.agentFlows[id] = &spec
+	h.agentFlows[id] = existing
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(spec)
+	json.NewEncoder(w).Encode(existing)
 	h.notifyWatchers()
+	h.publishFlowEvent(r.Context(), "UPDATED", id, existing.TenantID)
 }
 
 func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.afStore.Delete(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := h.afStore.Delete(r.Context(), id); err != nil {
 		http.Error(w, "internal", 500)
 		return
 	}
-	delete(h.agentFlows, r.PathValue("id"))
+	tenant := r.PathValue("tenant")
+	delete(h.agentFlows, id)
 	w.WriteHeader(204)
 	h.notifyWatchers()
+	h.publishFlowEvent(r.Context(), "DELETED", id, tenant)
 }
 
 func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) {
@@ -288,7 +361,7 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 // per-TENANT namespace (not per-flow) — every flow belonging to the same
 // tenant shares one namespace, with each flow's dedicated JM Deployment
 // disambiguated by name (flowgent-jobmanager-{tenantId}-{flowId}).
-func (h *FlowDefHandler) applicationNamespace(spec *entities.AgentFlowInfo) string {
+func (h *FlowDefHandler) applicationNamespace(spec *entities.FlowInfo) string {
 	if spec.Namespace != "" {
 		return spec.Namespace
 	}

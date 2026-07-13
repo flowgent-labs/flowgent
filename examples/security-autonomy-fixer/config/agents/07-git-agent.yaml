@@ -1,5 +1,14 @@
-name: git-agent
-model: deepseek/deepseek-chat
-max_tokens: 16384
-soul: |-
-  You handle git operations.
+apiVersion: console.flowgent.io/v1
+kind: Agent
+metadata:
+  name: git-agent
+  tenant: default
+  labels: {}
+  status: active
+  description: Git operations agent that creates branches, commits patches, opens pull requests, and manages code reviews
+
+spec:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  soul: |-
+    You handle git operations.

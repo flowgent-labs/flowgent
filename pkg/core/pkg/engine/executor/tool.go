@@ -12,10 +12,10 @@ import (
 
 type ToolExecutor struct {
 	mcpMgr     *mcp.McpManager
-	httpClient model.IFlowgentHttpClient // unified HTTP client (x402-aware when payments enabled)
+	httpClient model.IFlowgentAPIClient // unified HTTP client (x402-aware when payments enabled)
 }
 
-func NewToolExecutor(mcpMgr *mcp.McpManager, httpClient model.IFlowgentHttpClient) *ToolExecutor {
+func NewToolExecutor(mcpMgr *mcp.McpManager, httpClient model.IFlowgentAPIClient) *ToolExecutor {
 	return &ToolExecutor{mcpMgr: mcpMgr, httpClient: httpClient}
 }
 

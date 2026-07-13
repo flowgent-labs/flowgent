@@ -1,0 +1,14 @@
+apiVersion: console.flowgent.io/v1
+kind: MCP
+metadata:
+  name: sonarqube
+  tenant: default
+  labels:
+    catalog: security,code-quality
+    protocol: streamable-http
+  status: active
+  description: SonarQube MCP server exposing 385 native Web API tools for SAST issue scanning, quality gate status, and re-analysis triggers
+spec:
+  enabled: true
+  type: http
+  url: http://172.29.235.101:18080/mcp

@@ -133,7 +133,7 @@ def ensure_security_fixer_flow_exists():
     with open(_FLOW_YAML_PATH) as f:
         flow_def = yaml.safe_load(f)
     flow_def.pop("triggers", None)
-    resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/agentflows", json=flow_def, timeout=10)
+    resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/flows", json=flow_def, timeout=10)
     if resp.status_code not in (200, 201):
         raise Exception(f"Flow upsert failed: {resp.status_code} {resp.text}")
     print(f"  ✓ Flow definition ready: {flow_def.get('id')} (priority={flow_def.get('priority')})")
@@ -143,7 +143,7 @@ def trigger_security_fixer() -> str:
     """Trigger security fixer flow and return run_id"""
     print("  → Triggering security-autonomy-fixer flow...")
     
-    url = f"{API_BASE}/api/v1/{TENANT}/agentflows/trigger"
+    url = f"{API_BASE}/api/v1/{TENANT}/flows/trigger"
     payload = {
         "agentflow_id": "security-autonomy-fixer",
         "vars": {

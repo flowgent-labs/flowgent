@@ -25,7 +25,7 @@ func (a *NotifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (
 func (a *NotifToWSAdapter) PodID() string { return a.Svc.PodID() }
 
 // CreateNotifierService builds a notifier.FlowgentNotifierManager from config, or nil if disabled.
-func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfig, httpClient model.IFlowgentHttpClient) *FlowgentNotifierManager {
+func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfig, httpClient model.IFlowgentAPIClient) *FlowgentNotifierManager {
 	if !cfg.Notifier.Enabled {
 		return nil
 	}

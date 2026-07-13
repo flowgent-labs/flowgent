@@ -94,20 +94,20 @@ func (c *FlowgentClient) GetAgent(ctx context.Context, tenant, name string) (*en
 
 // ─── AgentFlow CRUD ──────────────────────────────────────────────
 
-func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]entities.AgentFlowVersionInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agentflows", nil)
+func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]entities.FlowVersionInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/flows", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListFlows: %w", err)
 	}
-	var items []entities.AgentFlowVersionInfo
+	var items []entities.FlowVersionInfo
 	if err := readJSON(resp, &items); err != nil {
 		return nil, fmt.Errorf("ListFlows: %w", err)
 	}
 	return items, nil
 }
 
-func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*entities.AgentFlowInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agentflows/"+flowID, nil)
+func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*entities.FlowInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/flows/"+flowID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetFlow: %w", err)
 	}
@@ -119,16 +119,16 @@ func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*e
 		b, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("GetFlow %d: %s", resp.StatusCode, string(b))
 	}
-	var spec entities.AgentFlowInfo
+	var spec entities.FlowInfo
 	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
 		return nil, err
 	}
 	return &spec, nil
 }
 
-func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *entities.AgentFlowInfo) error {
+func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *entities.FlowInfo) error {
 	b, _ := json.Marshal(spec)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/agentflows", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/flows", bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("CreateFlow: %w", err)
 	}
@@ -140,9 +140,9 @@ func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *en
 	return nil
 }
 
-func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, spec *entities.AgentFlowInfo) error {
+func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, spec *entities.FlowInfo) error {
 	b, _ := json.Marshal(spec)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/agentflows/"+flowID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/flows/"+flowID, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("UpdateFlow: %w", err)
 	}
@@ -155,7 +155,7 @@ func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, 
 }
 
 func (c *FlowgentClient) DeleteFlow(ctx context.Context, tenant, flowID string) error {
-	resp, err := c.do(ctx, "DELETE", "/api/v1/"+tenant+"/agentflows/"+flowID, nil)
+	resp, err := c.do(ctx, "DELETE", "/api/v1/"+tenant+"/flows/"+flowID, nil)
 	if err != nil {
 		return fmt.Errorf("DeleteFlow: %w", err)
 	}
@@ -187,7 +187,7 @@ func (c *FlowgentClient) CreateRun(ctx context.Context, tenant string, run *enti
 func (c *FlowgentClient) TriggerRun(ctx context.Context, tenant, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) (*entities.FlowRunInfo, error) {
 	payload := map[string]any{"agentflow_id": agentFlowID, "vars": vars, "trigger": trigger}
 	b, _ := json.Marshal(payload)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/agentflows/trigger", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/flows/trigger", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
@@ -499,9 +499,9 @@ func (c *FlowgentClient) ListMCPs(ctx context.Context, tenant string) ([]*entiti
 
 // ─── Watch (long-poll) ───────────────────────────────────────────
 
-// WatchFlows calls GET /api/v1/{tenant}/agentflows/watch?since=N (long-poll).
-func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since int64) ([]entities.AgentFlowVersionInfo, int64, error) {
-	raw := fmt.Sprintf("/api/v1/%s/agentflows/watch?since=%d", tenant, since)
+// WatchFlows calls GET /api/v1/{tenant}/flows/watch?since=N (long-poll).
+func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since int64) ([]entities.FlowVersionInfo, int64, error) {
+	raw := fmt.Sprintf("/api/v1/%s/flows/watch?since=%d", tenant, since)
 	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("WatchFlows: %w", err)
@@ -509,13 +509,13 @@ func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since in
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	var versions []entities.AgentFlowVersionInfo
+	var versions []entities.FlowVersionInfo
 	if err := json.Unmarshal(body, &versions); err == nil {
 		return versions, since, nil
 	}
 	var wrapper struct {
-		Flows   []entities.AgentFlowVersionInfo `json:"flows"`
-		Version int64                    `json:"version"`
+		Flows   []entities.FlowVersionInfo `json:"flows"`
+		Version int64                      `json:"version"`
 	}
 	if err := json.Unmarshal(body, &wrapper); err != nil {
 		return nil, 0, fmt.Errorf("decode watch response: %w", err)
@@ -564,9 +564,9 @@ func (a *HumanApprovalClient) CreateApproval(ctx context.Context, approval *enti
 
 // NotifierClient is the client-side adapter for the notifier server's API calls.
 type NotifierClient struct {
-	Client  *FlowgentClient
-	Tenant  string
-	routes  map[string]*model.SubscriptionRoute
+	Client   *FlowgentClient
+	Tenant   string
+	routes   map[string]*model.SubscriptionRoute
 	routesMu sync.Mutex
 }
 

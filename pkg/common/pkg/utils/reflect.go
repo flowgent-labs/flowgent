@@ -132,15 +132,13 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 	collectScanFields(ev, &entries, seen)
 
 	var ptrs []any
-	jsonIdxs := make(map[int]int)    // ptrsIndex → entriesIndex
-	timeIdxs := make(map[int]int)    // ptrsIndex → entriesIndex
+	jsonIdxs := make(map[int]int) // ptrsIndex → entriesIndex
 	for ei, e := range entries {
 		if e.json {
 			jsonIdxs[len(ptrs)] = ei
 			ptrs = append(ptrs, reflect.New(reflect.TypeOf([]byte{})).Interface())
 		} else if e.timeField {
-			timeIdxs[len(ptrs)] = ei
-			ptrs = append(ptrs, reflect.New(reflect.TypeOf("")).Interface())
+			ptrs = append(ptrs, reflect.New(reflect.TypeOf(time.Time{})).Interface())
 		} else {
 			ptrs = append(ptrs, e.ptr)
 		}
@@ -155,17 +153,6 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 		}
 		ent := entries[ei]
 		json.Unmarshal(*b, ent.fv.Addr().Interface())
-	}
-	for pi, ei := range timeIdxs {
-		s := ptrs[pi].(*string)
-		if s == nil || *s == "" {
-			continue
-		}
-		ent := entries[ei]
-		t, err := ParseTime(*s)
-		if err == nil {
-			ent.fv.Set(reflect.ValueOf(t))
-		}
 	}
 	return nil
 }

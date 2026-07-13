@@ -3,53 +3,50 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// McpManager manages MCP client lifecycle and provides the unified HTTP client
-// to MCP tool implementations for x402 payment-aware external API calls.
+// McpManager manages MCP HTTP client lifecycle. TM pods are backend agents
+// in K8s — no human interaction, no stdio subprocess. All MCP servers are
+// accessed via Streamable HTTP transport.
 type McpManager struct {
 	mu         sync.Mutex
 	clients    map[string]*client.Client
-	defs       map[string]definition
-	httpClient model.IFlowgentHttpClient // unified HTTP client (x402-aware when payments enabled)
+	defs       map[string]httpDef
+	httpClient model.IFlowgentAPIClient
 }
 
-type definition struct {
-	command []string
-	args    []string
-	env     map[string]string
+type httpDef struct {
+	url     string
+	headers map[string]string
 }
 
-// NewMcpManager creates an MCP client manager with the given HTTP client.
-func NewMcpManager(httpClient model.IFlowgentHttpClient) *McpManager {
+func NewMcpManager(httpClient model.IFlowgentAPIClient) *McpManager {
 	return &McpManager{
 		clients:    make(map[string]*client.Client),
-		defs:       make(map[string]definition),
+		defs:       make(map[string]httpDef),
 		httpClient: httpClient,
 	}
 }
 
-// HttpClient returns the unified HTTP client for use by MCP tool implementations.
-func (f *McpManager) HttpClient() model.IFlowgentHttpClient {
+func (f *McpManager) HttpClient() model.IFlowgentAPIClient {
 	return f.httpClient
 }
 
-// Register adds an MCP server definition.
-func (f *McpManager) Register(name string, command, args []string, env map[string]string) {
+// Register adds an HTTP MCP server definition.
+func (f *McpManager) Register(name, url string, headers map[string]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.defs[name] = definition{command: command, args: args, env: env}
+	f.defs[name] = httpDef{url: url, headers: headers}
 }
 
-// GetClient returns a connected MCP client for the given server name.
+// GetClient returns a connected MCP HTTP client for the given server name.
 func (f *McpManager) GetClient(ctx context.Context, name string) (*client.Client, error) {
 	f.mu.Lock()
 	if c, ok := f.clients[name]; ok {
@@ -63,41 +60,20 @@ func (f *McpManager) GetClient(ctx context.Context, name string) (*client.Client
 	}
 	f.mu.Unlock()
 
-	env := os.Environ()
-	for k, v := range def.env {
-		// Normalize key to uppercase (viper lowercases YAML keys)
-		key := strings.ToUpper(k)
-		prefix := key + "="
-		found := false
-		for i := 0; i < len(env); i++ {
-			if len(env[i]) >= len(prefix) && strings.EqualFold(env[i][:len(prefix)], prefix) {
-				if found {
-					// Remove duplicate (e.g. both all_proxy and ALL_PROXY exist)
-					env = append(env[:i], env[i+1:]...)
-					i--
-				} else {
-					env[i] = prefix + v
-					found = true
-				}
-			}
-		}
-		if !found {
-			env = append(env, prefix+v)
-		}
+	opts := []transport.StreamableHTTPCOption{}
+	if len(def.headers) > 0 {
+		opts = append(opts, transport.WithHTTPHeaders(def.headers))
 	}
 
-	allArgs := make([]string, 0, len(def.command)-1+len(def.args))
-	allArgs = append(allArgs, def.command[1:]...)
-	allArgs = append(allArgs, def.args...)
-	c, err := client.NewStdioMCPClient(def.command[0], env, allArgs...)
+	c, err := client.NewStreamableHttpClient(def.url, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("start MCP %s: %w", name, err)
+		return nil, fmt.Errorf("connect MCP %s at %s: %w", name, def.url, err)
 	}
 
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	if _, err := c.Initialize(ctx, initReq); err != nil {
-		return nil, fmt.Errorf("init MCP %s: %w", name, err)
+		return nil, fmt.Errorf("init MCP %s at %s: %w", name, def.url, err)
 	}
 
 	f.mu.Lock()

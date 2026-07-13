@@ -15,7 +15,7 @@ const (
 // §1.1/§4.3. Every flow currently runs in Application mode (a dedicated
 // per-flow JM Deployment created by the Controller).
 //
-// The Priority field itself is intentionally kept on AgentFlowInfo/FlowRunInfo
+// The Priority field itself is intentionally kept on FlowInfo/FlowRunInfo
 // (not removed) — this reserves the config surface so Session mode can be
 // reintroduced later without an API/schema break. For now PriorityHigh is the
 // only value the API accepts (see handler.NormalizePriority); the old

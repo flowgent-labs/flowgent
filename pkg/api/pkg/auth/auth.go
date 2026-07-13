@@ -7,6 +7,9 @@ package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -69,6 +72,7 @@ func NewService(cfg config.AuthConfig) (*AuthService, error) {
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("auth: NewService anonymous paths", "paths", cfg.AnonymousPaths)
 	return &AuthService{cfg: cfg, tokenService: ts}, nil
 }
 
@@ -173,13 +177,9 @@ func NewTokenService(cfg config.AuthConfig) (*TokenService, error) {
 	if alg == "" {
 		alg = "ES256"
 	}
-	privateKey, err := parsePrivateKey([]byte(cfg.JWTPrivateKey))
+	privateKey, publicKey, err := loadOrGenerateKeys([]byte(cfg.JWTPrivateKey), []byte(cfg.JWTPublicKey))
 	if err != nil {
-		return nil, fmt.Errorf("auth: parse private key: %w", err)
-	}
-	publicKey, err := parsePublicKey([]byte(cfg.JWTPublicKey))
-	if err != nil {
-		return nil, fmt.Errorf("auth: parse public key: %w", err)
+		return nil, fmt.Errorf("auth: %w", err)
 	}
 	akValidity := time.Duration(cfg.JWTValidityAK) * time.Second
 	if akValidity <= 0 {
@@ -355,6 +355,35 @@ func parsePublicKey(pemBytes []byte) (any, error) {
 		return pub, nil
 	}
 	return nil, errors.New("auth: unsupported public key format")
+}
+
+// loadOrGenerateKeys parses PEM-encoded keys if provided; otherwise generates a fresh ECDSA P-256 key pair.
+func loadOrGenerateKeys(privPEM, pubPEM []byte) (priv, pub any, err error) {
+	if len(privPEM) > 0 {
+		priv, err = parsePrivateKey(privPEM)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse private key: %w", err)
+		}
+	}
+	if len(pubPEM) > 0 {
+		pub, err = parsePublicKey(pubPEM)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse public key: %w", err)
+		}
+	}
+	if priv != nil && pub != nil {
+		return priv, pub, nil
+	}
+	if priv != nil || pub != nil {
+		return nil, nil, errors.New("both private and public keys must be provided together")
+	}
+	// Auto-generate ECDSA P-256 key pair
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate ECDSA key: %w", err)
+	}
+	slog.Info("auth: auto-generated ECDSA P-256 JWT key pair (no keys in config)")
+	return key, &key.PublicKey, nil
 }
 
 // ── Shared helpers ────────────────────────────────────────────────

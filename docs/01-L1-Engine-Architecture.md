@@ -274,6 +274,7 @@ flowgent.io/mode:         "session" | "application"
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
 | **Sandbox as independent pods managed by JM (defense-in-depth)** | Sandbox runs as separate K8s pods managed by JM's K8sRM (same goroutine pattern as TM scaling). The JM — as the job/flow-level orchestrator — is the natural owner for both TM and sandbox lifecycle. Two-layer isolation: pod-level (K8s NetworkPolicy + seccomp RuntimeDefault profile) blocks broad egress at the CNI/container runtime layer; process-level (seccomp-bpf + userspace notifier) enforces per-flow per-node dynamic allowlists. Independent CPU/mem/volume limits prevent noisy-neighbor resource contention between TM and sandbox. TM and sandbox share a ReadWriteMany PVC organized by flowId directory — TM writes scripts, sandbox executes them, TM reads results from the same volume. |
 | **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-flow per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See §15 for full design. |
+| **MCP transport is HTTP-only (Streamable HTTP), not stdio subprocess** | TM pods are backend K8s agents without human interaction or a desktop environment. Spawning MCP server binaries as stdio subprocesses (`NewStdioMCPClient`) is a desktop/IDE pattern (Claude Code, Cursor) — it requires the MCP binary to be in the container image, adds subprocess lifecycle management overhead, and couples the TM to specific binary versions. HTTP mode (`NewStreamableHttpClient`) treats MCP servers as independent services — they can be deployed, scaled, and updated separately (e.g. sonarqube-mcp as a Docker container or Helm release). The `McpInfo` entity stores a URL + headers, not a command vector. See §6.2. |
 
 ---
 
@@ -297,9 +298,9 @@ aligns with Kubernetes' apiserver→etcd pattern.
 | `/_/healthz` | GET | Health check |
 | `/_/webhooks/{provider}` | POST | Webhook trigger (GitHub/GitLab) |
 | `/api/v1/{tenant}/agents` | GET/POST | List / Create agent definitions |
-| `/api/v1/{tenant}/agentflows` | GET/POST | List / Create flows |
-| `/api/v1/{tenant}/agentflows/{id}` | GET/PUT/DELETE | Flow CRUD |
-| `/api/v1/{tenant}/agentflows/trigger` | POST | Create PENDING run |
+| `/api/v1/{tenant}/flows` | GET/POST | List / Create flows |
+| `/api/v1/{tenant}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
+| `/api/v1/{tenant}/flows/trigger` | POST | Create PENDING run |
 | `/api/v1/{tenant}/runs` | GET/POST | List runs (JM polls this) / Create run |
 | `/api/v1/{tenant}/runs/{id}` | GET/PUT | Run status + update |
 | `/api/v1/{tenant}/runs/{id}/tasks` | GET/POST | Task list + create (JM/TM write) |
@@ -335,7 +336,7 @@ There are two ways runs enter the system:
 **Path A: API Trigger (sync write, async execution)**
 
 ```
-POST /api/v1/{tenant}/agentflows/trigger
+POST /api/v1/{tenant}/flows/trigger
   → agentFlowHandler validates spec exists
   → run := { AgentFlowID, Vars, Status:PENDING, Tenant, Namespace:"" }
   → persist via apiserver store       // ← sync ends here
@@ -418,6 +419,146 @@ Both session and application JMs use the **same binary + same code path**. The
 only difference is `FLOWGENT_NAMESPACE`:
 - Session: empty → runPoller picks runs with `namespace=""`
 - Application: `flowgent-{tenant}-{flow}` → runPoller picks runs in that namespace
+
+### 3.4 DAG Dependency Coordination — Iteration Loop + Blocking Schedule
+
+The JM is the **sole dependency controller** for a flow run. It does not just
+fire off ExecutionPlans and hope they execute in order — it actively enforces
+the DAG's topological constraints through a **two-level loop pattern**: an outer
+iteration loop that repeatedly discovers newly-ready nodes, and an inner per-node
+blocking `Schedule()` that waits for the TM to complete each node before
+dispatching the next.
+
+#### 3.4.1 Execution Loop (Pseudocode)
+
+```
+Execute(run, spec):
+  buildExecutionGraph(spec, runID)   // initialize DAG state
+
+  for iteration := 1; ; iteration++:
+    if HasFailed()  → run.Status = FAILED, persist, return
+    if IsComplete() → run.Status = COMPLETED, persist, return
+
+    ready := Ready()                 // nodes with all deps satisfied
+    if len(ready) == 0:
+      break                          // deadlock: some nodes have unsatisfied deps
+
+    for each nodeID in ready:
+      plan := buildPlan(nodeID, resolvedInputs)
+      state.SaveTask(plan)           // persist task run via REST
+
+      result := rm.Schedule(plan)    // ← BLOCKING: waits for TM result
+      if result.Error != "":
+        Fail(nodeID)                 // child nodes stay blocked → flow fails
+        continue
+
+      nodeOutputs[nodeID] = result.Output
+      Done(nodeID)                   // unblocks children for next iteration
+
+      if node is condition:
+        SetConditionResult(nodeID, bool)
+        for each child with false-match edge:
+          Skip(child)                // false-branch skipped
+```
+
+**Key insight**: `rm.Schedule()` is a **synchronous blocking call** — the JM
+waits for the TM to execute the plan and report the result before continuing.
+This means sibling nodes (e.g. B1, B2, B3 all depending on A) are dispatched
+**sequentially** within one iteration, not concurrently. Each node's result
+arrives before the next node is dispatched. True concurrent dispatch of
+sibling nodes is a potential future optimization (dispatch all siblings,
+collect results via a `sync.WaitGroup`), but the current sequential approach
+is simpler and avoids partial-failure rollback complexity.
+
+#### 3.4.2 Dependency Resolution — `depsDone()` Algorithm
+
+```
+depsDone(node):
+  if node has zero dependencies → true (root node)
+
+  for each dependency d:
+    if d is completed or skipped → this dep is satisfied, continue
+    if edge(d→node) has a condition value AND d is not yet evaluated:
+      → dormant conditional edge, skip (don't block)
+    otherwise → this dep is unsatisfied, return false
+
+  return true  // all deps satisfied or dormant
+```
+
+**Conditional edge handling**: When an edge carries a `condition` (true/false),
+it is treated as **dormant** until the source node executes. A dormant
+conditional edge does NOT block the target node — the `depsDone` check skips
+it. After the condition node executes, `SetConditionResult()` is called, and
+all children on the false-branch are explicitly `Skip()`ped. This means
+condition nodes gate their children through the Done→Skip mechanism, not
+through blocking in `depsDone`.
+
+#### 3.4.3 K8s Mode: Subscribe-Before-Publish + Per-Node Channel Routing
+
+In K8s (MQTT) mode, `K8sRM.Schedule()` implements a **subscribe-before-publish**
+pattern to avoid missing the TM's response:
+
+```
+K8sRM.Schedule(plan):
+  1. Create resultCh := make(chan execResult, 1)
+
+  2. SUBSCRIBE to exec/results (once per run):
+     if s.runResults[runID] == nil:
+       q.Subscribe("exec/results/{tenant}/{flow}/{run}", callback)
+     s.runResults[runID][plan.NodeID] = resultCh
+     // ^^ channel registered BEFORE publish — no race
+
+  3. PUBLISH plan to exec/plans/{tenant}/{flow}/{run}
+     → TM pods consume via $share/tm-pool
+
+  4. BLOCK on resultCh (with planTimeout):
+     select {
+       case <-ctx.Done():  → timeout, return error
+       case er := <-resultCh:
+         if er.State == "FAILED" → return error
+         return TaskResult{Output: {plan_id, node_id, state}}
+     }
+```
+
+The callback routes incoming `exec/results` messages to the correct node's
+channel by matching `er.NodeID` against registered channels, then deletes
+the channel entry (cleanup). The `runResults` map is keyed by `(runID,
+nodeID)` — each node gets its own dedicated channel. This means even though
+nodes are dispatched sequentially, the routing infrastructure supports
+concurrent dispatch if the JM loop were changed to fire-and-collect.
+
+#### 3.4.4 Round-Trip Timing Diagram (Single Node)
+
+```
+JM.Execute()          K8sRM.Schedule()         MQTT                TM.SlotWorker
+──────────            ────────────────          ────                ─────────────
+Ready() → [A]
+  │                     
+  ├─Schedule(A) ──►   Subscribe exec/results
+  │                   Register chan[A]
+  │                   Publish exec/plans ────►  ──────────────►  Dequeue ($share)
+  │                                                                Execute via Router
+  │                   ◄── Publish exec/results ──  ◄────────────  Save task via REST
+  │                   Route er.NodeID → chan[A]                    Report state back
+  │                   delete chan[A]
+  ◄── result ────────
+  Done(A)
+
+Ready() → [B]          // B was blocked on A, now ready
+  ...
+```
+
+#### 3.4.5 Edge Cases
+
+| Scenario | Behavior |
+|----------|----------|
+| **Root nodes (no deps)** | `Ready()` returns them immediately — first iteration |
+| **Parallel siblings** | All siblings become `Ready()` in the same iteration after their shared parent is `Done()`. Dispatched sequentially but each blocks independently. |
+| **Condition node → false branch** | False-branch children are `Skip()`ped immediately after condition executes. They never appear in `Ready()`. |
+| **Node fails** | `Fail(node)` — children stay blocked (never become ready). `HasFailed()` → flow terminates. |
+| **Deadlock** (Ready=∅, !IsComplete, !HasFailed) | Some nodes have permanently unsatisfied deps (e.g. a dependency was never created). Loop breaks, returns nil — nodes left in PENDING. |
+| **TM timeout** | `planTimeout` (default 5 min) — `Schedule()` returns error, node is marked failed, flow terminates. |
+| **TM crash mid-execution** | JM heartbeat monitor detects dead TM after 30s. Orphaned plans are re-dispatched (failover). |
 
 ---
 
@@ -502,10 +643,19 @@ busy, returns `INSUFFICIENT_RESOURCES` immediately. When a slot is acquired, cal
 
 Two responsibilities: **plan dispatch** and **TM pod management**.
 
-**Dispatch**: `Schedule()` serializes the ExecutionPlan to JSON and publishes it to
-an MQTT topic (`flowgent/exec/{runID}/{planID}`). TM pods subscribed via MQTT shared
-subscription (`$share/tm-pool`) dequeue and execute plans. Returns immediately after
-publish (fire-and-forget). Results are published back to JM via MQTT.
+**Dispatch**: `Schedule()` is a **blocking** call — it does NOT fire-and-forget.
+It subscribes to `exec/results` for the run (once), registers a per-node Go channel
+(keyed by `nodeID`), publishes the plan to `exec/plans`, then **blocks on the channel**
+waiting for the TM to execute and report the result. This subscribe-before-publish
+ordering avoids the race where the TM responds before the JM is listening.
+
+The per-run result routing map (`runResults map[string]map[string]chan execResult`)
+routes incoming `exec/results` messages to the correct node's channel by matching
+`er.NodeID`. When a result arrives, the channel entry is deleted (cleanup). Each
+`Schedule()` call creates its own channel and waits on it independently — this
+means the JM dispatches sibling nodes **sequentially** (one completes before the
+next is dispatched), not concurrently. See §3.4 for the full DAG coordination
+design.
 
 **TM pod management**: Manages a K8s Deployment (`flowgent-taskmanager`). On init,
 `ensureDeployment()` creates the Deployment if it doesn't exist.
@@ -552,7 +702,33 @@ slots executes up to 4 DAG nodes concurrently.
 | `sandbox` | SandboxExecutor | Secure script execution (python3/bash/node) with network isolation |
 | `noop` | NoopExecutor | Terminal node, passthrough |
 
-### 6.2 Heartbeat & Failover
+### 6.2 MCP Transport — HTTP-Only (Streamable HTTP)
+
+TM pods are pure backend agents running in K8s — no human interaction, no desktop
+environment, no subprocess launcher. All MCP (Model Context Protocol) server
+communication uses **Streamable HTTP** transport via `mark3labs/mcp-go`'s
+`client.NewStreamableHttpClient`. The `McpManager` manages HTTP client lifecycle:
+each MCP server definition stores a URL and optional headers (auth tokens,
+tenant forwarding), NOT a command/args/env vector.
+
+```
+TM Pod (SlotWorker)
+  → ToolExecutor.Execute(plan)
+    → McpManager.CallTool(serverName, toolName, args)
+      → GetClient(name) → NewStreamableHttpClient(url, WithHTTPHeaders(headers))
+        → c.Initialize(ctx, initReq)     // MCP protocol handshake over HTTP
+        → c.CallTool(ctx, callToolReq)   // JSON-RPC over HTTP POST
+          → upstream MCP server (sonarqube-mcp, github-mcp, etc.)
+```
+
+The `McpInfo` entity stored in PG (`llm_mcp` table) carries:
+- `url` — MCP server endpoint (e.g. `http://172.29.235.101:18080/mcp`)
+- `headers` — optional auth/forwarding headers (e.g. `Authorization: Bearer xxx`)
+
+This is consistent with how Claude Code, Codex, Cursor, and OpenCode all support
+remote MCP servers — the TM is just another MCP client, connecting over HTTP.
+
+### 6.3 Heartbeat & Failover
 
 TMs send periodic heartbeats. JM's KubernetesResourceManager detects dead TMs
 and re-dispatches orphaned plans.
@@ -633,6 +809,49 @@ POST /api/v1/{tenant}/runs/{id}/tasks/{tid}
 | SandboxRunner (sandbox pod) | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result` | SandboxExecutor (TM) | Per-run subscription |
 | Notifier.Publish | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/notify/event` | Notifier consumer | `$share/notify-pool` per-tenant |
 | TM heartbeat | `flowgent/v1/heartbeat/{tmId}` | HeartbeatMonitor | Wildcard `flowgent/v1/heartbeat/+` for all TMs |
+
+### 7.1.1 DAG Execution Round-Trip (exec/plans + exec/results)
+
+The `exec/plans` → `exec/results` topic pair is the backbone of DAG dependency
+coordination. The JM enforces topological order by blocking on each plan's
+result before dispatching the next:
+
+```
+JM.Execute()              K8sRM.Schedule()              MQTT                     TM.SlotWorker
+──────────                ────────────────              ────                     ─────────────
+for iteration=1,2,...:
+  Ready() → [A,B,...]
+  for each nodeID:
+    │
+    ├─Schedule(plan) ──►  Subscribe exec/results
+    │                     (once per run, if first call)
+    │                     Register chan[nodeID]
+    │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-pool
+    │                                                                       SlotWorker dequeue
+    │                                                                       Executor.Execute()
+    │                                                                       PUT /tasks (REST)
+    │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_id,state}
+    │                     Route er.NodeID → chan[nodeID]
+    │                     delete chan[nodeID]
+    ◄── TaskResult ──────
+    Done(nodeID)          // unblocks children for next iteration
+    │
+    // next iteration: children of just-completed nodes become Ready()
+```
+
+**Critical timing**: The subscribe-before-publish ordering is mandatory.
+`K8sRM.Schedule()` registers the per-node channel on `exec/results` BEFORE
+publishing to `exec/plans`. If the order were reversed, a fast TM could
+publish the result before the JM's callback is registered, causing the
+`Schedule()` call to hang until `planTimeout`.
+
+**State-only callback**: `exec/results` carries only `{plan_id, node_id,
+state}` — the actual output data is persisted by the TM via
+`PUT /api/v1/{tenant}/runs/{id}/tasks/{tid}` BEFORE publishing to
+`exec/results`. The JM then reads output data from the task record (or relies
+on the in-memory `nodeOutputs` map populated from the Schedule return value
+for variable resolution in subsequent nodes). See §8.1 for the ExecutionPlan
+data model.
 
 ### 7.2 Session vs Application Mode
 
@@ -754,7 +973,7 @@ There are two paths to trigger a run:
 
 ```
 1. TRIGGER (sync)
-   → REST/A2A/Webhook → POST /api/v1/{tenant}/agentflows/trigger
+   → REST/A2A/Webhook → POST /api/v1/{tenant}/flows/trigger
    → agentFlowHandler validates spec exists
    → persists PENDING run via store
    → returns run_id to caller    ← sync ends here
@@ -1103,7 +1322,7 @@ model (→ common)
 | `engine/taskmanager/` | TaskManager + SlotWorker pool + heartbeat |
 | `engine/discovery/`, `engine/checkpoint/`, `engine/trigger/` | Engine subsystems |
 | `llm/` | LLM client (OpenAI-compatible) + LlmProviderManager |
-| `mcp/` | MCP tool manager factory |
+| `mcp/` | MCP HTTP client manager (Streamable HTTP transport, lazy-connect, tool invocation) |
 | `lock/` | Distributed lock (memory/Redis/Postgres) |
 
 ### api (`pkg/api/pkg/`) — Module 11

@@ -21,8 +21,6 @@ RUN apk add --no-cache ca-certificates tzdata curl jq bash
 ENV TZ=Asia/Shanghai
 
 COPY --from=builder /out/flowgent /app/flowgent
-COPY examples/security-autonomy-fixer/config/mcps/mock-server.sh /app/mcp-server.sh
-RUN chmod +x /app/mcp-server.sh
 COPY examples/ /app/examples/
 COPY etc/ /app/etc/
 

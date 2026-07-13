@@ -35,14 +35,14 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("DELETE /api/v1/{tenant}/agents/{name}", agentDef.Delete)
 
 	// ── AgentFlows (tenant-scoped) ─────────────────────────
-	mux.HandleFunc("GET /api/v1/{tenant}/agentflows", flowDef.List)
-	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/watch", flowDef.Watch)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows", flowDef.Create)
-	mux.HandleFunc("GET /api/v1/{tenant}/agentflows/{id}", flowDef.Get)
-	mux.HandleFunc("PUT /api/v1/{tenant}/agentflows/{id}", flowDef.Update)
-	mux.HandleFunc("DELETE /api/v1/{tenant}/agentflows/{id}", flowDef.Delete)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/trigger", flowDef.Trigger)
-	mux.HandleFunc("POST /api/v1/{tenant}/agentflows/{id}/trigger", flowDef.TriggerByID)
+	mux.HandleFunc("GET /api/v1/{tenant}/flows", flowDef.List)
+	mux.HandleFunc("GET /api/v1/{tenant}/flows/watch", flowDef.Watch)
+	mux.HandleFunc("POST /api/v1/{tenant}/flows", flowDef.Create)
+	mux.HandleFunc("GET /api/v1/{tenant}/flows/{id}", flowDef.Get)
+	mux.HandleFunc("PUT /api/v1/{tenant}/flows/{id}", flowDef.Update)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/flows/{id}", flowDef.Delete)
+	mux.HandleFunc("POST /api/v1/{tenant}/flows/trigger", flowDef.Trigger)
+	mux.HandleFunc("POST /api/v1/{tenant}/flows/{id}/trigger", flowDef.TriggerByID)
 
 	// ── Runs (tenant-scoped) ───────────────────────────────
 	mux.HandleFunc("POST /api/v1/{tenant}/runs", flowRun.Create)

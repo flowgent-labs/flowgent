@@ -43,7 +43,7 @@ type TaskManagerConfig struct {
 	SandboxPolicy     *model.SandboxPolicy
 	SandboxWorkspace  string
 	SandboxDeploymentEnabled bool
-	HttpClient        model.IFlowgentHttpClient // unified HTTP client (x402-aware when payments enabled)
+	HttpClient        model.IFlowgentAPIClient // unified HTTP client (x402-aware when payments enabled)
 }
 
 // TaskManager is a persistent worker that consumes ExecutionPlans from
@@ -84,8 +84,8 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 				slog.Debug("taskmanager skip MCP", "name", m.Name, "enabled", m.Enabled)
 				continue
 			}
-			slog.Debug("taskmanager register MCP", "name", m.Name, "cmd", m.Command, "args", m.Args)
-			mcpMgr.Register(m.Name, m.Command, m.Args, m.Env)
+			slog.Debug("taskmanager register MCP", "name", m.Name, "type", m.Type, "url", m.URL)
+			mcpMgr.Register(m.Name, m.URL, m.Headers)
 		}
 	} else {
 		slog.Warn("taskmanager ListMCPs failed", "err", err)

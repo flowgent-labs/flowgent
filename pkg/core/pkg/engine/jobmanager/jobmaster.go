@@ -32,7 +32,7 @@ type EdgeCondition struct {
 }
 
 // JobMaster is the per-run DAG orchestrator. It builds the execution graph
-// from an AgentFlowInfo and dispatches plans via resourcemanager.ResourceManager.Schedule().
+// from an FlowInfo and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
 	state   RunStateStore
@@ -58,6 +58,8 @@ type JobMaster struct {
 
 	planMap     map[string]*entities.ExecutionPlan
 	nodeOutputs map[string]map[string]any
+
+	resolvedVars map[string]any
 }
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
@@ -252,7 +254,7 @@ func (jm *JobMaster) depsDoneLocked(n string) bool {
 
 // ─── buildExecutionGraph — single pass: DAG state + ExecutionPlans ─
 
-func (jm *JobMaster) buildExecutionGraph(spec *entities.AgentFlowInfo, runID string) {
+func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) {
 	nodeIDs := make([]string, len(spec.Nodes))
 	for i, n := range spec.Nodes {
 		nodeIDs[i] = n.ID
@@ -314,13 +316,25 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.AgentFlowInfo, runID str
 
 // ─── Execute ─────────────────────────────────────────────
 
-func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spec *entities.AgentFlowInfo) error {
+func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
 	if jm.tracer == nil {
 		jm.tracer = tracing.Tracer("flowgent/jobmaster")
 	}
 
 	jm.buildExecutionGraph(spec, run.ID)
 	jm.applySupervisorConfig(spec)
+
+	// Merge flow vars with run vars and inject built-in variables.
+	jm.resolvedVars = make(map[string]any)
+	for k, v := range spec.Vars {
+		jm.resolvedVars[k] = v
+	}
+	for k, v := range run.Vars {
+		jm.resolvedVars[k] = v
+	}
+	jm.resolvedVars["run_id"] = run.ID
+	jm.resolvedVars["tenant_id"] = spec.TenantID
+	jm.resolvedVars["flow_id"] = spec.ID
 
 	ctx, span := jm.tracer.Start(ctx, "jobmaster.execute",
 		trace.WithAttributes(
@@ -423,9 +437,17 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 }
 
 func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[string]any {
+	// Build scope: vars + dependency node outputs.
+	scope := map[string]map[string]any{"vars": jm.resolvedVars}
+	for _, dep := range jm.Deps(nodeID) {
+		if o, ok := jm.nodeOutputs[dep]; ok {
+			scope[dep] = o
+		}
+	}
+
 	in := make(map[string]any)
 	for k, v := range yamlInput {
-		in[k] = v
+		in[k] = resolveDeep(v, scope)
 	}
 	for _, dep := range jm.Deps(nodeID) {
 		if o, ok := jm.nodeOutputs[dep]; ok {
@@ -435,6 +457,35 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 	return in
 }
 
+func resolveDeep(v any, scope map[string]map[string]any) any {
+	switch val := v.(type) {
+	case string:
+		// If the entire value is ${node-id} (no field selector), replace with
+		// the raw output map rather than a Go string representation.
+		if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") && !strings.Contains(val, ".") && !strings.Contains(val, " ") {
+			nodeID := val[2 : len(val)-1]
+			if node, ok := scope[nodeID]; ok {
+				return node
+			}
+		}
+		return utils.Resolve(val, scope)
+	case map[string]any:
+		out := make(map[string]any)
+		for k, vv := range val {
+			out[k] = resolveDeep(vv, scope)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, vv := range val {
+			out[i] = resolveDeep(vv, scope)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 func (jm *JobMaster) collectFirstError() string {
 	for _, err := range jm.nodeErrors {
 		return err
@@ -442,7 +493,7 @@ func (jm *JobMaster) collectFirstError() string {
 	return "node failed"
 }
 
-func (jm *JobMaster) applySupervisorConfig(spec *entities.AgentFlowInfo) {
+func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 	for _, n := range spec.Nodes {
 		if n.Type == entities.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
 			jm.maxNodes = n.SupervisorConfig.MaxNodes

@@ -16,12 +16,12 @@ import (
 type WebhookSender struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers"`
-	client  model.IFlowgentHttpClient
+	client  model.IFlowgentAPIClient
 }
 
 func (s *WebhookSender) Type() string { return "webhook" }
 
-func (s *WebhookSender) SetHTTPClient(c model.IFlowgentHttpClient) { s.client = c }
+func (s *WebhookSender) SetHTTPClient(c model.IFlowgentAPIClient) { s.client = c }
 
 func (s *WebhookSender) Validate() error {
 	if s.URL == "" {
