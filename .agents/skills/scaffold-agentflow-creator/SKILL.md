@@ -138,7 +138,7 @@ edges:
 | `map` | Fan-out parallel processing | `source`, `concurrency`, `node` (nested inline node def) |
 | `condition` | Boolean branch | `expression` (e.g. `${vote.decision == true}`) |
 | `supervisor` | Safety guardrail | `agent`, `supervisor_config: {allowed_actions, max_retries, max_nodes, max_injections}` |
-| `tribunal` | Multi-agent majority vote | `strategy: {type: majority}`, `input: {votes: [ref1, ref2, ref3]}` |
+| `committee` | Multi-agent majority vote | `strategy: {type: majority}`, `input: {votes: [ref1, ref2, ref3]}` |
 | `human` | Manual approval gate | `approval: {timeout, on_approve, on_reject}` |
 | `noop` | Terminal marker | — |
 
@@ -208,7 +208,7 @@ Here's what I understood:
   analyze        | agent       | issue-detector (to be created)
   review-sec     | agent       | security-reviewer (to be created)
   review-quality | agent       | quality-reviewer (to be created)
-  vote           | tribunal    | majority vote on 3 reviews
+  vote           | committee    | majority vote on 3 reviews
   gate           | supervisor  | guard: continue|retry|abort
   create-pr      | tool        | github:create_pr
   end            | noop        | —

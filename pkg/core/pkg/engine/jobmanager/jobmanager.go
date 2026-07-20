@@ -22,10 +22,11 @@ type JobManagerConfig struct {
 // JobManager is the singleton JobManager (like Flink's Dispatcher in session mode).
 // It receives agentflow run submissions and spawns a JobMaster per run.
 type JobManager struct {
-	state  RunStateStore
-	rm     resourcemanager.ResourceManager
-	logger *utils.Logger
-	cfg    *JobManagerConfig
+	state           RunStateStore
+	rm              resourcemanager.ResourceManager
+	logger          *utils.Logger
+	cfg             *JobManagerConfig
+	knowledgeClient *client.FlowgentClient
 }
 
 // NewJobManager creates the shared JobManager singleton.
@@ -38,6 +39,9 @@ func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logg
 	}
 	return &JobManager{state: state, rm: rm, logger: logger, cfg: cfg}, nil
 }
+
+// SetKnowledgeClient wires the knowledge client for post-run knowledge extraction.
+func (m *JobManager) SetKnowledgeClient(c *client.FlowgentClient) { m.knowledgeClient = c }
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
 func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
@@ -54,6 +58,9 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 	run.TenantID = spec.TenantID
 
 	master := NewJobMaster(m.state, m.rm, m.logger, m.cfg)
+	if m.knowledgeClient != nil {
+		master.SetKnowledgeWriter(m.knowledgeClient)
+	}
 	return master.Execute(ctx, run, spec)
 }
 

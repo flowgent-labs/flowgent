@@ -1,27 +1,66 @@
 #!/usr/bin/env python3
 """
-Scenario 02 — API Server Module: REST CRUD + Lifecycle Events
+Scenario 02 — API Server Module: REST CRUD + Lifecycle Events.
 
-Validates complete REST API coverage for all entities and MQTT lifecycle
-event publishing for flow/run state changes.
+Validates complete REST API CRUD for all 9 entity types, PostgreSQL persistence,
+and MQTT lifecycle event publishing.
 
-Entity Coverage (9 entities) — paths/tables match pkg/api/pkg/server.go + pkg/store:
-1. AgentFlow   - orh_agentflow      - /api/v1/{tenant}/flows
-2. FlowRun     - orh_flowrun        - /api/v1/{tenant}/runs
-3. TaskRun     - task_runs          - /api/v1/{tenant}/runs/{run_id}/tasks
-4. Agent       - llm_agent          - /api/v1/{tenant}/agents
-5. Skill       - llm_skill          - /api/v1/{tenant}/llm/skills
-6. MCP         - llm_mcp            - /api/v1/{tenant}/mcp
-7. Provider    - llm_providers      - /api/v1/{tenant}/llm/providers
-8. Approval    - human_approvals    - /api/v1/human/approvals
-9. Channel     - nfy_channel        - /api/v1/{tenant}/notifications/channels
+Entity → Table → REST Path:
+  1. AgentFlow   → orh_agentflow    → /api/v1/{tenant}/flows
+  2. FlowRun     → orh_flowrun      → /api/v1/{tenant}/runs
+  3. TaskRun     → task_runs        → /api/v1/{tenant}/runs/{run_id}/tasks
+  4. Agent       → llm_agent        → /api/v1/{tenant}/agents
+  5. Skill       → llm_skill        → /api/v1/{tenant}/llm/skills
+  6. MCP         → llm_mcp          → /api/v1/{tenant}/mcp
+  7. Provider    → llm_providers     → /api/v1/{tenant}/llm/providers
+  8. Approval    → human_approvals   → /api/v1/human/approvals
+  9. Channel     → nfy_channel      → /api/v1/{tenant}/notifications/channels
 
-Test Strategy:
-- CRUD operations (Create, Read, List, Update, Delete)
-- PG persistence verification
-- Soft delete validation
-- Lifecycle event publishing (ctrl/flow/updated, ctrl/flow/deleted)
-- MQTT event consumption verification
+Steps with Expected I/O:
+  Step 1. Flow CRUD
+    Action:  POST → GET → PUT → DELETE /api/v1/{tenant}/flows
+    Input:   {id, nodes, edges, priority}
+    Output:  Create→201, Read→flow object, Update→version++, Delete→200/204
+
+  Step 2. Run Lifecycle
+    Action:  POST /api/v1/{tenant}/runs → GET → trigger
+    Input:   {agentflow_id, priority}
+    Output:  Create→201 (status=PENDING), Trigger→200 (run_id)
+
+  Step 3. Task Query
+    Action:  GET /api/v1/{tenant}/runs/{run_id}/tasks
+    Input:   Run ID
+    Output:  Task array (may be empty for new runs)
+
+  Step 4. Agent CRUD
+    Action:  POST → GET /api/v1/{tenant}/agents
+    Input:   {name, model, instruction}
+    Output:  200/201, agent object
+
+  Step 5. MCP CRUD
+    Action:  POST → PUT → DELETE /api/v1/{tenant}/mcp
+    Input:   {name, type, url, enabled}
+    Output:  201→200→204
+
+  Step 6. Provider CRUD
+    Action:  POST → GET /api/v1/{tenant}/llm/providers
+    Input:   {type, endpoint, models[]}
+    Output:  201, provider object
+
+  Step 7. Channel CRUD
+    Action:  POST → DELETE /api/v1/{tenant}/notifications/channels
+    Input:   {name, channel_type, config}
+    Output:  201→204
+
+  Step 8. PG Persistence
+    Action:  Direct psycopg2 query or REST verification
+    Input:   PG connection params from config
+    Output:  Row count matches REST list response
+
+  Step 9. MQTT Lifecycle Events
+    Action:  Subscribe to ctrl/flow/updated, ctrl/flow/deleted topics
+    Input:   Flow CRUD operations trigger events
+    Output:  Event received with matching flow_id within 5s
 """
 
 import sys
@@ -165,7 +204,8 @@ class MQTTTestClient:
 
 def test_crud_entity(entity_name: str, table_name: str, base_path: str,
                      id_field: str, create_payload: Dict, update_payload: Dict,
-                     pg_id_col: str = None, update_check_sql: str = None) -> bool:
+                     pg_id_col: str = None, update_check_sql: str = None,
+                     list_search_field: str = None) -> bool:
     """Test CRUD operations for a single entity.
 
     id_field is the JSON key identifying the resource in REST responses (used
@@ -174,12 +214,17 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
     REST responses use "id" but the orh_agentflow table's lookup column is
     "agentflow_id" — see pkg/store/pkg/agentflow/agentflow_postgres.go).
 
+    list_search_field is the JSON key to match in LIST responses; defaults to
+    id_field. Override when LIST items use a different key than the CREATE
+    response (e.g. AgentFlow LIST items use "flow_id" for the flow identifier).
+
     update_check_sql overrides the default "updated_at > created_at" check
     (e.g. for versioned tables where UPDATE creates a new row).
     """
     print(f"\n  → Testing {entity_name} CRUD...")
 
     pg_id_col = pg_id_col or id_field
+    list_search_field = list_search_field or id_field
     created_id = None
     pg_conn = get_pg_connection()
 
@@ -226,7 +271,7 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         if not isinstance(items, list):
             raise AssertionError(f"LIST did not return array")
 
-        found = any(item.get(pg_id_col) == created_id or item.get(id_field) == created_id for item in items)
+        found = any(item.get(list_search_field) == created_id or item.get(id_field) == created_id for item in items)
         if not found:
             raise AssertionError(f"Created item not in LIST")
 
@@ -575,6 +620,7 @@ def run():
             "base_path": f"/api/v1/{TENANT}/flows",
             "id_field": "id",
             "pg_id_col": "agentflow_id",
+            "list_search_field": "flow_id",
             "create": {
                 "id": f"test-flow-{rand_id()}",
                 "nodes": [],
@@ -648,6 +694,7 @@ def run():
             entity["update"],
             pg_id_col=entity.get("pg_id_col"),
             update_check_sql=entity.get("update_check_sql"),
+            list_search_field=entity.get("list_search_field"),
         )
     
     # Run lifecycle event tests

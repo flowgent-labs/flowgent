@@ -497,6 +497,40 @@ func (c *FlowgentClient) ListMCPs(ctx context.Context, tenant string) ([]*entiti
 	return items, nil
 }
 
+// ─── Knowledge ─────────────────────────────────────────────────────
+
+// SearchKnowledge performs a semantic/keyword search over the knowledge base.
+func (c *FlowgentClient) SearchKnowledge(ctx context.Context, tenant string, query string, topK int, tags []string) ([]*entities.KnowledgeEntry, error) {
+	body, _ := json.Marshal(map[string]any{
+		"query": query,
+		"top_k": topK,
+		"tags":  tags,
+	})
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/knowledge/search", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("SearchKnowledge: %w", err)
+	}
+	var items []*entities.KnowledgeEntry
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("SearchKnowledge: %w", err)
+	}
+	return items, nil
+}
+
+// CreateKnowledge creates a knowledge entry via the API.
+func (c *FlowgentClient) CreateKnowledge(ctx context.Context, tenant string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error) {
+	b, _ := json.Marshal(entry)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/knowledge", bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("CreateKnowledge: %w", err)
+	}
+	var created entities.KnowledgeEntry
+	if err := readJSON(resp, &created); err != nil {
+		return nil, fmt.Errorf("CreateKnowledge: %w", err)
+	}
+	return &created, nil
+}
+
 // ─── Watch (long-poll) ───────────────────────────────────────────
 
 // WatchFlows calls GET /api/v1/{tenant}/flows/watch?since=N (long-poll).

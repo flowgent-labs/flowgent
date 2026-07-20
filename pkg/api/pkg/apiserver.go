@@ -18,6 +18,7 @@ import (
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
+	tracing "github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -31,8 +32,9 @@ type FlowgentApiServer struct {
 	cfg   *config.FlowgentConfig
 	store storepkg.IStore
 
-	restServer *http.Server
-	ppServer   *http.Server
+	restServer  *http.Server
+	ppServer    *http.Server
+	otelProvider *tracing.Provider
 
 	// Handlers (set during construction)
 	agentFlowHandler *handler.FlowDefHandler
@@ -61,6 +63,25 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 
 	logger := utils.NewLogger(cfg.Logging.Mode, cfg.Logging.Level)
 
+	// ── OTEL Tracing ──
+	var otelProvider *tracing.Provider
+	if cfg.Mgmt.OTEL.Enabled && cfg.Mgmt.OTEL.Endpoint != "" {
+		otelCfg := &tracing.OTELConfig{
+			Enabled:    cfg.Mgmt.OTEL.Enabled,
+			Endpoint:   cfg.Mgmt.OTEL.Endpoint,
+			Protocol:   cfg.Mgmt.OTEL.Protocol,
+			Timeout:    cfg.Mgmt.OTEL.Timeout,
+			SampleRate: cfg.Mgmt.OTEL.SampleRate,
+		}
+		provider, err := tracing.NewProvider(context.Background(), "flowgent-apiserver", "1.0", otelCfg, nil)
+		if err != nil {
+			slog.Warn("OTEL tracer provider init failed, tracing disabled", "error", err)
+		} else {
+			otelProvider = provider
+			slog.Info("OTEL tracing enabled", "endpoint", cfg.Mgmt.OTEL.Endpoint)
+		}
+	}
+
 	// ── MQTT Publisher (optional) ──
 	var mqttPub handler.MQTTPublisher
 	if cfg.Messager.Type == "mqtt" && cfg.Messager.MQTT.Broker != "" {
@@ -79,12 +100,13 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
 	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 	mcpHandler := handler.NewMcpHandler(storeImpl)
+	webhookHandler := handler.NewWebhookHandler(agentFlowHandler, logger, cfg.Tenant.DefaultTenant)
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Routes ──
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, nil)
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(cfg.Auth)
 	if err != nil {
@@ -116,6 +138,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		cfg:              cfg,
 		store:            storeImpl,
 		restServer:       restSrv,
+		otelProvider:     otelProvider,
 		agentFlowHandler: agentFlowHandler,
 	}
 
@@ -192,6 +215,11 @@ func (s *FlowgentApiServer) Shutdown() error {
 	if s.store != nil {
 		if closer, ok := s.store.(interface{ Close() error }); ok {
 			closer.Close()
+		}
+	}
+	if s.otelProvider != nil {
+		if err := s.otelProvider.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("OTEL provider shutdown", "error", err)
 		}
 	}
 	return nil

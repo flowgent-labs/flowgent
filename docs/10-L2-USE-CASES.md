@@ -56,7 +56,7 @@ Supervisor (per-repo)
   │     ├── Security Reviewer
   │     ├── Quality Reviewer
   │     └── Architecture Reviewer
-  ├── Tribunal → Supervisor → Condition → Human Approval
+  ├── Committee → Supervisor → Condition → Human Approval
   ├── Commit & PR (branch → patch → pull request)
   ├── SonarQube Re-Scan Loop (max 3 iterations)
   │     ├── Trigger re-analysis → poll for completion

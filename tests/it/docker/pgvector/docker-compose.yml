@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  pgvector:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/pgvector_pgvector:pg16
+    container_name: flowgent-test-pgvector
+    environment:
+      POSTGRES_USER: flowgent
+      POSTGRES_PASSWORD: flowgent
+      POSTGRES_DB: flowgent_test
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowgent -d flowgent_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgvector_data:

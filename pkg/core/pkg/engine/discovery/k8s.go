@@ -54,6 +54,9 @@ func NewK8sDiscoveryClient() (*K8sDiscoveryClient, error) {
 }
 
 // DiscoverPeers lists pods matching labelSelector in the client's namespace.
+// Only Ready pods are returned — non-ready pods (Evicted, Completed, Error,
+// CrashLoopBackOff, etc.) are excluded so that shard calculations and leader
+// election are based on the actual live pod count.
 func (c *K8sDiscoveryClient) DiscoverPeers(ctx context.Context, labelSelector string) ([]Peer, error) {
 	pods, err := c.clientset.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
@@ -71,11 +74,14 @@ func (c *K8sDiscoveryClient) DiscoverPeers(ctx context.Context, labelSelector st
 				break
 			}
 		}
+		if !ready {
+			continue
+		}
 		peers = append(peers, Peer{
 			Name:      pod.Name,
 			Namespace: pod.Namespace,
 			PodIP:     pod.Status.PodIP,
-			Ready:     ready,
+			Ready:     true,
 			Since:     pod.CreationTimestamp.Time,
 		})
 	}

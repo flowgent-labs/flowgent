@@ -296,7 +296,7 @@ aligns with Kubernetes' apiserver→etcd pattern.
 | Route | Method | Description |
 |-------|--------|-------------|
 | `/_/healthz` | GET | Health check |
-| `/_/webhooks/{provider}` | POST | Webhook trigger (GitHub/GitLab) |
+| `/api/v1/webhook/{provider}` | POST | SCM webhook trigger (GitHub/GitLab/Gitea) — per-provider body adapter |
 | `/api/v1/{tenant}/agents` | GET/POST | List / Create agent definitions |
 | `/api/v1/{tenant}/flows` | GET/POST | List / Create flows |
 | `/api/v1/{tenant}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
@@ -693,7 +693,7 @@ slots executes up to 4 DAG nodes concurrently.
 | `tool` | ToolExecutor | MCP tool invocation |
 | `condition` | ConditionExecutor | Boolean expression evaluation |
 | `supervisor` | SupervisorExecutor | LLM-based action decision |
-| `tribunal` | TribunalExecutor | Majority vote across inputs |
+| `committee` | CommitteeExecutor | Majority vote across inputs |
 | `human` | HumanExecutor | Approval gate with timeout |
 | `map` | MapExecutor | Fan-out over list (with nesting) |
 | `join` | JoinExecutor | Merge fan-out results |
@@ -973,14 +973,20 @@ There are two paths to trigger a run:
 
 ```
 1. TRIGGER (sync)
-   → REST/A2A/Webhook → POST /api/v1/{tenant}/flows/trigger
-   → agentFlowHandler validates spec exists
-   → persists PENDING run via store
-   → returns run_id to caller    ← sync ends here
+   → REST:     POST /api/v1/{tenant}/flows/trigger  {agentflow_id, vars}
+   → A2A:      POST /a2a/tasks                       {agentflow_id, vars}
+   → Webhook:  POST /api/v1/webhook/{provider}       (e.g, GitHub/GitLab/BitBucket req body)
+       → per-provider adapter normalizes body → canonical WebhookEvent
+       → for each flow whose triggers match {provider, event}: one run
+   → all paths converge on FlowDefHandler.CreateRunFromTrigger:
+       → validate spec exists
+       → persist PENDING run via store (Application-mode namespace)
+       → publish ctrl/run/created lifecycle event on MQTT
+       → return run_id(s) to caller    ← sync ends here
 
 2. JM POLL (async)
    → JM's runPoller (2s tick) finds PENDING run (namespace-filtered)
-   → jm.Submit(run, spec) spawns JobMaster
+   → jm.Submit(run, spec) spawns JobMaster → DAG parse → topological TM dispatch
 ```
 
 ### 10.2 Path B: Controller Dispatch (Fully Async)
@@ -1200,7 +1206,7 @@ Histogram boundaries (from sample config):
 
 ## 15. Code Layout & File Map
 
-The codebase is a Go workspace (`go.work`) joining 12 modules with a strictly
+The codebase is a Go workspace (`go.work`) joining 13 modules with a strictly
 acyclic dependency graph. `cmd` is the leaf — it depends on everything.
 `common` is the root — zero dependencies.
 
@@ -1217,6 +1223,7 @@ model (→ common)
        ├─ notifier (→ config + messager + model)
        ├─ sandbox (→ common + model + messager)
        ├─ store (→ config + model + cache)
+       ├─ console (→ config + model + store + wallet)
        └─ core (→ config + messager + model + cache + notifier + wallet + sandbox + store)
              ↑
              ├─ cmd (→ everything)
@@ -1234,9 +1241,10 @@ model (→ common)
 | 7 | notifier | `pkg/notifier/` | `flowgent/notifier` | config, messager, model |
 | 8 | sandbox | `pkg/sandbox/` | `flowgent/sandbox` | common, model, messager |
 | 9 | store | `pkg/store/` | `flowgent/store` | config, model, cache |
-| 10 | core | `pkg/core/` | `flowgent/core` | config, messager, model, cache, notifier, wallet, sandbox, store |
-| 11 | api | `pkg/api/` | `flowgent/api` | config, model, store |
-| 12 | cmd | `pkg/cmd/` | `flowgent/cmd` | all above |
+| 10 | console | `pkg/console/` | `flowgent/console` | config, model, store, wallet |
+| 11 | core | `pkg/core/` | `flowgent/core` | config, messager, model, cache, notifier, wallet, sandbox, store |
+| 12 | api | `pkg/api/` | `flowgent/api` | config, model, store |
+| 13 | cmd | `pkg/cmd/` | `flowgent/cmd` | all above |
 
 ### common (`pkg/common/pkg/`) — Module 1 (root)
 
@@ -1311,7 +1319,17 @@ model (→ common)
 | `notifier/` | Notifier channel store (PG only) |
 | `memory/` | Node memory store (PG + SQLite) |
 
-### core (`pkg/core/pkg/`) — Module 10
+### console (`pkg/console/pkg/`) — Module 10
+
+| Path | Role |
+|------|------|
+| `console.go` | FlowgentConsole class — lazy store init, secret store setup, tenant management |
+| `types.go` | ExportData, ResourceImport (K8s-style), ResourceMetadata, WalletExport |
+| `export.go` | ExportKinds/ExportAll — filtered export (kinds: llm, channel, mcp, skill, agent, flow, flowrun) |
+| `import.go` | ImportPaths/ImportFile/ImportResource — YAML/JSON import with K8s-style resource wrapper support |
+| `repl.go` | Interactive REPL (liner-based) — CRUD for 9 resource types + import/export commands |
+
+### core (`pkg/core/pkg/`) — Module 11
 
 | Path | Role |
 |------|------|
@@ -1325,14 +1343,14 @@ model (→ common)
 | `mcp/` | MCP HTTP client manager (Streamable HTTP transport, lazy-connect, tool invocation) |
 | `lock/` | Distributed lock (memory/Redis/Postgres) |
 
-### api (`pkg/api/pkg/`) — Module 11
+### api (`pkg/api/pkg/`) — Module 12
 
 | Path | Role |
 |------|------|
 | `server.go` | REST API route registration |
 | `handler/` | HTTP handlers: agent defs, flow defs, flow runs, human approval, notifier, LLM providers |
 
-### cmd (`pkg/cmd/pkg/`) — Module 12 (leaf)
+### cmd (`pkg/cmd/pkg/`) — Module 13 (leaf)
 
 | Path | Role |
 |------|------|
@@ -1771,4 +1789,191 @@ func loadResourceDir[T any](dir string) ([]T, error) {
     }
     return result, nil
 }
+```
+
+---
+
+## 20. Flowgent Console — Resource Management CLI
+
+The `flowgent console` is the offline resource management tool for Flowgent.
+It provides import/export and CRUD for all resource kinds, enabling seamless
+migration between environments (dev → staging → production) and backup/restore
+workflows.
+
+### 20.1 Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Flowgent Console (REPL)                        │
+│                                                                   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │  Export   │  │  Import  │  │   CRUD   │  │   Lazy Stores    │ │
+│  │  Engine   │  │  Engine  │  │  (list/  │  │   (agents, flows, │ │
+│  │  (YAML/   │  │  (YAML/  │  │   get/   │  │    runs, channels,│ │
+│  │   JSON)   │  │   JSON)  │  │   add/   │  │    llm, mcps)     │ │
+│  │           │  │          │  │  remove) │  │                   │ │
+│  └─────┬─────┘  └────┬─────┘  └────┬─────┘  └────────┬──────────┘ │
+│        │              │             │                  │            │
+│        └──────────────┴─────────────┴──────────────────┘            │
+│                              │                                     │
+│                     FlowgentConsole                                │
+│                    (lazy store init)                               │
+│                              │                                     │
+│                     ┌────────┴────────┐                            │
+│                     │    IStore (DB)  │                            │
+│                     │  PG / SQLite    │                            │
+│                     └─────────────────┘                            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 20.2 Supported Resource Kinds
+
+| Kind | CLI Name | REST Endpoint | Export | Import | CRUD (list/get/add/remove) |
+|------|----------|---------------|--------|--------|---------------------------|
+| Agent | `agent` | `/api/v1/{tenant}/agents` | yes | yes | yes |
+| MCP | `mcp` | `/api/v1/{tenant}/mcp` | yes | yes | yes |
+| LLMProvider | `llm` | `/api/v1/{tenant}/llm/providers` | yes | yes | yes |
+| NotifyChannel | `channel` | `/api/v1/{tenant}/notifications/channels` | yes | yes | yes |
+| Skill (Flow with kind=skill) | `skill` | (no REST endpoint — import/console only) | yes | yes | yes |
+| AgentFlow | `flow` | `/api/v1/{tenant}/flows` | yes | yes | yes |
+| FlowRun | `flowrun` | `/api/v1/{tenant}/runs` | yes | yes | yes |
+| Wallet (Ed25519 keypair) | `wallet` | — | **never exported** | yes | yes |
+
+### 20.3 Import/Export Design
+
+**Golden rule**: Export → Import must be seamless and lossless. Resources
+exported from one Flowgent instance must re-import cleanly into another,
+regardless of backend (PG → SQLite or vice versa).
+
+**Wallet exclusion**: Wallet private keys are never exported — they can only
+be imported or generated via `wallet add`. This prevents accidental credential
+leakage in backup files. The `ExportData` struct still carries a `Wallets`
+field for backward-compatible import from older archives.
+
+**Output format** is auto-detected from file extension:
+`.json` → JSON (indented), `.yaml`/`.yml` → YAML.
+
+### 20.4 CLI Usage
+
+```bash
+# Interactive REPL
+flowgent console -c etc/flowgent.yaml
+
+# Batch export — all resource kinds (wallets excluded)
+flowgent console -c etc/flowgent.yaml -- export --output /tmp/backup.yaml
+
+# Batch export — filtered by kind
+flowgent console -c etc/flowgent.yaml -- export \
+  --kind mcp,llm,agent,flow,flowrun,skill,channel \
+  --output /tmp/flowgent_data.json
+
+# Import from files/directories (supports glob patterns)
+flowgent console -c etc/flowgent.yaml -- import config/agents/*.yaml
+flowgent console -c etc/flowgent.yaml -- import config/mcps/
+flowgent console -c etc/flowgent.yaml -- import /tmp/backup.yaml
+```
+
+### 20.5 Import File Format — K8s-Style Single Resource
+
+Each YAML/JSON file uses a Kubernetes-style `apiVersion`/`kind`/`metadata`/`spec`
+wrapper. This is the canonical format for per-resource YAML files in Flowgent
+config directories:
+
+```yaml
+apiVersion: console.flowgent.io/v1
+kind: MCP
+metadata:
+  name: sonarqube
+  tenant: default
+  labels:
+    catalog: security,code-quality
+  status: active
+  description: SonarQube MCP server for SAST issue scanning
+spec:
+  enabled: true
+  type: http
+  url: http://172.29.235.101:18080/mcp
+```
+
+Valid `kind` values: `Agent`, `MCP`, `LLMProvider`, `Flow`, `FlowRun`, `Skill`,
+`NotifyChannel`. The `spec` block is the raw entity payload — identical to what
+the REST API accepts.
+
+### 20.6 Import File Format — Bulk ExportData
+
+For full backups, the export produces a single file containing all resources in
+a top-level container:
+
+```yaml
+llms:
+  - id: deepseek
+    provider: deepseek
+    model: deepseek-chat
+    ...
+mcps:
+  - name: github
+    enabled: true
+    type: http
+    url: https://api.githubcopilot.com/mcp/
+    ...
+agents:
+  - name: supervisor
+    model: deepseek/deepseek-chat
+    soul: ...
+    ...
+agentFlows:
+  - id: security-autonomy-fixer
+    kind: flow
+    nodes: [...]
+    edges: [...]
+skills:
+  - id: nexus3-retrieval
+    kind: skill
+    nodes: [...]
+    edges: [...]
+flowRuns:
+  - id: run-abc123
+    agentFlowID: security-autonomy-fixer
+    status: COMPLETED
+    ...
+channels:
+  - id: slack-alerts
+    type: slack
+    ...
+wallets: []  # always empty on export; preserved for backward-compatible import
+```
+
+This format supports seamless re-import: `ImportAll()` iterates each section
+and writes to the corresponding store.
+
+### 20.7 E2E Migration Workflow
+
+```bash
+# 1. Export from production
+flowgent console -c etc/prod.yaml -- export --output /tmp/prod-export.yaml
+
+# 2. Import to staging (validates the exported file)
+flowgent console -c etc/staging.yaml -- import /tmp/prod-export.yaml
+
+# 3. Or — import individual resource files from a config directory
+flowgent console -c etc/dev.yaml -- import \
+  examples/security-autonomy-fixer/config/agents/ \
+  examples/security-autonomy-fixer/config/flows/ \
+  examples/security-autonomy-fixer/config/mcps/ \
+  examples/security-autonomy-fixer/config/skills/
+```
+
+### 20.8 Module Dependency
+
+`console` depends on `config` (FlowgentConfig), `model` (entities), `store`
+(database access), and `wallet` (secret store for Ed25519 keys). It sits at
+the same level as `core` in the dependency graph — both are mid-tier modules
+that `cmd` orchestrates. See §15 for the full module table.
+
+```
+config + model + store + wallet
+         ↑
+       console
+         ↑
+        cmd (→ everything, including console)
 ```

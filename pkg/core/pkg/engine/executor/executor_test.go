@@ -101,11 +101,11 @@ func TestJoinExecutor(t *testing.T) {
 	}
 }
 
-// ── Tribunal ─────────────────────────────────────────
+// ── Committee ─────────────────────────────────────────
 
-func TestTribunalExecutor_Majority(t *testing.T) {
-	e := &TribunalExecutor{}
-	if e.TaskType() != entities.TaskTribunal {
+func TestCommitteeExecutor_Majority(t *testing.T) {
+	e := &CommitteeExecutor{}
+	if e.TaskType() != entities.TaskCommittee {
 		t.Error("wrong task type")
 	}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
@@ -124,8 +124,8 @@ func TestTribunalExecutor_Majority(t *testing.T) {
 	}
 }
 
-func TestTribunalExecutor_Unanimous_Fail(t *testing.T) {
-	e := &TribunalExecutor{}
+func TestCommitteeExecutor_Unanimous_Fail(t *testing.T) {
+	e := &CommitteeExecutor{}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "unanimous"}},
 		Input: map[string]any{"votes": []any{
@@ -142,8 +142,8 @@ func TestTribunalExecutor_Unanimous_Fail(t *testing.T) {
 	}
 }
 
-func TestTribunalExecutor_EmptyVotes(t *testing.T) {
-	e := &TribunalExecutor{}
+func TestCommitteeExecutor_EmptyVotes(t *testing.T) {
+	e := &CommitteeExecutor{}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}},
 		Input:    map[string]any{},
@@ -480,7 +480,7 @@ func TestTaskExecutorRouter(t *testing.T) {
 	router.Register(&NoopExecutor{})
 	router.Register(&MapExecutor{})
 	router.Register(&JoinExecutor{})
-	router.Register(&TribunalExecutor{})
+	router.Register(&CommitteeExecutor{})
 	router.Register(&SubflowExecutor{})
 
 	tests := []struct {
@@ -491,7 +491,7 @@ func TestTaskExecutorRouter(t *testing.T) {
 		{entities.TaskNoop, &entities.ExecutionPlan{TaskType: entities.TaskNoop}},
 		{entities.TaskMap, &entities.ExecutionPlan{TaskType: entities.TaskMap}},
 		{entities.TaskJoin, &entities.ExecutionPlan{TaskType: entities.TaskJoin, Input: map[string]any{}}},
-		{entities.TaskTribunal, &entities.ExecutionPlan{TaskType: entities.TaskTribunal, NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}}, Input: map[string]any{"votes": []any{map[string]any{"decision": true}}}}},
+		{entities.TaskCommittee, &entities.ExecutionPlan{TaskType: entities.TaskCommittee, NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}}, Input: map[string]any{"votes": []any{map[string]any{"decision": true}}}}},
 		{entities.TaskSubflow, &entities.ExecutionPlan{TaskType: entities.TaskSubflow, NodeSpec: &entities.NodeSpec{AgentFlowID: "test-flow"}}},
 	}
 

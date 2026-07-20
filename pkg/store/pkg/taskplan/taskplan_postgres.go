@@ -60,9 +60,26 @@ func (s *TaskPlanPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.T
 	if err != nil {
 		return err
 	}
+	input, err := json.Marshal(e.Input)
+	if err != nil {
+		return err
+	}
 	_, err = s.inner.Pool.Exec(ctx,
-		`UPDATE task_runs SET status=$1, output=$2, error=$3, retry_count=$4, started_at=$5, finished_at=$6, updated_at=NOW() WHERE id=$7`,
-		e.Status, output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt, e.ID)
+		`INSERT INTO task_runs (id, agentflow_run_id, node_id, status, input, output, error, retry_count, max_retries, exec_id, parent_task_run_id, started_at, finished_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 ON CONFLICT (id) DO UPDATE SET
+		     status            = EXCLUDED.status,
+		     input             = COALESCE(EXCLUDED.input, task_runs.input),
+		     output            = COALESCE(EXCLUDED.output, task_runs.output),
+		     error             = COALESCE(EXCLUDED.error, task_runs.error),
+		     retry_count       = EXCLUDED.retry_count,
+		     max_retries       = COALESCE(EXCLUDED.max_retries, task_runs.max_retries),
+		     exec_id           = COALESCE(EXCLUDED.exec_id, task_runs.exec_id),
+		     parent_task_run_id = COALESCE(EXCLUDED.parent_task_run_id, task_runs.parent_task_run_id),
+		     started_at        = COALESCE(EXCLUDED.started_at, task_runs.started_at),
+		     finished_at       = COALESCE(EXCLUDED.finished_at, task_runs.finished_at),
+		     updated_at        = NOW()`,
+		e.ID, e.AgentFlowRunID, e.NodeID, e.Status, input, output, e.Error, e.RetryCount, e.MaxRetries, e.ExecID, e.ParentTaskRunID, e.StartedAt, e.FinishedAt)
 	return err
 }
 

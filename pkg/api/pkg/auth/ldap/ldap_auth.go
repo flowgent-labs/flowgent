@@ -80,6 +80,15 @@ func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // authenticate validates credentials against LDAP directory.
 // Multi-domain: tries each configured domain until the user is found and authenticated.
+//
+// Flow mirrors Spring's LdapTemplate.authenticate:
+//
+//	1. Service account bind (LdapContextSource.getContext)
+//	2. User search (EqualsFilter + SUBTREE_SCOPE + countLimit=1)
+//	3. User password bind (re-bind as the found DN)
+//	4. Config-driven attribute mapping (CustomLdapContextMapper)
+//	5. Group resolution from memberOf / group search
+//	6. Role mapping from AD groups or domain
 func (p *Service) authenticate(r *http.Request, username, password string) (*auth.UserInfo, error) {
 	conn, err := p.dial()
 	if err != nil {
@@ -88,7 +97,7 @@ func (p *Service) authenticate(r *http.Request, username, password string) (*aut
 	defer conn.Close()
 
 	// Step 1: Bind with service account
-	if err := conn.Bind(p.cfg.BindDN, p.cfg.BindPassword); err != nil {
+	if err := conn.Bind(p.cfg.UserDN, p.cfg.Password); err != nil {
 		return nil, fmt.Errorf("ldap: service bind: %w", err)
 	}
 
@@ -116,9 +125,11 @@ func (p *Service) authenticate(r *http.Request, username, password string) (*aut
 }
 
 // searchUser searches for a user across all configured domains.
+// ≡ EqualsFilter(usernameAttribute, encodeForLdap(username)) + SUBTREE_SCOPE + countLimit=1.
+// Attributes requested are derived from UserAttrMapping (if configured) or a broad default set.
 func (p *Service) searchUser(conn LDAPConnection, username string) (string, *ldapEntry, string, error) {
 	attr := p.usernameAttribute()
-	attrs := []string{attr, p.emailAttribute(), p.displayNameAttribute(), "dn", "memberOf"}
+	attrs := append([]string{attr, p.emailAttribute(), p.displayNameAttribute(), "dn"}, userAttrList(p.cfg)...)
 
 	for _, domain := range p.domains() {
 		filter := fmt.Sprintf(domain.UserSearchFilter, escapeFilter(username))
@@ -206,6 +217,7 @@ func (p *Service) groupSearchFilter() string {
 }
 
 // buildUserInfo extracts user attributes from an LDAP entry.
+// When UserAttrMapping is configured, extra attributes are populated per the mapping.
 func (p *Service) buildUserInfo(entry *ldapEntry, username, domain string) *auth.UserInfo {
 	user := &auth.UserInfo{
 		UserID:      getAttr(entry, p.usernameAttribute(), username),
@@ -219,6 +231,15 @@ func (p *Service) buildUserInfo(entry *ldapEntry, username, domain string) *auth
 	}
 	if user.Username == "" {
 		user.Username = username
+	}
+	// Populate extra attributes from config-driven mapping (≡ CustomLdapContextMapper)
+	for internalName, ldapAttr := range p.cfg.UserAttrMapping {
+		if internalName == "" || ldapAttr == "" {
+			continue
+		}
+		if val := getAttr(entry, ldapAttr, ""); val != "" {
+			user.Extra[internalName] = val
+		}
 	}
 	return user
 }
@@ -278,6 +299,75 @@ func (p *Service) dial() (LDAPConnection, error) {
 
 func (p *Service) requestTimeoutSeconds() int { return 10 }
 
+// ── Permission extraction (≡ parse memberOf CN values) ──────────
+
+// ExtractPermissionsFromMemberOf parses memberOf DNs and returns the CN values.
+// Each memberOf DN encodes a permission group (e.g. CN=App-ENV-Role,OU=Groups,…).
+// The returned list is raw — callers apply their own filtering (by env, app, role)
+// according to their enterprise group naming conventions.
+func ExtractPermissionsFromMemberOf(memberOf []string) []string {
+	if len(memberOf) == 0 {
+		return nil
+	}
+	var perms []string
+	for _, dn := range memberOf {
+		cn := extractCN(dn)
+		if cn != "" {
+			perms = append(perms, cn)
+		}
+	}
+	return perms
+}
+
+// extractCN returns the value of the first CN RDN in a DN.
+func extractCN(dn string) string {
+	const prefix = "CN="
+	i := 0
+	// Case-insensitive find for "CN="
+	for i <= len(dn)-len(prefix) {
+		sub := dn[i : i+len(prefix)]
+		if (sub[0] == 'C' || sub[0] == 'c') && (sub[1] == 'N' || sub[1] == 'n') && sub[2] == '=' {
+			break
+		}
+		i++
+	}
+	if i > len(dn)-len(prefix) {
+		return ""
+	}
+	start := i + 3
+	end := start
+	for end < len(dn) {
+		if dn[end] == '\\' {
+			end += 2 // skip escaped comma
+			continue
+		}
+		if dn[end] == ',' {
+			break
+		}
+		end++
+	}
+	return dn[start:end]
+}
+
+// userAttrList returns the LDAP attribute names to request in a search.
+// Uses cfg.UserAttrMapping values when configured; falls back to the individual
+// attribute fields (UsernameAttribute, EmailAttribute, etc.) and "memberOf".
+func userAttrList(cfg config.LDAPConfig) []string {
+	if len(cfg.UserAttrMapping) > 0 {
+		seen := map[string]bool{"dn": true}
+		var list []string
+		for _, ldapAttr := range cfg.UserAttrMapping {
+			if ldapAttr != "" && !seen[ldapAttr] {
+				seen[ldapAttr] = true
+				list = append(list, ldapAttr)
+			}
+		}
+		return list
+	}
+	// Default: broad attribute set for common LDAP schemas
+	return []string{"cn", "mail", "displayName", "memberOf"}
+}
+
 // ── Helpers ───────────────────────────────────────────────────────
 
 func getAttr(entry *ldapEntry, name, fallback string) string {
@@ -291,7 +381,9 @@ func getAttr(entry *ldapEntry, name, fallback string) string {
 	return vals[0]
 }
 
-// escapeFilter escapes special characters per RFC 4515.
+// escapeFilter escapes LDAP filter special characters per RFC 4515.
+//
+//	NUL → \00   ( → \28   ) → \29   * → \2a   \ → \5c
 func escapeFilter(s string) string {
 	result := make([]byte, 0, len(s)*2)
 	for i := 0; i < len(s); i++ {

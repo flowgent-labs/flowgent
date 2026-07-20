@@ -1,5 +1,24 @@
 """
 Scenario 03 — A2A Protocol: Agent Card + Task Submit.
+
+Validates Google Agent-to-Agent (A2A) protocol endpoints on port :9992.
+
+Steps with Expected I/O:
+  Step 1. Agent Card Discovery
+    Action:  GET {A2A_URL}/.well-known/agent.json
+    Input:   A2A port reachable
+    Output:  HTTP 200, JSON body with "skills" array (≥1 skill)
+    On Fail: SKIP — A2A not enabled (non-critical)
+
+  Step 2. Task Submission
+    Action:  POST {A2A_URL}/a2a/tasks  {agentflow_id, input}
+    Input:   Valid JSON body with agentflow_id
+    Output:  HTTP 200 → body contains "task_id"; 404 → flow not found (non-critical)
+
+  Step 3. Task Query
+    Action:  GET {A2A_URL}/a2a/tasks
+    Input:   A2A server responding
+    Output:  HTTP 200 or 404 (listing may not be supported — non-critical)
 """
 
 import requests

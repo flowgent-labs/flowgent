@@ -93,8 +93,8 @@ spec:
     - id: review-arch
       type: agent
       agent: arch-reviewer
-    - id: tribunal
-      type: tribunal
+    - id: committee
+      type: committee
       input:
         votes:
           - ${review-security.decision}
@@ -116,7 +116,7 @@ spec:
       type: supervisor
     - id: approved
       type: condition
-      expression: ${tribunal.decision == true}
+      expression: ${committee.decision == true}
     - id: create-branch
       input:
         action: create_branch
@@ -192,12 +192,12 @@ spec:
     - from: generate-tests
       to: review-arch
     - from: review-security
-      to: tribunal
+      to: committee
     - from: review-quality
-      to: tribunal
+      to: committee
     - from: review-arch
-      to: tribunal
-    - from: tribunal
+      to: committee
+    - from: committee
       to: supervisor-check
     - from: supervisor-check
       to: approved

@@ -16,7 +16,7 @@ const (
 	TaskSkill      TaskType = "skill"
 	TaskSupervisor TaskType = "supervisor"
 	TaskSubflow    TaskType = "subflow"
-	TaskTribunal   TaskType = "tribunal"
+	TaskCommittee   TaskType = "committee"
 	TaskMap        TaskType = "map"
 	TaskJoin       TaskType = "join"
 	TaskHuman      TaskType = "human"

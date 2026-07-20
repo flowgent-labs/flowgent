@@ -19,6 +19,8 @@ func RegisterRESTRoutes(
 	ws *handler.NotifierWSBridge,
 	llmProvider *handler.LlmProviderHandler,
 	mcpH *handler.McpHandler,
+	webhook *handler.WebhookHandler,
+	knowledgeHandler *handler.KnowledgeHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -62,10 +64,6 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/human/{token}/approve", human.Approve)
 	mux.HandleFunc("POST /api/v1/human/{token}/reject", human.Reject)
 
-	// ── Webhooks (global — external services, non-tenant prefix) ──
-	mux.HandleFunc("POST /_/webhooks/{provider}", flowDef.Trigger)
-	mux.HandleFunc("POST /_/webhooks/github", flowDef.Trigger)
-
 	// ── Notification Channels (tenant-scoped) ──────────────
 	mux.HandleFunc("GET /api/v1/{tenant}/notifications/channels", notif.ListChannels)
 	mux.HandleFunc("POST /api/v1/{tenant}/notifications/channels", notif.CreateChannel)
@@ -88,9 +86,36 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("PUT /api/v1/{tenant}/mcp/{name}", mcpH.Update)
 	mux.HandleFunc("DELETE /api/v1/{tenant}/mcp/{name}", mcpH.Delete)
 
+	// ── Knowledge Entries (tenant-scoped) ─────────────────
+	mux.HandleFunc("GET /api/v1/{tenant}/knowledge/tags", knowledgeHandler.ListTags)
+	mux.HandleFunc("GET /api/v1/{tenant}/knowledge", knowledgeHandler.List)
+	mux.HandleFunc("POST /api/v1/{tenant}/knowledge", knowledgeHandler.Create)
+	mux.HandleFunc("GET /api/v1/{tenant}/knowledge/{id}", knowledgeHandler.Get)
+	mux.HandleFunc("PUT /api/v1/{tenant}/knowledge/{id}", knowledgeHandler.Update)
+	mux.HandleFunc("DELETE /api/v1/{tenant}/knowledge/{id}", knowledgeHandler.Delete)
+	mux.HandleFunc("POST /api/v1/{tenant}/knowledge/search", knowledgeHandler.Search)
 	// ── WebSocket (tenant-scoped) ──────────────────────────
 	if ws != nil {
 		mux.HandleFunc("GET /api/v1/{tenant}/ws/human-approvals", ws.HandleHumanApprovals)
+	}
+
+	// ── SCM Webhooks (GitHub / GitLab / Gitea) ─────────────
+	// Global (not tenant-scoped in the URL): SCM providers cannot include a
+	// tenant path segment. The provider is the last path segment and the
+	// per-provider body adapter normalizes the payload; the matched flow's
+	// own tenant_id scopes the created run. See handler/webhook.go.
+	//
+	// The route MUST be registered on a separate, composed mux: on the shared
+	// mux, "POST /api/v1/webhook/{provider}" is ambiguous with the
+	// "POST /api/v1/{tenant}/..." routes (both match e.g.
+	// "/api/v1/webhook/agents"), which makes net/http panic at registration.
+	// Mounting the tenant mux under a catch-all behind the literal webhook
+	// route makes the literal "webhook" segment win without changing the URL.
+	if webhook != nil {
+		outer := http.NewServeMux()
+		outer.HandleFunc("POST /api/v1/webhook/{provider}", webhook.Handle)
+		outer.Handle("/", mux)
+		return outer
 	}
 
 	return mux

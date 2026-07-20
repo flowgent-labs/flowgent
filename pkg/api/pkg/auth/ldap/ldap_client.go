@@ -50,6 +50,14 @@ type ldapEntry struct {
 // ── Dial & connection adapter ─────────────────────────────────────
 
 // DialURL parses an LDAP URL (ldap://host:port or ldaps://host:port) and connects.
+//
+// Enterprise AD examples:
+//
+//	ldaps://aa-lds-prod.us.mycompany:636    (standard LDAPS)
+//	ldaps://aa-lds-prod.us.mycompany:3269   (Global Catalog SSL)
+//
+// When connecting to AD Global Catalog (port 3269), set referral: follow
+// to handle cross-domain referrals automatically.
 func DialURL(rawURL string, timeout time.Duration, insecureSkipVerify bool) (LDAPConnection, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

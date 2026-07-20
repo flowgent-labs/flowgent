@@ -1,12 +1,64 @@
 """
 Scenario 01 — Pre-Deployment & Infrastructure: K3s, Helm, Pod Readiness.
 
-Verifies Layers 1-3 of the E2E checklist:
-  L1 — Pre-Deployment: K3s health, SonarQube, EMQX, Docker image
-  L2 — Helm Redeploy: release state, K8s resources
-  L3 — Pod Readiness: all pods Running, healthz, no crash loops
+Verifies cluster health, external dependencies, Helm deployment, and pod
+readiness before any functional scenarios run.
 
-Uses kubectl subprocess calls — this scenario runs on the K3s control node.
+Uses kubectl subprocess calls — runs on the K3s control node.
+
+Steps with Expected I/O:
+  L1 — Pre-Deployment
+    Step 1.1 K3s Nodes
+      Action:  kubectl get nodes
+      Input:   KUBECONFIG set, K3s cluster running
+      Output:  ≥1 node with "Ready" status
+
+    Step 1.2 System Pods
+      Action:  kubectl get pods -n kube-system
+      Input:   K3s cluster accessible
+      Output:  All kube-system pods Running
+
+    Step 1.3 SonarQube Health
+      Action:  GET {SONARQUBE_URL}/api/system/health
+      Input:   config.SONARQUBE_URL
+      Output:  HTTP 200, body contains "health"/"status" (WARN if unreachable — non-critical)
+
+    Step 1.4 EMQX Reachable
+      Action:  TCP connect {EMQX_HOST}:{EMQX_PORT}
+      Input:   config.EMQX_HOST, config.EMQX_PORT
+      Output:  Connection accepted (WARN if refused)
+
+    Step 1.5 Docker Image
+      Action:  docker images flowgent-core
+      Input:   Docker daemon running
+      Output:  Image "flowgent-core" listed (WARN if missing)
+
+  L2 — Helm State
+    Step 2.1 Helm Release
+      Action:  helm list -n {namespace} -o json
+      Input:   Helm binary on PATH
+      Output:  Release "flowgent" with status "deployed"
+
+    Step 2.2 K8s Resources
+      Action:  kubectl get deploy,svc,configmap -l app.kubernetes.io/instance=flowgent
+      Input:   Helm release deployed
+      Output:  Resources listed (≥1 each)
+
+  L3 — Pod Readiness
+    Step 3.1 Pod Status
+      Action:  kubectl get pods -l app.kubernetes.io/instance=flowgent -o json
+      Input:   Helm release deployed
+      Output:  All pods phase=Running, all containers ready
+
+    Step 3.2 API Server Healthz
+      Action:  GET {API_URL}/_/healthz
+      Input:   API server pod Running on :9999
+      Output:  HTTP 200
+
+    Step 3.3 Log Sanity
+      Action:  kubectl logs -l app.kubernetes.io/component={c} --tail=20 (apiserver/controller/notifier)
+      Input:   Pods running, logs accessible
+      Output:  0 ERROR/FATAL/PANIC in recent log lines
 """
 
 import subprocess

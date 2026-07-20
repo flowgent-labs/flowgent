@@ -126,12 +126,38 @@ type OIDCConfig struct {
 	Scope        string `json:"scope" yaml:"scope"`
 }
 
+// LDAPConfig configures enterprise LDAP/AD authentication.
+//
+// Field naming mirrors Spring's LdapContextSource + LdapTemplate patterns.
+//
+// # Connection (like Spring's LdapContextSource)
+//
+//	url:      ldaps://aa-lds-prod.us.mycompany:3269  (Global Catalog SSL)
+//	base_dn:  DC=InfoDir,DC=Prod,DC=MyCompany
+//	user_dn:  CN=GB-MyAPP-AD-OPS,OU=Alternate Accounts,OU=MyCompanyPeople,DC=…
+//	password: "${LDAP_PASSWORD}"
+//	referral: follow  (≡ LdapContextSource.setReferral("follow"))
+//
+// # User search (like Spring's EqualsFilter + SUBTREE_SCOPE + countLimit=1)
+//
+//	user_search_filter: (CN=%s)
+//	username_attribute: CN
+//
+// # Attribute mapping (like Spring's CustomLdapContextMapper)
+//
+// Maps internal field names to LDAP attribute names configured per deployment.
+//
+//	user_attr_mapping:
+//	  identifier:   "cn"
+//	  display_name: "displayName"
+//	  email:        "mail"
+//	  groups:       "memberOf"
 type LDAPConfig struct {
 	Enabled              bool               `json:"enabled" yaml:"enabled"`
 	URL                  string             `json:"url" yaml:"url"`                                       // ldap[s]://host:port
 	BaseDN               string             `json:"base_dn" yaml:"base_dn"`                               // root base DN
-	BindDN               string             `json:"bind_dn" yaml:"bind_dn"`                               // service account DN
-	BindPassword         string             `json:"bind_password" yaml:"bind_password"`                   // service account password
+	UserDN               string             `json:"user_dn" yaml:"user_dn"`                               // service account DN
+	Password             string             `json:"password" yaml:"password"`                             // service account password
 	Domains              []LDAPDomainConfig `json:"domains" yaml:"domains"`                               // AD multi-domain search
 	RoleMapping          []LDAPRoleMapping  `json:"role_mapping" yaml:"role_mapping"`                     // AD group/domain → role
 	UserSearchFilter     string             `json:"user_search_filter" yaml:"user_search_filter"`         // default: (cn=%s)
@@ -141,6 +167,8 @@ type LDAPConfig struct {
 	GroupSearchBase      string             `json:"group_search_base" yaml:"group_search_base"`           // optional: for group→role resolution
 	GroupSearchFilter    string             `json:"group_search_filter" yaml:"group_search_filter"`       // default: (member=%s)
 	GroupNameAttribute   string             `json:"group_name_attribute" yaml:"group_name_attribute"`     // default: cn
+	UserAttrMapping      map[string]string  `json:"user_attr_mapping" yaml:"user_attr_mapping"`           // internal name → LDAP attribute name
+	Referral             string             `json:"referral" yaml:"referral"`                             // "follow" or "throw" (for AD multi-domain GC)
 	InsecureSkipVerify   bool               `json:"insecure_skip_verify" yaml:"insecure_skip_verify"`
 }
 

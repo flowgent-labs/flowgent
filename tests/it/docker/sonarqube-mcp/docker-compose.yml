@@ -1,0 +1,17 @@
+version: "3.8"
+# Note: Docker MCP containers are optional for IT tests. The test harness
+# uses in-process MCP bridges (externalmock/mcp_bridge.go) by default.
+# Use these compose files only when you need to test with real MCP servers.
+services:
+  sonarqube-mcp:
+    image: ghcr.io/flowgent-labs/sonarqube-mcp:latest
+    container_name: sonarqube-mcp
+    restart: unless-stopped
+    ports:
+      - "13080:8080"
+    environment:
+      - SONARQUBE_URL=http://host.docker.internal:19001
+      - SONARQUBE_TOKEN=mock-token
+      - LOG_LEVEL=debug
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

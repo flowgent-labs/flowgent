@@ -2,6 +2,7 @@ package jobmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -26,6 +27,12 @@ type RunStateStore interface {
 	SaveTask(ctx context.Context, task *entities.TaskRunInfo) error
 }
 
+// KnowledgePostWriter persists knowledge entries after a run completes.
+// The engine uses this via a REST-client adapter — never a direct store import.
+type KnowledgePostWriter interface {
+	CreateKnowledge(ctx context.Context, tenant string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error)
+}
+
 type EdgeCondition struct {
 	From, To  string
 	Condition *bool
@@ -42,6 +49,8 @@ type JobMaster struct {
 	timeout time.Duration
 	nodeLimit int
 	maxNodes  int
+
+	knowledgeWriter KnowledgePostWriter
 
 	mu             sync.Mutex
 	nodes          []string
@@ -75,6 +84,9 @@ func NewJobMaster(state RunStateStore, rm resourcemanager.ResourceManager, logge
 		nodeOutputs: make(map[string]map[string]any),
 	}
 }
+
+// SetKnowledgeWriter configures the post-run knowledge extraction writer.
+func (jm *JobMaster) SetKnowledgeWriter(w KnowledgePostWriter) { jm.knowledgeWriter = w }
 
 // ─── Graph state ────────────────────────────────────────
 
@@ -369,14 +381,22 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 			run.Error = jm.collectFirstError()
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Error, "failed")
-			return jm.state.UpdateRun(ctx, run)
+			if err := jm.state.UpdateRun(ctx, run); err != nil {
+				return err
+			}
+			jm.postHandle(run, spec)
+			return nil
 		}
 		if jm.IsComplete() {
 			slog.Debug("jobmaster execute is complete")
 			run.Status = entities.RunCompleted
 			run.FinishedAt = TimePtr()
 			span.SetStatus(codes.Ok, "done")
-			return jm.state.UpdateRun(ctx, run)
+			if err := jm.state.UpdateRun(ctx, run); err != nil {
+				return err
+			}
+			jm.postHandle(run, spec)
+			return nil
 		}
 
 		ready := jm.Ready()
@@ -493,6 +513,55 @@ func (jm *JobMaster) collectFirstError() string {
 	return "node failed"
 }
 
+// postHandle runs asynchronously after the run completes, extracting knowledge
+// from agent and tool node outputs for cross-workflow persistent memory.
+func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowInfo) {
+	if jm.knowledgeWriter == nil {
+		return
+	}
+
+	// Snapshot fields needed by the async goroutine.
+	tenant := spec.TenantID
+	runID := run.ID
+	flowID := spec.ID
+
+	// Build a snapshot of completed node outputs.
+	jm.mu.Lock()
+	outputs := make(map[string]map[string]any, len(jm.nodeOutputs))
+	for k, v := range jm.nodeOutputs {
+		outputs[k] = v
+	}
+	jm.mu.Unlock()
+
+	go func() {
+		for nodeID, output := range outputs {
+			if len(output) == 0 {
+				continue
+			}
+			content, err := json.Marshal(output)
+			if err != nil {
+				continue
+			}
+			title := fmt.Sprintf("Run %s / node %s", runID, nodeID)
+			sourceRef := fmt.Sprintf("%s:%s:%s", flowID, runID, nodeID)
+
+			entry := &entities.KnowledgeEntry{
+				Title:       title,
+				Content:     string(content),
+				ContentType: "json",
+				Source:      "flow_run",
+				SourceRef:   sourceRef,
+				Tags:        []string{flowID, nodeID},
+			}
+			entry.TenantID = tenant
+
+			if _, err := jm.knowledgeWriter.CreateKnowledge(context.Background(), tenant, entry); err != nil {
+				slog.Warn("jobmaster postHandle create knowledge failed", "node", nodeID, "err", err)
+			}
+		}
+	}()
+}
+
 func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 	for _, n := range spec.Nodes {
 		if n.Type == entities.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
@@ -520,8 +589,8 @@ func NodeToTaskType(nt entities.NodeType) entities.TaskType {
 		return entities.TaskTool
 	case entities.ConditionNode:
 		return entities.TaskCondition
-	case entities.TribunalNode:
-		return entities.TaskTribunal
+	case entities.CommitteeNode:
+		return entities.TaskCommittee
 	case entities.SupervisorNode:
 		return entities.TaskSupervisor
 	case entities.MapNode:

@@ -54,10 +54,11 @@ type RMTMState = RMState
 // the current TM/sandbox replica counts and slot allocation without querying K8s.
 // execResult is the TM→JM result published to exec/results.
 type execResult struct {
-	PlanID         string `json:"plan_id"`
-	AgentFlowRunID string `json:"agentflow_run_id"`
-	NodeID         string `json:"node_id"`
-	State          string `json:"state"`
+	PlanID         string         `json:"plan_id"`
+	AgentFlowRunID string         `json:"agentflow_run_id"`
+	NodeID         string         `json:"node_id"`
+	State          string         `json:"state"`
+	Output         map[string]any `json:"output,omitempty"`
 }
 
 type KubernetesResourceManager struct {
@@ -300,7 +301,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 		if er.State == "FAILED" {
 			return nil, fmt.Errorf("plan %s failed", plan.PlanID)
 		}
-		return &entities.TaskResult{Output: map[string]any{"plan_id": er.PlanID, "node_id": er.NodeID, "state": er.State}}, nil
+		return &entities.TaskResult{Output: er.Output}, nil
 	}
 }
 

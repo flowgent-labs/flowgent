@@ -271,21 +271,23 @@ CREATE INDEX IF NOT EXISTS idx_llmmemory_tenant ON llm_memory(tenant_id);
 
 -- ── Knowledge Entries ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS knowledge_entries (
-    id          VARCHAR(64) PRIMARY KEY,
-    category    VARCHAR(255),
-    title       VARCHAR(255),
-    content     JSONB NOT NULL,
-    embedding   JSONB,
-    tags        JSONB,
-    source      VARCHAR(255),
-    description TEXT NOT NULL DEFAULT '',
-    tenant_id   VARCHAR(255) NOT NULL DEFAULT 'default',
-    status      VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by  VARCHAR(255) NOT NULL DEFAULT '',
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_by  VARCHAR(255) NOT NULL DEFAULT '',
-    del_flag    BOOLEAN NOT NULL DEFAULT false
+    id           VARCHAR(64) PRIMARY KEY,
+    category     VARCHAR(255),
+    title        VARCHAR(255),
+    content      JSONB NOT NULL,
+    content_type VARCHAR(32) NOT NULL DEFAULT 'text',
+    source       VARCHAR(255),
+    source_ref   VARCHAR(512),
+    tags         JSONB,
+    metadata     JSONB DEFAULT '{}',
+    description  TEXT NOT NULL DEFAULT '',
+    tenant_id    VARCHAR(255) NOT NULL DEFAULT 'default',
+    status       VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by   VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by   VARCHAR(255) NOT NULL DEFAULT '',
+    del_flag     BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_entries(category);
 CREATE INDEX IF NOT EXISTS idx_knowledge_tenant    ON knowledge_entries(tenant_id);

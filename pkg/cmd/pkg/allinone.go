@@ -196,10 +196,12 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	notifHandler := handler.NewNotifierHandler(state.store, state.logger)
 	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
 	mcpHandler := handler.NewMcpHandler(state.store)
+	knowledgeHandler := handler.NewKnowledgeHandler(state.store)
+	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Tenant.DefaultTenant)
 
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler)
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler)
 
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(state.cfg.Auth)

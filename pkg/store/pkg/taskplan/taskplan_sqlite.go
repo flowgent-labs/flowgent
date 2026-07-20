@@ -56,9 +56,23 @@ func (s *TaskPlanSQLiteStore) UpdateTaskRun(ctx context.Context, e *entities.Tas
 	if err != nil {
 		return err
 	}
+	input, err := json.Marshal(e.Input)
+	if err != nil {
+		return err
+	}
 	_, err = s.inner.Conn.ExecContext(ctx,
-		`UPDATE task_runs SET status=?1, output=?2, error=?3, retry_count=?4, started_at=?5, finished_at=?6, updated_at=CURRENT_TIMESTAMP WHERE id=?7`,
-		string(e.Status), output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt, e.ID)
+		`INSERT INTO task_runs (id, agentflow_run_id, node_id, status, input, output, error, retry_count, started_at, finished_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+		 ON CONFLICT (id) DO UPDATE SET
+		     status      = EXCLUDED.status,
+		     input       = COALESCE(EXCLUDED.input, task_runs.input),
+		     output      = COALESCE(EXCLUDED.output, task_runs.output),
+		     error       = COALESCE(EXCLUDED.error, task_runs.error),
+		     retry_count = EXCLUDED.retry_count,
+		     started_at  = COALESCE(EXCLUDED.started_at, task_runs.started_at),
+		     finished_at = COALESCE(EXCLUDED.finished_at, task_runs.finished_at),
+		     updated_at  = CURRENT_TIMESTAMP`,
+		e.ID, e.AgentFlowRunID, e.NodeID, string(e.Status), input, output, e.Error, e.RetryCount, e.StartedAt, e.FinishedAt)
 	return err
 }
 

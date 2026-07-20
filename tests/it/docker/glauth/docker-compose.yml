@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  glauth:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0
+    container_name: flowgent-glauth
+    restart: unless-stopped
+    ports:
+      - "3389:389"
+    volumes:
+      - ./config.cfg:/app/config/config.cfg:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 389 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s

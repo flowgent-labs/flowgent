@@ -15,7 +15,7 @@ const (
 	MapNode        NodeType = "map"
 	AgentFlowNode  NodeType = "agentflow"
 	ConditionNode  NodeType = "condition"
-	TribunalNode   NodeType = "tribunal"
+	CommitteeNode   NodeType = "committee"
 	HumanNode      NodeType = "human"
 	SupervisorNode NodeType = "supervisor"
 	SandboxNode    NodeType = "sandbox"

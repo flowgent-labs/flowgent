@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -37,8 +38,8 @@ func Resolve(v any, scope map[string]map[string]any) any {
 
 // EvalCondition evaluates a condition expression against the scope.
 // Supported forms:
-//   - ${tribunal.decision}         → resolves to bool directly
-//   - ${tribunal.decision == true} → resolves and compares
+//   - ${committee.decision}         → resolves to bool directly
+//   - ${committee.decision == true} → resolves and compares
 //   - "true" / "false"         → plain bool literals
 func EvalCondition(expr string, scope map[string]map[string]any) bool {
 	expr = strings.TrimSpace(expr)
@@ -54,7 +55,7 @@ func EvalCondition(expr string, scope map[string]map[string]any) bool {
 
 	// Handle ${node.field == value} comparison
 	if strings.HasPrefix(expr, "${") && strings.HasSuffix(expr, "}") && strings.Contains(expr, " ") {
-		inner := expr[2 : len(expr)-1] // e.g. "tribunal.decision == true"
+		inner := expr[2 : len(expr)-1] // e.g. "committee.decision == true"
 		// Split on comparison operator
 		var path, op, rhs string
 		if idx := strings.Index(inner, " == "); idx > 0 {
@@ -81,6 +82,61 @@ func EvalCondition(expr string, scope map[string]map[string]any) bool {
 			return lhs != rhs
 		}
 		return false
+	}
+
+	// Handle ${node.field} OP value (comparison operator outside ${})
+	// e.g. "${A.score} > 0.8", "${A.result} == true"
+	if strings.HasPrefix(expr, "${") && strings.Contains(expr, " ") {
+		endBrace := strings.Index(expr, "}")
+		if endBrace > 0 {
+			pathExpr := expr[:endBrace+1]                // "${A.score}"
+			rest := strings.TrimSpace(expr[endBrace+1:]) // "> 0.8"
+			resolved := Resolve(pathExpr, scope)
+			lhs := fmt.Sprintf("%v", resolved)
+
+			var op, rhs string
+			for _, o := range []string{">=", "<=", "!=", "==", ">", "<"} {
+				if after, ok := strings.CutPrefix(rest, o+" "); ok {
+					op = o
+					rhs = after
+					break
+				}
+				if after, ok := strings.CutPrefix(rest, o); ok {
+					op = o
+					rhs = after
+					break
+				}
+			}
+			if op == "" {
+				return false
+			}
+
+			lhsF, lhOk := strconv.ParseFloat(lhs, 64)
+			rhsF, rhOk := strconv.ParseFloat(rhs, 64)
+			if lhOk == nil && rhOk == nil {
+				switch op {
+				case ">":
+					return lhsF > rhsF
+				case "<":
+					return lhsF < rhsF
+				case ">=":
+					return lhsF >= rhsF
+				case "<=":
+					return lhsF <= rhsF
+				case "==":
+					return lhsF == rhsF
+				case "!=":
+					return lhsF != rhsF
+				}
+			}
+			switch op {
+			case "==":
+				return lhs == rhs
+			case "!=":
+				return lhs != rhs
+			}
+			return false
+		}
 	}
 
 	// Handle simple ${node.field} (boolean lookup)

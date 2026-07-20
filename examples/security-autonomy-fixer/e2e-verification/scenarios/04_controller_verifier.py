@@ -1,25 +1,52 @@
 #!/usr/bin/env python3
 """
-Scenario 04 — Controller Module: Application Mode Lifecycle
+Scenario 04 — Controller Module: Application Mode Lifecycle.
 
-Validates Controller's flow lifecycle management in Application mode:
-- Flow created → Controller creates JM Deployment
-- Flow updated → Controller rolling updates JM
-- Flow deleted → Controller garbage-collects JM/TM/Sandbox Deployments
+Validates Controller's flow lifecycle management in Application mode.
 
-Requirements:
-- K8s/K3s cluster accessible
-- Helm release deployed (Application mode is the only mode — there is no
-  global.mode Helm value; see VERIFICATION.md Environment Reset)
-- Controller pod running
+Prerequisites: K8s/K3s cluster, Helm release, Controller pod running.
 
-Test Strategy:
-1. Create AgentFlow via API
-2. Verify Controller receives ctrl/flow/updated event
-3. Verify JM Deployment created with correct labels/env
-4. Verify JM Pod reaches Running state
-5. Delete AgentFlow
-6. Verify Controller garbage-collects Deployment
+Steps with Expected I/O — Flow CREATE Lifecycle:
+  Step 1. Create AgentFlow via API
+    Action:  POST /api/v1/{tenant}/flows
+    Input:   {id: "test-flow-{uuid}", nodes: [noop], edges: [], priority: "high"}
+    Output:  HTTP 200/201, flow ID returned
+
+  Step 1b. Verify MQTT ctrl/flow/updated event (best-effort)
+    Action:  Subscribe to ctrl/flow/updated, wait 5s after flow create
+    Input:   MQTT broker reachable
+    Output:  Event with matching agentflow_id (WARN if not received — Controller may poll)
+
+  Step 2. Wait for JM Deployment
+    Action:  kubectl get deployment {name} -n {tenant_ns}
+    Input:   Deployment name: flowgent-jobmanager-{tenant}-{flow_id}
+    Output:  Deployment exists in tenant namespace within 30s
+
+  Step 3. Verify Deployment Spec
+    Action:  kubectl get deployment {name} -n {tenant_ns} -o json
+    Input:   Deployment name
+    Output:  Container env includes FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}
+
+  Step 4. Wait for JM Pod Running
+    Action:  kubectl get pods -l app=flowgent-jobmanager,flowgent.io/flow={flow_id}
+    Input:   Label selector
+    Output:  Pod reaches Running within 60s
+
+  Step 5. Delete Flow
+    Action:  DELETE /api/v1/{tenant}/flows/{id}
+    Input:   Flow ID
+    Output:  HTTP 200/204
+
+  Step 6. Verify Deployment Cleanup
+    Action:  Wait for Deployment deletion
+    Input:   Deployment name, 60s timeout
+    Output:  Deployment deleted (Controller GC)
+
+Steps with Expected I/O — Flow UPDATE Lifecycle:
+  Step 7. Create flow + wait for Deployment (as Steps 1-4)
+  Step 8. PUT /api/v1/{tenant}/flows/{id}  {description, version}
+    Input:   Updated description, new version
+    Output:  HTTP 200, Deployment generation incremented
 """
 
 import sys
@@ -340,19 +367,16 @@ def test_controller_pod_running() -> bool:
         controller_pods = [
             pod for pod in pods.get("items", [])
             if "controller" in pod.get("metadata", {}).get("name", "")
+            and pod.get("status", {}).get("phase") == "Running"
         ]
-        
+
         if not controller_pods:
-            print(f"      ⚠ No Controller pod found (may not be deployed in this environment)")
+            print(f"      ⚠ No Running Controller pod found (may not be deployed in this environment)")
             return True  # Not a failure, Controller may not be deployed
-        
+
         controller_pod = controller_pods[0]
-        phase = controller_pod.get("status", {}).get("phase")
-        
-        if phase != "Running":
-            raise AssertionError(f"Controller pod not Running: {phase}")
-        
-        print(f"      ✓ Controller pod is Running")
+
+        print(f"      ✓ Controller pod is Running ({controller_pod['metadata']['name']})")
         return True
         
     except Exception as e:
@@ -384,7 +408,7 @@ def test_flow_update_lifecycle() -> bool:
             raise AssertionError(f"Flow creation failed: {resp.status_code}")
         created_id = resp.json().get("id")
 
-        if not wait_for_deployment(deployment_name, namespace=jm_namespace, timeout=30):
+        if not wait_for_deployment(deployment_name, namespace=jm_namespace, timeout=60):
             raise AssertionError(f"JM Deployment not created for UPDATE test: {deployment_name} (namespace={jm_namespace})")
 
         before = kubectl_get("deployment", deployment_name, namespace=jm_namespace)

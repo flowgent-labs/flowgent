@@ -1,0 +1,19 @@
+# Keycloak OIDC provider for mcpfather integration tests.
+# Provides a full OIDC issuer supporting client_credentials and device_code
+# (RFC 8628) grant types.
+version: "3.8"
+services:
+  keycloak:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/keycloak:26.7.0
+    container_name: mcpfather-keycloak
+    network_mode: host
+    hostname: 127.0.0.1
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    command: start-dev --hostname=127.0.0.1 --hostname-strict=false
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/realms/master/.well-known/openid-configuration || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

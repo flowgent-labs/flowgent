@@ -1,0 +1,19 @@
+version: "3.8"
+services:
+  github-mcp:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/ghcr.io_github_github-mcp-server:v1.5.0
+    container_name: github-mcp
+    restart: unless-stopped
+    ports:
+      - "13081:8082"
+    entrypoint: ["/server/github-mcp-server"]
+    command: ["http"]
+    environment:
+      # Points to the local mock GitHub API (started by the Go test harness on
+      # :19002 via NewFixedPortGitHubAPI). The mock returns real GitHub REST v3
+      # JSON response structures — 100% API-compatible, zero external network calls.
+      - GITHUB_API_URL=http://host.docker.internal:19002
+      - GITHUB_TOKEN=mock-token
+      - LOG_LEVEL=debug
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

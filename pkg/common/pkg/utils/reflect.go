@@ -46,8 +46,14 @@ func collectFields(v reflect.Value, cols *[]string, args *[]any, seen map[string
 				b = []byte("[]")
 			}
 			*args = append(*args, b)
-		} else if fv.Type() == reflect.TypeOf(time.Time{}) {
+		} else if fv.Type() == timeType {
 			*args = append(*args, fv.Interface().(time.Time).Format("2006-01-02 15:04:05"))
+		} else if fv.Type().Kind() == reflect.Ptr && fv.Type().Elem() == timeType {
+			if fv.IsNil() {
+				*args = append(*args, nil)
+			} else {
+				*args = append(*args, fv.Elem().Interface().(time.Time).Format("2006-01-02 15:04:05"))
+			}
 		} else {
 			*args = append(*args, fv.Interface())
 		}
@@ -138,7 +144,12 @@ func ScanStruct(scanner interface{ Scan(dest ...any) error }, dest any) error {
 			jsonIdxs[len(ptrs)] = ei
 			ptrs = append(ptrs, reflect.New(reflect.TypeOf([]byte{})).Interface())
 		} else if e.timeField {
-			ptrs = append(ptrs, reflect.New(reflect.TypeOf(time.Time{})).Interface())
+			// Scan time columns through an adapter so both drivers work:
+			// pgx yields time.Time natively, while modernc SQLite yields the
+			// stored value as a string/[]byte. Scanning a string straight into
+			// *time.Time fails ("unsupported Scan"), which previously broke the
+			// entire SQLite store path.
+			ptrs = append(ptrs, &timeFieldScanner{fv: e.fv})
 		} else {
 			ptrs = append(ptrs, e.ptr)
 		}
@@ -173,7 +184,7 @@ func collectScanFields(v reflect.Value, entries *[]scanEntry, seen map[string]bo
 		fv := v.Field(i)
 		if IsJSONType(fv.Type()) {
 			*entries = append(*entries, scanEntry{ptr: nil, fv: fv, json: true})
-		} else if fv.Type() == reflect.TypeOf(time.Time{}) {
+		} else if isTimeField(fv.Type()) {
 			*entries = append(*entries, scanEntry{ptr: nil, fv: fv, timeField: true})
 		} else {
 			*entries = append(*entries, scanEntry{ptr: fv.Addr().Interface(), fv: fv, json: false})
@@ -187,6 +198,63 @@ func collectScanFields(v reflect.Value, entries *[]scanEntry, seen map[string]bo
 		}
 		collectScanFields(v.Field(i), entries, seen)
 	}
+}
+
+var timeType = reflect.TypeOf(time.Time{})
+
+// isTimeField reports whether a struct field is a time.Time or *time.Time,
+// both of which must be scanned through timeFieldScanner.
+func isTimeField(ft reflect.Type) bool {
+	if ft == timeType {
+		return true
+	}
+	return ft.Kind() == reflect.Ptr && ft.Elem() == timeType
+}
+
+// timeFieldScanner is a sql.Scanner that accepts whatever a driver returns for
+// a timestamp column (time.Time from pgx, string/[]byte from modernc SQLite,
+// or NULL) and stores it into the target time.Time / *time.Time field.
+type timeFieldScanner struct{ fv reflect.Value }
+
+func (s *timeFieldScanner) Scan(src any) error {
+	var tm time.Time
+	switch v := src.(type) {
+	case nil:
+		s.set(time.Time{}, true)
+		return nil
+	case time.Time:
+		tm = v
+	case string:
+		if v == "" {
+			s.set(time.Time{}, true)
+			return nil
+		}
+		parsed, err := ParseTime(v)
+		if err != nil {
+			return err
+		}
+		tm = parsed
+	case []byte:
+		return s.Scan(string(v))
+	default:
+		return fmt.Errorf("unsupported time scan source %T", src)
+	}
+	s.set(tm, false)
+	return nil
+}
+
+func (s *timeFieldScanner) set(tm time.Time, zeroOrNil bool) {
+	if s.fv.Kind() == reflect.Ptr {
+		if zeroOrNil {
+			s.fv.Set(reflect.Zero(s.fv.Type()))
+			return
+		}
+		p := reflect.New(s.fv.Type().Elem())
+		p.Elem().Set(reflect.ValueOf(tm))
+		s.fv.Set(p)
+		return
+	}
+	s.fv.Set(reflect.ValueOf(tm))
 }
 
 // ParseTime attempts to parse a string into time.Time using common SQLite formats.

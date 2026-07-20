@@ -98,11 +98,13 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	}
 
 	router := executor.NewTaskExecutorRouter()
-	router.Register(executor.NewAgentExecutor(llmClient, apiClient, cfg.Tenant))
+	agentExec := executor.NewAgentExecutor(llmClient, apiClient, cfg.Tenant)
+	agentExec.SetKnowledgeRetriever(apiClient) // RAG: cross-workflow knowledge injection
+	router.Register(agentExec)
 	router.Register(&executor.ConditionExecutor{})
 	router.Register(executor.NewToolExecutor(mcpMgr, cfg.HttpClient))
 	router.Register(executor.NewSupervisorExecutor(llmClient, apiClient, cfg.Tenant))
-	router.Register(&executor.TribunalExecutor{})
+	router.Register(&executor.CommitteeExecutor{})
 	router.Register(&executor.MapExecutor{})
 	router.Register(&executor.JoinExecutor{})
 	router.Register(&executor.SubflowExecutor{})

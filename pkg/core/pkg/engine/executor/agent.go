@@ -20,12 +20,19 @@ type NodeMemoryStore = interface {
 	SearchMemory(ctx context.Context, flowID string, embedding []float32, topK int) ([]entities.MemoryInfo, error)
 }
 
+// KnowledgeRetriever provides cross-workflow persistent knowledge for RAG injection.
+// Engine components use this via a REST-client adapter — never a direct store import.
+type KnowledgeRetriever interface {
+	SearchKnowledge(ctx context.Context, tenant string, query string, topK int, tags []string) ([]*entities.KnowledgeEntry, error)
+}
+
 type AgentExecutor struct {
-	llmClient  engine.LLMClient
-	client     *client.FlowgentClient
-	tenant     string
-	memStore   NodeMemoryStore
-	maxRetries int
+	llmClient    engine.LLMClient
+	client       *client.FlowgentClient
+	tenant       string
+	memStore     NodeMemoryStore
+	knowledge    KnowledgeRetriever
+	maxRetries   int
 }
 
 func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, tenant string) *AgentExecutor {
@@ -33,6 +40,7 @@ func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, te
 }
 
 func (e *AgentExecutor) SetMemoryStore(s NodeMemoryStore) { e.memStore = s }
+func (e *AgentExecutor) SetKnowledgeRetriever(k KnowledgeRetriever) { e.knowledge = k }
 func (e *AgentExecutor) TaskType() entities.TaskType         { return entities.TaskAgent }
 
 func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
@@ -62,6 +70,15 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		userPrompt = instruction + "\n\n" + userPrompt
 	}
 
+	// Inject cross-workflow knowledge into the system prompt (RAG).
+	soul := agent.Soul
+	if e.knowledge != nil {
+		query := truncate(instruction+" "+userPrompt, 512)
+		if entries, err := e.knowledge.SearchKnowledge(ctx, e.tenant, query, 5, nil); err == nil && len(entries) > 0 {
+			soul = formatKnowledgeContext(entries) + "\n\n" + soul
+		}
+	}
+
 	outputSchema := agent.OutputSchema
 	if plan.NodeSpec.OutputSchema != nil {
 		outputSchema = plan.NodeSpec.OutputSchema
@@ -74,7 +91,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 
 	var lastErr error
 	for attempt := 0; attempt <= e.maxRetries; attempt++ {
-		resp, err := e.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, temperature)
+		resp, err := e.llmClient.Generate(ctx, soul, userPrompt, agent.Model, temperature)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call failed: %w", err)
 			e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, "", attempt, lastErr.Error())
@@ -135,4 +152,17 @@ func (e *AgentExecutor) upsertMemory(ctx context.Context, flowID, nodeID, prompt
 		Content:  content,
 		Metadata: map[string]any{"retry_count": attempt, "last_error": errMsg},
 	})
+}
+
+// formatKnowledgeContext formats knowledge entries as a system-prompt context block.
+func formatKnowledgeContext(entries []*entities.KnowledgeEntry) string {
+	var b []byte
+	b = append(b, "[Relevant cross-workflow knowledge:]\n"...)
+	for i, e := range entries {
+		if i > 0 {
+			b = append(b, '\n')
+		}
+		b = append(b, fmt.Sprintf("- %s: %s", e.Title, truncate(e.Content, 300))...)
+	}
+	return string(b)
 }

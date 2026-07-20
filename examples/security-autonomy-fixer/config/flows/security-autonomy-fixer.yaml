@@ -150,8 +150,8 @@ spec:
     # PHASE 5: VOTE — Deterministic majority vote
     # ═══════════════════════════════════════════════════════════════
   
-    - id: tribunal
-      type: tribunal
+    - id: committee
+      type: committee
       strategy:
         type: majority
       input:
@@ -179,7 +179,7 @@ spec:
   
     - id: is-approved
       type: condition
-      expression: "${tribunal.decision} == true"
+      expression: "${committee.decision} == true"
   
     # ═══════════════════════════════════════════════════════════════
     # PHASE 8: HUMAN APPROVAL — Async approval gate
@@ -220,7 +220,7 @@ spec:
           ${aggregate-issues.issues}
   
           Reviewed by: security, quality, architecture
-          Vote: ${tribunal.decision}
+          Vote: ${committee.decision}
   
     - id: create-pr
       type: tool
@@ -244,7 +244,7 @@ spec:
           - Architecture: ${review-arch.decision} (${review-arch.reason})
   
           ### Vote
-          Tribunal majority decision: **${tribunal.decision}**
+          Committee majority decision: **${committee.decision}**
   
     # ═══════════════════════════════════════════════════════════════
     # PHASE 10: RE-SCAN — SonarQube iterative fix verification
@@ -326,7 +326,7 @@ spec:
         repo: "${vars.repo}"
         original_issues: "${aggregate-issues.issues}"
         patches: "${generate-fixes.patches}"
-        vote_decision: "${tribunal.decision}"
+        vote_decision: "${committee.decision}"
         pr_url: "${create-pr.pr_url}"
         compare_result: "${compare-results}"
         scan_results:
@@ -385,12 +385,12 @@ spec:
     - { from: generate-fixes, to: review-arch }
   
     # Review → Vote
-    - { from: review-security, to: tribunal }
-    - { from: review-quality, to: tribunal }
-    - { from: review-arch, to: tribunal }
+    - { from: review-security, to: committee }
+    - { from: review-quality, to: committee }
+    - { from: review-arch, to: committee }
   
     # Vote → Supervisor → Condition
-    - { from: tribunal, to: supervisor-check }
+    - { from: committee, to: supervisor-check }
     - { from: supervisor-check, to: is-approved }
   
     # If approved → Human → Commit → PR

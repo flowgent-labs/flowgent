@@ -271,21 +271,23 @@ CREATE INDEX IF NOT EXISTS idx_llmmemory_tenant ON llm_memory(tenant_id);
 
 -- ── Knowledge Entries ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS knowledge_entries (
-    id          TEXT PRIMARY KEY,
-    category    TEXT,
-    title       TEXT,
-    content     TEXT NOT NULL,
-    embedding   TEXT,
-    tags        TEXT,
-    source      TEXT,
-    description TEXT    NOT NULL DEFAULT '',
-    tenant_id   TEXT    NOT NULL DEFAULT 'default',
-    status      TEXT    NOT NULL DEFAULT 'ACTIVE',
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-    created_by  TEXT    NOT NULL DEFAULT '',
-    updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_by  TEXT    NOT NULL DEFAULT '',
-    del_flag    INTEGER NOT NULL DEFAULT 0
+    id           TEXT PRIMARY KEY,
+    category     TEXT,
+    title        TEXT,
+    content      TEXT NOT NULL,
+    content_type TEXT    NOT NULL DEFAULT 'text',
+    source       TEXT,
+    source_ref   TEXT,
+    tags         TEXT,
+    metadata     TEXT    DEFAULT '{}',
+    description  TEXT    NOT NULL DEFAULT '',
+    tenant_id    TEXT    NOT NULL DEFAULT 'default',
+    status       TEXT    NOT NULL DEFAULT 'ACTIVE',
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    created_by   TEXT    NOT NULL DEFAULT '',
+    updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_by   TEXT    NOT NULL DEFAULT '',
+    del_flag     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_entries(category);
 CREATE INDEX IF NOT EXISTS idx_knowledge_tenant    ON knowledge_entries(tenant_id);

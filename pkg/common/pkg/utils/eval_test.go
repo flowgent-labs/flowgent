@@ -40,9 +40,9 @@ func TestResolve_IntToString(t *testing.T) {
 
 func TestResolve_BoolToString(t *testing.T) {
 	scope := map[string]map[string]any{
-		"tribunal": {"decision": true},
+		"committee": {"decision": true},
 	}
-	got := Resolve("${tribunal.decision}", scope)
+	got := Resolve("${committee.decision}", scope)
 	if got != "true" {
 		t.Errorf("expected 'true', got %v", got)
 	}
@@ -70,27 +70,27 @@ func TestResolve_NestedMap(t *testing.T) {
 
 func TestEvalCondition_True(t *testing.T) {
 	scope := map[string]map[string]any{
-		"tribunal": {"decision": true},
+		"committee": {"decision": true},
 	}
-	if !EvalCondition("${tribunal.decision == true}", scope) {
+	if !EvalCondition("${committee.decision == true}", scope) {
 		t.Error("expected true")
 	}
 }
 
 func TestEvalCondition_False(t *testing.T) {
 	scope := map[string]map[string]any{
-		"tribunal": {"decision": false},
+		"committee": {"decision": false},
 	}
-	if EvalCondition("${tribunal.decision == true}", scope) {
+	if EvalCondition("${committee.decision == true}", scope) {
 		t.Error("expected false")
 	}
 }
 
 func TestEvalCondition_BoolDirect(t *testing.T) {
 	scope := map[string]map[string]any{
-		"tribunal": {"decision": true},
+		"committee": {"decision": true},
 	}
-	if !EvalCondition("${tribunal.decision}", scope) {
+	if !EvalCondition("${committee.decision}", scope) {
 		t.Error("expected true from direct bool access")
 	}
 }

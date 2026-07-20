@@ -15,8 +15,8 @@ func testLDAPCfg() config.LDAPConfig {
 		Enabled:            true,
 		URL:                "ldap://localhost:389",
 		BaseDN:             "dc=example,dc=com",
-		BindDN:             "cn=svc,dc=example,dc=com",
-		BindPassword:       "secret",
+		UserDN:             "cn=svc,dc=example,dc=com",
+		Password:       "secret",
 		UserSearchFilter:   "(cn=%s)",
 		UsernameAttribute:  "cn",
 		EmailAttribute:     "mail",
@@ -283,5 +283,69 @@ func TestService_ServeHTTP_EmptyCredentials(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+// ── ExtractPermissionsFromMemberOf ────────────────────────────────
+
+func TestExtractPermissionsFromMemberOf(t *testing.T) {
+	memberOf := []string{
+		"CN=Infodir-MyAPP-UAT-Airflow-Viewer,OU=MyAPP,OU=Applications,OU=Groups,DC=Infodir,DC=Prod,DC=MyCompany",
+		"CN=Infodir-MyAPP-PROD-Airflow-Admin,OU=MyAPP,OU=Applications,OU=Groups,DC=Infodir,DC=Prod,DC=MyCompany",
+		"CN=Infodir-MyAPP-UAT-Airflow-Admin,OU=MyAPP,OU=Applications,OU=Groups,DC=Infodir,DC=Prod,DC=MyCompany",
+		"CN=Infodir-OtherApp-DEV-Editor,OU=OtherApp,OU=Applications,OU=Groups,DC=Infodir,DC=Prod,DC=MyCompany",
+	}
+
+	perms := ExtractPermissionsFromMemberOf(memberOf)
+	if len(perms) != 4 {
+		t.Errorf("expected 4 permissions, got %d: %v", len(perms), perms)
+	}
+	wantFirst := "Infodir-MyAPP-UAT-Airflow-Viewer"
+	if perms[0] != wantFirst {
+		t.Errorf("perms[0] = %q, want %q", perms[0], wantFirst)
+	}
+}
+
+func TestExtractPermissionsFromMemberOf_Empty(t *testing.T) {
+	perms := ExtractPermissionsFromMemberOf(nil)
+	if perms != nil {
+		t.Errorf("expected nil for empty input, got %v", perms)
+	}
+	perms = ExtractPermissionsFromMemberOf([]string{})
+	if perms != nil {
+		t.Errorf("expected nil for empty slice, got %v", perms)
+	}
+}
+
+func TestExtractPermissionsFromMemberOf_NoCN(t *testing.T) {
+	perms := ExtractPermissionsFromMemberOf([]string{
+		"OU=Groups,DC=example,DC=com",
+		"DC=example,DC=com",
+	})
+	if len(perms) != 0 {
+		t.Errorf("expected 0 permissions for DNs without CN, got %d: %v", len(perms), perms)
+	}
+}
+
+// ── escapeFilter (5-char coverage) ────────────────────────────────
+
+func TestEscapeFilter_AllSpecialChars(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"simple", "simple"},
+		{"user*name", `user\2aname`},
+		{"test(user)", `test\28user\29`},
+		{"a\\b", `a\5cb`},
+		{"parens()and*star", `parens\28\29and\2astar`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := escapeFilter(tt.input)
+			if got != tt.want {
+				t.Errorf("escapeFilter(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

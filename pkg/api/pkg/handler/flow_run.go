@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -50,9 +52,33 @@ func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	h.publishRunCreatedEvent(r.Context(), &run)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(run)
+}
+
+// publishRunCreatedEvent emits the `ctrl/run/created` lifecycle event on MQTT
+// for a directly-created run (POST /runs — used by the Controller's
+// createApplicationRun and by tests). Mirrors FlowDefHandler's event so both
+// run-creation paths publish the identical topic/payload (docs §2.4 /
+// VERIFICATION.md §4.2.4). Best-effort — a broker outage never fails the
+// create.
+func (h *FlowRunHandler) publishRunCreatedEvent(ctx context.Context, run *entities.FlowRunInfo) {
+	if h.mqtt == nil {
+		return
+	}
+	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", run.TenantID, run.AgentFlowID, run.ID)
+	payload, _ := json.Marshal(map[string]any{
+		"action":       "created",
+		"run_id":       run.ID,
+		"agentflow_id": run.AgentFlowID,
+		"tenant_id":    run.TenantID,
+		"namespace":    run.Namespace,
+	})
+	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
+		h.logger.Warn("mqtt run created event publish failed", "topic", topic, "error", err)
+	}
 }
 
 // List returns runs with optional query-param filters.

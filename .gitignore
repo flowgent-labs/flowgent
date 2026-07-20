@@ -40,3 +40,6 @@ go.work.sum
 .vscode/
 ca-certificates.crt
 __pycache__/
+
+# E2E verification reports (archived directories are gitignored)
+examples/security-autonomy-fixer/reports/archived-*

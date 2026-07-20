@@ -88,6 +88,8 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			Status:         plan.State,
 			Output:         planResultOutput(plan.Result),
 			Error:          planResultError(plan.Result),
+			ExecID:         plan.PlanID,
+			Input:          plan.Input,
 		})
 
 		sw.emitDownstream(ctx, &plan)
@@ -118,6 +120,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.Executi
 		"agentflow_run_id": plan.AgentFlowRunID,
 		"node_id":          plan.NodeID,
 		"state":            string(plan.State),
+		"output":           planResultOutput(plan.Result),
 	})
 	_ = sw.q.Publish(ctx, messager.ExecResultsTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID), &messager.InterMessage{
 		ID:      fmt.Sprintf("status-%s-%s", plan.AgentFlowRunID, plan.NodeID),

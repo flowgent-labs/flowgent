@@ -308,6 +308,26 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 			return
 		}
 		c.logger.Info("Application namespace created", "flow_id", spec.ID, "tenant_id", tenantID, "namespace", ns)
+
+		// Copy the shared ConfigMap (flowgent-config) from the controller's
+		// own namespace into the new tenant namespace. Without this, every
+		// dedicated JM pod in the tenant namespace would fail with
+		// "MountVolume.SetUp failed for volume \"config\": configmap not found".
+		cmName := c.jmConfigMapName()
+		if srcCM, srcErr := clientset.CoreV1().ConfigMaps(c.cfg.Runtime.Namespace).Get(ctx, cmName, metav1.GetOptions{}); srcErr == nil {
+			dstCM := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   cmName,
+					Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/tenant": tenantID},
+				},
+				Data: srcCM.Data,
+			}
+			if _, err := clientset.CoreV1().ConfigMaps(ns).Create(ctx, dstCM, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+				c.logger.Warn("Failed to copy ConfigMap to tenant namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName, "error", err)
+			} else {
+				c.logger.Info("ConfigMap copied to tenant namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName)
+			}
+		}
 	}
 
 	jmName := fmt.Sprintf("flowgent-jobmanager-%s-%s", tenantID, spec.ID)

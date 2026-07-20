@@ -327,16 +327,49 @@ func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) {
-	ctx, span := flowDefTracer.Start(r.Context(), "FlowDefHandler.Trigger", trace.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
+	tenant := r.PathValue("tenant")
+	runID, err := h.CreateRunFromTrigger(r.Context(), agentFlowID, tenant, vars, trigger)
+	if err != nil {
+		if err == errFlowNotFound {
+			http.Error(w, "agentflow not found", 404)
+			return
+		}
+		http.Error(w, "internal", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": string(entities.RunPending), "tenant": tenant, "agentflow_id": agentFlowID})
+}
+
+// errFlowNotFound is returned by CreateRunFromTrigger when the referenced
+// agentflow doesn't exist (in cache or DB), so callers can map it to a 404.
+var errFlowNotFound = fmt.Errorf("agentflow not found")
+
+// CreateRunFromTrigger is the shared, transport-agnostic run-creation path
+// used by every trigger source (REST /flows/trigger, SCM webhook, A2A). It
+// resolves the flow spec, creates a PENDING run in the flow's dedicated
+// Application-mode namespace, persists it via the sole DB client, publishes a
+// `ctrl/run/created` lifecycle event on MQTT, and returns the new run ID.
+//
+// Keeping this in one place guarantees every entry point routes runs to the
+// same namespace the Controller's dedicated JM polls (see applicationNamespace)
+// and emits the same lifecycle event — the async half of Phase 1 (the JM
+// run-poller → JobMaster DAG parse → topological TM dispatch) then proceeds
+// identically regardless of how the run was triggered.
+func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, tenant string, vars map[string]any, trigger entities.TriggerInfo) (string, error) {
+	ctx, span := flowDefTracer.Start(ctx, "FlowDefHandler.Trigger", trace.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
 	defer span.End()
+
+	h.mu.RLock()
 	spec := h.agentFlows[agentFlowID]
-	if spec == nil && h.store != nil {
+	h.mu.RUnlock()
+	if spec == nil && h.afStore != nil {
 		spec, _ = h.afStore.GetSpec(ctx, agentFlowID)
 	}
 	if spec == nil {
-		http.Error(w, "agentflow not found", 404)
-		return
+		return "", errFlowNotFound
 	}
+
 	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars, Priority: spec.Priority}
 	// Every flow has a dedicated per-flow JM Deployment that only polls its
 	// own namespace (see pkg/controller/pkg/controller.go
@@ -345,13 +378,41 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 	// Route the run there instead of namespace="", which nothing would ever
 	// pick up.
 	run.Namespace = h.applicationNamespace(spec)
+	if run.TenantID == "" {
+		run.TenantID = spec.TenantID
+	}
 	run.SetTrigger(trigger)
 	if err := h.frStore.Create(ctx, run); err != nil {
-		http.Error(w, "internal", 500)
+		return "", err
+	}
+	h.publishRunCreatedEvent(ctx, agentFlowID, run)
+	return run.ID, nil
+}
+
+// publishRunCreatedEvent emits the `ctrl/run/created` lifecycle event on MQTT
+// (docs §2.4 / VERIFICATION.md §4.2.4). Only the apiserver publishes ctrl/*
+// events. Best-effort: a broker outage never fails run creation (the run is
+// already persisted and the JM poller will still pick it up).
+func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, flowID string, run *entities.FlowRunInfo) {
+	if h.mqtt == nil {
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"run_id": run.ID, "status": string(run.Status), "tenant": r.PathValue("tenant"), "agentflow_id": agentFlowID})
+	tenantID := run.TenantID
+	if tenantID == "" {
+		tenantID = h.defaultTenant
+	}
+	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", tenantID, flowID, run.ID)
+	payload, _ := json.Marshal(map[string]any{
+		"action":       "created",
+		"run_id":       run.ID,
+		"agentflow_id": flowID,
+		"tenant_id":    tenantID,
+		"namespace":    run.Namespace,
+		"trigger_type": run.TriggerType,
+	})
+	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
+		slog.Warn("mqtt run created event publish failed", "topic", topic, "error", err)
+	}
 }
 
 // applicationNamespace mirrors pkg/controller/pkg/controller.go's
