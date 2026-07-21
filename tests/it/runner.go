@@ -3,7 +3,7 @@
 // servers for external APIs. Every middleware dependency (PostgreSQL via
 // Docker) is real; only external SaaS APIs (LLM, GitHub, SonarQube) are mocked.
 //
-// Prerequisite: docker compose -f tests/it/docker/pgvector/docker-compose.yml up -d
+// Prerequisite: docker compose -f deploy/docker/pgvector/docker-compose.yml up -d
 package it
 
 import (
@@ -149,7 +149,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	pool, ok := storeImpl.DB().(*pgxpool.Pool)
 	if !ok {
-		t.Fatalf("store.DB() is %T, want *pgxpool.Pool — is PostgreSQL running? (cd tests/it/docker/pgvector && docker compose up -d)", storeImpl.DB())
+		t.Fatalf("store.DB() is %T, want *pgxpool.Pool — is PostgreSQL running? (cd deploy/docker/pgvector && docker compose up -d)", storeImpl.DB())
 	}
 
 	// ── apiserver (no auth) ──

@@ -6,7 +6,7 @@
 
 ```bash
 # 1. Start real middleware
-docker compose -f tests/it/docker/pgvector/docker-compose.yml up -d
+docker compose -f deploy/docker/pgvector/docker-compose.yml up -d
 
 # 2. Run all IT tests (-p 1 required: fixed-port mocks + shared PG)
 go test github.com/flowgent-labs/flowgent/tests/it/... -count=1 -timeout 300s -p 1
@@ -29,7 +29,7 @@ tests/it/
   notifier/
   knowledge/
   sandbox/
-  docker/                  ← 中间件 Docker compose（PostgreSQL 必选，MCP 容器可选）
+  deploy/docker/           ← 中间件 Docker compose（PostgreSQL 必选，MCP 容器可选）
     pgvector/
     github-mcp/
     sonarqube-mcp/
