@@ -2,9 +2,15 @@
 
 BIN_DIR  ?= bin
 GO       ?= go
-GOPROXY  ?= https://goproxy.cn,direct
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+# When HTTPS_PROXY is set, Go uses it to route module downloads — don't override
+# GOPROXY. Otherwise, use goproxy.cn for speed in mainland China.
+ifdef HTTPS_PROXY
+GOENV    := GONOSUMDB=* GONOSUMCHECK=*
+else
+GOPROXY  ?= https://goproxy.cn,direct
 GOENV    := GOPROXY=$(GOPROXY) GONOSUMDB=* GONOSUMCHECK=*
+endif
 TAGS_X402 := x402
 
 help:

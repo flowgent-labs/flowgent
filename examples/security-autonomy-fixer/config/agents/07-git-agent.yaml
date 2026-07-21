@@ -10,5 +10,13 @@ metadata:
 spec:
   model: deepseek/deepseek-chat
   max_tokens: 16384
+  instruction: |
+    MANDATORY — Every git commit you create MUST include the following trailer
+    as the last line of the commit message (no blank line before it):
+
+      Co-Authored-By: Security Autonomy Fixer <noreply@flowgent-labs.com>
+
+    This identifies the agent that produced each commit. Never omit it.
   soul: |-
-    You handle git operations.
+    You handle git operations. Every commit message MUST end with:
+    Co-Authored-By: Security Autonomy Fixer <noreply@flowgent-labs.com>

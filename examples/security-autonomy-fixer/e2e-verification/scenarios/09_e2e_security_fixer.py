@@ -292,60 +292,40 @@ def verify_seed(s, conn):
 
 
 def verify_trigger(s, conn):
-    """Phase 1: POST to /api/v1/webhook/github with pull_request payload.
+    """Phase 1: Trigger flow via manual endpoint (webhook fallback).
     Returns run_id."""
-    print("\n-- [1] Trigger — POST /api/v1/webhook/github with pull_request --")
+    print("\n-- [1] Trigger — POST /api/v1/{tenant}/flows/{id}/trigger --")
 
-    # Minimal GitHub pull_request webhook payload for wl4g/rengine PR #4
-    payload = {
-        "action": "opened",
-        "number": 4,
-        "pull_request": {
-            "url": "https://api.github.com/repos/wl4g/rengine/pulls/4",
-            "id": 4,
+    run_id = None
+
+    # Primary: manual trigger endpoint
+    trigger_url = f"{API}/api/v1/{TENANT}/flows/{FLOW_ID}/trigger"
+    r = s.post(trigger_url, json={"vars": {}})
+    if r.status_code in (200, 201, 202):
+        resp_data = r.json() if r.text else {}
+        run_id = resp_data.get("run_id") or resp_data.get("id")
+        print(f"  OK manual trigger accepted (status={r.status_code}, run_id={run_id})")
+    else:
+        # Fallback: webhook endpoint
+        print(f"  WARN: Manual trigger returned {r.status_code}, trying webhook fallback...")
+        payload = {
+            "action": "opened",
             "number": 4,
-            "state": "open",
-            "title": "E2E Security Fix Verification PR",
-            "head": {
-                "ref": "fix/flowgent_sec_auto_fix",
-                "sha": "trigger-e2e-abcdef1234567890",
-                "repo": {
-                    "id": 12345,
-                    "name": "rengine",
-                    "full_name": "wl4g/rengine",
-                    "owner": {"login": "wl4g", "id": 12345},
-                }
+            "pull_request": {
+                "head": {"ref": "fix/flowgent_sec_auto_fix", "sha": "trigger-e2e-abcdef1234567890",
+                         "repo": {"full_name": "wl4g/rengine"}},
+                "base": {"ref": "main", "sha": "base-main-abcdef1234567890",
+                         "repo": {"full_name": "wl4g/rengine"}},
             },
-            "base": {
-                "ref": "main",
-                "sha": "base-main-abcdef1234567890",
-                "repo": {
-                    "id": 12345,
-                    "name": "rengine",
-                    "full_name": "wl4g/rengine",
-                    "owner": {"login": "wl4g", "id": 12345},
-                }
-            },
-        },
-        "repository": {
-            "id": 12345,
-            "name": "rengine",
-            "full_name": "wl4g/rengine",
-            "owner": {"login": "wl4g", "id": 12345},
-        },
-        "sender": {"login": "flowgent-bot", "id": 99999},
-    }
-
-    headers = {"Content-Type": "application/json", "X-GitHub-Event": "pull_request"}
-
-    r = s.post(f"{API}/api/v1/webhook/github", json=payload, headers=headers)
-    if r.status_code != 202:
-        raise AssertionError(f"webhook returned {r.status_code}: {r.text[:200]}")
-    print(f"  OK webhook accepted (status={r.status_code})")
-
-    # Extract run_id from response
-    resp_data = r.json() if r.text else {}
-    run_id = resp_data.get("run_id") or resp_data.get("id") or None
+            "repository": {"full_name": "wl4g/rengine"},
+        }
+        headers = {"Content-Type": "application/json", "X-GitHub-Event": "pull_request"}
+        r = s.post(f"{API}/api/v1/webhook/github", json=payload, headers=headers)
+        if r.status_code not in (200, 202):
+            raise AssertionError(f"Both trigger methods failed. webhook returned {r.status_code}: {r.text[:200]}")
+        resp_data = r.json() if r.text else {}
+        run_id = resp_data.get("run_id") or resp_data.get("id")
+        print(f"  OK webhook trigger accepted (status={r.status_code}, run_id={run_id})")
 
     # Fallback: query PG for the most recent run
     if not run_id and conn:
@@ -360,7 +340,7 @@ def verify_trigger(s, conn):
             print(f"  OK run_id from PG fallback: {run_id}")
 
     if not run_id:
-        raise AssertionError("No run_id in webhook response or PG fallback")
+        raise AssertionError("No run_id from trigger or PG fallback")
 
     # Verify PG persistence
     if conn:
@@ -375,7 +355,7 @@ def verify_trigger(s, conn):
         else:
             print("  WARN: run_id not yet visible in PG (may need persistence delay)")
 
-    print(f"  OK run_id={run_id} (type trigger via webhook)")
+    print(f"  OK run_id={run_id} (manual trigger)")
     return run_id
 
 

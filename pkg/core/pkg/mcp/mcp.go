@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -64,6 +65,13 @@ func (f *McpManager) GetClient(ctx context.Context, name string) (*client.Client
 	if len(def.headers) > 0 {
 		opts = append(opts, transport.WithHTTPHeaders(def.headers))
 	}
+	// Disable compression — some MCP servers (SonarQube) have internal
+	// gzip parsing bugs when Accept-Encoding: gzip is forwarded to their
+	// backing REST API. Cluster-internal connections don't benefit from
+	// compression anyway.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DisableCompression = true
+	opts = append(opts, transport.WithHTTPBasicClient(&http.Client{Transport: tr}))
 
 	c, err := client.NewStreamableHttpClient(def.url, opts...)
 	if err != nil {

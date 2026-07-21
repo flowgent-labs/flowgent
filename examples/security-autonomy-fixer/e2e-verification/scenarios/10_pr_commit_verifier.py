@@ -39,10 +39,24 @@ HEADERS = {
 if GITHUB_TOKEN:
     HEADERS["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
-FLOWGENT_COMMIT_PATTERNS = [
-    "flowgent", "security-autonomy-fixer", "auto-fix",
-    "fix: SonarQube", "fix: Security", "remediate",
-    "security fix", "vulnerability fix", "quality gate",
+FLOWGENT_SECURITY_FIX_PATTERNS = [
+    "fix: resolve sonarqube",
+    "fix: sonarqube",
+    "fix: security",
+    "fix: remediate",
+    "fix: sql injection",
+    "fix: xss",
+    "fix: csrf",
+    "fix: vulnerability",
+    "security-autonomy-fixer",
+]
+
+FLOWGENT_CI_PATTERNS = [
+    "quality gate",
+    "sonar check",
+    "sonarqube workflow",
+    "ci workflow",
+    "ci:",
 ]
 
 
@@ -85,34 +99,56 @@ def run():
     print(f"  Updated: {updated_at}")
     print(f"  Files changed: {files_changed}  +{additions}/-{deletions}")
 
-    # 2. Get commits on the PR branch
-    print(f"\n  -> Fetching commits on branch '{BRANCH}'...")
-    commits_data = _gh_get(f"/repos/{REPO}/commits?sha={BRANCH}&per_page=50")
+    # 2. Get commits on the PR (only those unique to the head branch vs base)
+    print(f"\n  -> Fetching commits on PR #{PR_NUMBER}...")
+    commits_data = _gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}/commits?per_page=100")
     if commits_data is None:
         raise AssertionError(f"Cannot fetch commits for branch '{BRANCH}' — GitHub API unreachable")
     if not isinstance(commits_data, list):
         raise AssertionError(f"Unexpected commits response type: {type(commits_data).__name__}")
     commits = commits_data
 
-    print(f"  Total commits on branch: {len(commits)}")
+    print(f"  Total commits on PR: {len(commits)}")
 
-    # 3. Classify commits
-    flowgent_commits = []
+    # 3. Classify commits: security fixes vs CI/workflow vs other
+    flowgent_security_fixes = []
+    flowgent_ci_commits = []
     other_commits = []
 
     for c in commits:
-        msg = (c.get("commit", {}).get("message", "")).lower()
-        author = c.get("commit", {}).get("author", {}).get("name", "")
+        commit_data = c.get("commit", {})
+        msg_full = commit_data.get("message", "")
+        msg = msg_full.lower()
+        author = commit_data.get("author", {}).get("name", "")
+        committer = commit_data.get("committer", {}).get("name", "")
         sha = c.get("sha", "")[:8]
 
-        is_flowgent = any(pattern.lower() in msg for pattern in FLOWGENT_COMMIT_PATTERNS)
-        if is_flowgent:
-            flowgent_commits.append({"sha": sha, "message": c.get("commit", {}).get("message", "").split("\n")[0], "author": author})
-        else:
-            other_commits.append({"sha": sha, "message": c.get("commit", {}).get("message", "").split("\n")[0], "author": author})
+        is_security_fix = any(pattern in msg for pattern in FLOWGENT_SECURITY_FIX_PATTERNS)
+        is_ci = any(pattern in msg for pattern in FLOWGENT_CI_PATTERNS)
+        is_flowgent_author = "flowgent" in author.lower() or "flowgent" in committer.lower()
 
-    print(f"  Flowgent-authored commits: {len(flowgent_commits)}")
-    for fc in flowgent_commits:
+        entry = {
+            "sha": sha,
+            "message": msg_full.split("\n")[0],
+            "author": author,
+            "committer": committer,
+        }
+
+        if is_security_fix and is_flowgent_author:
+            flowgent_security_fixes.append(entry)
+        elif is_ci and is_flowgent_author:
+            flowgent_ci_commits.append(entry)
+        else:
+            other_commits.append(entry)
+
+    print(f"  Flowgent security-fix commits: {len(flowgent_security_fixes)}")
+    for fc in flowgent_security_fixes:
+        print(f"    {fc['sha']} {fc['message'][:80]} (author: {fc['author']})")
+    if flowgent_security_fixes:
+        print(f"  ✓ These are commits produced by the security-autonomy-fixer pipeline")
+
+    print(f"  Flowgent CI/workflow commits (NOT security fixes): {len(flowgent_ci_commits)}")
+    for fc in flowgent_ci_commits:
         print(f"    {fc['sha']} {fc['message'][:80]} (author: {fc['author']})")
 
     print(f"  Other commits: {len(other_commits)}")
@@ -150,12 +186,18 @@ def run():
     checks.append(("PR accessible", pr_state in ("open", "merged", "closed"), True))
 
     # Critical: Branch must have commits
-    checks.append(("Branch has commits", len(commits) > 0, True))
+    checks.append(("PR has commits", len(commits) > 0, True))
 
-    # Critical: Flowgent must have pushed fix commits
-    checks.append(("Flowgent-authored commits found", len(flowgent_commits) > 0, True))
+    # Critical: Flowgent security-autonomy-fixer must have produced fix commits
+    # (NOT CI/workflow commits — those are NOT security fixes)
+    has_security_fixes = len(flowgent_security_fixes) > 0
+    checks.append(("Flowgent security-fix commits on PR", has_security_fixes, True))
 
-    # Non-critical: test coverage changes (nice to have)
+    # Critical: Fix commits must touch source code, not just CI configs
+    source_files_changed = [fn for fn in src_files if not fn.startswith(".github/")]
+    checks.append(("Source code changes (not just CI)", len(source_files_changed) > 0, True))
+
+    # Non-critical: test coverage changes
     has_tests = len(test_files) > 0
     checks.append(("Test coverage changes", has_tests, False))
 
@@ -163,19 +205,26 @@ def run():
         marker = "OK" if ok else ("FAIL" if critical else "WARN")
         print(f"  [{marker}] {label}: {'yes' if ok else 'no/missing'}")
 
+    if flowgent_ci_commits and not flowgent_security_fixes:
+        print(f"\n  ⚠  Found {len(flowgent_ci_commits)} Flowgent CI/workflow commit(s) but ZERO security-fix commits.")
+        print(f"  ⚠  The security-autonomy-fixer pipeline has NOT produced any code fixes.")
+
     critical_failures = [label for label, ok, critical in checks if not ok and critical]
     if critical_failures:
         raise AssertionError(
             f"Critical PR checks failed: {critical_failures}. "
-            f"Flowgent pipeline ran but fix commits were NOT pushed to {pr_url}. "
-            f"Check: (1) GitHub token has repo:write scope, "
-            f"(2) MCP github server is configured with valid credentials, "
-            f"(3) commit-fixes and create-pr nodes completed successfully."
+            f"Flowgent security-autonomy-fixer has NOT pushed fix commits to {pr_url}. "
+            f"Check: (1) GitHub MCP token has repo:write scope, "
+            f"(2) commit-fixes and create-pr nodes completed successfully, "
+            f"(3) MCP tool names in flow definition match the real GitHub MCP server tools."
         )
 
-    print(f"\n  OK Flowgent agents produced {len(flowgent_commits)} commit(s)")
+    if has_security_fixes:
+        print(f"\n  ✓ Flowgent security-autonomy-fixer produced {len(flowgent_security_fixes)} commit(s)")
     if test_files:
-        print(f"  OK Test coverage changes detected in {len(test_files)} file(s)")
+        print(f"  ✓ Test coverage changes detected in {len(test_files)} file(s)")
+    else:
+        print(f"  ⚠  No test file changes — security fixes should include test coverage")
     print(f"  Review at: {pr_url}")
     print(f"  PASS")
 

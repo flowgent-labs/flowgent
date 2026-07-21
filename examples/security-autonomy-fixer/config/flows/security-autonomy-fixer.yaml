@@ -66,17 +66,18 @@ spec:
       type: tool
       tool: github
       input:
-        action: get_latest_commit
+        action: get_commit
+        owner: "wl4g"
         repo: "${vars.repo}"
-        branch: main
+        sha: main
   
     - id: scan-sonarqube
       type: tool
       tool: sonarqube
       input:
-        action: "scan/get_issues"
-        project_key: "${vars.repo}"
-        severities: "${vars.target_severities}"
+        action: get_overall_issues
+        projectKey: "${vars.repo}"
+        branch: main
   
     # ═══════════════════════════════════════════════════════════════
     # PHASE 2: ANALYZE — Parse, normalize, deduplicate findings
@@ -209,10 +210,11 @@ spec:
       type: tool
       tool: github
       input:
-        action: commit_and_push
+        action: push_files
+        owner: "wl4g"
         repo: "${vars.repo}"
         branch: "security-bot/fix-${vars.run_id}"
-        changes: "${generate-fixes.patches}"
+        files: "${generate-fixes.patches}"
         message: |
           [Security Fix] Auto-generated security fix
   
@@ -258,9 +260,9 @@ spec:
       type: tool
       tool: sonarqube
       input:
-        action: "scan/get_jobs_by_commit"
-        repo: "${vars.repo}"
-        commit_sha: "${get-commit.commit_sha}"
+        action: GetProjectsExportFindings
+        project: "${vars.repo}"
+        branch: main
   
     - id: wait-rescan
       type: sandbox
@@ -290,9 +292,9 @@ spec:
       type: tool
       tool: sonarqube
       input:
-        action: "scan/get_issues"
-        project_key: "${vars.repo}"
-        severities: "${vars.target_severities}"
+        action: get_overall_issues
+        projectKey: "${vars.repo}"
+        branch: main
   
     - id: compare-results
       type: agent
@@ -341,9 +343,10 @@ spec:
       type: tool
       tool: github
       input:
-        action: create_issue_comment
+        action: add_issue_comment
+        owner: "wl4g"
         repo: "${vars.repo}"
-        pr_number: "${create-pr.pr_number}"
+        issue_number: "${create-pr.pr_number}"
         body: "${summary-report.report}"
   
     - id: notify-email
