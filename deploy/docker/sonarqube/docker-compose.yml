@@ -85,18 +85,18 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo ">> Resetting SonarQube admin password..."
-        STATUS=""
-        for i in $(seq 1 30); do
-          STATUS=$(wget -qO- --post-data="" http://sonarqube:9000/api/system/status 2>/dev/null || echo "")
-          if echo "$STATUS" | grep -q '"UP"'; then break; fi
-          echo "  waiting for SonarQube API... ($i)"
+        echo '>> Resetting SonarQube admin password...'
+        STATUS=''
+        for i in $$(seq 1 30); do
+          STATUS=$$(wget -qO- --post-data="" http://sonarqube:9000/api/system/status 2>/dev/null || echo '')
+          if echo "$$STATUS" | grep -q '"UP"'; then break; fi
+          echo "  waiting for SonarQube API... ($$i)"
           sleep 5
         done
         # Change admin password via API
         curl -s -u admin:admin -X POST \
-          "http://sonarqube:9000/api/users/change_password?login=admin&password=Abcd1234@sonar&previousPassword=admin" \
-          || echo "WARN: Password may already be set (non-default)"
+          'http://sonarqube:9000/api/users/change_password?login=admin&password=Abcd1234@sonar&previousPassword=admin' \
+          || echo 'WARN: Password may already be set (non-default)'
         echo ">> SonarQube init done. Admin password: Abcd1234@sonar"
     networks:
       - sonarqube-net

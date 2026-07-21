@@ -5,14 +5,14 @@
 # Examples:
 #   ./deploy/mirror.sh rancher/mirrored-pause:3.6
 #   ./deploy/mirror.sh alpine:3.21 alpine
-#   ./deploy/mirror.sh golang:1.25 golang  root@43.98.168.69
+#   ./deploy/mirror.sh golang:1.26 golang  root@43.98.165.146
 set -euo pipefail
 
 IMAGE="${1:?Usage: $0 <docker-image> [aliyun-repo] [jump-host]}"
 REPO="${2:-$(echo "$IMAGE" | sed 's/[\/:]/_/g')}"
 TAG=$(echo "$IMAGE" | rev | cut -d: -f1 | rev)
 [ -z "$TAG" ] && TAG="latest"
-JUMP_HOST="${3:-root@43.98.168.69}"
+JUMP_HOST="${3:-root@43.98.165.146}"
 NS="${MIRROR_NS:-wl4g}"
 REG="${MIRROR_REG:-registry.cn-shenzhen.aliyuncs.com}"
 ALIYUN="${REG}/${NS}/${REPO}:${TAG}"

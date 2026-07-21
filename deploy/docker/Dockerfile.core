@@ -2,8 +2,7 @@
 # ─── Stage 1: Build flowgent-core ────────────────────────────────
 FROM registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine AS builder
 
-ENV GOPROXY=https://goproxy.cn,direct
-
+ARG GOPROXY
 ARG BUILD_TS=0
 ARG BUILD_TAGS=
 RUN --mount=type=cache,target=/go/pkg/mod \

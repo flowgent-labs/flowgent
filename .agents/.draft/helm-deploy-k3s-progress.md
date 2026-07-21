@@ -8,7 +8,7 @@
 ## 0. Image Mirroring — Alibaba Cloud Registry Transfer
 
 Docker Hub is blocked in this environment. All images must be mirrored via
-`ssh root@43.98.168.69` (a jump box with Docker Hub access and Alibaba Cloud
+`ssh root@43.98.165.146` (a jump box with Docker Hub access and Alibaba Cloud
 registry credentials).
 
 ### Naming Convention
@@ -26,14 +26,14 @@ registry.cn-shenzhen.aliyuncs.com/{namespace}/{underscore_name}:{tag}
 
 ```bash
 # Step 1: Pull from Docker Hub on the jump box
-ssh root@43.98.168.69 "docker pull rancher/mirrored-coredns-coredns:1.14.2"
+ssh root@43.98.165.146 "docker pull rancher/mirrored-coredns-coredns:1.14.2"
 
 # Step 2: Tag with Alibaba Cloud naming
-ssh root@43.98.168.69 "docker tag rancher/mirrored-coredns-coredns:1.14.2 \
+ssh root@43.98.165.146 "docker tag rancher/mirrored-coredns-coredns:1.14.2 \
   registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2"
 
 # Step 3: Push to Alibaba Cloud
-ssh root@43.98.168.69 "docker push registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2"
+ssh root@43.98.165.146 "docker push registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2"
 
 # Step 4: Use the Alibaba Cloud image in K3s
 kubectl set image deploy/coredns -n kube-system \
@@ -59,7 +59,7 @@ kubectl set image deploy/coredns -n kube-system \
 CGO_ENABLED=0 go build -o bin/flowgent ./src/cmd/flowgent/
 sudo podman build -t registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest -f deploy/docker/Dockerfile .
 sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
-  ssh root@43.98.168.69 "docker load && docker push registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest"
+  ssh root@43.98.165.146 "docker load && docker push registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest"
 ```
 
 ---

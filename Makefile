@@ -36,13 +36,25 @@ help:
 build-image-all: build-image-core build-image-wallet build-image-all-in-one
 
 build-image-core:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+ifdef HTTPS_PROXY
+	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+else
+	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+endif
 
 build-image-wallet:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-wallet:latest -f deploy/docker/Dockerfile.wallet .
+ifdef HTTPS_PROXY
+	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-wallet:latest -f deploy/docker/Dockerfile.wallet .
+else
+	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-wallet:latest -f deploy/docker/Dockerfile.wallet .
+endif
 
 build-image-all-in-one:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
+ifdef HTTPS_PROXY
+	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
+else
+	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent:all-in-one -f deploy/docker/Dockerfile.all-in-one .
+endif
 
 # ── Binary builds ─────────────────────────────────────────────────
 
