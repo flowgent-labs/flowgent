@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: MCP
 metadata:
   name: github
@@ -9,7 +9,6 @@ metadata:
   status: active
   description: Official GitHub MCP server for branch management, commits, pull requests, and PR comments via Streamable HTTP
 spec:
-  enabled: true
   type: http
   url: https://api.githubcopilot.com/mcp/
   headers:

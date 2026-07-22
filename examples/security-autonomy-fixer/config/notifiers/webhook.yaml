@@ -1,0 +1,15 @@
+apiVersion: core.flowgent.io/v1
+kind: NotifyChannel
+metadata:
+  name: security-webhook
+  tenant: default
+  labels:
+    channel: webhook
+    catalog: notification
+  status: active
+  description: Webhook notification channel — posts security fix summaries to team chat (Teams/Slack)
+
+spec:
+  provider: webhook
+  config:
+    url: ${NOTIFY_WEBHOOK_URL:https://outlook.office.com/webhook/xxxxx}

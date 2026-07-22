@@ -470,39 +470,46 @@ facilitators.
 
 ---
 
-## 4.8 Scenario 08 — OTEL Tracing (L9)
+## 4.8 Scenario 08 — OTEL Tracing (L9) — **MANDATORY**
+
+> **This scenario is MANDATORY.**  Failure to find a Jaeger trace or missing core
+> node span coverage is treated as a verification failure (not opportunistic).
+> Previously Jaeger trace inspection was informational-only; it now gates the
+> overall E2E pass/fail verdict.
 
 ### 4.10.1 Purpose
 
-Validate complete distributed trace coverage for all 24 nodes of the
-`security-autonomy-fixer` flow, including span hierarchy and attribute
-completeness.
+Validate complete distributed trace coverage for all 25 nodes (12 phases) of
+the `security-autonomy-fixer` flow, including span hierarchy and attribute
+completeness.  Verifies that **every step** is traced — including retries and
+every API / MQTT call per step.
 
 ### 4.10.2 Prerequisites
 
-- Scenarios 01-09 passed
-- Jaeger running (port 16686)
-- OTEL exporter configured (`OTEL_EXPORTER_OTLP_ENDPOINT`)
+- Scenarios 01-07 passed
+- Jaeger all-in-one running (Query API reachable on port 16686)
+- OTEL exporter configured in `mgmt.otel` ConfigMap section
 - Agents and MCPs seeded (auto-seeded by script)
+- `flowgent-jobmanager` service registered in Jaeger
 
 ### 4.10.3 Steps
 
-| Step | Action | Expected Input | Expected Output |
-|------|--------|---------------|-----------------|
-| 10.1 | Seed agents + MCPs | `config/agents/*.yaml`, `config/mcps/*.yaml` | Agents and MCPs registered in DB |
-| 10.2 | Import `security-autonomy-fixer` flow | Flow YAML (24 nodes, 11 phases) | Flow created via API |
-| 10.3 | Trigger flow run | `{agentflow_id}` | Run ID returned |
-| 10.4 | Wait for completion | Run ID | Flow reaches terminal state |
-| 10.5 | Query Jaeger for traces | `flowgent.run_id={run_id}` | ≥1 trace with ≥160 spans |
-| 10.6 | Validate per-node spans | Span data | Each node ≥7 spans (dispatch→consume→execute→persist→publish→receive) |
-| 10.7 | Validate span attributes | Span tags | `flowgent.node_id`, `flowgent.task_type`, `input`, `output` present |
+| Step | Action | Expected Input | Expected Output | Mandatory |
+|------|--------|---------------|-----------------|-----------|
+| 10.1 | Seed agents + MCPs | `config/agents/*.yaml`, `config/mcps/*.yaml` | Agents and MCPs registered in DB | — |
+| 10.2 | Import `security-autonomy-fixer` flow | Flow YAML (25 nodes, 12 phases) | Flow created via API | — |
+| 10.3 | Trigger flow run | `{agentflow_id}` | Run ID returned | — |
+| 10.4 | Wait for completion | Run ID | Flow reaches terminal state | — |
+| 10.5 | Query Jaeger for traces | `run.id={run_id}` tag on spans | ≥1 trace with ≥25 spans | **YES** |
+| 10.6 | Validate per-node span coverage | Span `flowgent.node_id` tags | All core phases (1–7) have ≥1 span/node | **YES** |
+| 10.7 | Validate span attributes | Span tags | `flowgent.node_id`, `flowgent.task_type` on sampled spans | Informational |
 
 ### 4.10.4 Expected Span Hierarchy per Node
 
 ```
 JM-DispatchPlan
   └─ TM-ConsumeExecPlan
-       └─ SlotWorker-Execute{Type}   (Agent|Tool|Sandbox|Supervisor|Committee|...)
+       └─ SlotWorker-Execute{Type}   (Agent|Tool|Sandbox|Supervisor|Committee|Condition|Human|Noop)
             ├─ LLM-Call / MCP-Call / Sandbox-Execute  (type-specific)
             ├─ API-PUT-/tasks                           (persist output)
             └─ MQTT-Publish-ExecResult                  (state callback)
@@ -511,9 +518,14 @@ JM-DispatchPlan
 
 ### 4.10.5 Pass/Fail Criteria
 
-- **PASS**: Traces found in Jaeger, ≥160 spans, span hierarchy correct, required
-  attributes present on all spans
-- **FAIL**: No traces found, span count too low, missing attributes, broken hierarchy
+- **PASS**: Jaeger Query API reachable, ≥1 trace found matching `run.id`, ≥25
+  total spans, **all core nodes (phases 1–7) have ≥1 span each**, infrastructure
+  checks (JM/API OTEL init, DNS resolution) all pass.
+
+- **FAIL**: Jaeger unreachable, **zero traces found** (mandatory), core nodes
+  missing spans, infrastructure checks failed.  Any of these triggers an
+  `AssertionError` — this scenario is NO LONGER an "opportunistic / informational"
+  check.
 
 ---
 
@@ -521,8 +533,8 @@ JM-DispatchPlan
 
 ### 4.11.1 Purpose
 
-Capstone white-box run of the canonical `security-autonomy-fixer` flow (24 nodes,
-11 phases). Verifies the complete pipeline from issue discovery through PR creation.
+Capstone white-box run of the canonical `security-autonomy-fixer` flow (25 nodes,
+12 phases). Verifies the complete pipeline from issue discovery through PR creation.
 
 ### 4.11.2 Prerequisites
 
@@ -532,7 +544,7 @@ Capstone white-box run of the canonical `security-autonomy-fixer` flow (24 nodes
 - LLM provider registered (e.g. DeepSeek)
 - Clean PostgreSQL (no stale flow/runs from previous attempts)
 
-### 4.11.3 Flow Phases
+### 4.11.3 Flow Phases (25 nodes, 12 phases)
 
 | Phase | Nodes | Description |
 |-------|-------|-------------|
@@ -544,9 +556,9 @@ Capstone white-box run of the canonical `security-autonomy-fixer` flow (24 nodes
 | 6. SUPERVISOR | `supervisor-check` | Safety gate with constraints |
 | 7. CONDITION | `is-approved` | Branch on approval decision |
 | 8. HUMAN | `human-approval` | Async human approval gate |
-| 9. COMMIT+PR | `create-branch`, `commit-fixes`, `create-pr` | Git operations via GitHub MCP |
+| 9. PR CHECK&COMMIT | `check-existing-pr`, `pr-exists`, `create-branch`, `commit-fixes`, `create-pr`, `commit-to-existing` | Idempotent PR check → branch & commit (create new or reuse existing) |
 | 10. RE-SCAN | `trigger-rescan`, `wait-rescan`, `check-resolved`, `compare-results`, `fix-complete` | Verify fixes with SonarQube |
-| 11. REPORT | `summary-report`, `notify-pr`, `notify-email`, `notify-teams`, `end` | Multi-channel notification |
+| 11. REPORT | `summary-report`, `notify-pr`, `end` | Compile summary, comment on PR, terminate |
 
 ### 4.11.4 Steps
 

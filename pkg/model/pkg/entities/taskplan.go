@@ -55,7 +55,9 @@ type ExecutionPlan struct {
 // NodeSpec is the simplified node definition embedded in an ExecutionPlan.
 type NodeSpec struct {
 	ID               string               `json:"id"`
+	Kind             NodeType             `json:"kind,omitempty"`
 	Type             NodeType             `json:"type"`
+	Solution         string               `json:"solution,omitempty"`
 	Agent            string               `json:"agent,omitempty"`
 	Skill            string               `json:"skill,omitempty"`
 	AgentFlowID      string               `json:"agentflow,omitempty"`
@@ -70,6 +72,7 @@ type NodeSpec struct {
 	SupervisorConfig *SupervisorConfig    `json:"supervisor_config,omitempty"`
 	ChildNode        *NodeSpec            `json:"child_node,omitempty"`
 	RawInput         map[string]any       `json:"raw_input,omitempty"`
+	Args             map[string]any       `json:"args,omitempty"`
 	OutputSchema     map[string]any       `json:"output_schema,omitempty"`
 	Runtime          string               `json:"runtime,omitempty"`
 	Script           string               `json:"script,omitempty"`
@@ -142,7 +145,9 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 	}
 	spec := &NodeSpec{
 		ID:               n.ID,
+		Kind:             n.Kind,
 		Type:             n.Type,
+		Solution:          n.Solution,
 		Agent:            n.Agent,
 		Skill:            n.Skill,
 		AgentFlowID:      n.AgentFlowID,
@@ -162,10 +167,14 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		NetworkPolicy:    n.NetworkPolicy,
 		Workspace:        n.Workspace,
 		RawInput:         n.Input,
+		Args:             n.Args,
 		OutputSchema:     n.OutputSchema,
 	}
 	if n.Node != nil {
 		spec.ChildNode = NodeSpecFromNode(n.Node)
+	}
+	if spec.Kind == "" {
+		spec.Kind = spec.Type
 	}
 	return spec
 }

@@ -57,7 +57,7 @@ func TestService_CanHandle(t *testing.T) {
 
 func TestNewOIDCClient(t *testing.T) {
 	cfg := config.OIDCConfig{
-		IssueURL: "http://localhost:5556/dex",
+		IssueURL: "http://localhost:8080/realms/master",
 		ClientID: "flowgent",
 		Scope:    "openid profile email",
 	}

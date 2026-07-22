@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: supervisor
@@ -8,17 +8,25 @@ metadata:
   description: Senior autonomous orchestration controller that plans, routs, and supervises the security fix pipeline
 
 spec:
-  model: deepseek/deepseek-chat
+  model: deepseek-pro
   max_tokens: 16384
   temperature: 0.2
   soul: |-
-    You are a senior autonomous orchestration controller. Output ONLY a JSON object.
+    You are a senior autonomous orchestration controller.
   instruction: |-
     Decide the next action based on the execution state:
     - "continue" if everything looks good, proceed to next node
     - "retry" if a node should be re-executed
     - "inject" to add extra review
     - "abort" if execution is unsafe
-
-    Reply with ONLY a JSON object, no other text:
-    {"action":"continue","target":"","reason":"brief explanation"}
+  output_schema:
+    type: object
+    properties:
+      action:
+        type: string
+        enum: [continue, retry, inject, abort]
+      target:
+        type: string
+      reason:
+        type: string
+    required: [action, target, reason]

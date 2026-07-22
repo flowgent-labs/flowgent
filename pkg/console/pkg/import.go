@@ -222,8 +222,24 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		fmt.Printf("  OK Skill: %s\n", spec.ID)
 
+		case "notifychannel":
+			var ch entities.NotifyChannelInfo
+			if err := parseSpec(ri.Spec, &ch); err != nil {
+				fmt.Printf("Error parsing NotifyChannel spec in %s: %v\n", filePath, err)
+				return false
+			}
+			ch.ID = uuid.New().String()
+			ch.CreatedAt = time.Now()
+			ch.UpdatedAt = time.Now()
+			applyWrapperMeta(ri, &ch.BaseEntity, &ch.Labels, fc.tenant)
+			if err := ls.channels.Save(fc.ctx, &ch); err != nil {
+				fmt.Printf("Error saving NotifyChannel %s: %v\n", ch.Name, err)
+				return false
+			}
+			fmt.Printf("  OK NotifyChannel: %s\n", ch.Name)
+
 	default:
-		fmt.Printf("Unknown kind %q in %s — expected Agent|MCP|LLMProvider|Flow|FlowRun|Skill\n", ri.Kind, filePath)
+		fmt.Printf("Unknown kind %q in %s — expected Agent|MCP|LLMProvider|Flow|FlowRun|NotifyChannel|Skill\n", ri.Kind, filePath)
 		return false
 	}
 	return true

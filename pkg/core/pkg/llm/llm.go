@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -35,7 +36,7 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
-				slog.Debug("llm loaded provider", "id", dbp.ID, "type", dbp.Type, "status", dbp.Status, "apiKeyLen", len(dbp.ApiKey))
+				slog.Debug("llm loaded provider", "id", dbp.ID, "provider", dbp.Provider, "status", dbp.Status, "apiKeyLen", len(dbp.ApiKey))
 				if dbp.Status != "ACTIVE" || dbp.ID == "" {
 					slog.Debug("llm skip provider", "id", dbp.ID, "status", dbp.Status)
 					continue
@@ -68,17 +69,17 @@ func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 	pc := newProvider(&dbP)
 	if pc != nil {
 		m.providers[dbP.ID] = pc
-		if dbP.Type != "" && dbP.Type != dbP.ID {
-			m.providers[dbP.Type] = pc
+		if dbP.Provider != "" && dbP.Provider != dbP.ID {
+			m.providers[dbP.Provider] = pc
 		}
 	}
 }
 
 func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
-	switch p.Type {
-	case "anthropic":
+	switch {
+	case strings.EqualFold(p.Provider, "anthropic"):
 		return newAnthropicProvider(p)
-	case "gemini":
+	case strings.EqualFold(p.Provider, "gemini"):
 		return newGeminiProvider(p)
 	default:
 		return newOpenAIProvider(p)

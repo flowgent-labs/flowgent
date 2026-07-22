@@ -244,7 +244,7 @@ func (r *ITRunner) SeedLLMProvider(endpoint string) {
 	// doesn't pick up a URL whose httptest server has already been closed.
 	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_providers WHERE provider = 'mock'`)
 	r.Post("/api/v1/"+r.Tenant+"/llm/providers", entities.LlmProviderInfo{
-		Type: "mock", Endpoint: endpoint, ApiKey: "test-key",
+		Provider: "mock", Endpoint: endpoint, ApiKey: "test-key",
 		Status: "ACTIVE", Enabled: true, RateLimit: 100000,
 	})
 }

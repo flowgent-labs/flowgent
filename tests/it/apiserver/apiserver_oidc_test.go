@@ -19,8 +19,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
-const dexAddr = "localhost:5556"
-const dexIssuer = "http://localhost:5556/dex"
+const kcIssuer = "http://127.0.0.1:8080/realms/master"
 const oidcCallbackPort = 58080
 
 const oidcTestPrivKey = `-----BEGIN EC PRIVATE KEY-----
@@ -34,11 +33,11 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEipUhjeQH8TLc1KXQ+NZjfovpdZLu
 PRdwgkS1x97sRQJ44gVNZW0h6qqAmNRYMzoW/cS87D5yB1tSV/PtFC0E9A==
 -----END PUBLIC KEY-----`
 
-func dexAvailable(t *testing.T) bool {
+func oidcAvailable(t *testing.T) bool {
 	t.Helper()
-	resp, err := http.Get(dexIssuer + "/.well-known/openid-configuration")
+	resp, err := http.Get(kcIssuer + "/.well-known/openid-configuration")
 	if err != nil {
-		t.Skipf("Dex OIDC server not available at %s: %v\n  Start with: cd deploy/docker/dex && podman run -d --name dex --network host --rm -v \"$(pwd)/config.yaml:/etc/dex/config.yaml:ro\" docker.io/dexidp/dex:v2.41.1 dex serve /etc/dex/config.yaml", dexIssuer, err)
+		t.Skipf("Keycloak OIDC server not available at %s: %v\n  Start with: cd deploy/docker/keycloak && docker compose up -d", kcIssuer, err)
 		return false
 	}
 	resp.Body.Close()
@@ -59,10 +58,10 @@ func mustOIDCTokenService(t *testing.T) *auth.TokenService {
 }
 
 func TestE2E_OIDC_Discovery(t *testing.T) {
-	if !dexAvailable(t) {
+	if !oidcAvailable(t) {
 		return
 	}
-	resp, err := http.Get(dexIssuer + "/.well-known/openid-configuration")
+	resp, err := http.Get(kcIssuer + "/.well-known/openid-configuration")
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
@@ -74,8 +73,8 @@ func TestE2E_OIDC_Discovery(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
 		t.Fatalf("decode discovery: %v", err)
 	}
-	if discovery["issuer"] != dexIssuer {
-		t.Errorf("issuer = %v, want %s", discovery["issuer"], dexIssuer)
+	if discovery["issuer"] != kcIssuer {
+		t.Errorf("issuer = %v, want %s", discovery["issuer"], kcIssuer)
 	}
 	if discovery["authorization_endpoint"] == "" {
 		t.Error("missing authorization_endpoint")
@@ -86,12 +85,12 @@ func TestE2E_OIDC_Discovery(t *testing.T) {
 }
 
 func TestE2E_OIDC_BuildAuthURL(t *testing.T) {
-	if !dexAvailable(t) {
+	if !oidcAvailable(t) {
 		return
 	}
 	redirectURL := fmt.Sprintf("http://localhost:%d/auth/callback/oidc", oidcCallbackPort)
 	cfg := config.OIDCConfig{
-		Enabled: true, IssueURL: dexIssuer, ClientID: "flowgent-client",
+		Enabled: true, IssueURL: kcIssuer, ClientID: "flowgent-client",
 		ClientSecret: "flowgent-secret", RedirectURL: redirectURL, Scope: "openid profile email",
 	}
 	ts := mustOIDCTokenService(t)
@@ -107,8 +106,8 @@ func TestE2E_OIDC_BuildAuthURL(t *testing.T) {
 	if location == "" {
 		t.Fatal("no Location header")
 	}
-	if !strings.Contains(location, dexIssuer+"/auth") {
-		t.Errorf("redirect URL doesn't point to Dex auth endpoint: %s", location)
+	if !strings.Contains(location, kcIssuer+"/protocol/openid-connect/auth") {
+		t.Errorf("redirect URL doesn't point to Keycloak auth endpoint: %s", location)
 	}
 	if !strings.Contains(location, "response_type=code") {
 		t.Error("missing response_type=code")
@@ -120,7 +119,7 @@ func TestE2E_OIDC_BuildAuthURL(t *testing.T) {
 
 func TestE2E_OIDC_ServiceInterface(t *testing.T) {
 	cfg := config.OIDCConfig{
-		Enabled: true, IssueURL: dexIssuer, ClientID: "flowgent-client",
+		Enabled: true, IssueURL: kcIssuer, ClientID: "flowgent-client",
 		ClientSecret: "flowgent-secret", RedirectURL: "http://localhost:58080/auth/callback/oidc",
 		Scope: "openid profile email",
 	}
@@ -149,12 +148,12 @@ func TestE2E_OIDC_ServiceInterface(t *testing.T) {
 }
 
 func TestE2E_OIDC_FullFlow(t *testing.T) {
-	if !dexAvailable(t) {
+	if !oidcAvailable(t) {
 		return
 	}
 	redirectURL := fmt.Sprintf("http://localhost:%d/auth/callback/oidc", oidcCallbackPort)
 	oidcCfg := config.OIDCConfig{
-		Enabled: true, IssueURL: dexIssuer, ClientID: "flowgent-client",
+		Enabled: true, IssueURL: kcIssuer, ClientID: "flowgent-client",
 		ClientSecret: "flowgent-secret", RedirectURL: redirectURL, Scope: "openid profile email",
 	}
 	authCfg := config.AuthConfig{

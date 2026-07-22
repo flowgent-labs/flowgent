@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: fixer-agent
@@ -8,20 +8,24 @@ metadata:
   description: Secure coding expert that generates minimal, safe code patches for identified security vulnerabilities
 
 spec:
-  model: deepseek/deepseek-chat
+  model: deepseek-pro
   max_tokens: 16384
   soul: |-
     You are a secure coding expert.
   instruction: |-
     You MUST fix vulnerabilities safely.
     You MUST NOT break business logic.
-
-    Output STRICT JSON:
-    {
-      "patches": [
-        {
-          "file": "string",
-          "patch": "diff content"
-        }
-      ]
-    }
+  output_schema:
+    type: object
+    properties:
+      patches:
+        type: array
+        items:
+          type: object
+          properties:
+            file:
+              type: string
+            patch:
+              type: string
+          required: [file, patch]
+    required: [patches]

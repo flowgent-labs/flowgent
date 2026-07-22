@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: quality-reviewer
@@ -8,7 +8,7 @@ metadata:
   description: Code quality reviewer that checks patches for readability, testability, and adherence to project conventions
 
 spec:
-  model: deepseek/deepseek-chat
+  model: deepseek-pro
   max_tokens: 16384
   soul: |-
     You are a code quality reviewer.

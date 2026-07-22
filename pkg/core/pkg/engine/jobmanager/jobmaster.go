@@ -457,22 +457,19 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 }
 
 func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[string]any {
-	// Build scope: vars + dependency node outputs.
+	// Scope: vars + ALL node outputs (not just direct deps), so that
+	// a node can reference any ancestor's output via ${ancestor.field}.
 	scope := map[string]map[string]any{"vars": jm.resolvedVars}
-	for _, dep := range jm.Deps(nodeID) {
-		if o, ok := jm.nodeOutputs[dep]; ok {
-			scope[dep] = o
-		}
+	for nid, output := range jm.nodeOutputs {
+		scope[nid] = output
 	}
 
 	in := make(map[string]any)
 	for k, v := range yamlInput {
 		in[k] = resolveDeep(v, scope)
 	}
-	for _, dep := range jm.Deps(nodeID) {
-		if o, ok := jm.nodeOutputs[dep]; ok {
-			in[dep] = o
-		}
+	for nid, output := range jm.nodeOutputs {
+		in[nid] = output
 	}
 	return in
 }
@@ -480,12 +477,21 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 func resolveDeep(v any, scope map[string]map[string]any) any {
 	switch val := v.(type) {
 	case string:
-		// If the entire value is ${node-id} (no field selector), replace with
-		// the raw output map rather than a Go string representation.
-		if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") && !strings.Contains(val, ".") && !strings.Contains(val, " ") {
-			nodeID := val[2 : len(val)-1]
-			if node, ok := scope[nodeID]; ok {
-				return node
+		// If the entire value is exactly one reference (${node} or ${node.field}),
+		// return the raw value so that arrays/maps pass through as real Go types
+		// rather than fmt.Sprintf("%v", ...) strings which downstream callers
+		// (MCP tools, JSON serialization) cannot parse.
+		if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") && !strings.Contains(val, " ") {
+			inner := val[2 : len(val)-1]
+			if parts := strings.SplitN(inner, ".", 2); len(parts) > 0 {
+				if node, ok := scope[parts[0]]; ok {
+					if len(parts) == 1 {
+						return node
+					}
+					if fieldVal, ok := node[parts[1]]; ok {
+						return fieldVal
+					}
+				}
 			}
 		}
 		return utils.Resolve(val, scope)

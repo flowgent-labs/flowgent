@@ -659,7 +659,7 @@ func (s *consoleState) llmList(args []string) {
 	fmt.Println(strings.Repeat("-", 110))
 	for _, p := range items {
 		modelCount := len(p.Models)
-		fmt.Printf("%-38s %-24s %-24d %s\n", p.ID, truncate(p.Type, 24), modelCount, truncate(p.Endpoint, 40))
+		fmt.Printf("%-38s %-24s %-24d %s\n", p.ID, truncate(p.Provider, 24), modelCount, truncate(p.Endpoint, 40))
 	}
 	fmt.Printf("(%d providers)\n", len(items))
 }

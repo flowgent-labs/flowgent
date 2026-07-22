@@ -34,7 +34,24 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.Executi
 		return nil, fmt.Errorf("supervisor agent not found: %s", plan.NodeSpec.Agent)
 	}
 
-	resp, err := e.llmClient.Generate(ctx, agent.Soul, formatPlanInput(plan), agent.Model, 0.2)
+	userPrompt := formatPlanInput(plan)
+	instruction := plan.NodeSpec.Instruction
+	if instruction == "" {
+		instruction = agent.Instruction
+	}
+	if instruction != "" {
+		userPrompt = instruction + "\n\n" + userPrompt
+	}
+	outputSchema := agent.OutputSchema
+	if plan.NodeSpec.OutputSchema != nil {
+		outputSchema = plan.NodeSpec.OutputSchema
+	}
+	if outputSchema != nil {
+		schemaJSON, _ := json.MarshalIndent(outputSchema, "", "  ")
+		userPrompt += "\n\nYou MUST output a valid JSON object matching this schema:\n```json\n" + string(schemaJSON) + "\n```\nOutput ONLY the JSON, no other text."
+	}
+
+	resp, err := e.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, 0.2)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor LLM call failed: %w", err)
 	}

@@ -101,9 +101,9 @@ test-x402:
 test-it:
 	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 300s ./...
 
-# Auth integration tests need a live LDAP (GLAuth) / OIDC (Dex) container:
-#   cd deploy/docker/glauth && docker compose up -d   (then: make test-it-ldap)
-#   cd deploy/docker/dex    && docker compose up -d   (then: make test-it-oidc)
+# Auth integration tests need a live LDAP (GLAuth) / OIDC (Keycloak) container:
+#   cd deploy/docker/glauth   && docker compose up -d   (then: make test-it-ldap)
+#   cd deploy/docker/keycloak && docker compose up -d   (then: make test-it-oidc)
 test-it-ldap:
 	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -tags=ldap -timeout 120s -run TestE2E_LDAP ./...
 test-it-oidc:

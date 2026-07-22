@@ -10,9 +10,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
+	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
 )
+
+// fixEnabled derives the Enabled field from Status for API responses.
+// Enabled has db:"-" so it is never persisted; Status is the source of truth.
+func fixEnabled(p *entities.LlmProviderInfo) *entities.LlmProviderInfo {
+	if p != nil {
+		p.Enabled = p.Status == "ACTIVE"
+	}
+	return p
+}
 
 // LlmProviderHandler serves DB-backed LLM provider definitions.
 type LlmProviderHandler struct {
@@ -20,7 +29,7 @@ type LlmProviderHandler struct {
 }
 
 // NewLlmProviderHandler creates an LlmProviderHandler from an IStore.
-func NewLlmProviderHandler(s store.IStore) *LlmProviderHandler {
+func NewLlmProviderHandler(s storepkg.IStore) *LlmProviderHandler {
 	var lpStore llmprovider.ILlmProviderStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
@@ -41,6 +50,9 @@ func (h *LlmProviderHandler) List(w http.ResponseWriter, r *http.Request) {
 	items := page.Items
 	if items == nil {
 		items = []*entities.LlmProviderInfo{}
+	}
+	for _, p := range items {
+		fixEnabled(p)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -92,7 +104,7 @@ func (h *LlmProviderHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(p)
+	json.NewEncoder(w).Encode(fixEnabled(p))
 }
 
 // Update modifies an existing LLM provider.

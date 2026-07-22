@@ -240,25 +240,25 @@ notifier:
   # Example (for reference only — use `flowgent console` to create):
   # channels:
   #   - name: telegram-ops
-  #     type: telegram
+  #     provider: telegram
   #     enabled: false
   #     config:
   #       bot_token: "${TELEGRAM_BOT_TOKEN}"
   #       chat_id: "-1001234567890"
   #   - name: dingtalk-ops
-  #     type: dingtalk
+  #     provider: dingtalk
   #     enabled: false
   #     config:
   #       webhook_url: "${DINGTALK_WEBHOOK_URL}"
   #       secret: "${DINGTALK_SECRET}"
   #   - name: slack-ops
-  #     type: slack
+  #     provider: slack
   #     enabled: false
   #     config:
   #       webhook_url: "${SLACK_WEBHOOK_URL}"
   #       channel: "#flowgent-alerts"
   #   - name: email-ops
-  #     type: email
+  #     provider: email
   #     enabled: false
   #     config:
   #       smtp_host: "smtp.example.com"
@@ -267,7 +267,7 @@ notifier:
   #       password: "<YOUR_SMTP_PASSWORD>"
   #       from: "flowgent@example.com"
   #   - name: webhook-generic
-  #     type: webhook
+  #     provider: webhook
   #     enabled: false
   #     config:
   #       url: "https://hooks.example.com/flowgent"

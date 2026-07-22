@@ -76,7 +76,7 @@ func TestNotifier_ChannelCRUD(t *testing.T) {
 	base := fs.APIURL + "/api/v1/" + tenant + "/notifications/channels"
 
 	ch := map[string]any{
-		"name": "test-telegram", "channel_type": "telegram",
+		"name": "test-telegram", "provider": "telegram",
 		"config": map[string]any{"chat_id": "-1001234567890", "token": "test-bot-token"},
 		"enabled": true,
 	}
@@ -150,7 +150,7 @@ func TestNotifier_FlowCompletionNotification(t *testing.T) {
 
 	fs := it.New(t, flow)
 	ch := map[string]any{
-		"name": "flow-complete-telegram", "channel_type": "telegram",
+		"name": "flow-complete-telegram", "provider": "telegram",
 		"config": map[string]any{"chat_id": "-1001234567890", "token": "test-bot-token"},
 		"enabled": true,
 	}

@@ -78,7 +78,7 @@ def run():
             f"{API}/api/v1/{TENANT}/notifications/channels",
             json={
                 "name": channel_name,
-                "type": "webhook",
+                "provider": "webhook",
                 "config": {"url": "https://httpbin.org/post"},
                 "enabled": True,
             },
@@ -139,7 +139,7 @@ def run():
 
             event_payload = {
                 "channel": channel_name,
-                "type": "webhook",
+                "provider": "webhook",
                 "message": "e2e notification event",
                 "run_id": run_id,
             }

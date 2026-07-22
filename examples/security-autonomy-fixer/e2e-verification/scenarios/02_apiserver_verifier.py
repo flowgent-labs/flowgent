@@ -664,7 +664,7 @@ def run():
                 "provider": "openai",
                 "endpoint": "https://api.openai.com/v1",
                 "apikey": "sk-test",
-                "model": "gpt-4",
+                "defaultModel": "gpt-4",
             },
             "update": {"timeout_ms": 60000},
         },
@@ -675,7 +675,7 @@ def run():
             "id_field": "id",
             "create": {
                 "name": f"test-channel-{rand_id()}",
-                "type": "webhook",
+                "provider": "webhook",
                 "config": {"url": "https://example.com/hook"},
                 "enabled": True,
             },

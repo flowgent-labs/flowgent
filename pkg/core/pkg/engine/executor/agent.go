@@ -83,6 +83,10 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 	if plan.NodeSpec.OutputSchema != nil {
 		outputSchema = plan.NodeSpec.OutputSchema
 	}
+	if outputSchema != nil {
+		schemaJSON, _ := json.MarshalIndent(outputSchema, "", "  ")
+		userPrompt += "\n\nYou MUST output a valid JSON object matching this schema:\n```json\n" + string(schemaJSON) + "\n```\nOutput ONLY the JSON, no other text."
+	}
 
 	temperature := 0.3
 	if agent.Temperature != nil {

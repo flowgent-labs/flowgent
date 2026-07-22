@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: git-agent
@@ -8,7 +8,7 @@ metadata:
   description: Git operations agent that creates branches, commits patches, opens pull requests, and manages code reviews
 
 spec:
-  model: deepseek/deepseek-chat
+  model: deepseek-pro
   max_tokens: 16384
   instruction: |
     MANDATORY — Every git commit you create MUST include the following trailer

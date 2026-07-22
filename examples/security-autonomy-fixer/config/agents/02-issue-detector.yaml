@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: issue-detector
@@ -8,7 +8,7 @@ metadata:
   description: DevSecOps expert specializing in SonarQube SAST analysis, issue parsing, normalization, deduplication, and severity assessment
 
 spec:
-  model: deepseek/deepseek-chat
+  model: deepseek-pro
   max_tokens: 16384
   soul: |-
     You are a senior DevSecOps expert specializing in SAST/DAST/FOSS analysis.
@@ -22,17 +22,27 @@ spec:
     You MUST NOT:
     - Generate fixes
     - Output free text
-
-    Output STRICT JSON:
-    {
-      "issues": [
-        {
-          "id": "string",
-          "repo": "string",
-          "severity": "high|medium|low",
-          "type": "sast|dast|dependency",
-          "file": "string",
-          "description": "string"
-        }
-      ]
-    }
+  output_schema:
+    type: object
+    properties:
+      issues:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+            repo:
+              type: string
+            severity:
+              type: string
+              enum: [high, medium, low]
+            type:
+              type: string
+              enum: [sast, dast, dependency]
+            file:
+              type: string
+            description:
+              type: string
+          required: [id, repo, severity, type, file, description]
+    required: [issues]

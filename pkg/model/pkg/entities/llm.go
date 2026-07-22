@@ -5,7 +5,7 @@ package entities
 type LlmProviderInfo struct {
 	BaseEntity
 
-	Type        string            `json:"type" yaml:"type" db:"provider"`
+	Provider    string            `json:"provider" yaml:"provider" db:"provider"`
 	Enabled     bool              `json:"enabled" yaml:"enabled" db:"-"`
 	Status      string            `json:"status" yaml:"status" db:"status"`
 	Timeout     string            `json:"timeout" yaml:"timeout" db:"-"`
@@ -14,7 +14,7 @@ type LlmProviderInfo struct {
 	Credentials map[string]any    `json:"credentials" yaml:"credentials" db:"-"`
 	Proxy       string            `json:"proxy,omitempty" yaml:"proxy,omitempty" db:"-"`
 	RateLimit   int               `json:"rate_limit" yaml:"rate_limit" db:"-"`
-	Model       string            `json:"model,omitempty" yaml:"model,omitempty" db:"model"`
+	DefaultModel string           `json:"defaultModel" yaml:"defaultModel" db:"model"`
 	Models      []LlmModelInfo    `json:"models" yaml:"models" db:"models"`
 	ApiKey      string            `json:"apikey" yaml:"apikey" db:"apikey"`
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`

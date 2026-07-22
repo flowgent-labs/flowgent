@@ -1,4 +1,4 @@
-apiVersion: console.flowgent.io/v1
+apiVersion: core.flowgent.io/v1
 kind: Skill
 metadata:
   name: nexus3-retrieval
@@ -17,34 +17,36 @@ spec:
     default_top_n: 5
   nodes:
     - id: query-versions
-      type: sandbox
-      runtime: bash
-      timeout: 30s
-      script: |
-        #!/bin/bash
-        # Runs nexus3-iq.sh get-available-versions
-        SCRIPT_DIR="/workspace/nexus3-retrieval/scripts"
-        cd "$SCRIPT_DIR" 2>/dev/null || cd "$(dirname "$0")"
-        bash nexus3-iq.sh get-available-versions \
-          "${INPUT_GROUP_ID}" "${INPUT_ARTIFACT_ID}" "${INPUT_CURRENT_VERSION:-}"
-      network_policy:
-        mode: allowlist
-        allowed:
-          - "nexus3:8081"
-          - "sonatypeiq:8070"
+      kind: sandbox
+      spec:
+        runtime: bash
+        timeout: 30s
+        script: |
+          #!/bin/bash
+          # Runs nexus3-iq.sh get-available-versions
+          SCRIPT_DIR="/workspace/nexus3-retrieval/scripts"
+          cd "$SCRIPT_DIR" 2>/dev/null || cd "$(dirname "$0")"
+          bash nexus3-iq.sh get-available-versions \
+            "${INPUT_GROUP_ID}" "${INPUT_ARTIFACT_ID}" "${INPUT_CURRENT_VERSION:-}"
+        network_policy:
+          mode: allowlist
+          allowed:
+            - "nexus3:8081"
+            - "sonatypeiq:8070"
     - id: filter-results
-      type: agent
-      agent: issue-detector
-      input:
-        raw_result: "${query-versions}"
-        top_n: "${vars.default_top_n}"
+      kind: agent
+      spec:
+        agent: issue-detector
+        args:
+          raw_result: "${query-versions}"
+          top_n: "${vars.default_top_n}"
       instruction: |
         Parse the version query result. If warning is non-empty, flag it.
         Sort: recommended versions first, then by firewall=allow, then version desc.
         Return top-N versions as STRICT JSON:
-        {"versions":[{"version":"...","firewall":"allow|unknown","recommended":true|false,"source":"iq|nexus3"}]}
+        {"versions":[{"version":"...","firewall":"allow|unknown","recommended":true|false","source":"iq|nexus3"}]}
     - id: end
-      type: noop
+      kind: noop
   edges:
     - { from: query-versions, to: filter-results }
     - { from: filter-results, to: end }
