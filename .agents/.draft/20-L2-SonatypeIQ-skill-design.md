@@ -1,7 +1,7 @@
 # Nexus3 + SonatypeIQ Skill 设计草稿
 
 **Date:** 2026-05-30
-**Decision:** 合并 `examples/mcp-nexus3/` + `examples/mcp-sonatypeiq/` → skill
+**Decision:** 合并 `use-cases/mcp-nexus3/` + `use-cases/mcp-sonatypeiq/` → skill
 
 ---
 
@@ -68,9 +68,9 @@ get-available-versions:
 
 ## 执行计划
 
-1. 删除 `examples/mcp-nexus3/`
-2. 删除 `examples/mcp-sonatypeiq/`
-3. 更新 `examples/skills/nexus3-retrieval/`
+1. 删除 `use-cases/mcp-nexus3/`
+2. 删除 `use-cases/mcp-sonatypeiq/`
+3. 更新 `use-cases/skills/nexus3-retrieval/`
    - 重写 `scripts/` → `nexus3-iq.sh get-available-versions`
    - 更新 `skill.yaml` — 使用单个 sandbox node 调用脚本
    - 更新 `SKILL.md` — 文档

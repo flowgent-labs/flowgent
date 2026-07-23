@@ -60,8 +60,8 @@ endif
 
 build-all: build-core build-wallet
 	@mkdir -p $(BIN_DIR)
-	cd examples/security-autonomy-fixer/config/mcps/github && GOWORK=off CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/github-mcp .
-	cd examples/security-autonomy-fixer/config/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/sonarqube-mcp .
+	cd use-cases/security-autonomy-fixer/config/mcps/github && GOWORK=off CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/github-mcp .
+	cd use-cases/security-autonomy-fixer/config/mcps/sonarqube && GOWORK=off CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -ldflags="-s -w" -o ../../../../$(BIN_DIR)/sonarqube-mcp .
 
 build-core:
 	@mkdir -p $(BIN_DIR)

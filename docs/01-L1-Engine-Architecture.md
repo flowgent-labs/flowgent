@@ -1370,7 +1370,7 @@ model (→ common)
 
 ### 16.1 Core Insight
 
-**A Skill is a sub-AgentFlow.** Nothing more. A "skill" accomplishes a task — which inherently means orchestrating multiple tools and/or agents. That's exactly what an AgentFlow is. Users migrating from Claude Code, Codex, Copilot, or any other agent framework can drop their existing skills into Flowgent as AgentFlow YAML files and reference them as `type: agentflow` nodes.
+**A Skill is a sub-AgentFlow.** Nothing more. A "skill" accomplishes a task — which inherently means orchestrating multiple tools and/or agents. That's exactly what an AgentFlow is. Users migrating from Claude Code, Codex, Copilot, or any other agent framework can drop their existing skills into Flowgent as AgentFlow YAML files and reference them as `kind: agentflow` nodes.
 
 No new abstractions. No new executors. No ReAct loop. No mandatory schema.
 
@@ -1397,28 +1397,40 @@ type AgentFlowSpec struct {
 
 ```yaml
 # etc/skills/01-dependency-scan.yaml
-id: dependency-scan
-kind: skill
-summary: "Scan project dependencies for known CVEs"
-nodes:
-  - id: clone
-    type: tool
-    tool: github
-    input: { action: clone_repo, url: "${input.repo_url}" }
-  - id: scan
-    type: tool
-    tool: dependency-checker
-    input: { path: "${clone.output.path}" }
-  - id: normalize
-    type: agent
-    agent: issue-detector
-    input: { raw_output: "${scan.output}" }
-edges:
-  - { from: clone, to: scan }
-  - { from: scan, to: normalize }
+apiVersion: core.flowgent.io/v1
+kind: Flow
+metadata:
+  name: dependency-scan
+spec:
+  id: dependency-scan
+  kind: skill
+  summary: "Scan project dependencies for known CVEs"
+  nodes:
+    - id: clone
+      kind: tool
+      spec:
+        tool: github
+        args:
+          action: clone_repo
+          url: ${vars.repo_url}
+    - id: scan
+      kind: tool
+      spec:
+        tool: dependency-checker
+        args:
+          path: ${clone.output.path}
+    - id: normalize
+      kind: agent
+      spec:
+        agent: issue-detector
+        args:
+          raw_output: ${scan.output}
+  edges:
+    - { from: clone, to: scan }
+    - { from: scan, to: normalize }
 ```
 
-Reference from any flow: `type: agentflow`, `agentflow: dependency-scan`.
+Reference from any flow: `kind: agentflow`, `agentflow: dependency-scan`.
 
 ### 16.4 Why Skill Instead of MCP Tool — The Nexus3 Case
 
@@ -1453,14 +1465,16 @@ environment (dev/staging/production) without rebuilding any binaries.
 ```yaml
 # In the flow YAML — skill replaces MCP tool
 - id: fetch-safe-deps
-  skill: nexus3-retrieval
-  input:
-    repo: "${vars.repo}"
-    maven_coordinates: "${scan-sonatypeiq.maven_coords}"
-    top_n: 3
+  kind: skill
+  spec:
+    skill: nexus3-retrieval
+    args:
+      repo: ${vars.repo}
+      maven_coordinates: ${scan-sonatypeiq.maven_coords}
+      top_n: 3
 ```
 
-This is the same `type: skill` / `type: agentflow` mechanism described in §13.1–13.3.
+This is the same `kind: skill` / `kind: agentflow` mechanism described in §13.1–13.3.
 No new executors. No new abstractions. Just a flow referencing another flow.
 
 ---
@@ -1469,7 +1483,7 @@ No new executors. No new abstractions. Just a flow referencing another flow.
 
 ### 17.1 Tools Belong to the DAG, Not the Agent
 
-Tools are deterministic DAG nodes (`type: tool`). The flow designer decides which tool to call, at which step, with which inputs. The agent receives tool output and reasons about it — it never decides to call a tool itself. This is the architectural line between enterprise orchestration (DAG-controlled) and personal AI assistants (ReAct loop).
+Tools are deterministic DAG nodes (`kind: tool`). The flow designer decides which tool to call, at which step, with which inputs. The agent receives tool output and reasons about it — it never decides to call a tool itself. This is the architectural line between enterprise orchestration (DAG-controlled) and personal AI assistants (ReAct loop).
 
 ### 17.2 AgentDef — Structured Additions
 
@@ -1957,10 +1971,10 @@ flowgent console -c etc/staging.yaml -- import /tmp/prod-export.yaml
 
 # 3. Or — import individual resource files from a config directory
 flowgent console -c etc/dev.yaml -- import \
-  examples/security-autonomy-fixer/config/agents/ \
-  examples/security-autonomy-fixer/config/flows/ \
-  examples/security-autonomy-fixer/config/mcps/ \
-  examples/security-autonomy-fixer/config/skills/
+  use-cases/security-autonomy-fixer/config/agents/ \
+  use-cases/security-autonomy-fixer/config/flows/ \
+  use-cases/security-autonomy-fixer/config/mcps/ \
+  use-cases/security-autonomy-fixer/config/skills/
 ```
 
 ### 20.8 Module Dependency

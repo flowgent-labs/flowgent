@@ -293,7 +293,7 @@ kubectl apply -f deploy/docker/facilitator/k8s-deployment.yaml
 2. **Unit tests for x402 path** — parser, policy, facilitator, MQTT sign client, wallet signer, and HTTP retry flow need focused tests.
 3. **Approval event-driven mode** — Current approval integration still needs production-grade callback/event handling.
 4. **PG spending store** — `SpendingStore` uses in-memory default. Postgres-backed store is needed for distributed budget tracking.
-5. **Wallet E2E execution** — `examples/security-autonomy-fixer/e2e-verification/scenarios/11_wallet_verifier.py` is added but still depends on a running wallet service and EMQX to execute fully.
+5. **Wallet E2E execution** — `use-cases/security-autonomy-fixer/e2e-verification/scenarios/11_wallet_verifier.py` is added but still depends on a running wallet service and EMQX to execute fully.
 
 ---
 

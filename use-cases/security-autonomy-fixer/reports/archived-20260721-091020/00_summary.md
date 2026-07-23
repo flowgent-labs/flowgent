@@ -1,0 +1,29 @@
+# E2E Verification Summary
+
+**Result**: 0/1 passed  
+**Duration**: 0.9s  
+**Timestamp**: 2026-07-21 09:09:40  
+
+| # | Scenario | Status | Duration |
+|---|----------|--------|----------|
+| 09 | E2E | FAIL | 0.9s |
+
+## Failures
+
+### Scenario 09: E2E — Security Fixer Full Pipeline (capstone)
+```
+webhook returned 404: 404 page not found
+
+Traceback (most recent call last):
+  File "/home/agent/flowgent/examples/security-autonomy-fixer/e2e-verification/runner.py", line 179, in run_scenario
+    mod.run()
+  File "/home/agent/flowgent/examples/security-autonomy-fixer/e2e-verification/scenarios/09_e2e_security_fixer.py", line 817, in run
+    run_id = verify_trigger(s, conn)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/agent/flowgent/examples/security-autonomy-fixer/e2e-verification/scenarios/09_e2e_security_fixer.py", line 343, in verify_trigger
+    raise AssertionError(f"webhook returned {r.status_code}: {r.text[:200]}")
+AssertionError: webhook returned 404: 404 page not found
+
+
+```
+

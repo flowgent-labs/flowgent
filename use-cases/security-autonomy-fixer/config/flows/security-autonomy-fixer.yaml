@@ -1,0 +1,580 @@
+apiVersion: core.flowgent.io/v1
+kind: Flow
+metadata:
+  name: security-autonomy-fixer
+  tenant: default
+  labels: {}
+  status: active
+  description: End-to-end SonarQube SAST security remediation pipeline — discovery, analyze, fix, review, vote, approve, commit
+spec:
+  id: security-autonomy-fixer
+  priority: high
+  description: "SonarQube-only developer remediation agentflow for security vulnerabilities:\n\n1. DISCOVERY — Fetch latest\
+    \ commit; query SonarQube SAST issues via MCP.\n2. ANALYZE — issue-detector agent parses, normalizes, deduplicates, and\n\
+    \   assigns severity to all SonarQube findings.\n3. FIX — fixer-agent analyzes root cause and generates minimal secure\
+    \ patches.\n4. REVIEW — Three agents (security, quality, architecture) review in parallel.\n5. VOTE — Deterministic majority\
+    \ vote decides whether to proceed.\n6. SUPERVISOR — Safety gate with bounded retries, injection limits, abort.\n7. CONDITIONAL\
+    \ — Based on vote: proceed to human approval or loop back to fix.\n8. HUMAN APPROVAL — Async approval gate (24h timeout)\
+    \ before code push.\n9. COMMIT & PR — Check for existing open PR first (idempotent); reuse if found, else create branch, push, open new PR.\n10. RE-SCAN — Trigger SonarQube\
+    \ re-analysis, poll for completion, compare\n    pre/post results. If unresolved issues remain → loop back to fix\n  \
+    \  (max 3 iterations).\n11. REPORT — Compile final summary, notify via PR comment + email + webhook.\n"
+  triggers:
+  - type: schedule
+    cron: 0 */6 * * *
+  - type: webhook
+    provider: github
+    events:
+    - push
+    - pull_request
+  - type: webhook
+    provider: gitlab
+    events:
+    - push
+    - merge_request
+  vars:
+    repo: rengine
+    repo_path: /home/agent/rengine
+    max_iterations: 3
+    iteration: 0
+    target_severities: BLOCKER,CRITICAL,MAJOR
+    sonarqube_url: http://172.29.235.101:9000
+    notify_email_to: security-team@company.com
+    notify_webhook_url: https://outlook.office.com/webhook/xxxxx
+  nodes:
+  - id: get-commit
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: get_commit
+        owner: wl4g
+        repo: ${vars.repo}
+        sha: master
+  - id: scan-sonarqube
+    kind: tool
+    spec:
+      tool: sonarqube
+      args:
+        action: GetIssuesSearch
+        projectKey: ${vars.repo}
+        branch: master
+  - id: aggregate-issues
+    kind: agent
+    spec:
+      agent: issue-detector
+      args:
+        repo: ${vars.repo}
+        sonarqube_issues: ${scan-sonarqube}
+    instruction: 'Parse the SonarQube scan results. For each issue extract:
+
+      - Source (sonarqube), rule ID, severity
+
+      - File path, line number, message
+
+      - Deduplicate by file+rule (keep highest severity)
+
+      - Sort by severity (BLOCKER > CRITICAL > MAJOR)
+
+      - Select top 10 issues to fix (prioritize BLOCKER/CRITICAL)
+
+      '
+  - id: git-clone
+    kind: sandbox
+    spec:
+      runtime: bash
+      timeout: 300s
+      args:
+        repo: ${vars.repo}
+      network_policy:
+        mode: allowlist
+        allowed:
+        - github.com
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        INPUT=$(cat input.json)
+        REPO=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['repo'])")
+        REPO_PATH="/workspace/${REPO}"
+        TOKEN="${GITHUB_TOKEN:-}"
+
+        if [ -n "$TOKEN" ]; then
+          AUTH_URL="https://${TOKEN}@github.com/wl4g/${REPO}.git"
+        else
+          AUTH_URL="https://github.com/wl4g/${REPO}.git"
+        fi
+
+        if [ -d "$REPO_PATH/.git" ]; then
+          cd "$REPO_PATH"
+          git fetch origin master 2>&1 || true
+          git checkout master 2>&1 || true
+          git pull origin master 2>&1 || echo "Pull skipped (network or merge issue)"
+        else
+          mkdir -p "$REPO_PATH"
+          git clone --depth 1 --branch master "$AUTH_URL" "$REPO_PATH" 2>&1
+        fi
+
+        cd "$REPO_PATH"
+        COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        echo "{\"status\":\"ready\",\"path\":\"$REPO_PATH\",\"commit\":\"$COMMIT\"}"
+  - id: read-source-files
+    kind: sandbox
+    spec:
+      runtime: python3
+      timeout: 60s
+      args:
+        issues: ${aggregate-issues.issues}
+        repo_path: /workspace/rengine
+      script: |
+        #!/usr/bin/env python3
+        import json, os, sys
+
+        with open("input.json") as f:
+            inp = json.load(f)
+
+        issues = inp.get("issues", [])
+        repo_path = inp.get("repo_path", "/workspace/rengine")
+
+        files = {}
+        for issue in issues:
+            fp = issue.get("file", "")
+            if not fp:
+                continue
+            full = os.path.join(repo_path, fp)
+            if os.path.isfile(full) and full not in files:
+                with open(full) as f:
+                    files[full] = {"path": fp, "content": f.read()}
+
+        result = {"files": list(files.values())}
+        print(json.dumps(result))
+  - id: generate-fixes
+    kind: agent
+    spec:
+      agent: fixer-agent
+      args:
+        issues: ${aggregate-issues.issues}
+        source_files: ${read-source-files.files}
+        repo_path: ${vars.repo_path}
+      output_schema:
+        type: object
+        properties:
+          files:
+            type: array
+            items:
+              type: object
+              properties:
+                path:
+                  type: string
+                content:
+                  type: string
+              required: [path, content]
+          patches:
+            type: array
+            items:
+              type: object
+              properties:
+                file:
+                  type: string
+                rule:
+                  type: string
+                description:
+                  type: string
+              required: [file, rule, description]
+        required: [files, patches]
+    instruction: 'For each issue, use the provided source file content (in source_files)
+
+      to understand the code context and root cause, then generate a minimal secure fix.
+
+      Output the FULL corrected file content for each file, NOT diffs.
+
+      Do NOT change business logic. Prefer targeted fixes.
+
+      '
+  - id: review-security
+    kind: agent
+    spec:
+      agent: security-reviewer
+      args:
+        patches: ${generate-fixes.patches}
+    instruction: 'Review each patch for security correctness. Does it fix the root cause?
+
+      Could it introduce new vulnerabilities?
+
+      '
+  - id: review-quality
+    kind: agent
+    spec:
+      agent: quality-reviewer
+      args:
+        patches: ${generate-fixes.patches}
+      output_schema:
+        type: object
+        properties:
+          decision:
+            type: boolean
+          confidence:
+            type: number
+          reason:
+            type: string
+        required: [decision, confidence, reason]
+    instruction: 'Review each patch for code quality. Is it minimal? Does it follow best practices?
+
+      '
+  - id: review-arch
+    kind: agent
+    spec:
+      agent: arch-reviewer
+      args:
+        patches: ${generate-fixes.patches}
+      output_schema:
+        type: object
+        properties:
+          decision:
+            type: boolean
+          confidence:
+            type: number
+          reason:
+            type: string
+        required: [decision, confidence, reason]
+    instruction: 'Review each patch for architectural impact. Does it break design patterns?
+
+      Could it affect system behavior?
+
+      '
+  - id: committee
+    kind: committee
+    spec:
+      strategy:
+        type: majority
+      args:
+        votes:
+        - ${review-security.decision}
+        - ${review-quality.decision}
+        - ${review-arch.decision}
+  - id: supervisor-check
+    kind: supervisor
+    spec:
+      agent: supervisor
+      supervisor_config:
+        max_retries: 3
+        max_nodes: 50
+        max_injections: 5
+        allowed_actions:
+        - continue
+        - retry
+        - inject
+        - abort
+  - id: is-approved
+    kind: condition
+    spec:
+      expression: ${committee.decision} == true
+  - id: human-approval
+    kind: human
+    spec:
+      approval:
+        timeout: 24h
+        on_approve: continue
+        on_reject: abort
+  - id: check-existing-pr
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: list_pull_requests
+        owner: wl4g
+        repo: ${vars.repo}
+        state: open
+  - id: pr-exists
+    kind: condition
+    spec:
+      expression: ${check-existing-pr.length} > 0
+  - id: create-branch
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: create_branch
+        owner: wl4g
+        repo: ${vars.repo}
+        branch: security-bot/fix-${vars.run_id}
+        from_branch: master
+  - id: commit-fixes
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: push_files
+        owner: wl4g
+        repo: ${vars.repo}
+        branch: security-bot/fix-${vars.run_id}
+        files: ${generate-fixes.files}
+        message: '[Security Fix] Auto-generated security fix
+
+
+          Issues addressed:
+
+          ${aggregate-issues.issues}
+
+
+          Reviewed by: security, quality, architecture
+
+          Vote: ${committee.decision}
+
+          '
+  - id: create-pr
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: create_pull_request
+        owner: wl4g
+        repo: ${vars.repo}
+        title: '[Security Fix] Auto-generated security remediation'
+        head: security-bot/fix-${vars.run_id}
+        base: master
+        body: '## Security Fix Summary
+
+          Automatically generated by Flowgent Security Autonomy Fixer.
+
+
+          ### Issues Found
+
+          ${aggregate-issues.issues}
+
+
+          ### Review Results
+
+          - Security: ${review-security.decision} (${review-security.reason})
+
+          - Quality: ${review-quality.decision} (${review-quality.reason})
+
+          - Architecture: ${review-arch.decision} (${review-arch.reason})
+
+
+          ### Vote
+
+          Committee majority decision: **${committee.decision}**
+
+          '
+  - id: commit-to-existing
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: push_files
+        owner: wl4g
+        repo: ${vars.repo}
+        branch: ${check-existing-pr.0.head.ref}
+        files: ${generate-fixes.files}
+        message: '[Security Fix] Additional auto-generated security fixes
+
+
+          Issues addressed:
+
+          ${aggregate-issues.issues}
+
+
+          Reviewed by: security, quality, architecture
+
+          Vote: ${committee.decision}
+
+          '
+  - id: trigger-rescan
+    kind: tool
+    spec:
+      tool: sonarqube
+      args:
+        action: GetProjectsExportFindings
+        project: ${vars.repo}
+        branch: master
+  - id: wait-rescan
+    kind: sandbox
+    spec:
+      runtime: bash
+      timeout: 120s
+      retry:
+        max: 12
+        initial: 10s
+        max_delay: 10s
+        factor: 1.0
+      script: "#!/bin/bash\nSQ_URL=\"${SONARQUBE_URL:-${vars.sonarqube_url}}\"\nSQ_TOKEN=\"${SONARQUBE_TOKEN}\"\nPROJECT_KEY=\"\
+        ${vars.repo}\"\nSTATUS=$(curl -s --noproxy '*' -u \"${SQ_TOKEN}:\" \\\n  \"$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1\"\
+        \ \\\n  2>/dev/null | python3 -c \"import sys,json; print(json.load(sys.stdin).get('tasks',[{}])[0].get('status','PENDING'))\"\
+        \ 2>/dev/null || echo \"PENDING\")\nif [ \"$STATUS\" = \"SUCCESS\" ]; then echo '{\"status\":\"completed\"}'; exit 0;\
+        \ fi\necho '{\"status\":\"pending\"}'; exit 1\n"
+      network_policy:
+        mode: allowlist
+        allowed:
+        - ${vars.sonarqube_url}
+  - id: check-resolved
+    kind: tool
+    spec:
+      tool: sonarqube
+      args:
+        action: GetIssuesSearch
+        projectKey: ${vars.repo}
+        branch: master
+  - id: compare-results
+    kind: agent
+    spec:
+      agent: issue-detector
+      args:
+        before_issues: ${aggregate-issues.issues}
+        after_issues: ${check-resolved}
+        iteration: ${vars.iteration}
+        max_iterations: ${vars.max_iterations}
+      output_schema:
+        type: object
+        properties:
+          resolution:
+            type: string
+            enum: [complete, partial, none, max_iterations_reached]
+          resolved_count:
+            type: integer
+          remaining_count:
+            type: integer
+          resolved_issues:
+            type: array
+            items:
+              type: string
+          remaining_issues:
+            type: array
+            items:
+              type: string
+        required: [resolution, resolved_count, remaining_count, resolved_issues, remaining_issues]
+    instruction: 'Compare pre-fix and post-fix SonarQube issue lists.
+
+      Count how many of the original issues are now resolved.
+
+      - ALL resolved → resolution="complete"
+
+      - SOME resolved → resolution="partial"
+
+      - NONE resolved → resolution="none"
+
+      - iteration >= max_iterations → resolution="max_iterations_reached"
+
+      '
+  - id: fix-complete
+    kind: condition
+    spec:
+      expression: ${compare-results.resolution} == 'complete' || ${compare-results.resolution} == 'max_iterations_reached'
+  - id: summary-report
+    kind: agent
+    spec:
+      agent: issue-detector
+      args:
+        repo: ${vars.repo}
+        original_issues: ${aggregate-issues.issues}
+        patches: ${generate-fixes.patches}
+        vote_decision: ${committee.decision}
+        existing_pr: ${check-existing-pr}
+        new_pr: ${create-pr}
+        compare_result: ${compare-results}
+        scan_results:
+          sonarqube: ${scan-sonarqube}
+      output_schema:
+        type: object
+        properties:
+          report:
+            type: string
+          status:
+            type: string
+            enum: [completed, partial, failed]
+          issues_found:
+            type: integer
+          issues_fixed:
+            type: integer
+          pr_number:
+            type: integer
+        required: [report, status, issues_found, issues_fixed, pr_number]
+    instruction: 'Generate a final summary report in markdown format.
+
+      Include: total issues found, patches applied, review votes,
+
+      fix resolution status, PR link, scan result summaries.
+
+      For PR link and number: if existing_pr has entries, use the first entry''s html_url and number.
+      Otherwise fall back to new_pr.pr_url and new_pr.pr_number.
+
+      '
+  - id: notify-pr
+    kind: tool
+    spec:
+      tool: github
+      args:
+        action: add_issue_comment
+        owner: wl4g
+        repo: ${vars.repo}
+        issue_number: ${summary-report.pr_number}
+        body: ${summary-report.report}
+  - id: end
+    kind: noop
+  edges:
+  - from: get-commit
+    to: scan-sonarqube
+  - from: scan-sonarqube
+    to: aggregate-issues
+  - from: aggregate-issues
+    to: git-clone
+  - from: git-clone
+    to: read-source-files
+  - from: read-source-files
+    to: generate-fixes
+  - from: generate-fixes
+    to: review-security
+  - from: generate-fixes
+    to: review-quality
+  - from: generate-fixes
+    to: review-arch
+  - from: review-security
+    to: committee
+  - from: review-quality
+    to: committee
+  - from: review-arch
+    to: committee
+  - from: committee
+    to: supervisor-check
+  - from: supervisor-check
+    to: is-approved
+  - from: is-approved
+    to: human-approval
+    condition: true
+  - from: human-approval
+    to: check-existing-pr
+  - from: check-existing-pr
+    to: pr-exists
+  - from: pr-exists
+    to: create-branch
+    condition: false
+  - from: pr-exists
+    to: commit-to-existing
+    condition: true
+  - from: create-branch
+    to: commit-fixes
+  - from: commit-fixes
+    to: create-pr
+  - from: is-approved
+    to: generate-fixes
+    condition: false
+  - from: create-pr
+    to: trigger-rescan
+  - from: commit-to-existing
+    to: trigger-rescan
+  - from: trigger-rescan
+    to: wait-rescan
+  - from: wait-rescan
+    to: check-resolved
+  - from: check-resolved
+    to: compare-results
+  - from: compare-results
+    to: fix-complete
+  - from: fix-complete
+    to: summary-report
+    condition: true
+  - from: summary-report
+    to: notify-pr
+  - from: notify-pr
+    to: end
+  - from: fix-complete
+    to: generate-fixes
+    condition: false

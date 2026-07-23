@@ -59,6 +59,11 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 		return nil, fmt.Errorf("sandbox write script: %w", err)
 	}
 
+	if plan.Input != nil {
+		if err := e.writeInput(plan); err != nil {
+			return nil, fmt.Errorf("sandbox write input: %w", err)
+		}
+	}
 	if plan.NodeSpec.Workspace != "" {
 		if err := e.snapshotOriginals(plan); err != nil {
 			return nil, fmt.Errorf("sandbox snapshot: %w", err)
@@ -132,6 +137,18 @@ func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan, spanID string)
 		"plans", plan.PlanID,
 		spanID,
 	)
+}
+
+func (e *SandboxExecutor) writeInput(plan *entities.ExecutionPlan) error {
+	dir := plan.NodeSpec.ScriptPath
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(plan.Input, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "input.json"), data, 0600)
 }
 
 func (e *SandboxExecutor) writeScript(plan *entities.ExecutionPlan) error {
