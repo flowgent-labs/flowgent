@@ -29,7 +29,7 @@ services:
 
   # Auto-reset admin password to fixed value on first startup.
   nexus3-init:
-    image: alpine:3.21
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
     container_name: sonatypenexus3-init
     depends_on:
       sonatypenexus3:
