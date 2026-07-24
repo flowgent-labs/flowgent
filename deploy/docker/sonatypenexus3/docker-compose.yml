@@ -12,7 +12,7 @@ services:
     mem_limit: 3G
     memswap_limit: 3G
     environment:
-      - INSTALL4J_ADD_VM_PARAMS=-Xms1g -Xmx2g -XX:MaxRAMPercentage=75.0 -XX:MaxDirectMemorySize=1g -XX:+AlwaysPreTouch
+      - INSTALL4J_ADD_VM_PARAMS=-Xms1g -Xmx2g -XX:MaxRAMPercentage=75.0 -XX:MaxDirectMemorySize=1g -XX:+AlwaysPreTouch -Djava.util.prefs.userRoot=/nexus-data/javaprefs
       - NEXUS_CONTEXT=/
     ports:
       - "28081:8081"
@@ -24,7 +24,43 @@ services:
       timeout: 10s
       retries: 10
       start_period: 180s
+    volumes:
+      - nexus3_data:/nexus-data
+
+  # Auto-reset admin password to fixed value on first startup.
+  nexus3-init:
+    image: alpine:3.21
+    container_name: sonatypenexus3-init
+    depends_on:
+      sonatypenexus3:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo '>> Resetting Nexus admin password...'
+        INIT_PASS=$$(cat /nexus-data/admin.password 2>/dev/null || echo '')
+        if [ -z "$$INIT_PASS" ]; then
+          echo 'WARN: No admin.password — already initialized.'
+          exit 0
+        fi
+        echo '  Changing admin password...'
+        curl -sf -u "admin:$$INIT_PASS" -X PUT \
+          'http://sonatypenexus3:8081/service/rest/v1/security/users/admin/change-password' \
+          -H 'Content-Type: text/plain' \
+          -d 'Abcd1234@nexus3' \
+          && echo '>> Nexus admin password set to: Abcd1234@nexus3' \
+          || echo 'WARN: Password change failed — may already be set'
+        echo '>> Nexus init done.'
+    volumes:
+      - nexus3_data:/nexus-data:ro
+    networks:
+      - nexus3-net
 
 networks:
   nexus3-net:
     driver: bridge
+
+volumes:
+  nexus3_data:
+    name: nexus3_data
