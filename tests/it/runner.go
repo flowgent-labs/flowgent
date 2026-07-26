@@ -225,7 +225,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), "", "")
+	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), "", flow.ID)
 
 	logProgress("[runner] stack ready at %s", srv.URL)
 	return r

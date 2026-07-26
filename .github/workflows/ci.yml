@@ -3,10 +3,20 @@
 name: Go
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    types: [opened, synchronize, reopened]
+  schedule:
+    # Daily build on main branch (03:07 UTC)
+    - cron: "7 3 * * *"
+    # Weekly full integration test on main branch (Monday 08:37 UTC)
+    - cron: "37 8 * * 1"
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  IN_CN_GFW: "false"
 
 jobs:
 
@@ -53,7 +63,7 @@ jobs:
     - name: Build
       run: make build
 
-    - name: Run Integration Tests
+    - name: Integration Tests
       run: make test-it
       env:
         FLOWGENT_TEST_PG_HOST: localhost

@@ -1,0 +1,229 @@
+# Release workflow — triggered when code lands on main.
+#
+# Event matrix:
+#   pull_request:closed + merged → PR title drives semver bump + release notes
+#   push:main                     → commit message drives semver bump (squash merge
+#                                   message = PR title; regular merge = second line)
+#
+# Dual trigger rationale:
+#   - pull_request:closed is the canonical "PR merged" signal with rich PR metadata
+#     (title, body, html_url).
+#   - push:main ensures the release run appears on the main-branch commit status
+#     (green check / red cross / yellow dot).
+#
+# Concurrency: same ref serialises runs so the two events for a single merge don't
+# race. If the tag already exists the second arrival is a no-op.
+#
+# Job DAG:
+#   release (bump + tag, outputs new_tag)
+#      ├─ build-binaries (checkout tag, build flowgent-core + flowgent-wallet)
+#      │    └─ upload-release (GitHub Release + binaries)
+#      └─ build-images (checkout tag, docker build + push to ghcr.io)
+#
+#   build-binaries and build-images run in parallel; build-images pushes directly.
+
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # For pull_request events, only proceed if the PR was actually merged.
+    # For push events, all pushes to main are candidates.
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if git rev-parse HEAD^2 >/dev/null 2>&1; then
+              COMMIT_MSG=$(git log -1 --format=%s HEAD^2)
+            else
+              COMMIT_MSG="${{ github.event.head_commit.message }}"
+              COMMIT_MSG=$(echo "${COMMIT_MSG}" | head -1)
+            fi
+          else
+            COMMIT_MSG="${{ github.event.pull_request.title }}"
+          fi
+
+          SHOULD_RELEASE=false
+          BUMP_LEVEL=""
+          if echo "${COMMIT_MSG}" | grep -qiE "^refactor:"; then
+            SHOULD_RELEASE=true
+            BUMP_LEVEL="major"
+          elif echo "${COMMIT_MSG}" | grep -qiE "^feat:"; then
+            SHOULD_RELEASE=true
+            BUMP_LEVEL="minor"
+          elif echo "${COMMIT_MSG}" | grep -qiE "^fix:"; then
+            SHOULD_RELEASE=true
+            BUMP_LEVEL="patch"
+          fi
+
+          if [ "${SHOULD_RELEASE}" != "true" ]; then
+            echo "Commit type does not trigger a release (only feat:, fix:, refactor:). Skipping."
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname 2>/dev/null | head -1)
+          if [ -z "${LATEST_TAG}" ]; then LATEST_TAG="v0.0.0"; fi
+          echo "Latest tag: ${LATEST_TAG}"
+
+          MAJOR=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f1)
+          MINOR=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f2)
+          PATCH=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f3)
+
+          case "${BUMP_LEVEL}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          echo "Bump: ${BUMP_LEVEL} (${COMMIT_MSG})"
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "New tag: ${NEW_TAG}"
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "new_tag=${NEW_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Create Git Tag
+        if: steps.bump.outputs.should_release == 'true'
+        run: |
+          if git rev-parse "${{ steps.bump.outputs.new_tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.bump.outputs.new_tag }} already exists, skipping tag creation."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${{ steps.bump.outputs.new_tag }}" -m "Release ${{ steps.bump.outputs.new_tag }}"
+            git push origin "${{ steps.bump.outputs.new_tag }}"
+          fi
+
+  build-binaries:
+    needs: release
+    if: needs.release.outputs.new_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.new_tag }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+
+      - name: Build flowgent-core
+        run: make build-core
+
+      - name: Build flowgent-wallet
+        run: make build-wallet
+
+      - name: Upload Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: bin/flowgent-*
+
+  build-images:
+    needs: release
+    if: needs.release.outputs.new_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [core, wallet]
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.new_tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push flowgent-${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.${{ matrix.image }}
+          push: true
+          tags: |
+            ghcr.io/flowgent-labs/flowgent-${{ matrix.image }}:${{ needs.release.outputs.new_tag }}
+            ghcr.io/flowgent-labs/flowgent-${{ matrix.image }}:latest
+          platforms: linux/amd64,linux/arm64
+
+  upload-release:
+    needs: [release, build-binaries]
+    if: needs.release.outputs.new_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: bin/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release.outputs.new_tag }}
+          name: ${{ needs.release.outputs.new_tag }}
+          body: |
+            ## Release ${{ needs.release.outputs.new_tag }}
+
+            ${{ github.event_name == 'pull_request' && format('PR: {0}', github.event.pull_request.html_url) || format('Commit: {0}', github.event.head_commit.url) }}
+
+            ### Changes
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.body || github.event.head_commit.message }}
+
+            ### Binaries
+            flowgent-core and flowgent-wallet built from main.
+          files: bin/flowgent-*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
