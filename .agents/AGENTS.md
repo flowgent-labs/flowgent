@@ -6,7 +6,7 @@
   Output goes to `bin/`.
   - Docker: `make build` / `make build:image:all` / `make build:image:core` / `make build:image:wallet` / `make build:image:all-in-one`
   - Host dev: `make build:all` / `make build:core` / `make build:wallet`
-  - Utilities: `make test` / `make fmt` / `make clean` / `make help`
+  - Utilities: `make test-ut` / `make fmt` / `make clean` / `make help`
 - **NEVER run `go build` directly** outside of `make build:xxx`
 - Binaries under `bin/` are git-ignored. Do NOT commit them.
 - **Git commit messages must be concise.** Keep subject under 72 chars.

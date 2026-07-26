@@ -33,15 +33,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// logProgress writes a timestamped progress message directly to the controlling
+// terminal (/dev/tty) so it appears in real-time during long-running integration
+// tests. go test redirects fd 1 (stdout) and fd 2 (stderr) into internal pipes
+// that are only flushed when the test process exits — meaning fmt.Fprintf(os.Stderr)
+// and os.Stderr.WriteString are invisible until the test completes (or is killed).
+// syscall.Write(2, ...) hits the same pipe and suffers the same fate. /dev/tty is
+// NOT a file descriptor but a kernel device that always points to the real
+// terminal regardless of any fd redirection — same trick used by ssh, sudo, and gpg
+// when they need to read a password while stdin is piped.
+func logProgress(format string, args ...interface{}) {
+	ts := time.Now().Format("15:04:05.000")
+	msg := fmt.Sprintf(format, args...)
+	line := fmt.Sprintf("    --- %s %s\n", ts, msg)
+	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
+		tty.WriteString(line)
+		tty.Close()
+	}
+}
+
 // ITRunner boots the real apiserver + engine with PostgreSQL from Docker.
 // Individual component tests use HTTP API for triggers and status, and raw
 // SQL via Pool() for data verification.
 type ITRunner struct {
-	T      *testing.T
-	APIURL string
+	T         *testing.T
+	APIURL    string
 	Namespace string
-	Flow   *entities.FlowInfo
-	LLMLog *externalmock.LLMCallLog
+	Flow      *entities.FlowInfo
+	LLMLog    *externalmock.LLMCallLog
 
 	pool *pgxpool.Pool
 }
@@ -144,6 +163,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		MaxConnections: 8,
 	}
 
+	logProgress("[store] connecting to PostgreSQL at %s:%s", host, port)
 	storeImpl := storepkg.InitStore(cfg)
 	t.Cleanup(func() { _ = storeImpl.Close() })
 
@@ -173,12 +193,14 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	r := &ITRunner{T: t, APIURL: srv.URL, Namespace: namespace, Flow: flow, LLMLog: llmLog, pool: pool}
 
+	logProgress("[seed] registering agents, LLM provider, and MCP servers")
 	r.SeedAgents()
 	r.SeedLLMProvider(llmURL)
 	r.SeedMCP("github", ghURL)
 	r.SeedMCP("sonarqube", sqURL)
 
 	// ── engine ──
+	logProgress("[engine] starting resource manager and job manager")
 	apiClient := client.NewFlowgentClient(srv.URL)
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider:     engine.ProviderStandalone,
@@ -187,7 +209,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		ApprovalInfo: &client.HumanApprovalClient{Client: apiClient},
 		Logger:       logger,
 		APIServerURL: srv.URL,
-		Namespace:       namespace,
+		Namespace:    namespace,
 	})
 	if err != nil {
 		t.Fatalf("create resource manager: %v", err)
@@ -205,6 +227,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	t.Cleanup(cancel)
 	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), "", "")
 
+	logProgress("[runner] stack ready at %s", srv.URL)
 	return r
 }
 
@@ -281,6 +304,7 @@ func (r *ITRunner) TriggerManual(vars map[string]any) []string {
 	if out.RunID == "" {
 		r.T.Fatalf("trigger: no run_id in response")
 	}
+	logProgress("[trigger] flow %s → run %s", r.Flow.ID, out.RunID)
 	return []string{out.RunID}
 }
 
@@ -319,20 +343,30 @@ func (r *ITRunner) TriggerGitHubEvent(event string, prNumber int, commitSHA stri
 		Triggered []string `json:"triggered"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
+	logProgress("[trigger] webhook %s PR#%d → %d run(s)", event, prNumber, len(out.Triggered))
 	return out.Triggered
 }
 
 func (r *ITRunner) WaitRun(runID string, timeout time.Duration) string {
 	r.T.Helper()
+	logProgress("[wait] polling run %s (timeout %s)", runID, timeout)
 	deadline := time.Now().Add(timeout)
 	var status string
+	pollCount := 0
 	for time.Now().Before(deadline) {
 		status = r.RunStatus(runID)
 		if status == string(entities.RunCompleted) || status == string(entities.RunFailed) {
+			logProgress("[wait] run %s finished: %s", runID, status)
 			return status
+		}
+		pollCount++
+		if pollCount%25 == 0 {
+			elapsed := time.Since(deadline.Add(-timeout)).Round(time.Second)
+			logProgress("[wait] run %s still %s (elapsed %s)", runID, status, elapsed)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	logProgress("[wait] run %s timed out after %s (last status: %s)", runID, timeout, status)
 	return status
 }
 
@@ -351,3 +385,5 @@ func (r *ITRunner) RunStatus(runID string) string {
 	_ = json.NewDecoder(resp.Body).Decode(&run)
 	return run.Status
 }
+
+
