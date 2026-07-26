@@ -274,7 +274,7 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
     id           VARCHAR(64) PRIMARY KEY,
     category     VARCHAR(255),
     title        VARCHAR(255),
-    content      JSONB NOT NULL,
+    content      TEXT NOT NULL,
     content_type VARCHAR(32) NOT NULL DEFAULT 'text',
     source       VARCHAR(255),
     source_ref   VARCHAR(512),

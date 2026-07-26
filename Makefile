@@ -3,9 +3,12 @@
 BIN_DIR  ?= bin
 GO       ?= go
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-# When HTTPS_PROXY is set, Go uses it to route module downloads — don't override
-# GOPROXY. Otherwise, use goproxy.cn for speed in mainland China.
-ifdef HTTPS_PROXY
+# IN_CN_GFW controls whether to route Go module downloads through a proxy/CDN.
+#   IN_CN_GFW=true  → prefer HTTPS_PROXY if set, otherwise use goproxy.cn
+#   IN_CN_GFW=false → no proxy (GitHub Actions CI / non-GFW environment)
+ifneq ($(IN_CN_GFW),true)
+GOENV    := GONOSUMDB=* GONOSUMCHECK=*
+else ifdef HTTPS_PROXY
 GOENV    := GONOSUMDB=* GONOSUMCHECK=*
 else
 GOPROXY  ?= https://goproxy.cn,direct
@@ -63,17 +66,25 @@ bootstrap-go:
 build-image: build-image-core build-image-wallet
 
 build-image-core:
+ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
 	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
 else
 	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
 endif
+else
+	DOCKER_BUILDKIT=1 docker build --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+endif
 
 build-image-wallet:
+ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
 	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-wallet:latest -f deploy/docker/Dockerfile.wallet .
 else
 	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-wallet:latest -f deploy/docker/Dockerfile.wallet .
+endif
+else
+	DOCKER_BUILDKIT=1 docker build --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-wallet:latest -f deploy/docker/Dockerfile.wallet .
 endif
 
 # ── Binary builds ─────────────────────────────────────────────────
