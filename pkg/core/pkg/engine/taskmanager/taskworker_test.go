@@ -34,7 +34,7 @@ func TestSlotWorker_Execute(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond) // let subscription register
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-tenant", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "test-flow", "test-run"), &messager.InterMessage{
 		ID:      "msg-1",
 		Payload: payload,
 	})
@@ -53,7 +53,7 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-tenant", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "test-flow", "test-run"), &messager.InterMessage{
 		ID:      "msg-bad",
 		Payload: []byte("not-valid-json"),
 	})
@@ -83,7 +83,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-tenant", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "test-flow", "test-run"), &messager.InterMessage{
 		ID:      "msg-fail",
 		Payload: payload,
 	})

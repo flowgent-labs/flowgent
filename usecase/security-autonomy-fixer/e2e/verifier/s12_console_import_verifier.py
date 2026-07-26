@@ -30,32 +30,32 @@ Steps with Expected I/O:
 
   L3 — Database Verification
     Step 3.1 Agents in llm_agent
-      Action:  psql -c "SELECT COUNT(*) FROM llm_agent WHERE tenant_id='default'"
+      Action:  psql -c "SELECT COUNT(*) FROM llm_agent WHERE namespace_id='default'"
       Input:   Import succeeded
       Output:  ≥5 agent records (supervisor, issue-detector, fixer-agent, security-reviewer, quality-reviewer, arch-reviewer, git-agent)
 
     Step 3.2 Flows in orh_agentflow
-      Action:  psql -c "SELECT COUNT(*) FROM orh_agentflow WHERE tenant_id='default' AND kind='flow'"
+      Action:  psql -c "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='flow'"
       Input:   Flow YAMLs imported
       Output:  ≥2 flow records
 
     Step 3.3 MCPs in llm_mcp
-      Action:  psql -c "SELECT COUNT(*) FROM llm_mcp WHERE tenant_id='default'"
+      Action:  psql -c "SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='default'"
       Input:   MCP YAMLs imported
       Output:  ≥2 MCP records
 
     Step 3.4 LLM Providers in llm_providers
-      Action:  psql -c "SELECT COUNT(*) FROM llm_providers WHERE tenant_id='default'"
+      Action:  psql -c "SELECT COUNT(*) FROM llm_providers WHERE namespace_id='default'"
       Input:   LLM provider YAMLs imported
       Output:  ≥1 LLM provider record
 
     Step 3.5 Notify Channels in nfy_channel
-      Action:  psql -c "SELECT COUNT(*) FROM nfy_channel WHERE tenant_id='default'"
+      Action:  psql -c "SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='default'"
       Input:   Notifier YAMLs imported
       Output:  ≥2 channel records
 
     Step 3.6 Skills in orh_agentflow
-      Action:  psql -c "SELECT COUNT(*) FROM orh_agentflow WHERE tenant_id='default' AND kind='skill'"
+      Action:  psql -c "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='skill'"
       Input:   Skill YAMLs imported
       Output:  ≥1 skill record
 """
@@ -66,7 +66,7 @@ import os
 import json
 from common import config
 
-NAMESPACE = config.K3S_NAMESPACE
+NAMESPACE = config.K8S_NAMESPACE
 
 # Paths relative to project root (e2e/verifier -> .. -> project root = ../../../../)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -207,7 +207,7 @@ def run():
     print("\n── L3: Database Verification ──")
 
     # ── L3.1: Agents ─────────────────────────────────────────
-    result = _pg_query("SELECT COUNT(*) FROM llm_agent WHERE tenant_id='default' AND del_flag=false;")
+    result = _pg_query("SELECT COUNT(*) FROM llm_agent WHERE namespace_id='default' AND del_flag=false;")
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
         print(f"  [3.1] llm_agent: {count} records (min expected: {MIN_AGENTS})")
@@ -216,7 +216,7 @@ def run():
         else:
             print(f"  [3.1] WARN: Expected ≥{MIN_AGENTS} agents, found {count}")
             # List agent names for diagnosis
-            result2 = _pg_query("SELECT name FROM llm_agent WHERE tenant_id='default' AND del_flag=false ORDER BY name;")
+            result2 = _pg_query("SELECT name FROM llm_agent WHERE namespace_id='default' AND del_flag=false ORDER BY name;")
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
                     print(f"        Agent: {line.strip()}")
@@ -226,7 +226,7 @@ def run():
 
     # ── L3.2: Flows ──────────────────────────────────────────
     result = _pg_query(
-        "SELECT COUNT(*) FROM orh_agentflow WHERE tenant_id='default' AND kind='flow' AND del_flag=false;"
+        "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='flow' AND del_flag=false;"
     )
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
@@ -236,7 +236,7 @@ def run():
         else:
             print(f"  [3.2] WARN: Expected ≥{MIN_FLOWS} flows, found {count}")
             result2 = _pg_query(
-                "SELECT id FROM orh_agentflow WHERE tenant_id='default' AND kind='flow' AND del_flag=false ORDER BY id;"
+                "SELECT id FROM orh_agentflow WHERE namespace_id='default' AND kind='flow' AND del_flag=false ORDER BY id;"
             )
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
@@ -246,7 +246,7 @@ def run():
         print(f"  [3.2] WARN: Could not query orh_agentflow: {stderr_short}")
 
     # ── L3.3: MCPs ───────────────────────────────────────────
-    result = _pg_query("SELECT COUNT(*) FROM llm_mcp WHERE tenant_id='default' AND del_flag=false;")
+    result = _pg_query("SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='default' AND del_flag=false;")
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
         print(f"  [3.3] llm_mcp: {count} records (min expected: {MIN_MCPS})")
@@ -254,7 +254,7 @@ def run():
             print(f"  [3.3] MCPs OK")
         else:
             print(f"  [3.3] WARN: Expected ≥{MIN_MCPS} MCPs, found {count}")
-            result2 = _pg_query("SELECT name FROM llm_mcp WHERE tenant_id='default' AND del_flag=false ORDER BY name;")
+            result2 = _pg_query("SELECT name FROM llm_mcp WHERE namespace_id='default' AND del_flag=false ORDER BY name;")
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
                     print(f"        MCP: {line.strip()}")
@@ -263,7 +263,7 @@ def run():
         print(f"  [3.3] WARN: Could not query llm_mcp: {stderr_short}")
 
     # ── L3.4: LLM Providers ──────────────────────────────────
-    result = _pg_query("SELECT COUNT(*) FROM llm_providers WHERE tenant_id='default' AND del_flag=false;")
+    result = _pg_query("SELECT COUNT(*) FROM llm_providers WHERE namespace_id='default' AND del_flag=false;")
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
         print(f"  [3.4] llm_providers: {count} records (min expected: {MIN_LLM_PROVIDERS})")
@@ -276,7 +276,7 @@ def run():
         print(f"  [3.4] WARN: Could not query llm_providers: {stderr_short}")
 
     # ── L3.5: Notify Channels ────────────────────────────────
-    result = _pg_query("SELECT COUNT(*) FROM nfy_channel WHERE tenant_id='default' AND del_flag=false;")
+    result = _pg_query("SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='default' AND del_flag=false;")
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
         print(f"  [3.5] nfy_channel: {count} records (min expected: {MIN_NOTIFIERS})")
@@ -284,7 +284,7 @@ def run():
             print("  [3.5] Notify Channels OK")
         else:
             print(f"  [3.5] WARN: Expected ≥{MIN_NOTIFIERS} channels, found {count}")
-            result2 = _pg_query("SELECT name FROM nfy_channel WHERE tenant_id='default' AND del_flag=false ORDER BY name;")
+            result2 = _pg_query("SELECT name FROM nfy_channel WHERE namespace_id='default' AND del_flag=false ORDER BY name;")
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
                     print(f"        Channel: {line.strip()}")
@@ -294,7 +294,7 @@ def run():
 
     # ── L3.6: Skills ─────────────────────────────────────────
     result = _pg_query(
-        "SELECT COUNT(*) FROM orh_agentflow WHERE tenant_id='default' AND kind='skill' AND del_flag=false;"
+        "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='skill' AND del_flag=false;"
     )
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
@@ -304,7 +304,7 @@ def run():
         else:
             print(f"  [3.6] WARN: Expected ≥{MIN_SKILLS} skills, found {count}")
             result2 = _pg_query(
-                "SELECT id FROM orh_agentflow WHERE tenant_id='default' AND kind='skill' AND del_flag=false ORDER BY id;"
+                "SELECT id FROM orh_agentflow WHERE namespace_id='default' AND kind='skill' AND del_flag=false ORDER BY id;"
             )
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
@@ -316,12 +316,12 @@ def run():
     # ── L3.7: Cross-table summary ────────────────────────────
     print("\n  ── Resource Inventory ──")
     inventory_queries = {
-        "Agents":      "SELECT COUNT(*) FROM llm_agent WHERE tenant_id='default' AND del_flag=false",
-        "Flows":       "SELECT COUNT(*) FROM orh_agentflow WHERE tenant_id='default' AND kind='flow' AND del_flag=false",
-        "MCPs":        "SELECT COUNT(*) FROM llm_mcp WHERE tenant_id='default' AND del_flag=false",
-        "LLM Providers": "SELECT COUNT(*) FROM llm_providers WHERE tenant_id='default' AND del_flag=false",
-        "Channels":    "SELECT COUNT(*) FROM nfy_channel WHERE tenant_id='default' AND del_flag=false",
-        "Skills":      "SELECT COUNT(*) FROM orh_agentflow WHERE tenant_id='default' AND kind='skill' AND del_flag=false",
+        "Agents":      "SELECT COUNT(*) FROM llm_agent WHERE namespace_id='default' AND del_flag=false",
+        "Flows":       "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='flow' AND del_flag=false",
+        "MCPs":        "SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='default' AND del_flag=false",
+        "LLM Providers": "SELECT COUNT(*) FROM llm_providers WHERE namespace_id='default' AND del_flag=false",
+        "Channels":    "SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='default' AND del_flag=false",
+        "Skills":      "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='skill' AND del_flag=false",
     }
     all_ok = True
     for label, query in inventory_queries.items():

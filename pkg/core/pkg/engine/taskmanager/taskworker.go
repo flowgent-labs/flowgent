@@ -122,7 +122,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.Executi
 		"state":            string(plan.State),
 		"output":           planResultOutput(plan.Result),
 	})
-	_ = sw.q.Publish(ctx, messager.ExecResultsTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID), &messager.InterMessage{
+	_ = sw.q.Publish(ctx, messager.ExecResultsTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID), &messager.InterMessage{
 		ID:      fmt.Sprintf("status-%s-%s", plan.AgentFlowRunID, plan.NodeID),
 		Headers: map[string]string{"task_run_id": plan.AgentFlowRunID, "node_id": plan.NodeID},
 		Payload: b,

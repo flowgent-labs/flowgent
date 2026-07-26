@@ -20,7 +20,7 @@ type FlowInfo struct {
 	SandboxPolicy *model.SandboxPolicyOverride `json:"sandbox_policy,omitempty" yaml:"sandbox_policy,omitempty"`
 
 	Priority    Priority          `json:"priority,omitempty" yaml:"priority,omitempty"`
-	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	K8sNamespace   string            `json:"k8s_namespace,omitempty" yaml:"namespace,omitempty"`
 	Mode        ExecutionMode     `json:"mode,omitempty" yaml:"mode,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Credentials map[string]string `json:"credentials,omitempty" yaml:"credentials,omitempty"`

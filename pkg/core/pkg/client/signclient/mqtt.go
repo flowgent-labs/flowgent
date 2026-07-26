@@ -23,7 +23,7 @@ import (
 // for signing via MQTT, and waits for the signed result.
 type MqttSignClient struct {
 	messager messager.IMessager
-	tenantID string
+	namespaceID string
 	flowID   string
 	runID    string
 	timeout  time.Duration
@@ -40,16 +40,16 @@ type signResult struct {
 // NewMqttSignClient creates an async sign client that communicates with the
 // wallet daemon via MQTT. It subscribes to the sign/response topic for the
 // given run context and dispatches responses to waiting callers by request ID.
-func NewMqttSignClient(m messager.IMessager, tenantID, flowID, runID string, timeout time.Duration) (*MqttSignClient, error) {
+func NewMqttSignClient(m messager.IMessager, namespaceID, flowID, runID string, timeout time.Duration) (*MqttSignClient, error) {
 	c := &MqttSignClient{
 		messager: m,
-		tenantID: tenantID,
+		namespaceID: namespaceID,
 		flowID:   flowID,
 		runID:    runID,
 		timeout:  timeout,
 		pending:  make(map[string]chan signResult),
 	}
-	if err := m.Subscribe(context.Background(), messager.SignResponseTopic(tenantID, flowID, runID), c.handleResponse); err != nil {
+	if err := m.Subscribe(context.Background(), messager.SignResponseTopic(namespaceID, flowID, runID), c.handleResponse); err != nil {
 		return nil, fmt.Errorf("subscribe sign response: %w", err)
 	}
 	return c, nil
@@ -87,13 +87,13 @@ func (c *MqttSignClient) Sign(ctx context.Context, walletAddr string, payload []
 		RequestID: reqID,
 		Wallet:    walletAddr,
 		Payload:   string(payload),
-		TenantID:  c.tenantID,
+		Namespace:  c.namespaceID,
 		FlowID:    c.flowID,
 		RunID:     c.runID,
 	}
 	body, _ := json.Marshal(req)
 
-	if err := c.messager.Publish(ctx, messager.SignRequestTopic(c.tenantID, c.flowID, c.runID), &messager.InterMessage{
+	if err := c.messager.Publish(ctx, messager.SignRequestTopic(c.namespaceID, c.flowID, c.runID), &messager.InterMessage{
 		ID:      reqID,
 		Payload: body,
 	}); err != nil {

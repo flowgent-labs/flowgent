@@ -4,11 +4,11 @@ Scenario 23 — Controller Module: Application Mode Lifecycle.
 
 Validates Controller's flow lifecycle management in Application mode.
 
-Prerequisites: K8s/K3s cluster, Helm release, Controller pod running.
+Prerequisites: K8s/K8S cluster, Helm release, Controller pod running.
 
 Steps with Expected I/O — Flow CREATE Lifecycle:
   Step 1. Create AgentFlow via API
-    Action:  POST /api/v1/{tenant}/flows
+    Action:  POST /api/v1/{namespace}/flows
     Input:   {id: "test-flow-{uuid}", nodes: [noop], edges: [], priority: "high"}
     Output:  HTTP 200/201, flow ID returned
 
@@ -18,12 +18,12 @@ Steps with Expected I/O — Flow CREATE Lifecycle:
     Output:  Event with matching agentflow_id (WARN if not received — Controller may poll)
 
   Step 2. Wait for JM Deployment
-    Action:  kubectl get deployment {name} -n {tenant_ns}
-    Input:   Deployment name: flowgent-jobmanager-{tenant}-{flow_id}
-    Output:  Deployment exists in tenant namespace within 30s
+    Action:  kubectl get deployment {name} -n {namespace_ns}
+    Input:   Deployment name: flowgent-jobmanager-{namespace}-{flow_id}
+    Output:  Deployment exists in namespace namespace within 30s
 
   Step 3. Verify Deployment Spec
-    Action:  kubectl get deployment {name} -n {tenant_ns} -o json
+    Action:  kubectl get deployment {name} -n {namespace_ns} -o json
     Input:   Deployment name
     Output:  Container env includes FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}
 
@@ -33,7 +33,7 @@ Steps with Expected I/O — Flow CREATE Lifecycle:
     Output:  Pod reaches Running within 60s
 
   Step 5. Delete Flow
-    Action:  DELETE /api/v1/{tenant}/flows/{id}
+    Action:  DELETE /api/v1/{namespace}/flows/{id}
     Input:   Flow ID
     Output:  HTTP 200/204
 
@@ -44,7 +44,7 @@ Steps with Expected I/O — Flow CREATE Lifecycle:
 
 Steps with Expected I/O — Flow UPDATE Lifecycle:
   Step 7. Create flow + wait for Deployment (as Steps 1-4)
-  Step 8. PUT /api/v1/{tenant}/flows/{id}  {description, version}
+  Step 8. PUT /api/v1/{namespace}/flows/{id}  {description, version}
     Input:   Updated description, new version
     Output:  HTTP 200, Deployment generation incremented
 """
@@ -65,23 +65,23 @@ try:
 except ImportError:
     MQTT_AVAILABLE = False
 
-API_BASE = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
-NAMESPACE = config.K3S_NAMESPACE
+API_BASE = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.K8S_NAMESPACE
 
 
 def rand_id() -> str:
     return str(uuid.uuid4())[:8]
 
 
-def application_namespace(tenant_id: str = TENANT) -> str:
+def application_namespace(namespace_id: str = NAMESPACE) -> str:
     """Mirror controller.go/flow_def.go applicationNamespace: every flow's
-    dedicated JM Deployment lives in its TENANT's shared namespace
-    "{namespace_prefix}{tenant_id}" (see docs/01-L1-Engine-Architecture.md
-    §1.3/§4.3 — tenant isolation is per-tenant, not per-flow), NOT in
-    NAMESPACE (config.K3S_NAMESPACE, typically "default") — that's only
+    dedicated JM Deployment lives in its NAMESPACE's shared namespace
+    "{namespace_prefix}{namespace_id}" (see docs/01-L1-Engine-Architecture.md
+    §1.3/§4.3 — namespace isolation is per-namespace, not per-flow), NOT in
+    NAMESPACE (config.K8S_NAMESPACE, typically "default") — that's only
     where the Controller/apiserver pods themselves run."""
-    return f"{config.K3S_APP_NAMESPACE_PREFIX}{tenant_id}"
+    return f"{config.K8S_APP_NAMESPACE_PREFIX}{namespace_id}"
 
 
 def kubectl_get(resource: str, name: str = None, namespace: str = NAMESPACE, 
@@ -199,7 +199,7 @@ def test_flow_create_lifecycle() -> bool:
     # applicationNamespace — computed upfront so the except-block cleanup
     # below can always target the right namespace, even if an assertion
     # fails before Step 2 (re-)computes it.
-    deployment_name = f"flowgent-jobmanager-{TENANT}-{flow_id}"
+    deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
     jm_namespace = application_namespace()
 
     # Set up MQTT listener for ctrl events (best-effort)
@@ -241,7 +241,7 @@ def test_flow_create_lifecycle() -> bool:
             "priority": "high",
         }
 
-        resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/flows", json=payload, timeout=10)
+        resp = requests.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10)
         if resp.status_code not in [200, 201]:
             raise AssertionError(f"Flow creation failed: {resp.status_code} {resp.text}")
 
@@ -274,8 +274,8 @@ def test_flow_create_lifecycle() -> bool:
         # Step 2: Wait for Controller to create JM Deployment
         print(f"    • Step 2: Waiting for Controller to create JM Deployment...")
         
-        # Deployment lands in the flow's tenant namespace (NOT NAMESPACE /
-        # config.K3S_NAMESPACE — see applicationNamespace, and
+        # Deployment lands in the flow's namespace namespace (NOT NAMESPACE /
+        # config.K8S_NAMESPACE — see applicationNamespace, and
         # ensureApplicationInfra, which now also auto-creates this namespace).
         if not wait_for_deployment(deployment_name, namespace=jm_namespace, timeout=30):
             raise AssertionError(f"JM Deployment not created: {deployment_name} (namespace={jm_namespace})")
@@ -322,7 +322,7 @@ def test_flow_create_lifecycle() -> bool:
         # Step 5: Cleanup - delete flow
         print(f"    • Step 5: Deleting AgentFlow...")
         
-        resp = requests.delete(f"{API_BASE}/api/v1/{TENANT}/flows/{created_id}", timeout=10)
+        resp = requests.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
         if resp.status_code not in [200, 204]:
             print(f"      ⚠ Flow deletion returned {resp.status_code}")
         
@@ -388,7 +388,7 @@ def test_flow_update_lifecycle() -> bool:
     print(f"\n  → Testing Flow UPDATE → JM rolling update...")
 
     flow_id = "test-flow-" + rand_id()
-    deployment_name = f"flowgent-jobmanager-{TENANT}-{flow_id}"
+    deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
     jm_namespace = application_namespace()
     created_id = None
 
@@ -402,7 +402,7 @@ def test_flow_update_lifecycle() -> bool:
             "edges": [],
             "priority": "high",
         }
-        resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/flows", json=payload, timeout=10)
+        resp = requests.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10)
         if resp.status_code not in [200, 201]:
             raise AssertionError(f"Flow creation failed: {resp.status_code}")
         created_id = resp.json().get("id")
@@ -414,7 +414,7 @@ def test_flow_update_lifecycle() -> bool:
         before_gen = before.get("metadata", {}).get("generation", 0) if before else 0
 
         resp = requests.put(
-            f"{API_BASE}/api/v1/{TENANT}/flows/{created_id}",
+            f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}",
             json={"description": "updated by e2e verifier", "version": 2},
             timeout=10,
         )
@@ -430,7 +430,7 @@ def test_flow_update_lifecycle() -> bool:
         else:
             print(f"      ⚠ Deployment generation unchanged (Controller may reconcile async)")
 
-        resp = requests.delete(f"{API_BASE}/api/v1/{TENANT}/flows/{created_id}", timeout=10)
+        resp = requests.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
         if resp.status_code not in [200, 204]:
             print(f"      ⚠ Flow deletion returned {resp.status_code}")
         wait_for_deployment_deleted(deployment_name, namespace=jm_namespace, timeout=60)

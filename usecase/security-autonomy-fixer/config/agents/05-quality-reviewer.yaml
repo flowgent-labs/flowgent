@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: quality-reviewer
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Code quality reviewer that checks patches for readability, testability, and adherence to project conventions

@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: MCP
 metadata:
   name: sonarqube
-  tenant: default
+  namespace: default
   labels:
     catalog: security,code-quality
     protocol: streamable-http

@@ -154,8 +154,8 @@ func (s *FlowgentNotifierManager) RegisterSender(name string, sender Sender) {
 func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 	s.logger.Debug("queue message received", "topic", topic)
 
-	var tenantID, flowID string
-	if n, _ := fmt.Sscanf(topic, messager.TopicPrefix+"/%s/flows/%s/runs/", &tenantID, &flowID); n < 2 {
+	var namespaceID, flowID string
+	if n, _ := fmt.Sscanf(topic, messager.TopicPrefix+"/%s/flows/%s/runs/", &namespaceID, &flowID); n < 2 {
 		s.logger.Warn("invalid queue topic format", "topic", topic)
 		return
 	}
@@ -167,7 +167,7 @@ func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 	}
 
 	s.logger.Info("processing queue notification",
-		"tenant", tenantID,
+		"namespace", namespaceID,
 		"flow", flowID,
 		"title", msg.Title)
 
@@ -175,7 +175,7 @@ func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 }
 
 // PublishNotification enqueues a notification to the MQTT queue.
-func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, tenantID, agentflowID, title, body string) error {
+func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, namespaceID, agentflowID, title, body string) error {
 	if s.mqtt == nil {
 		return fmt.Errorf("notification: mqtt not configured")
 	}
@@ -183,7 +183,7 @@ func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, tenan
 	msg := model.NotifierMessage{
 		Title:       title,
 		Body:        body,
-		TenantID:    tenantID,
+		Namespace:    namespaceID,
 		AgentFlowID: agentflowID,
 		Timestamp:   time.Now(),
 	}
@@ -193,7 +193,7 @@ func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, tenan
 		return fmt.Errorf("marshal notification: %w", err)
 	}
 
-	topic := messager.NotifyEventTopic(tenantID, agentflowID, "")
+	topic := messager.NotifyEventTopic(namespaceID, agentflowID, "")
 	return s.mqtt.Publish(ctx, topic, payload)
 }
 

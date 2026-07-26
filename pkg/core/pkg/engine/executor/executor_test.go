@@ -12,7 +12,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
-const testTenant = "test-tenant"
+const testNamespace = "test-namespace"
 
 // ── Condition ────────────────────────────────────────
 
@@ -237,7 +237,7 @@ func (c *retryLLM) Generate(_ context.Context, _, _, _ string, _ float64) (strin
 func agentServer(agents []*entities.AgentInfo) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, a := range agents {
-			if r.URL.Path == "/api/v1/"+testTenant+"/agents/"+a.Name {
+			if r.URL.Path == "/api/v1/"+testNamespace+"/agents/"+a.Name {
 				json.NewEncoder(w).Encode(a)
 				return
 			}
@@ -275,7 +275,7 @@ func TestSupervisorExecutor_ValidAction(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewSupervisorExecutor(llm, apiClient, testTenant)
+	e := NewSupervisorExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{
@@ -301,7 +301,7 @@ func TestSupervisorExecutor_DisallowedAction(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewSupervisorExecutor(llm, apiClient, testTenant)
+	e := NewSupervisorExecutor(llm, apiClient, testNamespace)
 
 	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{
@@ -324,7 +324,7 @@ func TestSupervisorExecutor_DefaultContinue(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewSupervisorExecutor(llm, apiClient, testTenant)
+	e := NewSupervisorExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{
@@ -352,7 +352,7 @@ func TestAgentExecutor_Success(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewAgentExecutor(llm, apiClient, testTenant)
+	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Agent: "issue-detector"},
@@ -383,7 +383,7 @@ func TestAgentExecutor_SchemaValidation_Pass(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewAgentExecutor(llm, apiClient, testTenant)
+	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Agent: "reviewer"},
@@ -421,7 +421,7 @@ func TestAgentExecutor_SchemaValidation_Retry(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewAgentExecutor(llm, apiClient, testTenant)
+	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Agent: "reviewer"},
@@ -445,7 +445,7 @@ func TestAgentExecutor_JSONPreamble(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewAgentExecutor(llm, apiClient, testTenant)
+	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Agent: "security-reviewer"},
@@ -463,7 +463,7 @@ func TestAgentExecutor_NotFound(t *testing.T) {
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
 
-	e := NewAgentExecutor(nil, apiClient, testTenant)
+	e := NewAgentExecutor(nil, apiClient, testNamespace)
 	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
 		NodeSpec: &entities.NodeSpec{Agent: "nonexistent"},
 	}, nil)

@@ -39,14 +39,14 @@ func NewFlowRunHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger)
 
 // Create inserts a new FlowRunInfo.
 func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 	var run entities.FlowRunInfo
 	if err := json.NewDecoder(r.Body).Decode(&run); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	if run.TenantID == "" {
-		run.TenantID = tenant
+	if run.Namespace == "" {
+		run.Namespace = namespace
 	}
 	if err := h.runStore.Create(r.Context(), &run); err != nil {
 		http.Error(w, err.Error(), 500)
@@ -68,13 +68,13 @@ func (h *FlowRunHandler) publishRunCreatedEvent(ctx context.Context, run *entiti
 	if h.mqtt == nil {
 		return
 	}
-	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", run.TenantID, run.AgentFlowID, run.ID)
+	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", run.Namespace, run.AgentFlowID, run.ID)
 	payload, _ := json.Marshal(map[string]any{
 		"action":       "created",
 		"run_id":       run.ID,
 		"agentflow_id": run.AgentFlowID,
-		"tenant_id":    run.TenantID,
-		"namespace":    run.Namespace,
+		"namespace_id":    run.Namespace,
+		"namespace": run.K8sNamespace,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
 		h.logger.Warn("mqtt run created event publish failed", "topic", topic, "error", err)
@@ -116,7 +116,7 @@ func filterRuns(runs []*entities.FlowRunInfo, status, namespace, flowID string) 
 		if status != "" && string(r.Status) != status {
 			continue
 		}
-		if namespace != "" && r.Namespace != namespace {
+		if namespace != "" && r.K8sNamespace != namespace {
 			continue
 		}
 		if flowID != "" && r.AgentFlowID != flowID {

@@ -77,7 +77,7 @@ id: my-flow-id                  # unique, kebab-case
 description: |
   What this flow does, in plain language.
 priority: medium                # high | medium | low
-tenant_id: default
+namespace_id: default
 
 triggers:                       # omit for manual-only flows
   - type: schedule

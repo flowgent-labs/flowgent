@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-// LoadCredentials reads credentials files in priority order (flow > tenant).
+// LoadCredentials reads credentials files in priority order (flow > namespace).
 // Returns a merged map suitable for setting as environment variables.
 //
 // Paths resolved (CSI-mounted secrets from GCP Secret Manager or similar):
 //
-//	{basePath}/{tenant}/secret/.credentials          (tenant-level, lower priority)
-//	{basePath}/{tenant}/{flow}/secret/.credentials   (flow-level, highest priority)
-func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string) map[string]string {
+//	{basePath}/{namespace}/secret/.credentials          (namespace-level, lower priority)
+//	{basePath}/{namespace}/{flow}/secret/.credentials   (flow-level, highest priority)
+func LoadCredentials(basePath, namespace, flow string, flowCreds map[string]string) map[string]string {
 	if basePath == "" {
 		basePath = "/var/flowgent"
 	}
@@ -24,19 +24,19 @@ func LoadCredentials(basePath, tenant, flow string, flowCreds map[string]string)
 	result := make(map[string]string)
 	found := false
 
-	// 1. Tenant-level credentials (lower priority)
-	tenantPath := filepath.Join(basePath, tenant, "secret", ".credentials")
-	if m := readEnvFile(tenantPath); len(m) > 0 {
+	// 1. Namespace-level credentials (lower priority)
+	nsPath := filepath.Join(basePath, namespace, "secret", ".credentials")
+	if m := readEnvFile(nsPath); len(m) > 0 {
 		for k, v := range m {
 			result[k] = v
 		}
 		found = true
-		slog.Debug("credentials loaded tenant-level", "path", tenantPath, "vars", len(m))
+		slog.Debug("credentials loaded namespace-level", "path", nsPath, "vars", len(m))
 	}
 
-	// 2. Flow-level credentials (highest priority — overrides tenant)
+	// 2. Flow-level credentials (highest priority — overrides namespace)
 	if flow != "" {
-		flowPath := filepath.Join(basePath, tenant, flow, "secret", ".credentials")
+		flowPath := filepath.Join(basePath, namespace, flow, "secret", ".credentials")
 		if m := readEnvFile(flowPath); len(m) > 0 {
 			for k, v := range m {
 				result[k] = v
@@ -101,10 +101,10 @@ func CredentialPathsOrDefault(cfg *FlowgentConfig) CredentialPathsConfig {
 }
 
 // FormatCredentialPaths formats the expected credential file paths for display.
-func FormatCredentialPaths(basePath, tenant, flow string) string {
+func FormatCredentialPaths(basePath, namespace, flow string) string {
 	return fmt.Sprintf(
-		"tenant: %s | flow: %s",
-		filepath.Join(basePath, tenant, "secret", ".credentials"),
-		filepath.Join(basePath, tenant, flow, "secret", ".credentials"),
+		"namespace: %s | flow: %s",
+		filepath.Join(basePath, namespace, "secret", ".credentials"),
+		filepath.Join(basePath, namespace, flow, "secret", ".credentials"),
 	)
 }

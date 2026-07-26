@@ -1,7 +1,7 @@
 # Flowgent — Implementation Progress
 
 **Date:** 2026-05-25
-**Status:** Helm chart with embedded PG/EMQX/Redis. K3s DNS fixed via Alibaba Cloud mirror. Global rename complete (notifier, resourcemanager, sandboxrunner).
+**Status:** Helm chart with embedded PG/EMQX/Redis. K8S DNS fixed via Alibaba Cloud mirror. Global rename complete (notifier, resourcemanager, sandboxrunner).
 
 ---
 
@@ -35,7 +35,7 @@ ssh root@43.98.165.146 "docker tag rancher/mirrored-coredns-coredns:1.14.2 \
 # Step 3: Push to Alibaba Cloud
 ssh root@43.98.165.146 "docker push registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2"
 
-# Step 4: Use the Alibaba Cloud image in K3s
+# Step 4: Use the Alibaba Cloud image in K8S
 kubectl set image deploy/coredns -n kube-system \
   coredns=registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored_coredns_coredns:1.14.2
 ```

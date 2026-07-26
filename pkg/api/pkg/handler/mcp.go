@@ -52,7 +52,7 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.ID = uuid.New().String()
-	m.TenantID = r.PathValue("tenant")
+	m.Namespace = r.PathValue("namespace")
 	m.CreatedAt = time.Now()
 	m.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &m); err != nil {

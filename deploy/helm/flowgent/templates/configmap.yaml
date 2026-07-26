@@ -74,9 +74,9 @@ data:
     notifier:
       enabled: {{ .Values.notifier.enabled }}
     runtime:
-      tenant:
-        default_tenant: {{ .Values.runtime.tenant.defaultTenant | default "default" | quote }}
-        namespace_prefix: {{ .Values.runtime.tenant.namespacePrefix | default "flowgent-" | quote }}
+      namespace:
+        default_namespace: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
+        namespace_prefix: {{ .Values.runtime.namespace.namespacePrefix | default "flowgent-" | quote }}
       credential_paths:
         base_path: {{ .Values.runtime.credentialPaths.basePath | default "/var/flowgent" | quote }}
     wallet:

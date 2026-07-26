@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: security-reviewer
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Strict security reviewer that validates patches for OWASP compliance, injection prevention, and cryptographic correctness

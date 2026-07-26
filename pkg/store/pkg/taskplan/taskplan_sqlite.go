@@ -106,7 +106,7 @@ func scanTaskRun(s scanner) (*entities.TaskRunInfo, error) {
 		&e.RetryCount, &e.MaxRetries, &e.ExecID,
 		&e.ParentTaskRunID, &e.Sequence,
 		&startedAt, &finishedAt,
-		&e.Description, &e.TenantID,
+		&e.Description, &e.Namespace,
 		&createdAtStr, &e.CreatedBy, &updatedAtStr, &e.UpdatedBy, &e.DelFlag,
 	)
 	if err != nil {

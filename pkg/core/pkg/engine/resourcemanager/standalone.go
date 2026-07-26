@@ -27,7 +27,7 @@ func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResour
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: "tm-local", SlotCount: poolSize,
 		Messager: cfg.Messager, State: cfg.TaskState, ApprovalInfo: cfg.ApprovalInfo,
-		APIServerURL: cfg.APIServerURL, Tenant: cfg.Tenant, Logger: cfg.Logger,
+		APIServerURL: cfg.APIServerURL, Namespace: cfg.Namespace, Logger: cfg.Logger,
 		SandboxMessager:             cfg.Messager,
 		SandboxPolicy:            cfg.SandboxPolicy,
 		SandboxWorkspace:         cfg.SandboxWorkspace,

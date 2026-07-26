@@ -10,12 +10,12 @@ Steps with Expected I/O:
     Output:  HTTP 200, body contains "status" (WARN if unreachable — non-critical)
 
   Step 2. Create Channel (REST)
-    Action:  POST /api/v1/{tenant}/notifications/channels
+    Action:  POST /api/v1/{namespace}/notifications/channels
     Input:   {name, type: "webhook", config: {url}, enabled: true}
     Output:  HTTP 200/201, body contains "id"
 
   Step 3. Test Channel Endpoint
-    Action:  POST /api/v1/{tenant}/notifications/test
+    Action:  POST /api/v1/{namespace}/notifications/test
     Input:   {channel_id, message}
     Output:  HTTP 200 (endpoint exists; actual delivery depends on external webhook)
 
@@ -37,8 +37,8 @@ import uuid
 import requests
 from common import config
 
-API = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
+API = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
 EMQX = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 EMQX_DASH = config.EMQX_DASHBOARD
@@ -75,7 +75,7 @@ def run():
     channel_name = f"e2e-notify-{rand_id()}"
     try:
         r = requests.post(
-            f"{API}/api/v1/{TENANT}/notifications/channels",
+            f"{API}/api/v1/{NAMESPACE}/notifications/channels",
             json={
                 "name": channel_name,
                 "provider": "webhook",
@@ -97,7 +97,7 @@ def run():
     print("\n  → [3] POST /notifications/test...")
     try:
         r = requests.post(
-            f"{API}/api/v1/{TENANT}/notifications/test",
+            f"{API}/api/v1/{NAMESPACE}/notifications/test",
             json={"channel_id": channel_id, "message": "e2e notifier test"},
             timeout=10,
         )
@@ -121,8 +121,8 @@ def run():
     else:
         flow_id = "notify-test-" + rand_id()
         run_id = "run-" + rand_id()
-        event_topic = f"flowgent/v1/{TENANT}/flows/{flow_id}/runs/{run_id}/notify/event"
-        result_topic = f"flowgent/v1/{TENANT}/flows/{flow_id}/runs/{run_id}/notify/result"
+        event_topic = f"flowgent/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/notify/event"
+        result_topic = f"flowgent/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/notify/result"
         received = {}
 
         def on_message(client, userdata, msg):
@@ -195,7 +195,7 @@ def run():
     # ── Cleanup channel ────────────────────────────────────────
     if channel_id:
         try:
-            requests.delete(f"{API}/api/v1/{TENANT}/notifications/channels/{channel_id}", timeout=5)
+            requests.delete(f"{API}/api/v1/{NAMESPACE}/notifications/channels/{channel_id}", timeout=5)
             print(f"\n  cleanup: deleted channel {channel_id}")
         except Exception:
             pass

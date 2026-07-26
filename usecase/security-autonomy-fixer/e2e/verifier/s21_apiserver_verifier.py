@@ -6,49 +6,49 @@ Validates complete REST API CRUD for all 9 entity types, PostgreSQL persistence,
 and MQTT lifecycle event publishing.
 
 Entity → Table → REST Path:
-  1. AgentFlow   → orh_agentflow    → /api/v1/{tenant}/flows
-  2. FlowRun     → orh_flowrun      → /api/v1/{tenant}/runs
-  3. TaskRun     → task_runs        → /api/v1/{tenant}/runs/{run_id}/tasks
-  4. Agent       → llm_agent        → /api/v1/{tenant}/agents
-  5. Skill       → llm_skill        → /api/v1/{tenant}/llm/skills
-  6. MCP         → llm_mcp          → /api/v1/{tenant}/mcp
-  7. Provider    → llm_providers     → /api/v1/{tenant}/llm/providers
+  1. AgentFlow   → orh_agentflow    → /api/v1/{namespace}/flows
+  2. FlowRun     → orh_flowrun      → /api/v1/{namespace}/runs
+  3. TaskRun     → task_runs        → /api/v1/{namespace}/runs/{run_id}/tasks
+  4. Agent       → llm_agent        → /api/v1/{namespace}/agents
+  5. Skill       → llm_skill        → /api/v1/{namespace}/llm/skills
+  6. MCP         → llm_mcp          → /api/v1/{namespace}/mcp
+  7. Provider    → llm_providers     → /api/v1/{namespace}/llm/providers
   8. Approval    → human_approvals   → /api/v1/human/approvals
-  9. Channel     → nfy_channel      → /api/v1/{tenant}/notifications/channels
+  9. Channel     → nfy_channel      → /api/v1/{namespace}/notifications/channels
 
 Steps with Expected I/O:
   Step 1. Flow CRUD
-    Action:  POST → GET → PUT → DELETE /api/v1/{tenant}/flows
+    Action:  POST → GET → PUT → DELETE /api/v1/{namespace}/flows
     Input:   {id, nodes, edges, priority}
     Output:  Create→201, Read→flow object, Update→version++, Delete→200/204
 
   Step 2. Run Lifecycle
-    Action:  POST /api/v1/{tenant}/runs → GET → trigger
+    Action:  POST /api/v1/{namespace}/runs → GET → trigger
     Input:   {agentflow_id, priority}
     Output:  Create→201 (status=PENDING), Trigger→200 (run_id)
 
   Step 3. Task Query
-    Action:  GET /api/v1/{tenant}/runs/{run_id}/tasks
+    Action:  GET /api/v1/{namespace}/runs/{run_id}/tasks
     Input:   Run ID
     Output:  Task array (may be empty for new runs)
 
   Step 4. Agent CRUD
-    Action:  POST → GET /api/v1/{tenant}/agents
+    Action:  POST → GET /api/v1/{namespace}/agents
     Input:   {name, model, instruction}
     Output:  200/201, agent object
 
   Step 5. MCP CRUD
-    Action:  POST → PUT → DELETE /api/v1/{tenant}/mcp
+    Action:  POST → PUT → DELETE /api/v1/{namespace}/mcp
     Input:   {name, type, url, enabled}
     Output:  201→200→204
 
   Step 6. Provider CRUD
-    Action:  POST → GET /api/v1/{tenant}/llm/providers
+    Action:  POST → GET /api/v1/{namespace}/llm/providers
     Input:   {type, endpoint, models[]}
     Output:  201, provider object
 
   Step 7. Channel CRUD
-    Action:  POST → DELETE /api/v1/{tenant}/notifications/channels
+    Action:  POST → DELETE /api/v1/{namespace}/notifications/channels
     Input:   {name, channel_type, config}
     Output:  201→204
 
@@ -88,8 +88,8 @@ except ImportError:
     print("Warning: psycopg2 not installed, PG direct tests will be skipped")
     PG_AVAILABLE = False
 
-API_BASE = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
+API_BASE = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
 
 
 def rand_id() -> str:
@@ -356,7 +356,7 @@ def test_flow_lifecycle_events() -> bool:
             "edges": [],
         }
         
-        resp = http_request("POST", f"/api/v1/{TENANT}/flows", payload)
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", payload)
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"Flow creation failed: {resp['status_code']}")
         
@@ -381,7 +381,7 @@ def test_flow_lifecycle_events() -> bool:
             "description": "updated description",
         }
         
-        resp = http_request("PUT", f"/api/v1/{TENANT}/flows/{created_id}", update_payload)
+        resp = http_request("PUT", f"/api/v1/{NAMESPACE}/flows/{created_id}", update_payload)
         if resp["status_code"] != 200:
             raise AssertionError(f"Flow update failed: {resp['status_code']}")
         
@@ -393,7 +393,7 @@ def test_flow_lifecycle_events() -> bool:
         
         # Test 3: DELETE → ctrl/flow/deleted
         print(f"    • Testing DELETE event...")
-        resp = http_request("DELETE", f"/api/v1/{TENANT}/flows/{created_id}")
+        resp = http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}")
         if resp["status_code"] not in [200, 204]:
             raise AssertionError(f"Flow deletion failed: {resp['status_code']}")
         
@@ -421,7 +421,7 @@ def test_flow_run_crud() -> bool:
     created_run_id = None
     pg_conn = get_pg_connection()
     try:
-        resp = http_request("POST", f"/api/v1/{TENANT}/flows", {
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", {
             "id": flow_id,
             "nodes": [{"id": "n1", "type": "noop"}],
             "edges": [],
@@ -429,7 +429,7 @@ def test_flow_run_crud() -> bool:
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"setup flow failed: {resp['status_code']}")
 
-        resp = http_request("POST", f"/api/v1/{TENANT}/runs", {
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
             "agentflow_id": flow_id,
             "status": "PENDING",
             "vars": {"test": True},
@@ -440,11 +440,11 @@ def test_flow_run_crud() -> bool:
         if not created_run_id:
             raise AssertionError("no run id in response")
 
-        resp = http_request("GET", f"/api/v1/{TENANT}/runs/{created_run_id}")
+        resp = http_request("GET", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
         if resp["status_code"] != 200 or resp["data"].get("id") != created_run_id:
             raise AssertionError("GET run failed")
 
-        resp = http_request("PUT", f"/api/v1/{TENANT}/runs/{created_run_id}", {"status": "RUNNING"})
+        resp = http_request("PUT", f"/api/v1/{NAMESPACE}/runs/{created_run_id}", {"status": "RUNNING"})
         if resp["status_code"] != 200:
             raise AssertionError(f"UPDATE run failed: {resp['status_code']}")
 
@@ -454,7 +454,7 @@ def test_flow_run_crud() -> bool:
             if cursor.fetchone()[0] != 1:
                 raise AssertionError("PG persistence failed for orh_flowrun")
 
-        resp = http_request("DELETE", f"/api/v1/{TENANT}/runs/{created_run_id}")
+        resp = http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
         if resp["status_code"] not in [200, 204]:
             raise AssertionError(f"DELETE run failed: {resp['status_code']}")
 
@@ -476,7 +476,7 @@ def test_task_run_nested() -> bool:
     run_id = None
     task_id = None
     try:
-        resp = http_request("POST", f"/api/v1/{TENANT}/flows", {
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", {
             "id": flow_id,
             "nodes": [{"id": "n1", "type": "noop"}],
             "edges": [],
@@ -484,7 +484,7 @@ def test_task_run_nested() -> bool:
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"setup flow failed: {resp['status_code']}")
 
-        resp = http_request("POST", f"/api/v1/{TENANT}/runs", {
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
             "agentflow_id": flow_id,
             "status": "PENDING",
         })
@@ -498,7 +498,7 @@ def test_task_run_nested() -> bool:
             "input": {"hello": "world"},
             "sequence": 1,
         }
-        base = f"/api/v1/{TENANT}/runs/{run_id}/tasks"
+        base = f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks"
         resp = http_request("POST", base, task_payload)
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"CREATE task failed: {resp['status_code']} {resp.get('text')}")
@@ -580,7 +580,7 @@ def test_approval_lifecycle() -> bool:
 def test_skill_api_availability() -> bool:
     """Skill REST API is planned but may not be registered; verify and skip gracefully."""
     print(f"\n  → Testing Skill API availability...")
-    for path in (f"/api/v1/{TENANT}/llm/skills", f"/api/v1/{TENANT}/skills"):
+    for path in (f"/api/v1/{NAMESPACE}/llm/skills", f"/api/v1/{NAMESPACE}/skills"):
         resp = http_request("GET", path)
         if resp["status_code"] == 404:
             continue
@@ -616,7 +616,7 @@ def run():
             # "updated_at > created_at" check doesn't apply.
             "name": "AgentFlow",
             "table": "orh_agentflow",
-            "base_path": f"/api/v1/{TENANT}/flows",
+            "base_path": f"/api/v1/{NAMESPACE}/flows",
             "id_field": "id",
             "pg_id_col": "agentflow_id",
             "list_search_field": "flow_id",
@@ -631,7 +631,7 @@ def run():
         {
             "name": "Agent",
             "table": "llm_agent",
-            "base_path": f"/api/v1/{TENANT}/agents",
+            "base_path": f"/api/v1/{NAMESPACE}/agents",
             "id_field": "name",
             "create": {
                 "name": f"test-agent-{rand_id()}",
@@ -644,7 +644,7 @@ def run():
         {
             "name": "MCP",
             "table": "llm_mcp",
-            "base_path": f"/api/v1/{TENANT}/mcp",
+            "base_path": f"/api/v1/{NAMESPACE}/mcp",
             "id_field": "name",
             "create": {
                 "name": f"test-mcp-{rand_id()}",
@@ -657,7 +657,7 @@ def run():
         {
             "name": "Provider",
             "table": "llm_providers",
-            "base_path": f"/api/v1/{TENANT}/llm/providers",
+            "base_path": f"/api/v1/{NAMESPACE}/llm/providers",
             "id_field": "id",
             "create": {
                 "provider": "openai",
@@ -670,7 +670,7 @@ def run():
         {
             "name": "Channel",
             "table": "nfy_channel",
-            "base_path": f"/api/v1/{TENANT}/notifications/channels",
+            "base_path": f"/api/v1/{NAMESPACE}/notifications/channels",
             "id_field": "id",
             "create": {
                 "name": f"test-channel-{rand_id()}",

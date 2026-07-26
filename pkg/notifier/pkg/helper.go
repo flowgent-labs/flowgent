@@ -26,10 +26,10 @@ func (a *NotifToWSAdapter) PodID() string { return a.Svc.PodID() }
 
 // CreateNotifierService builds a notifier.FlowgentNotifierManager from config.
 func CreateNotifierService(api *client.FlowgentClient, cfg *config.FlowgentConfig, httpClient model.IFlowgentAPIClient) *FlowgentNotifierManager {
-	tenant := cfg.Runtime.Tenant.DefaultTenant
-	if tenant == "" {
-		tenant = "default"
+	namespace := cfg.Runtime.Namespace.DefaultNamespace
+	if namespace == "" {
+		namespace = "default"
 	}
-	notifierClient := client.NewNotifierClient(api, tenant)
+	notifierClient := client.NewNotifierClient(api, namespace)
 	return NewFlowgentNotifierManager(notifierClient, nil, httpClient, &cfg.Notifier)
 }

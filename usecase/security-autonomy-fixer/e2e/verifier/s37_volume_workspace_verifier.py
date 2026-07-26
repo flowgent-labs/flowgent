@@ -9,7 +9,7 @@ Steps with Expected I/O:
   L1 — PVC Status
     Step 1.1 PVC Exists
       Action:  kubectl get pvc -A -o json
-      Input:   KUBECONFIG set, K3s cluster running, Helm deployed
+      Input:   KUBECONFIG set, K8S cluster running, Helm deployed
       Output:  Workspace PVC found with status "Bound"
 
     Step 1.2 PVC Capacity
@@ -56,7 +56,7 @@ import os
 import json
 from common import config
 
-NAMESPACE = config.K3S_NAMESPACE
+NAMESPACE = config.K8S_NAMESPACE
 
 
 def kubectl(args, check=True):

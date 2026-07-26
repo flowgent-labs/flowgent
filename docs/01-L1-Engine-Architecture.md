@@ -7,7 +7,7 @@
 
 ## 1. Architecture Overview
 
-Flowgent is a distributed multi-tenant AI agent orchestration engine. **Only the API Server
+Flowgent is a distributed multi-namespace AI agent orchestration engine. **Only the API Server
 connects to the database** — all other components communicate exclusively via MQTT (real-time
 scheduling bus) or call the API Server REST endpoints for state updates. Internal
 inter-component communication never uses SSE/WebSocket; WS is reserved for notifier→UI only.
@@ -45,7 +45,7 @@ PHASE 2 — Scheduling (Async)                      │
   • FlowgentClient.ListFlows (apiserver REST)      │
   • MQTT: subscribe lifecycle events               │
   • hash(flow_id) % N → N-way sharded              │
-  • MQTT: ctrl.jm.create/{tenant}/{flow} ──────────┤  → dedicated JM
+  • MQTT: ctrl.jm.create/{namespace}/{flow} ──────────┤  → dedicated JM
                                                    │
 ═══════════════════════════════════════════════════╪═══════════════════════
 PHASE 3 — Execution (Async)                       │
@@ -76,7 +76,7 @@ PHASE 3 — Execution (Async)                       │
   Notifier                                         │
   • $share/notify-pool: consume events             │
   • → Slack / Telegram / DingTalk / Email / Webhook│
-  • MQTT: notify.result.{tenant}.{flow} ───────────┤  → confirmation
+  • MQTT: notify.result.{namespace}.{flow} ───────────┤  → confirmation
   • WS → UI clients only (human approval push)     │
                                                    │
   All state writes: → FlowgentClient REST → apiserver → PG/DB
@@ -157,12 +157,12 @@ Controller watches apiserver → creates dedicated jobmanager for grade-priority
 | | Session | Application |
 |---|---|---|
 | **JM started by** | Helm / Admin (platform init) | Controller (on flow discovery) |
-| **JM naming** | `flowgent-jobmanager-{tenantId}-{hash}` | `flowgent-jobmanager-{tenantId}-{flowId}-{runId}-{hash}` |
-| **JM lifecycle** | Persistent, shared across tenants | Per-flow, destroyed on completion |
+| **JM naming** | `flowgent-jobmanager-{namespaceId}-{hash}` | `flowgent-jobmanager-{namespaceId}-{flowId}-{runId}-{hash}` |
+| **JM lifecycle** | Persistent, shared across namespaces | Per-flow, destroyed on completion |
 | **TM scale** | **Manual** (admin-managed replicas) | **Auto** (JM's K8s RM scales TMs) |
 | **Slot exhaustion** | Run stays PENDING, admin adds TMs | JM auto-scales TM replicas |
 | **Workspace** | Shared PVC (ReadWriteMany) | Per-flow subdirectory (same PVC) |
-| **Resource isolation** | Logical (tenant_id + rate limit) | Physical (dedicated K8s namespace) |
+| **Resource isolation** | Logical (namespace_id + rate limit) | Physical (dedicated K8s namespace) |
 | **Flink analogy** | Session Cluster | Application Cluster |
 
 **How mode is resolved at runtime:**
@@ -172,7 +172,7 @@ Controller watches apiserver → creates dedicated jobmanager for grade-priority
 3. Application JM (Controller-created): Controller sets `FLOWGENT_DEPLOYMENT_MODE=application` on the pod, overriding the config file → `AutoScale=true`
 4. `FLOWGENT_NAMESPACE` is a namespace filter for the runPoller, NOT a mode flag
 
-**JM polling scope — tenant-wide scan vs zero-scan:**
+**JM polling scope — namespace-wide scan vs zero-scan:**
 
 | | Session JM | Application JM |
 |---|---|---|
@@ -183,7 +183,7 @@ Controller watches apiserver → creates dedicated jobmanager for grade-priority
 
 **Key design**: Application JM receives the flow ID at startup (Controller passes
 `--flow-id` in `buildJMDeployment` args). It does NOT scan config files or load
-unrelated flows. Session JM alone performs tenant-wide discovery.
+unrelated flows. Session JM alone performs namespace-wide discovery.
 
 **TM scaling design decision**: Session mode TMs are admin-managed (Helm `replicas`).
 If slots are exhausted, JM returns `INSUFFICIENT_RESOURCES` — the run stays PENDING
@@ -204,10 +204,10 @@ fundamental differences:
 The API polling approach avoids CRD complexity and keeps the flow catalog
 behind the apiserver as the single DB gateway.
 
-### 1.3 Multi-Tenant Pod Naming
+### 1.3 Multi-Namespace Pod Naming
 
-Tenant isolation uses **K8s namespaces**: each tenant gets its own namespace.
-Pod names carry `tenant_id` + `flow_id` + `run_id` for observability:
+Namespace isolation uses **K8s namespaces**: each namespace gets its own namespace.
+Pod names carry `namespace_id` + `flow_id` + `run_id` for observability:
 
 **Components** (distributed mode):
 
@@ -227,11 +227,11 @@ Pod names carry `tenant_id` + `flow_id` + `run_id` for observability:
 > In all-in-one mode, all components run in a single process regardless.
 
 ```
-Session (shared pool, default=tenantId, {hash}=K8s suffix):
+Session (shared pool, default=namespaceId, {hash}=K8s suffix):
   flowgent-{component}-default-{hash}
 
 Application (dedicated per-run, {hash}=K8s suffix):
-  flowgent-{component}-{tenantId}-{flowId}-{runId}-{hash}
+  flowgent-{component}-{namespaceId}-{flowId}-{runId}-{hash}
 ```
 
 **Examples — Session mode (required components):**
@@ -253,7 +253,7 @@ flowgent-sandbox-rengine-vip-security-fixer-run-abc123-xyz003
 
 Labels on all pods:
 ```yaml
-flowgent.io/tenant:       "default"
+flowgent.io/namespace:       "default"
 flowgent.io/agentflow_id: "security-fixer"   # empty for session pods
 flowgent.io/run_id:       "run-abc123"       # empty for session pods
 flowgent.io/mode:         "session" | "application"
@@ -278,7 +278,7 @@ flowgent.io/mode:         "session" | "application"
 
 ---
 
-## 2. API Server — Sole DB Client + Multi-Tenant Gateway
+## 2. API Server — Sole DB Client + Multi-Namespace Gateway
 
 **The only component with database access.** All other components read/write state
 through the API Server's REST endpoints or via MQTT (real-time scheduling). This
@@ -288,7 +288,7 @@ aligns with Kubernetes' apiserver→etcd pattern.
 2. **Flow definition cache** — in-memory map, invalidated on CRUD, pushed to Controller via watch
 3. **MQTT lifecycle events** — publishes flow/run lifecycle events for real-time consumption by Controller, JM, and other components
 4. **State write endpoint** — JM/TM/sandbox update run/task status via REST (FlowgentClient), notifier reads channels via API
-5. **Multi-tenancy** — Auth (JWT/OIDC/GitHub OAuth) + rate limiting + tenant routing
+5. **Multi-tenancy** — Auth (JWT/OIDC/GitHub OAuth) + rate limiting + namespace routing
 6. **Scale independence** — stateless, 2+ replicas (JM is stateful, leader-elected)
 
 ### 2.1 REST API (Port 9999)
@@ -297,17 +297,17 @@ aligns with Kubernetes' apiserver→etcd pattern.
 |-------|--------|-------------|
 | `/_/healthz` | GET | Health check |
 | `/api/v1/webhook/{provider}` | POST | SCM webhook trigger (GitHub/GitLab/Gitea) — per-provider body adapter |
-| `/api/v1/{tenant}/agents` | GET/POST | List / Create agent definitions |
-| `/api/v1/{tenant}/flows` | GET/POST | List / Create flows |
-| `/api/v1/{tenant}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
-| `/api/v1/{tenant}/flows/trigger` | POST | Create PENDING run |
-| `/api/v1/{tenant}/runs` | GET/POST | List runs (JM polls this) / Create run |
-| `/api/v1/{tenant}/runs/{id}` | GET/PUT | Run status + update |
-| `/api/v1/{tenant}/runs/{id}/tasks` | GET/POST | Task list + create (JM/TM write) |
-| `/api/v1/{tenant}/runs/{id}/tasks/{tid}` | PUT | Update task status (TM writes) |
-| `/api/v1/{tenant}/runs/{id}/cancel` | POST | Cancel a running flow |
-| `/api/v1/{tenant}/notifications/channels` | GET | Notifier channel list |
-| `/api/v1/{tenant}/llm/providers` | GET | LLM provider definitions |
+| `/api/v1/{namespace}/agents` | GET/POST | List / Create agent definitions |
+| `/api/v1/{namespace}/flows` | GET/POST | List / Create flows |
+| `/api/v1/{namespace}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
+| `/api/v1/{namespace}/flows/trigger` | POST | Create PENDING run |
+| `/api/v1/{namespace}/runs` | GET/POST | List runs (JM polls this) / Create run |
+| `/api/v1/{namespace}/runs/{id}` | GET/PUT | Run status + update |
+| `/api/v1/{namespace}/runs/{id}/tasks` | GET/POST | Task list + create (JM/TM write) |
+| `/api/v1/{namespace}/runs/{id}/tasks/{tid}` | PUT | Update task status (TM writes) |
+| `/api/v1/{namespace}/runs/{id}/cancel` | POST | Cancel a running flow |
+| `/api/v1/{namespace}/notifications/channels` | GET | Notifier channel list |
+| `/api/v1/{namespace}/llm/providers` | GET | LLM provider definitions |
 | `/api/v1/human/approvals` | GET/POST | List pending / Create human approval |
 | `/api/v1/human/{token}/approve` | POST | Human approval |
 | `/api/v1/human/{token}/reject` | POST | Human rejection |
@@ -336,9 +336,9 @@ There are two ways runs enter the system:
 **Path A: API Trigger (sync write, async execution)**
 
 ```
-POST /api/v1/{tenant}/flows/trigger
+POST /api/v1/{namespace}/flows/trigger
   → agentFlowHandler validates spec exists
-  → run := { AgentFlowID, Vars, Status:PENDING, Tenant, Namespace:"" }
+  → run := { AgentFlowID, Vars, Status:PENDING, Namespace, Namespace:"" }
   → persist via apiserver store       // ← sync ends here
   → returns run_id to caller
   ... (later, asynchronously) ...
@@ -418,7 +418,7 @@ Execute(run, spec):
 Both session and application JMs use the **same binary + same code path**. The
 only difference is `FLOWGENT_NAMESPACE`:
 - Session: empty → runPoller picks runs with `namespace=""`
-- Application: `flowgent-{tenant}-{flow}` → runPoller picks runs in that namespace
+- Application: `flowgent-{namespace}-{flow}` → runPoller picks runs in that namespace
 
 ### 3.4 DAG Dependency Coordination — Iteration Loop + Blocking Schedule
 
@@ -504,11 +504,11 @@ K8sRM.Schedule(plan):
 
   2. SUBSCRIBE to exec/results (once per run):
      if s.runResults[runID] == nil:
-       q.Subscribe("exec/results/{tenant}/{flow}/{run}", callback)
+       q.Subscribe("exec/results/{namespace}/{flow}/{run}", callback)
      s.runResults[runID][plan.NodeID] = resultCh
      // ^^ channel registered BEFORE publish — no race
 
-  3. PUBLISH plan to exec/plans/{tenant}/{flow}/{run}
+  3. PUBLISH plan to exec/plans/{namespace}/{flow}/{run}
      → TM pods consume via $share/tm-pool
 
   4. BLOCK on resultCh (with planTimeout):
@@ -591,7 +591,7 @@ vars). Only processes flows where `shard == pod_index`.
 ```
 Every 10s:
   1. IDiscoveryClient.DiscoverPeers(labelSelector)
-  2. apiClient.ListFlows(tenant) → latest version per flow_id
+  2. apiClient.ListFlows(namespace) → latest version per flow_id
   3. For each flow where shard(flow_id) == my_index:
      a. Application: create/ensure K8s JM Deployment + create PENDING run via API
      b. (reserved) Session: create PENDING run via apiClient.CreateRun (namespace="")
@@ -607,7 +607,7 @@ Every 10s:
 | Priority | Mode | Controller Action | Who Executes |
 |----------|------|-------------------|--------------|
 | low/medium (reserved, not accepted) | Session | Create PENDING run via `apiClient.CreateRun` (namespace="") → shared JM picks up | Admin-managed TM pool |
-| high | Application | Create K8s JM Deployment + create PENDING run via API (namespace={tenant}) → dedicated JM picks up | JM auto-scales TMs via K8sRM |
+| high | Application | Create K8s JM Deployment + create PENDING run via API (namespace={namespace}) → dedicated JM picks up | JM auto-scales TMs via K8sRM |
 
 ### 4.4 Dual Format: Static YAML vs DB JSON
 
@@ -709,7 +709,7 @@ environment, no subprocess launcher. All MCP (Model Context Protocol) server
 communication uses **Streamable HTTP** transport via `mark3labs/mcp-go`'s
 `client.NewStreamableHttpClient`. The `McpManager` manages HTTP client lifecycle:
 each MCP server definition stores a URL and optional headers (auth tokens,
-tenant forwarding), NOT a command/args/env vector.
+namespace forwarding), NOT a command/args/env vector.
 
 ```
 TM Pod (SlotWorker)
@@ -738,49 +738,49 @@ and re-dispatches orphaned plans.
 ## 7. MQTT Event Bus
 
 All inter-component communication flows through MQTT topics under a unified
-namespace. The hierarchy isolates tenants and supports both session and
+namespace. The hierarchy isolates namespaces and supports both session and
 application deployment modes.
 
 ### 7.1 Topic Hierarchy
 
 All inter-component communication uses MQTT topics under `flowgent/v1/` with
-a hierarchical `{tenantId}/flows/{flowId}/runs/{runId}` structure for
-observability and multi-tenant isolation. Only apiserver touches DB.
+a hierarchical `{namespaceId}/flows/{flowId}/runs/{runId}` structure for
+observability and multi-namespace isolation. Only apiserver touches DB.
 
 ```
 # ── Execution Plan Dispatch: JM → TM ──────────────────────────
-flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/plans
+flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/plans
   JM publishes: serialized ExecutionPlan JSON
   TM subscribes via $share/tm-pool/.../exec/plans (load-balanced)
   → All routing info visible in topic for debugging
 
 # ── Execution Result: TM → JM ─────────────────────────────────
-flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results
+flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results
   TM publishes: TaskResult JSON (status, output, error)
   JM subscribes per-run: JM polls results for active runs
 
 # ── Sandbox Trigger: TM → Sandbox ─────────────────────────────
-flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/trigger
+flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/trigger
   TM publishes: model.SandboxTrigger (flowId, runId, scriptPath, ...)
   Sandbox subscribes via $share/sandbox-pool/.../sandbox/trigger (load-balanced)
 
 # ── Sandbox Result: Sandbox → TM ──────────────────────────────
-flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result
+flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
   Sandbox publishes: TaskResult JSON (stdout, stderr, exit_code)
   TM (originating slot only) subscribes: continues DAG execution
 
 # ── Controller → JM (dedicated JM creation) ───────────────────
-flowgent/v1/{tenant}/flows/{flowId}/ctrl/jm/create
+flowgent/v1/{namespace}/flows/{flowId}/ctrl/jm/create
   Controller publishes: "create dedicated JM for this flow"
   JM (leader-elected) subscribes: creates K8s JM Deployment
 
 # ── Notifier Events: Publisher → Notifier ─────────────────────
-flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/notify/event
+flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/event
   JM/Controller/TM publishes: notification event
   Notifier subscribes via $share/notify-pool/.../notify/event (load-balanced)
 
 # ── Notifier Results: Notifier → Publisher ────────────────────
-flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/notify/result
+flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/result
   Notifier publishes: delivery confirmation
   Publisher subscribes per-run
 
@@ -794,7 +794,7 @@ flowgent/v1/notify/pod/{podId}/ws/{wsId}
   Cross-pod WS message delivery for human approval push
 
 # ── State Write (via apiserver, NOT MQTT) ─────────────────────
-POST /api/v1/{tenant}/runs/{id}/tasks/{tid}
+POST /api/v1/{namespace}/runs/{id}/tasks/{tid}
   TM/sandbox/notifier → apiserver → PG
   (status updates, results, errors — persisted via REST)
 ```
@@ -803,11 +803,11 @@ POST /api/v1/{tenant}/runs/{id}/tasks/{tid}
 
 | Publisher | Topic | Consumer | Mechanism |
 |-----------|-------|----------|-----------|
-| K8sRM.Schedule | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/plans` | SlotWorker.Loop | `$share/tm-pool` competing consumers |
-| SlotWorker (result) | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/exec/results` | JobMaster | Per-run subscription |
-| SandboxExecutor (TM) | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/trigger` | SandboxRunner (sandbox pod) | `$share/sandbox-pool` competing consumers |
-| SandboxRunner (sandbox pod) | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result` | SandboxExecutor (TM) | Per-run subscription |
-| Notifier.Publish | `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/notify/event` | Notifier consumer | `$share/notify-pool` per-tenant |
+| K8sRM.Schedule | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/plans` | SlotWorker.Loop | `$share/tm-pool` competing consumers |
+| SlotWorker (result) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results` | JobMaster | Per-run subscription |
+| SandboxExecutor (TM) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/trigger` | SandboxRunner (sandbox pod) | `$share/sandbox-pool` competing consumers |
+| SandboxRunner (sandbox pod) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result` | SandboxExecutor (TM) | Per-run subscription |
+| Notifier.Publish | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/event` | Notifier consumer | `$share/notify-pool` per-namespace |
 | TM heartbeat | `flowgent/v1/heartbeat/{tmId}` | HeartbeatMonitor | Wildcard `flowgent/v1/heartbeat/+` for all TMs |
 
 ### 7.1.1 DAG Execution Round-Trip (exec/plans + exec/results)
@@ -847,7 +847,7 @@ publish the result before the JM's callback is registered, causing the
 
 **State-only callback**: `exec/results` carries only `{plan_id, node_id,
 state}` — the actual output data is persisted by the TM via
-`PUT /api/v1/{tenant}/runs/{id}/tasks/{tid}` BEFORE publishing to
+`PUT /api/v1/{namespace}/runs/{id}/tasks/{tid}` BEFORE publishing to
 `exec/results`. The JM then reads output data from the task record (or relies
 on the in-memory `nodeOutputs` map populated from the Schedule return value
 for variable resolution in subsequent nodes). See §8.1 for the ExecutionPlan
@@ -860,7 +860,7 @@ Heartbeat tmID uses a naming convention to distinguish modes at the topic level:
 | Mode | tmID Pattern | Example |
 |------|-------------|---------|
 | session | `session-tm-{hostname}-{hash}` | `session-tm-k8sm1-a1b2c3d4` |
-| application | `app-{tenant}-{flowId}-tm-{hostname}-{hash}` | `app-default-security-fixer-tm-k8sm1-e5f6g7h8` |
+| application | `app-{namespace}-{flowId}-tm-{hostname}-{hash}` | `app-default-security-fixer-tm-k8sm1-e5f6g7h8` |
 
 The JM monitors `heartbeat/+` and can distinguish session vs application TMs
 by the tmID prefix — no need for separate topic branches.
@@ -875,7 +875,7 @@ messaging:
     broker: "tcp://<host>:1883"
 ```
 The topic prefix `flowgent/v1/` is a hardcoded constant in the messager package.
-Topic builders like `messager.ExecPlansTopic(tenant, flow, run)` construct the
+Topic builders like `messager.ExecPlansTopic(namespace, flow, run)` construct the
 full hierarchical path from routing keys.
 
 ### 7.4 Fail-Fast in Distributed Mode
@@ -953,13 +953,13 @@ election. TM capacity admin-managed via Helm.
 
 Controller detects a flow (every flow, since `priority` only accepts `"high"`
 while Session mode is disabled) → creates dedicated K8s JM Deployment
-(`flowgent-jobmanager-{tenantId}-{flowId}` — see `applicationNamespace` in
-`pkg/controller/pkg/controller.go`) in the flow's **tenant** namespace
-(`{namespace_prefix}{tenantId}`, per §1.3 — every flow of the same tenant
+(`flowgent-jobmanager-{namespaceId}-{flowId}` — see `applicationNamespace` in
+`pkg/controller/pkg/controller.go`) in the flow's **namespace** namespace
+(`{namespace_prefix}{namespaceId}`, per §1.3 — every flow of the same namespace
 shares one namespace; Helm does not pre-create it, `ensureApplicationInfra`
-lazily creates it on first dispatch of any flow for that tenant) → JM
+lazily creates it on first dispatch of any flow for that namespace) → JM
 auto-scales TMs. Flow completes → Controller cleans up the Deployment (the
-tenant namespace itself is left behind, since other flows of the same tenant
+namespace namespace itself is left behind, since other flows of the same namespace
 may still be using it — see VERIFICATION.md Environment Reset for manual
 cleanup).
 
@@ -973,7 +973,7 @@ There are two paths to trigger a run:
 
 ```
 1. TRIGGER (sync)
-   → REST:     POST /api/v1/{tenant}/flows/trigger  {agentflow_id, vars}
+   → REST:     POST /api/v1/{namespace}/flows/trigger  {agentflow_id, vars}
    → A2A:      POST /a2a/tasks                       {agentflow_id, vars}
    → Webhook:  POST /api/v1/webhook/{provider}       (e.g, GitHub/GitLab/BitBucket req body)
        → per-provider adapter normalizes body → canonical WebhookEvent
@@ -1000,7 +1000,7 @@ There are two paths to trigger a run:
    → Hash-mod shard: only processes owned flows (peer snapshot fetched once/tick)
    → Detects flow trigger condition (cron / interval / on-new-definition)
    → (reserved) Session mode: FlowgentClient.CreateRun (PENDING, namespace="")
-   → Application mode: ensure K8s Deployment flowgent-jobmanager-{tenantId}-{flowId}
+   → Application mode: ensure K8s Deployment flowgent-jobmanager-{namespaceId}-{flowId}
                        + FlowgentClient.CreateRun (PENDING, namespace={flow's dedicated ns})
 
 2. JM POLL
@@ -1069,7 +1069,7 @@ Bridges internal agentflow events to external communication channels.
   │  │ Consumer         │  │ Scanner (5s)   │  │
   │  │ Topic: /flowgent/│  │ SELECT PENDING │  │
   │  │ notify/queue/    │  │ human_approvals│  │
-  │  │ {tenant}/{flow}  │  └───────┬────────┘  │
+  │  │ {namespace}/{flow}  │  └───────┬────────┘  │
   │  └────────┬─────────┘          │           │
   │           └──────────┬─────────┘           │
   │                      ▼                     │
@@ -1084,9 +1084,9 @@ Bridges internal agentflow events to external communication channels.
 
 ### 11.2 Queue Consumer
 
-MQTT shared subscription per tenant+flow: `flowgent/v1/{tenant}/flows/{flow}/runs/{run}/notify/event`.
+MQTT shared subscription per namespace+flow: `flowgent/v1/{namespace}/flows/{flow}/runs/{run}/notify/event`.
 Messages load-balanced across notifier pods via `$share/notify-pool`. Each message
-dispatched to configured channels for that tenant.
+dispatched to configured channels for that namespace.
 
 ### 11.3 IDiscoveryClient — Pluggable Service Discovery
 
@@ -1323,7 +1323,7 @@ model (→ common)
 
 | Path | Role |
 |------|------|
-| `console.go` | FlowgentConsole class — lazy store init, secret store setup, tenant management |
+| `console.go` | FlowgentConsole class — lazy store init, secret store setup, namespace management |
 | `types.go` | ExportData, ResourceImport (K8s-style), ResourceMetadata, WalletExport |
 | `export.go` | ExportKinds/ExportAll — filtered export (kinds: llm, channel, mcp, skill, agent, flow, flowrun) |
 | `import.go` | ImportPaths/ImportFile/ImportResource — YAML/JSON import with K8s-style resource wrapper support |
@@ -1523,7 +1523,7 @@ messages from the queue and reading/writing files through a shared workspace vol
 ### 18.2 Workspace Path Convention
 
 ```
-{workspace}/{tenant}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+{workspace}/{namespace}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
   ├── script.{py,sh,js}
   ├── result.json
   ├── status
@@ -1650,18 +1650,18 @@ TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
   → Snapshot originals                    → Read script from shared PVC
   → Publish trigger ───MQTT──→           → BuildFilter(network_policy)
     topic: .../sandbox/trigger            → Install seccomp (TSYNC)
-    {tenant}/{flowId}/{runId}             → Start notifier goroutine
+    {namespace}/{flowId}/{runId}             → Start notifier goroutine
   → Subscribe result ←──MQTT──           → Execute: bash/python3/node
     topic: .../sandbox/result             → Wait for child process exit
-    {tenant}/{flowId}/{runId}             → Notifier auto-exits
+    {namespace}/{flowId}/{runId}             → Notifier auto-exits
   → Read result.json from PVC            → Write result.json + status to PVC
                                            → Publish result ───MQTT──→
 ```
 
 In distributed mode, sandbox pods use `$share/sandbox-pool` shared subscription for
-load-balanced trigger consumption. The trigger topic contains `{tenant}/{flowId}/{runId}`
+load-balanced trigger consumption. The trigger topic contains `{namespace}/{flowId}/{runId}`
 so multiple runs don't interfere. Results use point-to-point routing via the same
-`{tenant}/{flowId}/{runId}` suffix — only the originating TM slot subscribes.
+`{namespace}/{flowId}/{runId}` suffix — only the originating TM slot subscribes.
 
 The `SandboxTrigger` struct is defined in `model` so both sides share the contract
 without Go import coupling. The sandbox pod's K8s Deployment is created and scaled
@@ -1679,7 +1679,7 @@ Sandbox Worker (per-execution lifecycle, running in sandbox pod):
   → Wait for child process exit
   → Notifier auto-exits (filter dies with child)
   → Write result.json + status to shared PVC
-  → Push result to MQTT: flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/sandbox/result
+  → Push result to MQTT: flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
 ```
 
 
@@ -1690,7 +1690,7 @@ workspace, provisioned once and shared across all sandbox pods.
 
 ```tree
 /var/flowgent/workspace/
-├── {tenant}/
+├── {namespace}/
 │   └── {definition_id}/
 │       ├── skills/                     ← skill scripts (read-only reference)
 │       └── runs/{run_id}/plans/{plan_id}/{span_id}/
@@ -1701,11 +1701,11 @@ workspace, provisioned once and shared across all sandbox pods.
 
 | Mode | Workspace Path | Provisioning |
 |------|---------------|-------------|
-| Session | `/var/flowgent/workspace/{tenant}/{definition_id}/` | PVC (Helm pre-creates) |
-| Application | `/var/flowgent/workspace/{tenant}/{definition_id}/` | PVC (same path convention) |
+| Session | `/var/flowgent/workspace/{namespace}/{definition_id}/` | PVC (Helm pre-creates) |
+| Application | `/var/flowgent/workspace/{namespace}/{definition_id}/` | PVC (same path convention) |
 | All-in-one | `os.TempDir()` | Process-local |
 
-Both modes use the same path convention — different tenants and flows are
+Both modes use the same path convention — different namespaces and flows are
 isolated by subdirectory, not by separate volumes.
 
 ### 18.7 Credential Injection
@@ -1844,13 +1844,13 @@ workflows.
 
 | Kind | CLI Name | REST Endpoint | Export | Import | CRUD (list/get/add/remove) |
 |------|----------|---------------|--------|--------|---------------------------|
-| Agent | `agent` | `/api/v1/{tenant}/agents` | yes | yes | yes |
-| MCP | `mcp` | `/api/v1/{tenant}/mcp` | yes | yes | yes |
-| LLMProvider | `llm` | `/api/v1/{tenant}/llm/providers` | yes | yes | yes |
-| NotifyChannel | `channel` | `/api/v1/{tenant}/notifications/channels` | yes | yes | yes |
+| Agent | `agent` | `/api/v1/{namespace}/agents` | yes | yes | yes |
+| MCP | `mcp` | `/api/v1/{namespace}/mcp` | yes | yes | yes |
+| LLMProvider | `llm` | `/api/v1/{namespace}/llm/providers` | yes | yes | yes |
+| NotifyChannel | `channel` | `/api/v1/{namespace}/notifications/channels` | yes | yes | yes |
 | Skill (Flow with kind=skill) | `skill` | (no REST endpoint — import/console only) | yes | yes | yes |
-| AgentFlow | `flow` | `/api/v1/{tenant}/flows` | yes | yes | yes |
-| FlowRun | `flowrun` | `/api/v1/{tenant}/runs` | yes | yes | yes |
+| AgentFlow | `flow` | `/api/v1/{namespace}/flows` | yes | yes | yes |
+| FlowRun | `flowrun` | `/api/v1/{namespace}/runs` | yes | yes | yes |
 | Wallet (Ed25519 keypair) | `wallet` | — | **never exported** | yes | yes |
 
 ### 20.3 Import/Export Design
@@ -1898,7 +1898,7 @@ apiVersion: console.flowgent.io/v1
 kind: MCP
 metadata:
   name: sonarqube
-  tenant: default
+  namespace: default
   labels:
     catalog: security,code-quality
   status: active

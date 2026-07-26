@@ -39,7 +39,7 @@ import (
 type ITRunner struct {
 	T      *testing.T
 	APIURL string
-	Tenant string
+	Namespace string
 	Flow   *entities.FlowInfo
 	LLMLog *externalmock.LLMCallLog
 
@@ -124,12 +124,12 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	sqURL, ghURL, llmURL string) *ITRunner {
 
 	t.Helper()
-	tenant := "test"
-	flow.TenantID = tenant
+	namespace := "test"
+	flow.Namespace = namespace
 
 	host, port := pgHostPort()
 	cfg := &config.FlowgentConfig{
-		Runtime:       config.RuntimeConfig{Tenant: config.TenantConfig{DefaultTenant: tenant, NamespacePrefix: "flowgent-"}},
+		Runtime:       config.RuntimeConfig{Namespace: config.NamespaceConfig{DefaultNamespace: namespace, NamespacePrefix: "flowgent-"}},
 		Orchestration: config.OrchestrationConfig{MaxConcurrentFlows: 8, FlowExecutionTimeout: "120s", MaxNodeRetries: 2},
 	}
 	cfg.Storage.Type = "POSTGRE"
@@ -153,7 +153,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	}
 
 	// ── apiserver (no auth) ──
-	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", tenant, nil)
+	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", namespace, nil)
 	nw := handler.NewNotifierWSBridge(nil)
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{},
@@ -165,13 +165,13 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		nw,
 		handler.NewLlmProviderHandler(storeImpl),
 		handler.NewMcpHandler(storeImpl),
-		handler.NewWebhookHandler(flowHandler, logger, tenant),
+		handler.NewWebhookHandler(flowHandler, logger, namespace),
 		handler.NewKnowledgeHandler(storeImpl),
 	)
 	srv := httptest.NewServer(restMux)
 	t.Cleanup(srv.Close)
 
-	r := &ITRunner{T: t, APIURL: srv.URL, Tenant: tenant, Flow: flow, LLMLog: llmLog, pool: pool}
+	r := &ITRunner{T: t, APIURL: srv.URL, Namespace: namespace, Flow: flow, LLMLog: llmLog, pool: pool}
 
 	r.SeedAgents()
 	r.SeedLLMProvider(llmURL)
@@ -183,17 +183,17 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider:     engine.ProviderStandalone,
 		PoolSize:     8,
-		TaskState:    &client.TaskStateClient{Client: apiClient, Tenant: tenant},
+		TaskState:    &client.TaskStateClient{Client: apiClient, Namespace: namespace},
 		ApprovalInfo: &client.HumanApprovalClient{Client: apiClient},
 		Logger:       logger,
 		APIServerURL: srv.URL,
-		Tenant:       tenant,
+		Namespace:       namespace,
 	})
 	if err != nil {
 		t.Fatalf("create resource manager: %v", err)
 	}
 	jm, err := jobmanager.NewJobManager(
-		&client.RunStateClient{Client: apiClient, Tenant: tenant},
+		&client.RunStateClient{Client: apiClient, Namespace: namespace},
 		rm, logger,
 		&jobmanager.JobManagerConfig{FlowExecutionTimeout: 120 * time.Second, MaxNodeRetries: 2, MaxConcurrentFlows: 8},
 	)
@@ -203,7 +203,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go jobmanager.StartRunPoller(ctx, apiClient, tenant, jm, flowHandler.AgentFlows(), "", "")
+	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), "", "")
 
 	return r
 }
@@ -235,7 +235,7 @@ func (r *ITRunner) SeedAgents() {
 		{Name: "arch-reviewer", Model: "mock/echo", Soul: "You are an architecture reviewer."},
 	}
 	for _, a := range agents {
-		r.Post("/api/v1/"+r.Tenant+"/agents", a)
+		r.Post("/api/v1/"+r.Namespace+"/agents", a)
 	}
 }
 
@@ -243,15 +243,15 @@ func (r *ITRunner) SeedLLMProvider(endpoint string) {
 	// Clean up stale mock providers from previous test runs so the engine
 	// doesn't pick up a URL whose httptest server has already been closed.
 	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_providers WHERE provider = 'mock'`)
-	r.Post("/api/v1/"+r.Tenant+"/llm/providers", entities.LlmProviderInfo{
+	r.Post("/api/v1/"+r.Namespace+"/llm/providers", entities.LlmProviderInfo{
 		Provider: "mock", Endpoint: endpoint, ApiKey: "test-key",
 		Status: "ACTIVE", Enabled: true, RateLimit: 100000,
 	})
 }
 
 func (r *ITRunner) SeedMCP(name, url string) {
-	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_mcp WHERE name = $1 AND tenant_id = $2`, name, r.Tenant)
-	r.Post("/api/v1/"+r.Tenant+"/mcp", entities.McpInfo{
+	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_mcp WHERE name = $1 AND namespace_id = $2`, name, r.Namespace)
+	r.Post("/api/v1/"+r.Namespace+"/mcp", entities.McpInfo{
 		Name: name, Type: "http", URL: url, Enabled: true,
 	})
 }
@@ -265,7 +265,7 @@ func (r *ITRunner) TriggerManual(vars map[string]any) []string {
 		payload["vars"] = map[string]any{}
 	}
 	b, _ := json.Marshal(payload)
-	resp, err := http.Post(r.APIURL+"/api/v1/"+r.Tenant+"/flows/"+r.Flow.ID+"/trigger", "application/json", bytes.NewReader(b))
+	resp, err := http.Post(r.APIURL+"/api/v1/"+r.Namespace+"/flows/"+r.Flow.ID+"/trigger", "application/json", bytes.NewReader(b))
 	if err != nil {
 		r.T.Fatalf("trigger POST: %v", err)
 	}
@@ -337,7 +337,7 @@ func (r *ITRunner) WaitRun(runID string, timeout time.Duration) string {
 }
 
 func (r *ITRunner) RunStatus(runID string) string {
-	resp, err := http.Get(r.APIURL + "/api/v1/" + r.Tenant + "/runs/" + runID)
+	resp, err := http.Get(r.APIURL + "/api/v1/" + r.Namespace + "/runs/" + runID)
 	if err != nil {
 		return ""
 	}

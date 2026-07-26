@@ -34,8 +34,8 @@ from typing import Dict, Any, Optional
 from common import config
 
 JAEGER_API = config.JAEGER_UI_URL
-API_BASE = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
+API_BASE = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
 
 _CONFIG_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "config")
 _FLOW_YAML_PATH = os.path.join(_CONFIG_ROOT, "flows", "security-autonomy-fixer.yaml")
@@ -44,7 +44,7 @@ _AGENTS_DIR = os.path.join(_CONFIG_ROOT, "agents")
 _USE_REAL_MCP = os.getenv("FLOWGENT_E2E_USE_REAL_MCP", "true").lower() == "true"
 _MOCK_MCP_COMMAND = ["/app/mcp-server.sh"]
 
-JM_NAMESPACE = f"{config.K3S_APP_NAMESPACE_PREFIX}{TENANT}"
+JM_NAMESPACE = f"{config.K8S_APP_NAMESPACE_PREFIX}{NAMESPACE}"
 JM_DEPLOY_NAME = f"flowgent-jobmanager-{JM_NAMESPACE}-security-autonomy-fixer"
 
 
@@ -55,8 +55,8 @@ def _unwrap_k8s(data: dict) -> dict:
         md = data.get("metadata", {}) or {}
         if md.get("name"):
             flat["name"] = md["name"]
-        if md.get("tenant"):
-            flat.setdefault("tenant_id", md["tenant"])
+        if md.get("namespace"):
+            flat.setdefault("namespace_id", md["namespace"])
         return flat
     return data
 
@@ -94,7 +94,7 @@ def seed_agents_and_mcps():
             agent_def = _unwrap_k8s(yaml.safe_load(f))
         name = agent_def.get("name")
         if name:
-            _get_or_post(f"/api/v1/{TENANT}/agents/{name}", f"/api/v1/{TENANT}/agents", agent_def, "agent")
+            _get_or_post(f"/api/v1/{NAMESPACE}/agents/{name}", f"/api/v1/{NAMESPACE}/agents", agent_def, "agent")
 
     if not os.environ.get("GITHUB_TOKEN") and os.environ.get("GH_TOKEN"):
         os.environ["GITHUB_TOKEN"] = os.environ["GH_TOKEN"]
@@ -107,7 +107,7 @@ def seed_agents_and_mcps():
         else:
             mcp_def = {"name": mode, "enabled": True, "type": "stdio",
                        "command": _MOCK_MCP_COMMAND, "args": [mode], "env": {}}
-        _get_or_post(f"/api/v1/{TENANT}/mcp/{mode}", f"/api/v1/{TENANT}/mcp", mcp_def, "mcp")
+        _get_or_post(f"/api/v1/{NAMESPACE}/mcp/{mode}", f"/api/v1/{NAMESPACE}/mcp", mcp_def, "mcp")
     print("  OK Agent + MCP definitions ready")
 
 
@@ -315,7 +315,7 @@ def ensure_security_fixer_flow_exists():
     with open(_FLOW_YAML_PATH) as f:
         flow_def = _unwrap_k8s(yaml.safe_load(f))
     flow_def.pop("triggers", None)
-    resp = requests.post(f"{API_BASE}/api/v1/{TENANT}/flows", json=flow_def, timeout=10)
+    resp = requests.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=flow_def, timeout=10)
     if resp.status_code not in (200, 201):
         raise Exception(f"Flow upsert failed: {resp.status_code} {resp.text}")
     print(f"  OK Flow definition ready: {flow_def.get('id')} (priority={flow_def.get('priority')})")
@@ -323,7 +323,7 @@ def ensure_security_fixer_flow_exists():
 
 def trigger_security_fixer() -> str:
     print("  -> Triggering security-autonomy-fixer flow...")
-    url = f"{API_BASE}/api/v1/{TENANT}/flows/trigger"
+    url = f"{API_BASE}/api/v1/{NAMESPACE}/flows/trigger"
     payload = {
         "agentflow_id": "security-autonomy-fixer",
         "vars": {
@@ -345,7 +345,7 @@ def trigger_security_fixer() -> str:
 
 def wait_for_completion(run_id: str, timeout: int = 600):
     print(f"  -> Waiting for run {run_id} to complete (timeout={timeout}s)...")
-    url = f"{API_BASE}/api/v1/{TENANT}/runs/{run_id}"
+    url = f"{API_BASE}/api/v1/{NAMESPACE}/runs/{run_id}"
     start = time.time()
     while time.time() - start < timeout:
         try:

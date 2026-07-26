@@ -100,12 +100,12 @@ var allInOneRestartCmd = &cobra.Command{
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 2. apiserver — multi-tenant REST + A2A gateway
+// 2. apiserver — multi-namespace REST + A2A gateway
 // ═══════════════════════════════════════════════════════════════
 
 var apiserverCmd = &cobra.Command{
 	Use:   "apiserver",
-	Short: "Multi-tenant REST API + A2A gateway",
+	Short: "Multi-namespace REST API + A2A gateway",
 	Long:  "Start, stop, or restart the API server (REST :9999, A2A :9992, mgmt :9991).",
 }
 

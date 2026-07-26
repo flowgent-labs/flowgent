@@ -45,7 +45,7 @@ Injected via environment variables (K8s Secrets → Sandbox Pod Env):
 Sandbox scripts execute in a shared workspace volume:
 
 ```
-{workspace}/{tenant}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+{workspace}/{namespace}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
   ├── script.sh        ← written by SandboxExecutor
   ├── result.json      ← written by SandboxRunner after execution
   └── status
@@ -54,7 +54,7 @@ Sandbox scripts execute in a shared workspace volume:
 | Mode | Workspace Backend |
 |------|------------------|
 | Session | PVC (ReadWriteMany), shared across all sandbox pods |
-| Application | PVC — dedicated per `{tenant}/{flow_id}`, provisioned by Controller |
+| Application | PVC — dedicated per `{namespace}/{flow_id}`, provisioned by Controller |
 
 This skill is **read-only** — it queries external APIs and returns data without modifying project files. Side effects (pom.xml edits, commits) are handled by subsequent DAG nodes in the parent flow.
 

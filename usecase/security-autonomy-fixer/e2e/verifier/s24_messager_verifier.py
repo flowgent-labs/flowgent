@@ -45,8 +45,8 @@ except ImportError:
     print("Install: pip install paho-mqtt")
     sys.exit(1)
 
-API_BASE = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
+API_BASE = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
 EMQX_HOST = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 
@@ -201,7 +201,7 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
     """Test complete Sandbox execution chain: JM → TM → Sandbox → TM → JM"""
     print(f"\n  → Testing Sandbox E2E Chain...")
     
-    tenant = TENANT
+    namespace = NAMESPACE
     flow_id = "test-flow-" + rand_id()
     run_id = "run-" + rand_id()
     plan_id = "plan-" + rand_id()
@@ -218,10 +218,10 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         tester.subscribe(f"$share/e2e-sandbox-pool/flowgent/v1/+/flows/+/runs/+/sandbox/trigger")
         
         # Point-to-point for sandbox result (TM receives)
-        tester.subscribe(f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/result")
+        tester.subscribe(f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result")
         
         # Point-to-point for exec result (JM receives)
-        tester.subscribe(f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/results")
+        tester.subscribe(f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results")
         
         time.sleep(0.5)
         tester.clear_messages()
@@ -233,7 +233,7 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
             "plan_id": plan_id,
             "agentflow_run_id": run_id,
             "agentflow_definition_id": flow_id,
-            "tenant_id": tenant,
+            "namespace_id": namespace,
             "task_id": task_id,
             "node_id": "sandbox-node",
             "task_type": "sandbox",
@@ -247,13 +247,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/plans",
+            f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/plans",
             {"id": plan_id, "payload": json.dumps(exec_plan)}
         )
         
         # Step 3: TM receives ExecutionPlan
         print(f"    • Step 3: TM receives exec/plans...")
-        exec_plans_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/plans"
+        exec_plans_topic = f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/plans"
         msg = tester.wait_for_message(exec_plans_topic, timeout=3)
         if not msg:
             raise AssertionError("TM did not receive ExecutionPlan")
@@ -272,13 +272,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
+            f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
             {"id": plan_id, "payload": json.dumps(sandbox_req)}
         )
         
         # Step 5: Sandbox receives trigger
         print(f"    • Step 5: Sandbox receives trigger...")
-        sb_trigger_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
+        sb_trigger_topic = f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
         msg = tester.wait_for_message(sb_trigger_topic, timeout=3)
         if not msg:
             raise AssertionError("Sandbox did not receive trigger")
@@ -296,13 +296,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/result",
+            f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result",
             {"id": plan_id, "payload": json.dumps(sandbox_result)}
         )
         
         # Step 7: TM receives sandbox result
         print(f"    • Step 7: TM receives sandbox/result...")
-        sb_result_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sandbox/result"
+        sb_result_topic = f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result"
         msg = tester.wait_for_message(sb_result_topic, timeout=3)
         if not msg:
             raise AssertionError("TM did not receive sandbox result")
@@ -328,13 +328,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/results",
+            f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results",
             {"id": plan_id, "payload": json.dumps(exec_result)}
         )
         
         # Step 10: JM receives state callback
         print(f"    • Step 10: JM receives exec/results...")
-        exec_results_topic = f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/results"
+        exec_results_topic = f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results"
         msg = tester.wait_for_message(exec_results_topic, timeout=5)
         if not msg:
             raise AssertionError("JM did not receive exec result")
@@ -366,7 +366,7 @@ def run():
     tester = MQTTTester()
     results = {}
     
-    tenant = TENANT
+    namespace = NAMESPACE
     flow_id = "test-flow-" + rand_id()
     run_id = "run-" + rand_id()
     tm_id = "tm-" + rand_id()
@@ -375,34 +375,34 @@ def run():
     topic_tests = [
         {
             "name": "exec/plans (JM → TM)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/plans",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/plans",
             "subscribe": f"$share/e2e-tm-pool/flowgent/v1/+/flows/+/runs/+/exec/plans",
             "payload": {"plan_id": rand_id(), "task_type": "agent"},
         },
         {
             "name": "exec/results (TM → JM, state-only)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/exec/results",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/exec/results",
             "payload": {"plan_id": rand_id(), "node_id": "n1", "state": "COMPLETED"},
         },
         {
             "name": "notify/event (Publisher → Notifier)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/notify/event",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/notify/event",
             "subscribe": f"$share/e2e-notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event",
             "payload": {"channel": "webhook", "message": "test notification"},
         },
         {
             "name": "notify/result (Notifier → Publisher)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/notify/result",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/notify/result",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/notify/result",
             "payload": {"status": "delivered", "channel": "webhook"},
         },
         {
             "name": "sign/request (TM → Wallet)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sign/request",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sign/request",
             "subscribe": f"$share/e2e-wallet-pool/flowgent/v1/+/flows/+/runs/+/sign/request",
             "payload": {
-                "tenant_id": tenant,
+                "namespace_id": namespace,
                 "flow_id": flow_id,
                 "run_id": run_id,
                 "request_id": rand_id(),
@@ -412,10 +412,10 @@ def run():
         },
         {
             "name": "sign/response (Wallet → TM)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/sign/response",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sign/response",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/sign/response",
             "payload": {
-                "tenant_id": tenant,
+                "namespace_id": namespace,
                 "flow_id": flow_id,
                 "run_id": run_id,
                 "request_id": rand_id(),
@@ -431,25 +431,25 @@ def run():
         },
         {
             "name": "ctrl/flow/updated (API → Controller)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/ctrl/flow/updated",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/ctrl/flow/updated",
             "subscribe": f"flowgent/v1/+/flows/+/ctrl/flow/updated",
             "payload": {"action": "updated", "agentflow_id": flow_id},
         },
         {
             "name": "ctrl/flow/deleted (API → Controller)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/ctrl/flow/deleted",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/ctrl/flow/deleted",
             "subscribe": f"flowgent/v1/+/flows/+/ctrl/flow/deleted",
             "payload": {"action": "deleted", "agentflow_id": flow_id},
         },
         {
             "name": "ctrl/run/created (API → Controller)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/ctrl/run/created",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/ctrl/run/created",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/ctrl/run/created",
             "payload": {"run_id": run_id, "status": "PENDING"},
         },
         {
             "name": "ctrl/run/status (API → Controller)",
-            "publish": f"flowgent/v1/{tenant}/flows/{flow_id}/runs/{run_id}/ctrl/run/status",
+            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/ctrl/run/status",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/ctrl/run/status",
             "payload": {"run_id": run_id, "status": "RUNNING"},
         },

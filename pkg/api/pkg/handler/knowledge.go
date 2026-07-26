@@ -33,7 +33,7 @@ func NewKnowledgeHandler(s store.IStore) *KnowledgeHandler {
 	return &KnowledgeHandler{store: kStore}
 }
 
-// List returns all knowledge entries for the given tenant, with optional
+// List returns all knowledge entries for the given namespace, with optional
 // tag filtering and pagination.
 func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
 	tagsParam := r.URL.Query().Get("tags")
@@ -75,7 +75,7 @@ func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Create adds a new knowledge entry.
 func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 
 	var entry entities.KnowledgeEntry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
@@ -88,7 +88,7 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entry.ID = uuid.New().String()
-	entry.TenantID = tenant
+	entry.Namespace = namespace
 	entry.CreatedAt = time.Now()
 	entry.UpdatedAt = time.Now()
 	if entry.Status == "" {
@@ -127,7 +127,7 @@ func (h *KnowledgeHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update modifies an existing knowledge entry.
 func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 
 	existing, err := h.store.Get(r.Context(), id)
 	if err != nil || existing == nil {
@@ -163,7 +163,7 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if updates.Metadata != nil {
 		existing.Metadata = updates.Metadata
 	}
-	existing.TenantID = tenant
+	existing.Namespace = namespace
 	existing.UpdatedAt = time.Now()
 
 	if err := h.store.Save(r.Context(), existing); err != nil {

@@ -32,22 +32,22 @@ func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
 	return &AgentDefHandler{store: agStore, logger: logger}
 }
 
-// List returns all agent definitions for the given tenant.
+// List returns all agent definitions for the given namespace.
 func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 	agents, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = tenant
+	_ = namespace
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agents)
 }
 
 // Create persists a new agent definition.
 func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 	var agent entities.AgentInfo
 	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -58,7 +58,7 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agent.ID = uuid.New().String()
-	agent.TenantID = tenant
+	agent.Namespace = namespace
 	agent.CreatedAt = time.Now()
 	agent.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &agent); err != nil {
@@ -86,7 +86,7 @@ func (h *AgentDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update modifies an existing agent definition.
 func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 
 	existing, err := h.store.Get(r.Context(), name)
 	if err != nil || existing == nil {
@@ -116,7 +116,7 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if updates.MaxTokens != 0 {
 		existing.MaxTokens = updates.MaxTokens
 	}
-	existing.TenantID = tenant
+	existing.Namespace = namespace
 	existing.UpdatedAt = time.Now()
 
 	if err := h.store.Save(r.Context(), existing); err != nil {

@@ -17,8 +17,8 @@ def unwrap_k8s(data: dict) -> dict:
         md = data.get("metadata", {}) or {}
         if md.get("name"):
             flat["name"] = md["name"]
-        if md.get("tenant"):
-            flat.setdefault("tenant_id", md["tenant"])
+        if md.get("namespace"):
+            flat.setdefault("namespace_id", md["namespace"])
         return flat
     return data
 
@@ -50,9 +50,9 @@ def get_or_post(s, api_base, get_path, post_path, payload, kind):
     return True
 
 
-def get_tasks(s, api_base, tenant, run_id):
+def get_tasks(s, api_base, namespace, run_id):
     """Fetch all tasks for a given flow run."""
-    r = s.get(f"{api_base}/api/v1/{tenant}/runs/{run_id}/tasks")
+    r = s.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/tasks")
     if r.status_code != 200:
         return []
     tasks = r.json()

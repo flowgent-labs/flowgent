@@ -8,20 +8,20 @@ Override via environment variables or by editing the defaults below.
 import os
 
 
-# ── K3s / K8s API ───────────────────────────────────────────────
-K3S_APISERVER_URL = os.getenv("FLOWGENT_K3S_APISERVER", "http://localhost:9999")
-K3S_A2A_URL       = os.getenv("FLOWGENT_K3S_A2A",       "http://localhost:9992")
-K3S_KUBECONFIG    = os.getenv("KUBECONFIG",              os.path.expanduser("~/.kube/config"))
-K3S_NAMESPACE     = os.getenv("FLOWGENT_K3S_NAMESPACE",  "default")
-K3S_TENANT        = os.getenv("FLOWGENT_K3S_TENANT",     "default")
-# Must match tenant.namespace_prefix (etc/flowgent.yaml / helm values.yaml
-# tenant.namespacePrefix, both default "flowgent-") — this is the PREFIX of
+# ── K8S / K8s API ───────────────────────────────────────────────
+K8S_APISERVER_URL = os.getenv("FLOWGENT_K8S_APISERVER", "http://localhost:9999")
+K8S_A2A_URL       = os.getenv("FLOWGENT_K8S_A2A",       "http://localhost:9992")
+K8S_KUBECONFIG    = os.getenv("KUBECONFIG",              os.path.expanduser("~/.kube/config"))
+K8S_NAMESPACE     = os.getenv("FLOWGENT_K8S_NAMESPACE",  "default")
+K8S_NAMESPACE        = os.getenv("FLOWGENT_K8S_NAMESPACE",     "default")
+# Must match namespace.namespace_prefix (etc/flowgent.yaml / helm values.yaml
+# namespace.namespacePrefix, both default "flowgent-") — this is the PREFIX of
 # where the Controller places each flow's dedicated JM Deployment (Application
-# mode): namespace = "{prefix}{tenant_id}" (per-TENANT, not per-flow — every
-# flow of the same tenant shares one namespace), NOT K3S_NAMESPACE. See
+# mode): namespace = "{prefix}{namespace_id}" (per-NAMESPACE, not per-flow — every
+# flow of the same namespace shares one namespace), NOT K8S_NAMESPACE. See
 # pkg/controller/pkg/controller.go applicationNamespace / pkg/api/pkg/handler/
 # flow_def.go applicationNamespace.
-K3S_APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K3S_APP_NAMESPACE_PREFIX", "flowgent-")
+K8S_APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K8S_APP_NAMESPACE_PREFIX", "flowgent-")
 
 # ── PostgreSQL ───────────────────────────────────────────────────
 PG_HOST     = os.getenv("FLOWGENT_PG_HOST",     "localhost")
@@ -49,7 +49,7 @@ SONARQUBE_TOKEN = os.getenv("FLOWGENT_SONARQUBE_TOKEN", "")
 WALLET_URL    = os.getenv("FLOWGENT_WALLET_URL",    "http://localhost:9901")
 WALLET_NAME   = os.getenv("FLOWGENT_WALLET_NAME",   "default")
 
-# ── K3s / kubectl paths ──────────────────────────────────────────
+# ── K8S / kubectl paths ──────────────────────────────────────────
 KUBECTL_BIN = os.getenv("KUBECTL_BIN", "kubectl")
 HELM_BIN    = os.getenv("HELM_BIN", "helm")
 

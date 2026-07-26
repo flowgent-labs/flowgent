@@ -204,7 +204,7 @@ orchestration:
 #    model.SandboxPolicy / SandboxDeploymentConfig wire types (used over MQTT/DB),
 #    which retain snake_case field names — do not rename them to camelCase.
 sandbox:
-  workspace: "/var/flowgent/workspace"   # shared PVC, per-{tenant}/{flow_id} subdirs
+  workspace: "/var/flowgent/workspace"   # shared PVC, per-{namespace}/{flow_id} subdirs
   policy:
     network:
       mode: none                   # none | allowlist | denylist
@@ -258,18 +258,18 @@ notifier:
 #    Operational parameters typically set via FLOWGENT__RUNTIME__* env vars
 #    rather than in the static config file.
 runtime:
-  # Tenant isolation defaults
-  tenant:
-    default_tenant: "default"
+  # Namespace isolation defaults
+  namespace:
+    default_namespace: "default"
     namespace_prefix: "flowgent-"
-  # CSI-mounted credential files hierarchy (tenant + flow level):
-  #   {basePath}/{tenant}/secret/.credentials          (tenant-level)
-  #   {basePath}/{tenant}/{flow}/secret/.credentials   (flow-level)
-  # Flow-level credentials override tenant-level.
+  # CSI-mounted credential files hierarchy (namespace + flow level):
+  #   {basePath}/{namespace}/secret/.credentials          (namespace-level)
+  #   {basePath}/{namespace}/{flow}/secret/.credentials   (flow-level)
+  # Flow-level credentials override namespace-level.
   credential_paths:
     base_path: "/var/flowgent"
   api_server_url: "http://apiserver:9999"
-  namespace: "default"
+  k8s_namespace: "default"
   # agentFlowId: ""              # set by JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
   # tmId: ""                     # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
   tm_deploy: "flowgent-taskmanager"

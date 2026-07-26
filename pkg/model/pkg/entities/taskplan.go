@@ -29,7 +29,7 @@ type ExecutionPlan struct {
 	PlanID                string   `json:"plan_id"`
 	AgentFlowRunID        string   `json:"agentflow_run_id"`
 	AgentFlowDefinitionID string   `json:"agentflow_definition_id"`
-	TenantID              string   `json:"tenant_id,omitempty"`
+	Namespace              string   `json:"namespace_id,omitempty"`
 	TaskID                string   `json:"task_id"`
 	TaskType              TaskType `json:"task_type"`
 	NodeID                string   `json:"node_id"`

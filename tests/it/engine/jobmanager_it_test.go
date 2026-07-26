@@ -14,7 +14,7 @@ func boolPtr(b bool) *bool { return &b }
 // TestJM_LinearChain verifies serial DAG execution: a→b→c→d.
 func TestJM_LinearChain(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "it-linear", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "it-linear", Namespace: "test"},
 		Nodes:      []entities.Node{entities.Node{ID: "get-commit", Type: entities.NoopNode}, entities.Node{ID: "scan", Type: entities.NoopNode}, entities.Node{ID: "aggregate", Type: entities.NoopNode}, entities.Node{ID: "report", Type: entities.NoopNode}},
 		Edges:      []entities.Edge{entities.Edge{From: "get-commit", To: "scan"}, entities.Edge{From: "scan", To: "aggregate"}, entities.Edge{From: "aggregate", To: "report"}},
 	}
@@ -32,7 +32,7 @@ func TestJM_LinearChain(t *testing.T) {
 // branches that fan back in to a join node.
 func TestJM_ParallelFanOutFanIn(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "it-diamond", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "it-diamond", Namespace: "test"},
 		Nodes:      []entities.Node{entities.Node{ID: "generate-fixes", Type: entities.NoopNode}, entities.Node{ID: "review-security", Type: entities.NoopNode}, entities.Node{ID: "review-quality", Type: entities.NoopNode}, entities.Node{ID: "committee", Type: entities.NoopNode}},
 		Edges:      []entities.Edge{entities.Edge{From: "generate-fixes", To: "review-security"}, entities.Edge{From: "generate-fixes", To: "review-quality"}, entities.Edge{From: "review-security", To: "committee"}, entities.Edge{From: "review-quality", To: "committee"}},
 	}
@@ -59,7 +59,7 @@ func TestJM_ConditionRouting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
-				BaseEntity: entities.BaseEntity{ID: "it-condition", TenantID: "test"},
+				BaseEntity: entities.BaseEntity{ID: "it-condition", Namespace: "test"},
 				Nodes: []entities.Node{
 					entities.Node{ID: "committee", Type: entities.NoopNode},
 					{ID: "is-approved", Type: entities.ConditionNode, Expression: "${input.approved == true}", Input: map[string]any{"approved": "${vars.approved}"}},
@@ -97,7 +97,7 @@ func TestJM_CommitteeMajority(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
-				BaseEntity: entities.BaseEntity{ID: "it-committee", TenantID: "test"},
+				BaseEntity: entities.BaseEntity{ID: "it-committee", Namespace: "test"},
 				Nodes: []entities.Node{
 					{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "majority"}, Input: map[string]any{"votes": tc.votes}},
 					entities.Node{ID: "end", Type: entities.NoopNode},
@@ -120,7 +120,7 @@ func TestJM_CommitteeMajority(t *testing.T) {
 // child execution plans.
 func TestJM_MapIteration(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "it-map", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "it-map", Namespace: "test"},
 		Nodes: []entities.Node{
 			{ID: "iterate", Type: entities.MapNode, Input: map[string]any{"items": []any{"x", "y", "z"}}},
 			entities.Node{ID: "done", Type: entities.NoopNode},
@@ -141,7 +141,7 @@ func TestJM_MapIteration(t *testing.T) {
 // through the DAG.
 func TestJM_SubFlowNesting(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "it-nesting", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "it-nesting", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
@@ -165,7 +165,7 @@ func TestJM_SubFlowNesting(t *testing.T) {
 // allows the DAG to proceed.
 func TestJM_SupervisorGate(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "it-supervisor", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "it-supervisor", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
@@ -177,7 +177,7 @@ func TestJM_SupervisorGate(t *testing.T) {
 		Edges: []entities.Edge{entities.Edge{From: "start", To: "gate"}, entities.Edge{From: "gate", To: "end"}},
 	}
 	fs := it.New(t, flow)
-	fs.Post("/api/v1/"+fs.Tenant+"/agents", entities.AgentInfo{
+	fs.Post("/api/v1/"+fs.Namespace+"/agents", entities.AgentInfo{
 		Name: "supervisor-agent", Model: "mock/echo",
 		Soul: "You are a supervisor agent. Decide whether to continue or rework.",
 	})
@@ -203,7 +203,7 @@ func TestJM_CommitteeUnanimous(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
-				BaseEntity: entities.BaseEntity{ID: "it-committee-unanimous", TenantID: "test"},
+				BaseEntity: entities.BaseEntity{ID: "it-committee-unanimous", Namespace: "test"},
 				Nodes: []entities.Node{
 					{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "unanimous"}, Input: map[string]any{"votes": tc.votes}},
 					entities.Node{ID: "end", Type: entities.NoopNode},
@@ -225,7 +225,7 @@ func TestJM_CommitteeUnanimous(t *testing.T) {
 // TestJM_CommitteeVeto verifies that with unanimous strategy a single "no" blocks.
 func TestJM_CommitteeVeto(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "it-committee-veto", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "it-committee-veto", Namespace: "test"},
 		Nodes: []entities.Node{
 			{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "unanimous"},
 				Input: map[string]any{"votes": []any{map[string]any{"decision": true}, map[string]any{"decision": true}, map[string]any{"decision": false}}}},
@@ -256,7 +256,7 @@ func TestJM_CommitteeWeighted(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
-				BaseEntity: entities.BaseEntity{ID: "it-committee-weighted", TenantID: "test"},
+				BaseEntity: entities.BaseEntity{ID: "it-committee-weighted", Namespace: "test"},
 				Nodes: []entities.Node{
 					{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "majority_strict"}, Input: map[string]any{"votes": tc.votes}},
 					entities.Node{ID: "end", Type: entities.NoopNode},

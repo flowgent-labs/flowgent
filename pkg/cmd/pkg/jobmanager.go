@@ -66,19 +66,19 @@ func startJobManager(cfgPath string) error {
 	defer q.Close()
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Runtime.Tenant.DefaultTenant
-	if tenant == "" {
-		tenant = "default"
+	namespace := svcCfg.Runtime.Namespace.DefaultNamespace
+	if namespace == "" {
+		namespace = "default"
 	}
 
-	stateClient := &client.RunStateClient{Client: apiClient, Tenant: tenant}
-	taskClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
+	stateClient := &client.RunStateClient{Client: apiClient, Namespace: namespace}
+	taskClient := &client.TaskStateClient{Client: apiClient, Namespace: namespace}
 	humanClient := &client.HumanApprovalClient{Client: apiClient}
 
 	var rm resourcemanager.ResourceManager
-	jmNamespace := svcCfg.Runtime.Namespace
+	jmNamespace := svcCfg.Runtime.K8sNamespace
 
-	k8sNamespace := svcCfg.Runtime.Namespace
+	k8sNamespace := svcCfg.Runtime.K8sNamespace
 	if k8sNamespace == "" {
 		k8sNamespace = "default"
 	}
@@ -102,7 +102,7 @@ func startJobManager(cfgPath string) error {
 			MQTTBroker:        svcCfg.Messager.MQTT.Broker,
 			PostgresDSN:       svcCfg.Storage.Postgres.Dsn,
 			APIServerURL:      svcCfg.Runtime.APIServerURL,
-			Tenant:            tenant,
+			Namespace:            namespace,
 		})
 	}
 	if rm == nil {
@@ -112,7 +112,7 @@ func startJobManager(cfgPath string) error {
 			ApprovalInfo: humanClient,
 			Logger:        logger, Messager: q,
 			APIServerURL:  svcCfg.Runtime.APIServerURL,
-			Tenant:        tenant,
+			Namespace:        namespace,
 		})
 	}
 
@@ -125,7 +125,7 @@ func startJobManager(cfgPath string) error {
 
 	flows := make(map[string]*entities.FlowInfo)
 	if agentFlowID != "" {
-		apiFlows, err := apiClient.ListFlows(context.Background(), tenant)
+		apiFlows, err := apiClient.ListFlows(context.Background(), namespace)
 		if err == nil {
 			var bestVer int64
 			for i := range apiFlows {
@@ -152,7 +152,7 @@ func startJobManager(cfgPath string) error {
 	slog.Debug("jobmanager loaded flows", "count", len(flows), "agentFlowID", agentFlowID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go jobmanager.StartRunPoller(ctx, apiClient, tenant, jm, flows, jmNamespace, agentFlowID)
+	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flows, jmNamespace, agentFlowID)
 	slog.Info("JobManager started", "scheduler", rm.Provider(), "namespace", jmNamespace, "agentFlow", agentFlowID)
 	utils.WaitSignal()
 	cancel()

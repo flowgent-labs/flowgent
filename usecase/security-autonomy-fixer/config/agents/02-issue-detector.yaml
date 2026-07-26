@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: issue-detector
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: DevSecOps expert specializing in SonarQube SAST analysis, issue parsing, normalization, deduplication, and severity assessment

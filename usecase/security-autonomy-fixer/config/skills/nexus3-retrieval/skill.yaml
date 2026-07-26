@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Skill
 metadata:
   name: nexus3-retrieval
-  tenant: default
+  namespace: default
   labels:
     type: dependency-firewall
     runtime: bash-python

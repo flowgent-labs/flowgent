@@ -44,19 +44,19 @@ const maxWebhookBody = 1 << 20
 type WebhookHandler struct {
 	trigger       *FlowDefHandler
 	logger        *utils.Logger
-	defaultTenant string
+	defaultNamespace string
 }
 
 // NewWebhookHandler wires a WebhookHandler to the shared FlowDefHandler (which
 // owns the flow cache + run store + MQTT publisher used to actually create the
-// run). defaultTenant is the tenant runs are created under when a provider
-// payload can't be attributed to a specific tenant (SCM webhooks are not
-// tenant-scoped in the URL).
-func NewWebhookHandler(trigger *FlowDefHandler, logger *utils.Logger, defaultTenant string) *WebhookHandler {
+// run). defaultNamespace is the namespace runs are created under when a provider
+// payload can't be attributed to a specific namespace (SCM webhooks are not
+// namespace-scoped in the URL).
+func NewWebhookHandler(trigger *FlowDefHandler, logger *utils.Logger, defaultNamespace string) *WebhookHandler {
 	return &WebhookHandler{
 		trigger:       trigger,
 		logger:        logger,
-		defaultTenant: defaultTenantID(defaultTenant),
+		defaultNamespace: coalesceNamespace(defaultNamespace),
 	}
 }
 
@@ -161,9 +161,9 @@ func (h *WebhookHandler) dispatch(ctx context.Context, evt WebhookEvent) []strin
 		if spec == nil || !matchesWebhookTrigger(spec, evt) {
 			continue
 		}
-		tenant := spec.TenantID
-		if tenant == "" {
-			tenant = h.defaultTenant
+		namespace := spec.Namespace
+		if namespace == "" {
+			namespace = h.defaultNamespace
 		}
 		vars := webhookVars(spec, evt)
 		trig := entities.TriggerInfo{
@@ -179,7 +179,7 @@ func (h *WebhookHandler) dispatch(ctx context.Context, evt WebhookEvent) []strin
 				"sender":     evt.Sender,
 			},
 		}
-		runID, err := h.trigger.CreateRunFromTrigger(ctx, spec.ID, tenant, vars, trig)
+		runID, err := h.trigger.CreateRunFromTrigger(ctx, spec.ID, namespace, vars, trig)
 		if err != nil {
 			h.logger.Warn("webhook: failed to create run",
 				"provider", evt.Provider, "event", evt.Event, "flow_id", spec.ID, "error", err)

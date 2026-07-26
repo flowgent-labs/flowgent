@@ -34,11 +34,11 @@ subjects:
     namespace: {{ .Release.Namespace }}
 ---
 # Dedicated per-flow JM Deployments (Application mode) land in their
-# tenant's namespace (flowgent-{tenantID} — every flow of the same tenant
+# namespace's namespace (flowgent-{namespaceID} — every flow of the same namespace
 # shares one namespace), so the Controller needs a ClusterRole to
 # create/list/delete Deployments across namespaces (buildJMDeployment /
 # gcOrphanedJMDeployments in pkg/controller), plus get/create on namespaces
-# themselves — ensureApplicationInfra lazily creates the tenant namespace on
+# themselves — ensureApplicationInfra lazily creates the namespace namespace on
 # first dispatch of any of its flows, since Helm does not pre-create it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

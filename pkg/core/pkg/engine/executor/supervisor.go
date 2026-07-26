@@ -16,17 +16,17 @@ import (
 type SupervisorExecutor struct {
 	llmClient engine.LLMClient
 	client    *client.FlowgentClient
-	tenant    string
+	namespace    string
 }
 
-func NewSupervisorExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, tenant string) *SupervisorExecutor {
-	return &SupervisorExecutor{llmClient: llm, client: apiClient, tenant: tenant}
+func NewSupervisorExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, namespace string) *SupervisorExecutor {
+	return &SupervisorExecutor{llmClient: llm, client: apiClient, namespace: namespace}
 }
 
 func (e *SupervisorExecutor) TaskType() entities.TaskType { return entities.TaskSupervisor }
 
 func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	agent, err := e.client.GetAgent(ctx, e.tenant, plan.NodeSpec.Agent)
+	agent, err := e.client.GetAgent(ctx, e.namespace, plan.NodeSpec.Agent)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor agent not found %q: %w", plan.NodeSpec.Agent, err)
 	}

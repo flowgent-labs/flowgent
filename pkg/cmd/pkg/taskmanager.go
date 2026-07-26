@@ -41,7 +41,7 @@ func startTaskManager(cfgPath string) error {
 
 	defaultTMID := "application-tm-" + utils.Hostname()
 	if flowID := svcCfg.Runtime.AgentFlowID; flowID != "" {
-		defaultTMID = "application-" + svcCfg.Runtime.Tenant.DefaultTenant + "-" + flowID + "-tm-" + utils.Hostname()
+		defaultTMID = "application-" + svcCfg.Runtime.Namespace.DefaultNamespace + "-" + flowID + "-tm-" + utils.Hostname()
 	}
 	tmID := svcCfg.Runtime.TMID
 	if tmID == "" {
@@ -56,17 +56,17 @@ func startTaskManager(cfgPath string) error {
 	defer q.Close()
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Runtime.Tenant.DefaultTenant
-	if tenant == "" {
-		tenant = "default"
+	namespace := svcCfg.Runtime.Namespace.DefaultNamespace
+	if namespace == "" {
+		namespace = "default"
 	}
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Messager: q,
-		State:         &client.TaskStateClient{Client: apiClient, Tenant: tenant},
+		State:         &client.TaskStateClient{Client: apiClient, Namespace: namespace},
 		ApprovalInfo:  &client.HumanApprovalClient{Client: apiClient},
 		APIServerURL:  svcCfg.Runtime.APIServerURL,
-		Tenant:        tenant,
+		Namespace:        namespace,
 		Logger:        logger,
 		SandboxMessager:             q,
 		SandboxPolicy:               svcCfg.Sandbox.Policy,

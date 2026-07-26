@@ -52,8 +52,8 @@ func (s *FlowSQLiteStore) SaveSpec(ctx context.Context, spec *entities.FlowInfo,
 		nextVer = 1
 	}
 	_, err := s.inner.Conn.ExecContext(ctx,
-		"INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,priority,tenant_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT (agentflow_id,version) DO UPDATE SET definition=?4,comment=?6,priority=?7,updated_at=CURRENT_TIMESTAMP",
-		uuid.New().String(), spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.TenantID)
+		"INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,priority,namespace_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT (agentflow_id,version) DO UPDATE SET definition=?4,comment=?6,priority=?7,updated_at=CURRENT_TIMESTAMP",
+		uuid.New().String(), spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.Namespace)
 	if err != nil {
 		return err
 	}

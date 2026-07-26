@@ -26,7 +26,7 @@ import os
 # Config now in runner.py
 from common import config
 
-A2A = config.K3S_A2A_URL
+A2A = config.K8S_A2A_URL
 
 
 def run():

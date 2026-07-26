@@ -1,21 +1,21 @@
 """
-Scenario 11 — Pre-Deployment & Infrastructure: K3s, Helm, Pod Readiness.
+Scenario 11 — Pre-Deployment & Infrastructure: K8S, Helm, Pod Readiness.
 
 Verifies cluster health, external dependencies, Helm deployment, and pod
 readiness before any functional scenarios run.
 
-Uses kubectl subprocess calls — runs on the K3s control node.
+Uses kubectl subprocess calls — runs on the K8S control node.
 
 Steps with Expected I/O:
   L1 — Pre-Deployment
-    Step 1.1 K3s Nodes
+    Step 1.1 K8S Nodes
       Action:  kubectl get nodes
-      Input:   KUBECONFIG set, K3s cluster running
+      Input:   KUBECONFIG set, K8S cluster running
       Output:  ≥1 node with "Ready" status
 
     Step 1.2 System Pods
       Action:  kubectl get pods -n kube-system
-      Input:   K3s cluster accessible
+      Input:   K8S cluster accessible
       Output:  All kube-system pods Running
 
     Step 1.3 SonarQube Health
@@ -70,7 +70,7 @@ import time
 # Config now in runner.py
 from common import config
 
-NAMESPACE = config.K3S_NAMESPACE
+NAMESPACE = config.K8S_NAMESPACE
 
 
 def kubectl(args, check=True):
@@ -95,11 +95,11 @@ def kubectl_json(args):
 
 
 def run():
-    # ── L1.1: K3s cluster health ───────────────────────────
+    # ── L1.1: K8S cluster health ───────────────────────────
     print("\n── L1: Pre-Deployment ──")
     result = kubectl(["get", "nodes"])
     if "Ready" in result.stdout:
-        print("  [1.1] K3s nodes OK (Ready found)")
+        print("  [1.1] K8S nodes OK (Ready found)")
     else:
         print("  [1.1] WARN: no Ready nodes in output")
 
@@ -223,7 +223,7 @@ def run():
     # ── L3.3: Apiserver healthz ────────────────────────────
     try:
         import requests
-        api_url = config.K3S_APISERVER_URL
+        api_url = config.K8S_APISERVER_URL
         r = requests.get(f"{api_url}/_/healthz", timeout=5)
         if r.status_code == 200:
             body = r.text[:200]

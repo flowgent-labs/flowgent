@@ -56,7 +56,7 @@ messaging:
     broker: ""                   # set via FLOWGENT_MQTT_BROKER env or external secret
 
 # ═══════════════════════════════════════════════════════════════
-# API Server — [always] Multi-tenant REST Gateway
+# API Server — [always] Multi-namespace REST Gateway
 # ═══════════════════════════════════════════════════════════════
 apiserver:
   enabled: true
@@ -134,7 +134,7 @@ secrets:
 # GCP and AWS use the Kubernetes CSI Secret Store Driver
 # (secrets-store.csi.k8s.io) with SecretProviderClass resources.
 # Secrets are mounted at the specified mountPath and loaded by the
-# Go config loader from {mountPath}/{tenant}/secret/.credentials.
+# Go config loader from {mountPath}/{namespace}/secret/.credentials.
 #
 # Vault uses the HashiCorp Vault Agent Injector (annotation-based).
 # When vault.injectAnnotations=true, Vault annotations are added to
@@ -252,19 +252,19 @@ orchestration:
 
 # ═══════════════════════════════════════════════════════════════
 # Runtime — deploy-time operational parameters under runtime: in config.
-# Includes tenant isolation, credential paths, and other runtime settings.
+# Includes namespace isolation, credential paths, and other runtime settings.
 #
 # namespacePrefix MUST match between the apiserver (Trigger routing) and the
-# Controller (per-tenant JM Deployment namespace placement — every flow's
-# dedicated JM Deployment lives in its tenant's shared namespace,
-# "{namespacePrefix}{tenantID}") — see pkg/controller/pkg/controller.go
+# Controller (per-namespace JM Deployment namespace placement — every flow's
+# dedicated JM Deployment lives in its namespace's shared K8s namespace,
+# "{namespacePrefix}{namespaceID}") — see pkg/controller/pkg/controller.go
 # applicationNamespace doc comment.
 # ═══════════════════════════════════════════════════════════════
 runtime:
-  tenant:
-    defaultTenant: "default"
+  namespace:
+    defaultNamespace: "default"
     namespacePrefix: "flowgent-"
   # Credential file paths mounted in pods (K8s Secrets).
-  # Hierarchy: flow-level overrides tenant-level.
+  # Hierarchy: flow-level overrides namespace-level.
   credentialPaths:
     basePath: "/var/flowgent"

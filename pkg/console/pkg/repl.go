@@ -22,7 +22,7 @@ import (
 type consoleState struct {
 	cfg    *config.FlowgentConfig
 	fc     *FlowgentConsole
-	tenant string
+	namespace string
 	rl     *liner.State
 	ctx    context.Context
 }
@@ -58,8 +58,8 @@ func RunREPL(cfgPath string, args []string, verbose bool) {
 		ctx: context.Background(),
 	}
 
-	if serviceCfg.Runtime.Tenant.DefaultTenant != "" {
-		state.tenant = serviceCfg.Runtime.Tenant.DefaultTenant
+	if serviceCfg.Runtime.Namespace.DefaultNamespace != "" {
+		state.namespace = serviceCfg.Runtime.Namespace.DefaultNamespace
 	}
 
 	// Batch mode: execute command line and exit
@@ -95,11 +95,11 @@ func RunREPL(cfgPath string, args []string, verbose bool) {
 	fmt.Println()
 
 	for {
-		tenantDisplay := state.tenant
-		if tenantDisplay == "" {
-			tenantDisplay = "(no tenant)"
+		namespaceDisplay := state.namespace
+		if namespaceDisplay == "" {
+			namespaceDisplay = "(no namespace)"
 		}
-		line, err := rl.Prompt(fmt.Sprintf("flowgent [%s]> ", tenantDisplay))
+		line, err := rl.Prompt(fmt.Sprintf("flowgent [%s]> ", namespaceDisplay))
 		if err != nil {
 			break
 		}
@@ -124,8 +124,8 @@ func (s *consoleState) dispatch(line string) {
 	case "help":
 		s.cmdHelp(args)
 
-	case "tenant":
-		s.cmdTenant(args)
+	case "namespace":
+		s.cmdNamespace(args)
 
 	case "flow":
 		s.resourceCmd(args, "flow", s.flowList, s.flowGet, s.flowAdd, s.flowRemove)
@@ -154,40 +154,40 @@ func (s *consoleState) dispatch(line string) {
 	}
 }
 
-// ─── Tenant ─────────────────────────────────────────────────────
+// ─── Namespace ────────────────────────────────────────────────────
 
-func (s *consoleState) cmdTenant(args []string) {
+func (s *consoleState) cmdNamespace(args []string) {
 	if len(args) == 0 {
-		if s.tenant == "" {
-			fmt.Println("No tenant set. Usage: tenant set <tenant-id>")
+		if s.namespace == "" {
+			fmt.Println("No namespace set. Usage: namespace set <namespace-id>")
 		} else {
-			fmt.Printf("Current tenant: %s\n", s.tenant)
+			fmt.Printf("Current namespace: %s\n", s.namespace)
 		}
 		return
 	}
 	switch strings.ToLower(args[0]) {
 	case "set":
 		if len(args) < 2 {
-			fmt.Println("Usage: tenant set <tenant-id>")
+			fmt.Println("Usage: namespace set <namespace-id>")
 			return
 		}
-		s.tenant = args[1]
-		fmt.Printf("Tenant set to: %s\n", s.tenant)
+		s.namespace = args[1]
+		fmt.Printf("Namespace set to: %s\n", s.namespace)
 	case "unset":
-		s.tenant = ""
-		fmt.Println("Tenant cleared.")
+		s.namespace = ""
+		fmt.Println("Namespace cleared.")
 	default:
-		fmt.Println("Usage: tenant [set <id> | unset]")
+		fmt.Println("Usage: namespace [set <id> | unset]")
 	}
 }
 
 // ─── Help ───────────────────────────────────────────────────────
 
 func (s *consoleState) cmdHelp(args []string) {
-	fmt.Print(`Management console commands (all tenant-scoped):
+	fmt.Print(`Management console commands (all namespace-scoped):
 
-  tenant set <id>           Set the active tenant (required before CRUD commands)
-  tenant unset              Clear the active tenant
+  namespace set <id>           Set the active namespace (required before CRUD commands)
+  namespace unset              Clear the active namespace
 
   flow    [list | get <id> | add | remove <id>]
   run     [list | get <id> | create <flow-id> | start <run-id> | stop <run-id>]
@@ -212,9 +212,9 @@ func (s *consoleState) cmdHelp(args []string) {
 
 type cmdFunc func(args []string)
 
-func (s *consoleState) requireTenant() bool {
-	if s.tenant == "" {
-		fmt.Println("Error: no tenant set. Use 'tenant set <id>' first.")
+func (s *consoleState) requireNamespace() bool {
+	if s.namespace == "" {
+		fmt.Println("Error: no namespace set. Use 'namespace set <id>' first.")
 		return false
 	}
 	return true
@@ -242,7 +242,7 @@ func (s *consoleState) resourceCmd(args []string, name string, listFn, getFn, ad
 // ─── Flow ───────────────────────────────────────────────────────
 
 func (s *consoleState) flowList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListFlows()
@@ -263,7 +263,7 @@ func (s *consoleState) flowList(args []string) {
 }
 
 func (s *consoleState) flowGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -279,10 +279,10 @@ func (s *consoleState) flowGet(args []string) {
 }
 
 func (s *consoleState) flowAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter agentflow JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
 	var spec entities.FlowInfo
@@ -298,7 +298,7 @@ func (s *consoleState) flowAdd(args []string) {
 }
 
 func (s *consoleState) flowRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -336,7 +336,7 @@ func (s *consoleState) cmdRun(args []string) {
 }
 
 func (s *consoleState) runList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListRuns()
@@ -357,7 +357,7 @@ func (s *consoleState) runList(args []string) {
 }
 
 func (s *consoleState) runGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -373,14 +373,14 @@ func (s *consoleState) runGet(args []string) {
 }
 
 func (s *consoleState) runCreate(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
 		fmt.Println("Usage: run create <flow-id>")
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	run, err := s.fc.CreateRun(args[0])
 	if err != nil {
 		fmt.Printf("Error creating run: %v\n", err)
@@ -391,7 +391,7 @@ func (s *consoleState) runCreate(args []string) {
 }
 
 func (s *consoleState) runStart(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -407,7 +407,7 @@ func (s *consoleState) runStart(args []string) {
 }
 
 func (s *consoleState) runStop(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -424,7 +424,7 @@ func (s *consoleState) runStop(args []string) {
 // ─── Agent ──────────────────────────────────────────────────────
 
 func (s *consoleState) agentList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListAgents()
@@ -445,7 +445,7 @@ func (s *consoleState) agentList(args []string) {
 }
 
 func (s *consoleState) agentGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -461,10 +461,10 @@ func (s *consoleState) agentGet(args []string) {
 }
 
 func (s *consoleState) agentAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter agent JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
 	var a entities.AgentInfo
@@ -480,7 +480,7 @@ func (s *consoleState) agentAdd(args []string) {
 }
 
 func (s *consoleState) agentRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -497,7 +497,7 @@ func (s *consoleState) agentRemove(args []string) {
 // ─── MCP ────────────────────────────────────────────────────────
 
 func (s *consoleState) mcpList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListMCPs()
@@ -518,7 +518,7 @@ func (s *consoleState) mcpList(args []string) {
 }
 
 func (s *consoleState) mcpGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -534,10 +534,10 @@ func (s *consoleState) mcpGet(args []string) {
 }
 
 func (s *consoleState) mcpAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter MCP JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
 	var m entities.McpInfo
@@ -553,7 +553,7 @@ func (s *consoleState) mcpAdd(args []string) {
 }
 
 func (s *consoleState) mcpRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -570,7 +570,7 @@ func (s *consoleState) mcpRemove(args []string) {
 // ─── Skill ──────────────────────────────────────────────────────
 
 func (s *consoleState) skillList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListSkills()
@@ -591,7 +591,7 @@ func (s *consoleState) skillList(args []string) {
 }
 
 func (s *consoleState) skillGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -607,10 +607,10 @@ func (s *consoleState) skillGet(args []string) {
 }
 
 func (s *consoleState) skillAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter skill JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
 	var spec entities.FlowInfo
@@ -626,7 +626,7 @@ func (s *consoleState) skillAdd(args []string) {
 }
 
 func (s *consoleState) skillRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -643,7 +643,7 @@ func (s *consoleState) skillRemove(args []string) {
 // ─── LLM ────────────────────────────────────────────────────────
 
 func (s *consoleState) llmList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListLLMs()
@@ -665,7 +665,7 @@ func (s *consoleState) llmList(args []string) {
 }
 
 func (s *consoleState) llmGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -681,10 +681,10 @@ func (s *consoleState) llmGet(args []string) {
 }
 
 func (s *consoleState) llmAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter LLM provider JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
 	var p entities.LlmProviderInfo
@@ -700,7 +700,7 @@ func (s *consoleState) llmAdd(args []string) {
 }
 
 func (s *consoleState) llmRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -717,7 +717,7 @@ func (s *consoleState) llmRemove(args []string) {
 // ─── Channel ────────────────────────────────────────────────────
 
 func (s *consoleState) channelList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	items, err := s.fc.ListChannels()
@@ -738,7 +738,7 @@ func (s *consoleState) channelList(args []string) {
 }
 
 func (s *consoleState) channelGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -754,10 +754,10 @@ func (s *consoleState) channelGet(args []string) {
 }
 
 func (s *consoleState) channelAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter channel JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
 	var ch entities.NotifyChannelInfo
@@ -773,7 +773,7 @@ func (s *consoleState) channelAdd(args []string) {
 }
 
 func (s *consoleState) channelRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -790,7 +790,7 @@ func (s *consoleState) channelRemove(args []string) {
 // ─── Wallet ─────────────────────────────────────────────────────
 
 func (s *consoleState) walletList(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if !s.fc.HasSecretStore() {
@@ -819,7 +819,7 @@ func (s *consoleState) walletList(args []string) {
 }
 
 func (s *consoleState) walletGet(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if !s.fc.HasSecretStore() {
@@ -842,7 +842,7 @@ func (s *consoleState) walletGet(args []string) {
 }
 
 func (s *consoleState) walletAdd(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if !s.fc.HasSecretStore() {
@@ -868,7 +868,7 @@ func (s *consoleState) walletAdd(args []string) {
 }
 
 func (s *consoleState) walletRemove(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if !s.fc.HasSecretStore() {
@@ -987,7 +987,7 @@ func splitAndTrim(s string) []string {
 }
 
 func (s *consoleState) cmdImport(args []string) {
-	if !s.requireTenant() {
+	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
@@ -997,7 +997,7 @@ func (s *consoleState) cmdImport(args []string) {
 		fmt.Println("  import a.yaml b.yaml           Import multiple files/patterns")
 		return
 	}
-	s.fc.SetTenant(s.tenant)
+	s.fc.SetNamespace(s.namespace)
 	imported := s.fc.ImportPaths(args, nil)
 	fmt.Printf("Imported %d resources.\n", imported)
 }

@@ -10,7 +10,7 @@ import (
 
 func TestSandbox_ExecutorWiring(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "sb-wiring", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "sb-wiring", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{{
@@ -33,7 +33,7 @@ func TestSandbox_ExecutorWiring(t *testing.T) {
 
 func TestSandbox_NoopFallback(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "sb-noop", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "sb-noop", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes:      []entities.Node{entities.Node{ID: "pre-sandbox", Type: entities.NoopNode}, entities.Node{ID: "post-sandbox", Type: entities.NoopNode}},

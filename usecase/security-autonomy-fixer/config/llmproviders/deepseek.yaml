@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: LLMProvider
 metadata:
   name: deepseek
-  tenant: default
+  namespace: default
   labels:
     provider: deepseek
     catalog: llm

@@ -21,7 +21,7 @@ import (
 // workspace volume. The workspace is a persistent volume mounted to both TM and
 // sandbox pods, organized as:
 //
-//	{workspace}/{tenant}/{agentflow_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+//	{workspace}/{namespace}/{agentflow_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
 //	  ├── script.{py,sh,js}
 //	  ├── result.json
 //	  ├── status
@@ -71,7 +71,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 	}
 
 	trigger := &model.SandboxTrigger{
-		TenantID:      plan.TenantID,
+		Namespace:      plan.Namespace,
 		FlowID:        plan.AgentFlowDefinitionID,
 		RunID:         plan.AgentFlowRunID,
 		PlanID:        plan.PlanID,
@@ -83,14 +83,14 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 		Workspace:     plan.NodeSpec.Workspace,
 		SpanID:        spanID,
 	}
-	trigger.Env = config.LoadCredentials("/var/flowgent", plan.TenantID, plan.AgentFlowDefinitionID, nil)
+	trigger.Env = config.LoadCredentials("/var/flowgent", plan.Namespace, plan.AgentFlowDefinitionID, nil)
 	payload, err := json.Marshal(trigger)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox marshal trigger: %w", err)
 	}
 
-	triggerTopic := messager.SandboxTriggerTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
-	resultTopic := messager.SandboxResultTopic(plan.TenantID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
+	triggerTopic := messager.SandboxTriggerTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
+	resultTopic := messager.SandboxResultTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 
 	resultCh := make(chan *entities.TaskResult, 1)
 
@@ -131,7 +131,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan, spanID string) string {
 	return filepath.Join(
 		e.workspace,
-		sanitize(plan.TenantID),
+		sanitize(plan.Namespace),
 		sanitize(plan.AgentFlowDefinitionID),
 		"runs", plan.AgentFlowRunID,
 		"plans", plan.PlanID,

@@ -67,7 +67,7 @@ type ResourceManagerConfig struct {
 	MQTTBroker            string
 	PostgresDSN           string
 	APIServerURL          string // API server URL for TM pod env var (K8s mode)
-	Tenant                string // default tenant for TM runtime resolution
+	Namespace                string // default namespace for TM runtime resolution
 }
 
 // ─── Factory ──────────────────────────────────────────────────

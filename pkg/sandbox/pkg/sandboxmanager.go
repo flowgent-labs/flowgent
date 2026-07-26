@@ -311,11 +311,11 @@ func (w *FlowgentSandboxManager) checkBanned(script string) string {
 
 func (w *FlowgentSandboxManager) publishResult(trigger *model.SandboxTrigger, result *entities.TaskResult) {
 	payload, _ := json.Marshal(result)
-	tenantID := trigger.TenantID
-	if tenantID == "" {
-		tenantID = "default"
+	namespaceID := trigger.Namespace
+	if namespaceID == "" {
+		namespaceID = "default"
 	}
-	resultTopic := messager.SandboxResultTopic(tenantID, trigger.FlowID, trigger.RunID)
+	resultTopic := messager.SandboxResultTopic(namespaceID, trigger.FlowID, trigger.RunID)
 
 	_ = w.queue.Publish(context.Background(), resultTopic, &messager.InterMessage{
 		ID:      trigger.PlanID,

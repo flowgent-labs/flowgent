@@ -33,21 +33,21 @@ type FlowDefHandler struct {
 	logger          *utils.Logger
 	agentFlows      map[string]*entities.FlowInfo
 	namespacePrefix string
-	defaultTenant   string
+	defaultNamespace   string
 	mu              sync.RWMutex
 	watchVersion    int64
 	watchChs        []chan struct{}
 }
 
 // NewFlowDefHandler creates a FlowDefHandler. namespacePrefix is used to
-// compute the default per-tenant K8s namespace for flows that don't set an
-// explicit Namespace — it must match tenant.namespace_prefix so that Trigger
+// compute the default per-namespace K8s namespace for flows that don't set an
+// explicit Namespace — it must match namespace.namespace_prefix so that Trigger
 // (Path A) routes runs into the same namespace the Controller uses when
 // creating the dedicated JM Deployment (see
-// pkg/controller/pkg/controller.go applicationNamespace). defaultTenant is
-// the fallback tenant ID (tenant.default_tenant) used when a flow spec
-// doesn't carry its own TenantID.
-func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultTenant string, mqtt MQTTPublisher) *FlowDefHandler {
+// pkg/controller/pkg/controller.go applicationNamespace). defaultNamespace is
+// the fallback namespace ID (namespace.default_namespace) used when a flow spec
+// doesn't carry its own Namespace.
+func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultNamespace string, mqtt MQTTPublisher) *FlowDefHandler {
 	afMap := make(map[string]*entities.FlowInfo)
 	for i := range agentFlows {
 		afMap[agentFlows[i].ID] = &agentFlows[i]
@@ -66,7 +66,7 @@ func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entiti
 		afStore = flow.NewFlowSQLiteStore(db)
 		frStore = flowrun.NewFlowRunSQLiteStore(db)
 	}
-	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, logger: logger, agentFlows: afMap, namespacePrefix: defaultNamespacePrefix(namespacePrefix), defaultTenant: defaultTenantID(defaultTenant), watchVersion: 1, mqtt: mqtt}
+	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, logger: logger, agentFlows: afMap, namespacePrefix: defaultNamespacePrefix(namespacePrefix), defaultNamespace: coalesceNamespace(defaultNamespace), watchVersion: 1, mqtt: mqtt}
 }
 
 // defaultNamespacePrefix falls back to "flowgent-" when unset, so
@@ -79,17 +79,17 @@ func defaultNamespacePrefix(prefix string) string {
 	return prefix
 }
 
-// defaultTenantID falls back to "default" when unset, mirroring the
-// tenant-fallback convention used by every cmd/ entrypoint (see e.g.
-// pkg/cmd/pkg/controller/controller.go) — cfg.Runtime.Tenant.DefaultTenant has no
-// viper default of its own (pkg/config/pkg/config.go TenantConfig), so an
-// omitted runtime.tenant block in the ConfigMap must still resolve consistently
-// here and in the Controller (applicationNamespace / c.tenant).
-func defaultTenantID(tenant string) string {
-	if tenant == "" {
+// coalesceNamespace falls back to "default" when unset, mirroring the
+// namespace-fallback convention used by every cmd/ entrypoint (see e.g.
+// pkg/cmd/pkg/controller/controller.go) — cfg.Runtime.Namespace.DefaultNamespace has no
+// viper default of its own (pkg/config/pkg/config.go NamespaceConfig), so an
+// omitted runtime.namespace block in the ConfigMap must still resolve consistently
+// here and in the Controller (applicationNamespace / c.namespace).
+func coalesceNamespace(namespace string) string {
+	if namespace == "" {
 		return "default"
 	}
-	return tenant
+	return namespace
 }
 
 // normalizePriority defaults an unset Priority to PriorityHigh and rejects
@@ -119,18 +119,18 @@ func (h *FlowDefHandler) notifyWatchers() {
 	}
 }
 
-func (h *FlowDefHandler) publishFlowEvent(ctx context.Context, eventType, flowID, tenantID string) {
+func (h *FlowDefHandler) publishFlowEvent(ctx context.Context, eventType, flowID, namespaceID string) {
 	if h.mqtt == nil {
 		return
 	}
-	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/updated", tenantID, flowID)
+	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/updated", namespaceID, flowID)
 	if eventType == "DELETED" {
-		topic = fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/deleted", tenantID, flowID)
+		topic = fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/deleted", namespaceID, flowID)
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
 		"event_type": eventType,
 		"flow_id":    flowID,
-		"tenant_id":  tenantID,
+		"namespace_id":  namespaceID,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
 		slog.Warn("mqtt flow event publish failed", "topic", topic, "error", err)
@@ -199,7 +199,7 @@ func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 	var spec entities.FlowInfo
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
 		http.Error(w, "invalid body", 400)
@@ -215,7 +215,7 @@ func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec.Priority = priority
-	spec.TenantID = tenant
+	spec.Namespace = namespace
 	createdBy, _ := r.Context().Value(CtxUserID).(string)
 	if err := h.afStore.SaveSpec(r.Context(), &spec, createdBy, "API create"); err != nil {
 		http.Error(w, "internal", 500)
@@ -228,7 +228,7 @@ func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(spec)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "CREATED", spec.ID, tenant)
+	h.publishFlowEvent(r.Context(), "CREATED", spec.ID, namespace)
 }
 
 func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +265,7 @@ func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowDefHandler) Update(w http.ResponseWriter, r *http.Request) {
-	_, id := r.PathValue("tenant"), r.PathValue("id")
+	_, id := r.PathValue("namespace"), r.PathValue("id")
 
 	existing, err := h.afStore.GetSpec(r.Context(), id)
 	if err != nil || existing == nil {
@@ -310,7 +310,7 @@ func (h *FlowDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(existing)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "UPDATED", id, existing.TenantID)
+	h.publishFlowEvent(r.Context(), "UPDATED", id, existing.Namespace)
 }
 
 func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -319,16 +319,16 @@ func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", 500)
 		return
 	}
-	tenant := r.PathValue("tenant")
+	namespace := r.PathValue("namespace")
 	delete(h.agentFlows, id)
 	w.WriteHeader(204)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "DELETED", id, tenant)
+	h.publishFlowEvent(r.Context(), "DELETED", id, namespace)
 }
 
 func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) {
-	tenant := r.PathValue("tenant")
-	runID, err := h.CreateRunFromTrigger(r.Context(), agentFlowID, tenant, vars, trigger)
+	namespace := r.PathValue("namespace")
+	runID, err := h.CreateRunFromTrigger(r.Context(), agentFlowID, namespace, vars, trigger)
 	if err != nil {
 		if err == errFlowNotFound {
 			http.Error(w, "agentflow not found", 404)
@@ -338,7 +338,7 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": string(entities.RunPending), "tenant": tenant, "agentflow_id": agentFlowID})
+	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": string(entities.RunPending), "namespace": namespace, "agentflow_id": agentFlowID})
 }
 
 // errFlowNotFound is returned by CreateRunFromTrigger when the referenced
@@ -356,7 +356,7 @@ var errFlowNotFound = fmt.Errorf("agentflow not found")
 // and emits the same lifecycle event — the async half of Phase 1 (the JM
 // run-poller → JobMaster DAG parse → topological TM dispatch) then proceeds
 // identically regardless of how the run was triggered.
-func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, tenant string, vars map[string]any, trigger entities.TriggerInfo) (string, error) {
+func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, namespace string, vars map[string]any, trigger entities.TriggerInfo) (string, error) {
 	ctx, span := flowDefTracer.Start(ctx, "FlowDefHandler.Trigger", trace.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
 	defer span.End()
 
@@ -378,8 +378,8 @@ func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, 
 	// Route the run there instead of namespace="", which nothing would ever
 	// pick up.
 	run.Namespace = h.applicationNamespace(spec)
-	if run.TenantID == "" {
-		run.TenantID = spec.TenantID
+	if run.Namespace == "" {
+		run.Namespace = spec.Namespace
 	}
 	run.SetTrigger(trigger)
 	if err := h.frStore.Create(ctx, run); err != nil {
@@ -397,17 +397,17 @@ func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, flowID stri
 	if h.mqtt == nil {
 		return
 	}
-	tenantID := run.TenantID
-	if tenantID == "" {
-		tenantID = h.defaultTenant
+	namespaceID := run.Namespace
+	if namespaceID == "" {
+		namespaceID = h.defaultNamespace
 	}
-	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", tenantID, flowID, run.ID)
+	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", namespaceID, flowID, run.ID)
 	payload, _ := json.Marshal(map[string]any{
 		"action":       "created",
 		"run_id":       run.ID,
 		"agentflow_id": flowID,
-		"tenant_id":    tenantID,
-		"namespace":    run.Namespace,
+		"namespace_id":    namespaceID,
+		"namespace": run.K8sNamespace,
 		"trigger_type": run.TriggerType,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
@@ -418,19 +418,19 @@ func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, flowID stri
 // applicationNamespace mirrors pkg/controller/pkg/controller.go's
 // applicationNamespace so Trigger (Path A) and the Controller (Path B) agree
 // on which namespace a given Application-mode flow's dedicated JM lives in.
-// Per §1.3/§4.3 of docs/01-L1-Engine-Architecture.md, tenant isolation is
+// Per §1.3/§4.3 of docs/01-L1-Engine-Architecture.md, namespace isolation is
 // per-TENANT namespace (not per-flow) — every flow belonging to the same
-// tenant shares one namespace, with each flow's dedicated JM Deployment
-// disambiguated by name (flowgent-jobmanager-{tenantId}-{flowId}).
+// namespace shares one namespace, with each flow's dedicated JM Deployment
+// disambiguated by name (flowgent-jobmanager-{namespaceId}-{flowId}).
 func (h *FlowDefHandler) applicationNamespace(spec *entities.FlowInfo) string {
-	if spec.Namespace != "" {
-		return spec.Namespace
+	if spec.K8sNamespace != "" {
+		return spec.K8sNamespace
 	}
-	tenantID := spec.TenantID
-	if tenantID == "" {
-		tenantID = h.defaultTenant
+	namespaceID := spec.Namespace
+	if namespaceID == "" {
+		namespaceID = h.defaultNamespace
 	}
-	return h.namespacePrefix + tenantID
+	return h.namespacePrefix + namespaceID
 }
 
 func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {

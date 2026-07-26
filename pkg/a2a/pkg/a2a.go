@@ -141,13 +141,13 @@ type adminRequest struct {
 	RunID       string                   `json:"run_id,omitempty"`
 	Spec        *entities.FlowInfo  `json:"spec,omitempty"`
 	Vars        map[string]any           `json:"vars,omitempty"`
-	Tenant      string                   `json:"tenant,omitempty"`
+	Namespace      string                   `json:"namespace,omitempty"`
 }
 
 func (h *adminAgentHandler) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, queue eventqueue.Queue) error {
 	req := parseAdminRequest(reqCtx.Message)
-	if req.Tenant == "" {
-		req.Tenant = "default"
+	if req.Namespace == "" {
+		req.Namespace = "default"
 	}
 
 	if reqCtx.StoredTask == nil {
@@ -180,7 +180,7 @@ func (h *adminAgentHandler) Cancel(ctx context.Context, reqCtx *a2asrv.RequestCo
 func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (string, error) {
 	switch req.Action {
 	case "list_flows":
-		flows, err := h.client.ListFlows(ctx, req.Tenant)
+		flows, err := h.client.ListFlows(ctx, req.Namespace)
 		if err != nil {
 			return "", err
 		}
@@ -188,7 +188,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		return string(b), nil
 
 	case "get_flow":
-		spec, err := h.client.GetFlow(ctx, req.Tenant, req.AgentFlowID)
+		spec, err := h.client.GetFlow(ctx, req.Namespace, req.AgentFlowID)
 		if err != nil {
 			return "", err
 		}
@@ -202,7 +202,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		if req.Spec == nil {
 			return "", fmt.Errorf("spec is required for create_flow")
 		}
-		if err := h.client.CreateFlow(ctx, req.Tenant, req.Spec); err != nil {
+		if err := h.client.CreateFlow(ctx, req.Namespace, req.Spec); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"created","agentflow_id":"%s"}`, req.Spec.ID), nil
@@ -211,32 +211,32 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		if req.Spec == nil {
 			return "", fmt.Errorf("spec is required for update_flow")
 		}
-		if err := h.client.UpdateFlow(ctx, req.Tenant, req.AgentFlowID, req.Spec); err != nil {
+		if err := h.client.UpdateFlow(ctx, req.Namespace, req.AgentFlowID, req.Spec); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"updated","agentflow_id":"%s"}`, req.AgentFlowID), nil
 
 	case "delete_flow":
-		if err := h.client.DeleteFlow(ctx, req.Tenant, req.AgentFlowID); err != nil {
+		if err := h.client.DeleteFlow(ctx, req.Namespace, req.AgentFlowID); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"deleted","agentflow_id":"%s"}`, req.AgentFlowID), nil
 
 	case "start_run":
 		trigger := entities.TriggerInfo{Type: "a2a", Source: "admin"}
-		if _, err := h.client.TriggerRun(ctx, req.Tenant, req.AgentFlowID, req.Vars, trigger); err != nil {
+		if _, err := h.client.TriggerRun(ctx, req.Namespace, req.AgentFlowID, req.Vars, trigger); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"triggered","agentflow_id":"%s"}`, req.AgentFlowID), nil
 
 	case "cancel_run":
-		if err := h.client.CancelRun(ctx, req.Tenant, req.RunID); err != nil {
+		if err := h.client.CancelRun(ctx, req.Namespace, req.RunID); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"status":"cancelled","run_id":"%s"}`, req.RunID), nil
 
 	case "get_run":
-		run, err := h.client.GetRun(ctx, req.Tenant, req.RunID)
+		run, err := h.client.GetRun(ctx, req.Namespace, req.RunID)
 		if err != nil {
 			return "", err
 		}
@@ -247,7 +247,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		return string(b), nil
 
 	case "list_runs":
-		runs, err := h.client.ListRuns(ctx, req.Tenant, "", "", req.AgentFlowID, 1, 50)
+		runs, err := h.client.ListRuns(ctx, req.Namespace, "", "", req.AgentFlowID, 1, 50)
 		if err != nil {
 			return "", err
 		}
@@ -281,8 +281,8 @@ func parseAdminRequest(msg *a2a.Message) *adminRequest {
 			if v, ok := p.Data["vars"].(map[string]any); ok {
 				req.Vars = v
 			}
-			if v, ok := p.Data["tenant"].(string); ok {
-				req.Tenant = v
+			if v, ok := p.Data["namespace"].(string); ok {
+				req.Namespace = v
 			}
 			if raw, ok := p.Data["spec"]; ok {
 				b, _ := json.Marshal(raw)

@@ -30,7 +30,7 @@ type RunStateStore interface {
 // KnowledgePostWriter persists knowledge entries after a run completes.
 // The engine uses this via a REST-client adapter — never a direct store import.
 type KnowledgePostWriter interface {
-	CreateKnowledge(ctx context.Context, tenant string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error)
+	CreateKnowledge(ctx context.Context, namespace string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error)
 }
 
 type EdgeCondition struct {
@@ -317,7 +317,7 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
 			AgentFlowRunID:        runID,
 			AgentFlowDefinitionID: spec.ID,
-			TenantID:              spec.TenantID,
+			Namespace:              spec.Namespace,
 			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
 			TaskType:              NodeToTaskType(n.Type), NodeID: n.ID,
 			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
@@ -345,7 +345,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		jm.resolvedVars[k] = v
 	}
 	jm.resolvedVars["run_id"] = run.ID
-	jm.resolvedVars["tenant_id"] = spec.TenantID
+	jm.resolvedVars["namespace_id"] = spec.Namespace
 	jm.resolvedVars["flow_id"] = spec.ID
 
 	ctx, span := jm.tracer.Start(ctx, "jobmaster.execute",
@@ -527,7 +527,7 @@ func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowIn
 	}
 
 	// Snapshot fields needed by the async goroutine.
-	tenant := spec.TenantID
+	namespace := spec.Namespace
 	runID := run.ID
 	flowID := spec.ID
 
@@ -559,9 +559,9 @@ func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowIn
 				SourceRef:   sourceRef,
 				Tags:        []string{flowID, nodeID},
 			}
-			entry.TenantID = tenant
+			entry.Namespace = namespace
 
-			if _, err := jm.knowledgeWriter.CreateKnowledge(context.Background(), tenant, entry); err != nil {
+			if _, err := jm.knowledgeWriter.CreateKnowledge(context.Background(), namespace, entry); err != nil {
 				slog.Warn("jobmaster postHandle create knowledge failed", "node", nodeID, "err", err)
 			}
 		}

@@ -18,7 +18,7 @@ import (
 // --- K8s-style single-resource parsing ---
 
 // ParseResourceImport detects and parses a K8s-style {kind, metadata, spec}
-// resource. Also accepts flat-style {kind, name, tenant, ..., spec} as fallback.
+// resource. Also accepts flat-style {kind, name, namespace, ..., spec} as fallback.
 func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
 	if fm == "yaml" {
 		var generic map[string]any
@@ -43,14 +43,14 @@ func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
 		} else {
 			md := &ResourceMetadata{
 				Name:        toString(generic["name"]),
-				Tenant:      toString(generic["tenant"]),
+				Namespace:      toString(generic["namespace"]),
 				Status:      toString(generic["status"]),
 				Description: toString(generic["description"]),
 			}
 			if labels, ok := generic["labels"]; ok {
 				md.Labels = toStringMap(labels)
 			}
-			if md.Name != "" || md.Tenant != "" || md.Status != "" || md.Description != "" || len(md.Labels) > 0 {
+			if md.Name != "" || md.Namespace != "" || md.Status != "" || md.Description != "" || len(md.Labels) > 0 {
 				ri.Metadata = md
 			}
 		}
@@ -75,18 +75,18 @@ func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
 	return &ri, true
 }
 
-// applyWrapperMeta applies metadata (tenant, labels, description, status) from
+// applyWrapperMeta applies metadata (namespace, labels, description, status) from
 // the K8s wrapper to a resource that embeds BaseEntity and has a Labels field.
-func applyWrapperMeta(ri *ResourceImport, base *entities.BaseEntity, labels *map[string]string, defaultTenant string) {
+func applyWrapperMeta(ri *ResourceImport, base *entities.BaseEntity, labels *map[string]string, defaultNamespace string) {
 	md := ri.Metadata
 	if md == nil {
-		base.TenantID = defaultTenant
+		base.Namespace = defaultNamespace
 		return
 	}
-	if md.Tenant != "" {
-		base.TenantID = md.Tenant
+	if md.Namespace != "" {
+		base.Namespace = md.Namespace
 	} else {
-		base.TenantID = defaultTenant
+		base.Namespace = defaultNamespace
 	}
 	if md.Description != "" {
 		base.Description = md.Description
@@ -127,7 +127,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		if a.Name == "" && ri.metadataName() != "" {
 			a.Name = ri.metadataName()
 		}
-		applyWrapperMeta(ri, &a.BaseEntity, &a.Labels, fc.tenant)
+		applyWrapperMeta(ri, &a.BaseEntity, &a.Labels, fc.namespace)
 		if err := ls.agents.Save(fc.ctx, &a); err != nil {
 			fmt.Printf("Error saving Agent %s: %v\n", a.Name, err)
 			return false
@@ -145,7 +145,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		if m.Name == "" && ri.metadataName() != "" {
 			m.Name = ri.metadataName()
 		}
-		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.tenant)
+		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.namespace)
 		if err := ls.mcps.Save(fc.ctx, &m); err != nil {
 			fmt.Printf("Error saving MCP %s: %v\n", m.Name, err)
 			return false
@@ -161,7 +161,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		p.ID = uuid.New().String()
 		p.CreatedAt = time.Now()
 		p.UpdatedAt = time.Now()
-		applyWrapperMeta(ri, &p.BaseEntity, &p.Labels, fc.tenant)
+		applyWrapperMeta(ri, &p.BaseEntity, &p.Labels, fc.namespace)
 		if err := ls.llm.Save(fc.ctx, &p); err != nil {
 			fmt.Printf("Error saving LLMProvider %s: %v\n", p.ID, err)
 			return false
@@ -180,7 +180,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		if spec.Kind == "" {
 			spec.Kind = "flow"
 		}
-		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.tenant)
+		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)
 		if err := ls.flows.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
 			fmt.Printf("Error saving Flow %s: %v\n", spec.ID, err)
 			return false
@@ -198,7 +198,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		run.CreatedAt = time.Now()
 		run.UpdatedAt = time.Now()
-		applyWrapperMeta(ri, &run.BaseEntity, &run.Labels, fc.tenant)
+		applyWrapperMeta(ri, &run.BaseEntity, &run.Labels, fc.namespace)
 		if err := ls.runs.Create(fc.ctx, &run); err != nil {
 			fmt.Printf("Error saving FlowRun %s: %v\n", run.ID, err)
 			return false
@@ -215,7 +215,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			spec.ID = ri.metadataName()
 		}
 		spec.Kind = "skill"
-		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.tenant)
+		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)
 		if err := ls.flows.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
 			fmt.Printf("Error saving Skill %s: %v\n", spec.ID, err)
 			return false
@@ -231,7 +231,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			ch.ID = uuid.New().String()
 			ch.CreatedAt = time.Now()
 			ch.UpdatedAt = time.Now()
-			applyWrapperMeta(ri, &ch.BaseEntity, &ch.Labels, fc.tenant)
+			applyWrapperMeta(ri, &ch.BaseEntity, &ch.Labels, fc.namespace)
 			if err := ls.channels.Save(fc.ctx, &ch); err != nil {
 				fmt.Printf("Error saving NotifyChannel %s: %v\n", ch.Name, err)
 				return false
@@ -255,7 +255,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 
 	for i := range data.LLMs {
 		llm := &data.LLMs[i]
-		llm.TenantID = fc.tenant
+		llm.Namespace = fc.namespace
 		llm.CreatedAt = time.Now()
 		llm.UpdatedAt = time.Now()
 		if llm.ID == "" {
@@ -268,7 +268,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	}
 	for i := range data.Channels {
 		ch := &data.Channels[i]
-		ch.TenantID = fc.tenant
+		ch.Namespace = fc.namespace
 		ch.CreatedAt = time.Now()
 		ch.UpdatedAt = time.Now()
 		if ch.ID == "" {
@@ -281,7 +281,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	}
 	for i := range data.MCPs {
 		m := &data.MCPs[i]
-		m.TenantID = fc.tenant
+		m.Namespace = fc.namespace
 		m.CreatedAt = time.Now()
 		m.UpdatedAt = time.Now()
 		if m.ID == "" {
@@ -298,7 +298,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		if sp.ID == "" {
 			sp.ID = uuid.New().String()
 		}
-		sp.TenantID = fc.tenant
+		sp.Namespace = fc.namespace
 		if err := ls.flows.SaveSpec(fc.ctx, &sp, "import", "imported from file"); err != nil {
 			return counts, fmt.Errorf("skill %s: %w", sp.ID, err)
 		}
@@ -306,7 +306,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	}
 	for i := range data.AgentDefs {
 		a := &data.AgentDefs[i]
-		a.TenantID = fc.tenant
+		a.Namespace = fc.namespace
 		a.CreatedAt = time.Now()
 		a.UpdatedAt = time.Now()
 		if a.ID == "" {
@@ -322,7 +322,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		if sp.ID == "" {
 			sp.ID = uuid.New().String()
 		}
-		sp.TenantID = fc.tenant
+		sp.Namespace = fc.namespace
 		if sp.Kind == "" {
 			sp.Kind = "flow"
 		}
@@ -333,7 +333,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	}
 	for i := range data.FlowRuns {
 		run := &data.FlowRuns[i]
-		run.TenantID = fc.tenant
+		run.Namespace = fc.namespace
 		run.CreatedAt = time.Now()
 		run.UpdatedAt = time.Now()
 		if run.ID == "" {

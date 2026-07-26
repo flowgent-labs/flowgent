@@ -332,7 +332,7 @@ def main():
     parser.add_argument("--scenario", "-s", help="Run specific scenario (e.g. 11, 31)")
     parser.add_argument("--list", "-l", action="store_true", help="List available scenarios")
     # Config overrides
-    parser.add_argument("--api", help=f"K3s API server URL (default: {config.K3S_APISERVER_URL})")
+    parser.add_argument("--api", help=f"K8S API server URL (default: {config.K8S_APISERVER_URL})")
     parser.add_argument("--pg", help=f"PG DSN (default: {config.pg_dsn()})")
     args = parser.parse_args()
 
@@ -342,13 +342,13 @@ def main():
         return
 
     if args.api:
-        config.K3S_APISERVER_URL = args.api
+        config.K8S_APISERVER_URL = args.api
     if args.pg:
         config.apply_pg_override(args.pg)
 
     print("=" * 60)
     print("  Flowgent E2E Runner")
-    print(f"  API:  {config.K3S_APISERVER_URL}")
+    print(f"  API:  {config.K8S_APISERVER_URL}")
     print(f"  PG:   {config.pg_dsn()}")
     print("=" * 60)
 

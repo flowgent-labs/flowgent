@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Flow
 metadata:
   name: security-autonomy-fixer
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: End-to-end SonarQube SAST security remediation pipeline — discovery, analyze, fix, review, vote, approve, commit

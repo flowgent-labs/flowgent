@@ -14,7 +14,7 @@ type NotifierEvent struct {
 type NotifierMessage struct {
 	Title       string    `json:"title"`
 	Body        string    `json:"body"`
-	TenantID    string    `json:"tenant_id"`
+	Namespace    string    `json:"namespace_id"`
 	AgentFlowID string    `json:"agentflow_id"`
 	Timestamp   time.Time `json:"timestamp"`
 }

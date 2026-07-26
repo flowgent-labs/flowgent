@@ -81,7 +81,7 @@ func TestEnvOverrideBinding(t *testing.T) {
 	yaml := "" +
 		"service_name: probe\n" +
 		"runtime:\n" +
-		"  namespace: from-yaml\n" +
+		"  k8s_namespace: from-yaml\n" +
 		"  agent_flow_id: from-yaml\n" +
 		"  jm_image: from-yaml\n" +
 		"  controller_label: from-yaml\n" +
@@ -96,7 +96,7 @@ func TestEnvOverrideBinding(t *testing.T) {
 	}
 
 	t.Setenv("FLOWGENT__STORAGE__POSTGRES__DSN", "from-env")
-	t.Setenv("FLOWGENT__RUNTIME__NAMESPACE", "from-env")
+	t.Setenv("FLOWGENT__RUNTIME__K8S_NAMESPACE", "from-env")
 	t.Setenv("FLOWGENT__MESSAGER__MQTT__CLIENT_ID", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_ID", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__JM_IMAGE", "from-env")
@@ -109,7 +109,7 @@ func TestEnvOverrideBinding(t *testing.T) {
 
 	checks := map[string]string{
 		"storage.postgres.dsn":     cfg.Storage.Postgres.Dsn,
-		"runtime.namespace":        cfg.Runtime.Namespace,
+		"runtime.k8s_namespace":     cfg.Runtime.K8sNamespace,
 		"messager.mqtt.client_id":  cfg.Messager.MQTT.ClientID,
 		"runtime.agent_flow_id":    cfg.Runtime.AgentFlowID,
 		"runtime.jm_image":         cfg.Runtime.JMImage,

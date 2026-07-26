@@ -72,8 +72,8 @@ func securityFixerFlow() *entities.FlowInfo {
 
 func TestNotifier_ChannelCRUD(t *testing.T) {
 	fs := it.New(t, securityFixerFlow())
-	tenant := fs.Tenant
-	base := fs.APIURL + "/api/v1/" + tenant + "/notifications/channels"
+	namespace := fs.Namespace
+	base := fs.APIURL + "/api/v1/" + namespace + "/notifications/channels"
 
 	ch := map[string]any{
 		"name": "test-telegram", "provider": "telegram",
@@ -141,7 +141,7 @@ func TestNotifier_ChannelCRUD(t *testing.T) {
 
 func TestNotifier_FlowCompletionNotification(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "nfy-complete", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "nfy-complete", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes:      []entities.Node{entities.Node{ID: "start", Type: entities.NoopNode}, entities.Node{ID: "end", Type: entities.NoopNode}},
@@ -155,7 +155,7 @@ func TestNotifier_FlowCompletionNotification(t *testing.T) {
 		"enabled": true,
 	}
 	b, _ := json.Marshal(ch)
-	resp, err := http.Post(fs.APIURL+"/api/v1/"+fs.Tenant+"/notifications/channels", "application/json", bytes.NewReader(b))
+	resp, err := http.Post(fs.APIURL+"/api/v1/"+fs.Namespace+"/notifications/channels", "application/json", bytes.NewReader(b))
 	if err != nil {
 		t.Fatalf("create channel: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestNotifier_FlowCompletionNotification(t *testing.T) {
 
 func TestNotifier_HumanApprovalNotification(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "nfy-human", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "nfy-human", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes:      []entities.Node{{ID: "needs-approval", Type: entities.HumanNode, Timeout: "1s"}},

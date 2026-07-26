@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: fixer-agent
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Secure coding expert that generates minimal, safe code patches for identified security vulnerabilities

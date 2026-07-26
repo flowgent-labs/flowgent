@@ -25,7 +25,7 @@ import (
 type FlowgentConsole struct {
 	store       store.IStore
 	secretStore payments.SecretStoreProvider
-	tenant      string
+	namespace      string
 	ctx         context.Context
 }
 
@@ -48,8 +48,8 @@ func NewFlowgentConsole(cfg *config.FlowgentConfig) (*FlowgentConsole, error) {
 		ctx:   context.Background(),
 	}
 
-	if cfg.Runtime.Tenant.DefaultTenant != "" {
-		fc.tenant = cfg.Runtime.Tenant.DefaultTenant
+	if cfg.Runtime.Namespace.DefaultNamespace != "" {
+		fc.namespace = cfg.Runtime.Namespace.DefaultNamespace
 	}
 
 	fc.initSecretStore(cfg)
@@ -76,11 +76,11 @@ func (fc *FlowgentConsole) initSecretStore(cfg *config.FlowgentConfig) {
 	fc.secretStore = ss
 }
 
-// SetTenant sets the active tenant.
-func (fc *FlowgentConsole) SetTenant(tenant string) { fc.tenant = tenant }
+// SetNamespace sets the active namespace.
+func (fc *FlowgentConsole) SetNamespace(namespace string) { fc.namespace = namespace }
 
-// Tenant returns the active tenant.
-func (fc *FlowgentConsole) Tenant() string { return fc.tenant }
+// Namespace returns the active namespace.
+func (fc *FlowgentConsole) Namespace() string { return fc.namespace }
 
 // DB returns the underlying database handle for direct store access.
 func (fc *FlowgentConsole) DB() any { return fc.store.DB() }

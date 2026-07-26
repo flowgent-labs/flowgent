@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: NotifyChannel
 metadata:
   name: security-webhook
-  tenant: default
+  namespace: default
   labels:
     channel: webhook
     catalog: notification

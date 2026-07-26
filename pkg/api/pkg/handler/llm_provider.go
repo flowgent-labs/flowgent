@@ -40,7 +40,7 @@ func NewLlmProviderHandler(s storepkg.IStore) *LlmProviderHandler {
 	return &LlmProviderHandler{store: lpStore}
 }
 
-// List returns all LLM provider definitions for a tenant.
+// List returns all LLM provider definitions for a namespace.
 func (h *LlmProviderHandler) List(w http.ResponseWriter, r *http.Request) {
 	page, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
@@ -66,7 +66,7 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = uuid.New().String()
-	p.TenantID = r.PathValue("tenant")
+	p.Namespace = r.PathValue("namespace")
 	if p.ApiKey == "" {
 		if v, ok := p.Credentials["apikey"]; ok {
 			if vs, ok := v.(string); ok {

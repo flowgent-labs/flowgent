@@ -163,7 +163,7 @@ func (wm *FlowgentWalletManager) handleSignRequest(topic string, payload []byte)
 		Signature: hex.EncodeToString(sig),
 	}
 	respBody, _ := json.Marshal(resp)
-	respTopic := messager.SignResponseTopic(req.TenantID, req.FlowID, req.RunID)
+	respTopic := messager.SignResponseTopic(req.Namespace, req.FlowID, req.RunID)
 
 	if err := wm.messager.Publish(context.Background(), respTopic, &messager.InterMessage{
 		ID:      req.RequestID,
@@ -181,7 +181,7 @@ func (wm *FlowgentWalletManager) publishSignError(req messager.SignRequest, errM
 		Error:     errMsg,
 	}
 	respBody, _ := json.Marshal(resp)
-	respTopic := messager.SignResponseTopic(req.TenantID, req.FlowID, req.RunID)
+	respTopic := messager.SignResponseTopic(req.Namespace, req.FlowID, req.RunID)
 	if err := wm.messager.Publish(context.Background(), respTopic, &messager.InterMessage{
 		ID:      req.RequestID,
 		Payload: respBody,

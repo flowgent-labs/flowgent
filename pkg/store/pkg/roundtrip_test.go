@@ -27,7 +27,7 @@ func TestSQLiteRoundTrip(t *testing.T) {
 		mode         TEXT    DEFAULT '',
 		labels       TEXT    DEFAULT '{}',
 		description  TEXT    NOT NULL DEFAULT '',
-		tenant_id    TEXT    NOT NULL DEFAULT 'default',
+		namespace_id    TEXT    NOT NULL DEFAULT 'default',
 		status       TEXT    NOT NULL DEFAULT 'ACTIVE',
 		created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
 		created_by   TEXT    NOT NULL DEFAULT '',

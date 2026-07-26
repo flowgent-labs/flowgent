@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: git-agent
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Git operations agent that creates branches, commits patches, opens pull requests, and manages code reviews

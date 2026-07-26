@@ -1,11 +1,11 @@
 // Package messager defines the inter-component messaging contract for Flowgent.
 //
 // All inter-component communication uses MQTT topics under the flowgent/v1/ prefix
-// with a hierarchical tenant/flow/run structure for observability and multi-tenancy.
+// with a hierarchical namespace/flow/run structure for observability and multi-tenancy.
 //
 // Topic hierarchy:
 //
-//	flowgent/v1/{tenantId}/flows/{flowId}/runs/{runId}/
+//	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/
 //	  ├── exec/plans          ← JM→TM: dispatch ExecutionPlans  ($share/tm-pool)
 //	  ├── exec/results        ← TM→JM: execution results         (point-to-point)
 //	  ├── sandbox/trigger     ← TM→Sandbox: script trigger       ($share/sandbox-pool)
@@ -13,10 +13,10 @@
 //	  ├── notify/event        ← Publisher→Notifier              ($share/notify-pool)
 //	  └── notify/result       ← Notifier→Publisher               (point-to-point)
 //
-//	flowgent/v1/{tenantId}/flows/{flowId}/
+//	flowgent/v1/{namespaceId}/flows/{flowId}/
 //	  └── ctrl/jm/create      ← Controller→JM leader
 //
-//	flowgent/v1/{tenantId}/flows/{flowId}/runs/{runId}/
+//	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/
 //	  ├── sign/request         ← TM→Wallet: unsigned payment     ($share/wallet-pool)
 //	  └── sign/response        ← Wallet→TM: signed result        (point-to-point)
 //
@@ -48,8 +48,8 @@ const (
 
 // ExecPlansTopic builds the topic for JM→TM execution plan dispatch.
 // TMs subscribe with SharedExecPlans() for load-balanced consumption.
-func ExecPlansTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, tenantID, flowID, runID)
+func ExecPlansTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SharedExecPlans is the $share subscription for TM slot workers.
@@ -58,14 +58,14 @@ func SharedExecPlans() string {
 }
 
 // ExecResultsTopic builds the topic for TM→JM execution result callback.
-func ExecResultsTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/results", TopicPrefix, tenantID, flowID, runID)
+func ExecResultsTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/results", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SandboxTriggerTopic builds the topic for TM→Sandbox script trigger dispatch.
 // Sandbox pods subscribe with SharedSandboxTrigger() for load-balanced consumption.
-func SandboxTriggerTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, tenantID, flowID, runID)
+func SandboxTriggerTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SharedSandboxTrigger is the $share subscription for sandbox runner pods.
@@ -74,8 +74,8 @@ func SharedSandboxTrigger() string {
 }
 
 // SandboxResultTopic builds the topic for Sandbox→TM result callback.
-func SandboxResultTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/result", TopicPrefix, tenantID, flowID, runID)
+func SandboxResultTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/result", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // HeartbeatTopic builds the topic for TM→JM liveness heartbeat.
@@ -89,14 +89,14 @@ func HeartbeatWildcard() string {
 }
 
 // CtrlJMCreateTopic builds the topic for Controller→JM dedicated JM creation.
-func CtrlJMCreateTopic(tenantID, flowID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/ctrl/jm/create", TopicPrefix, tenantID, flowID)
+func CtrlJMCreateTopic(namespaceID, flowID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/ctrl/jm/create", TopicPrefix, namespaceID, flowID)
 }
 
 // NotifyEventTopic builds the topic for publisher→Notifier event dispatch.
 // Notifier pods subscribe with SharedNotifyEvent() for load-balanced consumption.
-func NotifyEventTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/event", TopicPrefix, tenantID, flowID, runID)
+func NotifyEventTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/event", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SharedNotifyEvent is the $share subscription for notifier pods.
@@ -105,8 +105,8 @@ func SharedNotifyEvent() string {
 }
 
 // NotifyResultTopic builds the topic for Notifier→Publisher delivery confirmation.
-func NotifyResultTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/result", TopicPrefix, tenantID, flowID, runID)
+func NotifyResultTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/result", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // NotifyPodWSTopic builds the topic for cross-pod WebSocket message routing.
@@ -126,8 +126,8 @@ func NotifyQueueWildcard() string {
 
 // SignRequestTopic builds the topic for TM→Wallet payment signing requests.
 // Wallet daemons subscribe with SharedSignRequest() for load-balanced consumption.
-func SignRequestTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/request", TopicPrefix, tenantID, flowID, runID)
+func SignRequestTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/request", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SharedSignRequest is the $share subscription for wallet daemon pods.
@@ -136,13 +136,13 @@ func SharedSignRequest() string {
 }
 
 // SignResponseTopic builds the topic for Wallet→TM signed payment result.
-func SignResponseTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/response", TopicPrefix, tenantID, flowID, runID)
+func SignResponseTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/response", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SignResponseSubscription is the per-run subscription for TM to receive the signed result.
-func SignResponseSubscription(tenantID, flowID, runID string) string {
-	return TopicPrefix + "/" + tenantID + "/flows/" + flowID + "/runs/" + runID + "/sign/response"
+func SignResponseSubscription(namespaceID, flowID, runID string) string {
+	return TopicPrefix + "/" + namespaceID + "/flows/" + flowID + "/runs/" + runID + "/sign/response"
 }
 
 // ─── Payment Signing Types ──────────────────────────────────────
@@ -152,7 +152,7 @@ type SignRequest struct {
 	RequestID string `json:"request_id"`
 	Wallet    string `json:"wallet"`
 	Payload   string `json:"payload"`
-	TenantID  string `json:"tenant_id"`
+	Namespace  string `json:"namespace_id"`
 	FlowID    string `json:"flow_id"`
 	RunID     string `json:"run_id"`
 }
@@ -181,23 +181,23 @@ type InterMessage struct {
 // InterMessage with a JSON-encoded FlowEvent or RunEvent payload.
 
 // CtrlFlowUpdatedTopic is published by apiserver after flow create/update/reload.
-func CtrlFlowUpdatedTopic(tenantID, flowID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/updated", TopicPrefix, tenantID, flowID)
+func CtrlFlowUpdatedTopic(namespaceID, flowID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/updated", TopicPrefix, namespaceID, flowID)
 }
 
 // CtrlFlowDeletedTopic is published by apiserver after flow deletion.
-func CtrlFlowDeletedTopic(tenantID, flowID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/deleted", TopicPrefix, tenantID, flowID)
+func CtrlFlowDeletedTopic(namespaceID, flowID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/deleted", TopicPrefix, namespaceID, flowID)
 }
 
 // CtrlRunCreatedTopic is published by apiserver after a new PENDING run is created.
-func CtrlRunCreatedTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/created", TopicPrefix, tenantID, flowID, runID)
+func CtrlRunCreatedTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/created", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // CtrlRunStatusTopic is published by apiserver after a run status changes.
-func CtrlRunStatusTopic(tenantID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/status", TopicPrefix, tenantID, flowID, runID)
+func CtrlRunStatusTopic(namespaceID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/status", TopicPrefix, namespaceID, flowID, runID)
 }
 
 // SharedCtrlEvents is the $share subscription for controller pods.
@@ -209,7 +209,7 @@ func SharedCtrlEvents() string {
 type FlowEvent struct {
 	EventType string `json:"event_type"` // CREATED | UPDATED | DELETED
 	FlowID    string `json:"flow_id"`
-	TenantID  string `json:"tenant_id"`
+	Namespace  string `json:"namespace_id"`
 	Version   int64  `json:"version,omitempty"`
 }
 
@@ -218,7 +218,7 @@ type RunEvent struct {
 	EventType string `json:"event_type"` // CREATED | STATUS_CHANGED
 	RunID     string `json:"run_id"`
 	FlowID    string `json:"flow_id"`
-	TenantID  string `json:"tenant_id"`
+	Namespace  string `json:"namespace_id"`
 	Status    string `json:"status"`
 }
 

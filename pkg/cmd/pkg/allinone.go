@@ -45,7 +45,7 @@ type allInOneState struct {
 	store       store.IStore
 	apiClient   *client.FlowgentClient
 	httpClient  model.IFlowgentAPIClient
-	tenant      string
+	namespace      string
 	taskClient  *client.TaskStateClient
 	humanClient *client.HumanApprovalClient
 	logger      *utils.Logger
@@ -81,9 +81,9 @@ func startAllInOne(cfgPath string) error {
 	defer storeImpl.(interface{ Close() error }).Close()
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Runtime.Tenant.DefaultTenant
-	if tenant == "" {
-		tenant = "default"
+	namespace := svcCfg.Runtime.Namespace.DefaultNamespace
+	if namespace == "" {
+		namespace = "default"
 	}
 
 	state := &allInOneState{
@@ -91,8 +91,8 @@ func startAllInOne(cfgPath string) error {
 		store:       storeImpl,
 		apiClient:   apiClient,
 		httpClient:  client.NewHttpClient(svcCfg, nil),
-		tenant:      tenant,
-		taskClient:  &client.TaskStateClient{Client: apiClient, Tenant: tenant},
+		namespace:      namespace,
+		taskClient:  &client.TaskStateClient{Client: apiClient, Namespace: namespace},
 		humanClient: &client.HumanApprovalClient{Client: apiClient},
 		logger:      logger,
 	}
@@ -111,7 +111,7 @@ func startAllInOne(cfgPath string) error {
 	restSrv, flowHandler := startRESTServer(state, agentFlows, subFlows, wsBridge)
 
 	// Cron triggers
-	startCronScheduler(allFlows, state.apiClient, state.tenant)
+	startCronScheduler(allFlows, state.apiClient, state.namespace)
 
 	// JobManager + RunPoller
 	startOrchestrator(state, rm, flowHandler.AgentFlows())
@@ -160,7 +160,7 @@ func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
 		ApprovalInfo: state.humanClient,
 		Logger:        state.logger,
 		APIServerURL:  state.cfg.Runtime.APIServerURL,
-		Tenant:        state.tenant,
+		Namespace:        state.namespace,
 	})
 	return rm
 }
@@ -186,7 +186,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 			state.cfg.Messager.MQTT.Password)
 	}
 
-	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Tenant.NamespacePrefix, state.cfg.Runtime.Tenant.DefaultTenant, mqttPub)
+	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	humanHandler := handler.NewHumanHandler(state.store, mqttPub, state.logger)
 	runHandler := handler.NewFlowRunHandler(state.store, mqttPub, state.logger)
@@ -194,7 +194,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
 	mcpHandler := handler.NewMcpHandler(state.store)
 	knowledgeHandler := handler.NewKnowledgeHandler(state.store)
-	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Runtime.Tenant.DefaultTenant)
+	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Runtime.Namespace.DefaultNamespace)
 
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,
@@ -228,12 +228,12 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 
 // ─── Cron Scheduler ───────────────────────────────────────────────
 
-func startCronScheduler(allFlows []entities.FlowInfo, apiClient *client.FlowgentClient, tenant string) {
+func startCronScheduler(allFlows []entities.FlowInfo, apiClient *client.FlowgentClient, namespace string) {
 	cronSched := trigger.NewScheduleTrigger()
 	cronSched.RegisterAgentFlows(allFlows, func(ctx context.Context, id string) {
 		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending}
 		run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "cron"})
-		_, _ = apiClient.CreateRun(ctx, tenant, run)
+		_, _ = apiClient.CreateRun(ctx, namespace, run)
 	})
 	cronSched.Start()
 }
@@ -244,7 +244,7 @@ func startOrchestrator(state *allInOneState, rm resourcemanager.ResourceManager,
 	flowMap map[string]*entities.FlowInfo) {
 
 	timeout := parseDuration(state.cfg.Orchestration.FlowExecutionTimeout, 30*time.Minute)
-	stateClient := &client.RunStateClient{Client: state.apiClient, Tenant: state.tenant}
+	stateClient := &client.RunStateClient{Client: state.apiClient, Namespace: state.namespace}
 
 	jm, err := jobmanager.NewJobManager(stateClient, rm, state.logger, &jobmanager.JobManagerConfig{
 		FlowExecutionTimeout: timeout,
@@ -256,7 +256,7 @@ func startOrchestrator(state *allInOneState, rm resourcemanager.ResourceManager,
 		return
 	}
 
-	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.tenant, jm, flowMap, "", "")
+	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.namespace, jm, flowMap, "", "")
 }
 
 // ─── A2A Server ───────────────────────────────────────────────────
@@ -289,7 +289,7 @@ func startA2AServer(state *allInOneState) *http.Server {
 			Status: entities.RunPending, Vars: req.Vars,
 		}
 		run.SetTrigger(entities.TriggerInfo{Type: "api", Source: "a2a"})
-		if _, err := state.apiClient.CreateRun(r.Context(), state.tenant, run); err != nil {
+		if _, err := state.apiClient.CreateRun(r.Context(), state.namespace, run); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

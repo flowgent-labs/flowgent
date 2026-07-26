@@ -9,8 +9,8 @@ from common import parse_output, node_task, pg_connect
 from common.api import get_tasks as _get_tasks_raw
 from common.api import try_approve_pending_human as _try_approve_raw
 
-API = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
+API = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
 FLOW_ID = "security-autonomy-fixer"
 FLOW_TIMEOUT_S = config.FLOW_TIMEOUT_S
 POLL_INTERVAL_S = config.POLL_INTERVAL_S
@@ -42,7 +42,7 @@ PHASE_NODES = {
 
 
 def get_tasks(s, run_id):
-    return _get_tasks_raw(s, API, TENANT, run_id)
+    return _get_tasks_raw(s, API, NAMESPACE, run_id)
 
 
 def try_approve_pending_human(s, run_id, conn=None):
@@ -60,8 +60,8 @@ def seed_agents_and_mcps(s):
         name = agent_def.get("name")
         if not name:
             continue
-        if get_or_post(s, API, f"/api/v1/{TENANT}/agents/{name}",
-                       f"/api/v1/{TENANT}/agents", agent_def, "agent"):
+        if get_or_post(s, API, f"/api/v1/{NAMESPACE}/agents/{name}",
+                       f"/api/v1/{NAMESPACE}/agents", agent_def, "agent"):
             agent_count += 1
     print(f"  OK {agent_count} agent definition(s) registered (from {_AGENTS_DIR})")
 
@@ -79,8 +79,8 @@ def seed_agents_and_mcps(s):
         else:
             mcp_def = {"name": mode, "enabled": True, "type": "stdio",
                        "command": _MOCK_MCP_COMMAND, "args": [mode], "env": {}}
-        if get_or_post(s, API, f"/api/v1/{TENANT}/mcp/{mode}",
-                       f"/api/v1/{TENANT}/mcp", mcp_def, "mcp"):
+        if get_or_post(s, API, f"/api/v1/{NAMESPACE}/mcp/{mode}",
+                       f"/api/v1/{NAMESPACE}/mcp", mcp_def, "mcp"):
             mcp_count += 1
     print(f"  OK {mcp_count} MCP server(s) registered "
           f"({'real config/mcps/*.yaml' if _USE_REAL_MCP else 'mock /app/mcp-server.sh'})")

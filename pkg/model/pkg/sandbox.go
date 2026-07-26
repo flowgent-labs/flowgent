@@ -9,7 +9,7 @@ type SandboxResources struct {
 // SandboxTrigger is the message published from SandboxExecutor (TM side) to
 // SandboxRunner pods via MQTT.
 type SandboxTrigger struct {
-	TenantID      string            `json:"tenant_id,omitempty"`
+	Namespace      string            `json:"namespace_id,omitempty"`
 	FlowID        string            `json:"flow_id"`
 	RunID         string            `json:"run_id"`
 	PlanID        string            `json:"plan_id"`

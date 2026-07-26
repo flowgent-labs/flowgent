@@ -23,20 +23,20 @@ type NodeMemoryStore = interface {
 // KnowledgeRetriever provides cross-workflow persistent knowledge for RAG injection.
 // Engine components use this via a REST-client adapter — never a direct store import.
 type KnowledgeRetriever interface {
-	SearchKnowledge(ctx context.Context, tenant string, query string, topK int, tags []string) ([]*entities.KnowledgeEntry, error)
+	SearchKnowledge(ctx context.Context, namespace string, query string, topK int, tags []string) ([]*entities.KnowledgeEntry, error)
 }
 
 type AgentExecutor struct {
 	llmClient    engine.LLMClient
 	client       *client.FlowgentClient
-	tenant       string
+	namespace       string
 	memStore     NodeMemoryStore
 	knowledge    KnowledgeRetriever
 	maxRetries   int
 }
 
-func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, tenant string) *AgentExecutor {
-	return &AgentExecutor{llmClient: llm, client: apiClient, tenant: tenant, maxRetries: 3}
+func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, namespace string) *AgentExecutor {
+	return &AgentExecutor{llmClient: llm, client: apiClient, namespace: namespace, maxRetries: 3}
 }
 
 func (e *AgentExecutor) SetMemoryStore(s NodeMemoryStore) { e.memStore = s }
@@ -44,7 +44,7 @@ func (e *AgentExecutor) SetKnowledgeRetriever(k KnowledgeRetriever) { e.knowledg
 func (e *AgentExecutor) TaskType() entities.TaskType         { return entities.TaskAgent }
 
 func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	agent, err := e.client.GetAgent(ctx, e.tenant, plan.NodeSpec.Agent)
+	agent, err := e.client.GetAgent(ctx, e.namespace, plan.NodeSpec.Agent)
 	if err != nil {
 		return nil, fmt.Errorf("agent not found %q: %w", plan.NodeSpec.Agent, err)
 	}
@@ -74,7 +74,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 	soul := agent.Soul
 	if e.knowledge != nil {
 		query := truncate(instruction+" "+userPrompt, 512)
-		if entries, err := e.knowledge.SearchKnowledge(ctx, e.tenant, query, 5, nil); err == nil && len(entries) > 0 {
+		if entries, err := e.knowledge.SearchKnowledge(ctx, e.namespace, query, 5, nil); err == nil && len(entries) > 0 {
 			soul = formatKnowledgeContext(entries) + "\n\n" + soul
 		}
 	}

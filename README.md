@@ -12,7 +12,7 @@ Flowgent is an AI-native universal orchestration engine modeled after Apache Fli
 - **Deterministic + Intelligent** — `agent` and `supervisor` nodes provide LLM intelligence; all others guarantee deterministic execution.
 - **Controlled Autonomy** — supervisor constrained to `continue|retry|inject|abort` with configurable quotas.
 - **State-Machine Persistence** — every run and task is durable. Pause at `human` gates, resume via API, replay idempotently.
-- **Multi-Tenant API** — tenant-scoped REST paths (`/api/v1/{tenant}/...`), JWT/OIDC/GitHub OAuth, A2A protocol server (Google Agent-to-Agent).
+- **Multi-Namespace API** — namespace-scoped REST paths (`/api/v1/{namespace}/...`), JWT/OIDC/GitHub OAuth, A2A protocol server (Google Agent-to-Agent).
 - **Application Mode** — every agentflow gets a dedicated per-flow K8s JobManager, auto-scaling TaskManagers/sandboxes. (Session mode — a shared JM/TM pool — is temporarily disabled to simplify troubleshooting; the `priority` field is reserved for its reintroduction, but `high` is the only value currently accepted.)
 - **Dual-Mode Deployment** — All-in-One (SQLite + memory queue) or Production (PostgreSQL + MQTT/EMQX + Redis + K8s).
 - **OTEL Tracing Per Node** — every node span records input, output, and internal state for Jaeger debugging.

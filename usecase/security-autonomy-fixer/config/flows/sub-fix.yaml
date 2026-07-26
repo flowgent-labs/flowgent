@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Flow
 metadata:
   name: sub-fix
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Sub-flow for individual security issue analysis, patching, and validation per finding

@@ -30,7 +30,7 @@ import (
 // FlowgentController is the distributed flow driver.
 type FlowgentController struct {
 	api     *client.FlowgentClient
-	tenant  string
+	namespace  string
 	rm      resourcemanager.ResourceManager
 	logger  *utils.Logger
 	cfg     *config.FlowgentConfig
@@ -46,12 +46,12 @@ type FlowgentController struct {
 }
 
 // NewFlowgentController creates a FlowgentController instance.
-func NewFlowgentController(api *client.FlowgentClient, tenant string, rm resourcemanager.ResourceManager,
+func NewFlowgentController(api *client.FlowgentClient, namespace string, rm resourcemanager.ResourceManager,
 	logger *utils.Logger, cfg *config.FlowgentConfig, cfgPath string,
 	disc discovery.IDiscoveryClient) *FlowgentController {
 	return &FlowgentController{
 		api:               api,
-		tenant:            tenant,
+		namespace:            namespace,
 		rm:                rm,
 		logger:            logger,
 		cfg:               cfg,
@@ -156,7 +156,7 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 		peers = nil
 	}
 
-	versions, err := c.api.ListFlows(ctx, c.tenant)
+	versions, err := c.api.ListFlows(ctx, c.namespace)
 	if err != nil {
 		c.logger.Error("Failed to list agentflow definitions via apiserver", "error", err)
 		return
@@ -240,7 +240,7 @@ func (c *FlowgentController) shouldDispatch(flowID string, version int64) bool {
 // agentflow. It re-fetches the latest spec (cron fires asynchronously,
 // possibly minutes after the last reconcile) and creates a run for it.
 func (c *FlowgentController) triggerScheduledRun(ctx context.Context, flowID string) {
-	spec, err := c.api.GetFlow(ctx, c.tenant, flowID)
+	spec, err := c.api.GetFlow(ctx, c.namespace, flowID)
 	if err != nil || spec == nil {
 		c.logger.Warn("cron trigger: failed to load flow spec", "flow_id", flowID, "error", err)
 		return
@@ -269,12 +269,12 @@ func (c *FlowgentController) dispatchFlow(ctx context.Context, spec *entities.Fl
 }
 
 // ensureApplicationInfra makes sure the dedicated per-flow JM Deployment
-// exists for this flow, in its tenant's shared namespace. Idempotent — safe
+// exists for this flow, in its namespace's shared namespace. Idempotent — safe
 // to call on every reconcile tick, independent of whether a run is
 // dispatched.
 func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *entities.FlowInfo) {
 	ns := c.applicationNamespace(spec)
-	tenantID := c.dispatchTenant(spec)
+	namespaceID := c.dispatchNamespace(spec)
 
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -288,12 +288,12 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 		return
 	}
 
-	// The per-tenant namespace (e.g. "flowgent-{tenantID}") is not
+	// The per-namespace namespace (e.g. "flowgent-{namespaceID}") is not
 	// pre-created by Helm — it is created lazily here, on first dispatch of
-	// any flow belonging to this tenant. Deployments(ns).Create would
+	// any flow belonging to this namespace. Deployments(ns).Create would
 	// otherwise fail with a 404 "namespaces \"...\" not found" the very
-	// first time a new tenant is seen. Safe to call repeatedly: every flow
-	// of the same tenant shares (and may re-touch) this same namespace.
+	// first time a new namespace is seen. Safe to call repeatedly: every flow
+	// of the same namespace shares (and may re-touch) this same namespace.
 	if _, err := clientset.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); err != nil {
 		if !apierrors.IsNotFound(err) {
 			c.logger.Error("Failed to check application namespace", "flow_id", spec.ID, "namespace", ns, "error", err)
@@ -301,37 +301,37 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 		}
 		nsObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
 			Name:   ns,
-			Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/tenant": tenantID},
+			Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID},
 		}}
 		if _, err := clientset.CoreV1().Namespaces().Create(ctx, nsObj, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 			c.logger.Error("Failed to create application namespace", "flow_id", spec.ID, "namespace", ns, "error", err)
 			return
 		}
-		c.logger.Info("Application namespace created", "flow_id", spec.ID, "tenant_id", tenantID, "namespace", ns)
+		c.logger.Info("Application namespace created", "flow_id", spec.ID, "namespace_id", namespaceID, "namespace", ns)
 
 		// Copy the shared ConfigMap (flowgent-config) from the controller's
-		// own namespace into the new tenant namespace. Without this, every
-		// dedicated JM pod in the tenant namespace would fail with
+		// own namespace into the new namespace namespace. Without this, every
+		// dedicated JM pod in the namespace namespace would fail with
 		// "MountVolume.SetUp failed for volume \"config\": configmap not found".
 		cmName := c.jmConfigMapName()
-		if srcCM, srcErr := clientset.CoreV1().ConfigMaps(c.cfg.Runtime.Namespace).Get(ctx, cmName, metav1.GetOptions{}); srcErr == nil {
+		if srcCM, srcErr := clientset.CoreV1().ConfigMaps(c.cfg.Runtime.K8sNamespace).Get(ctx, cmName, metav1.GetOptions{}); srcErr == nil {
 			dstCM := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   cmName,
-					Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/tenant": tenantID},
+					Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID},
 				},
 				Data: srcCM.Data,
 			}
 			if _, err := clientset.CoreV1().ConfigMaps(ns).Create(ctx, dstCM, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-				c.logger.Warn("Failed to copy ConfigMap to tenant namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName, "error", err)
+				c.logger.Warn("Failed to copy ConfigMap to namespace namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName, "error", err)
 			} else {
-				c.logger.Info("ConfigMap copied to tenant namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName)
+				c.logger.Info("ConfigMap copied to namespace namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName)
 			}
 		}
 	}
 
-	jmName := fmt.Sprintf("flowgent-jobmanager-%s-%s", tenantID, spec.ID)
-	jmDeployment := c.buildJMDeployment(jmName, ns, tenantID, spec)
+	jmName := fmt.Sprintf("flowgent-jobmanager-%s-%s", namespaceID, spec.ID)
+	jmDeployment := c.buildJMDeployment(jmName, ns, namespaceID, spec)
 
 	_, err = clientset.AppsV1().Deployments(ns).Create(ctx, jmDeployment, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
@@ -344,65 +344,65 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 	}
 }
 
-// createApplicationRun creates a PENDING run scoped to the flow's tenant
+// createApplicationRun creates a PENDING run scoped to the flow's namespace
 // namespace, so only its dedicated JM (which polls that namespace) picks it
 // up.
 func (c *FlowgentController) createApplicationRun(ctx context.Context, spec *entities.FlowInfo) {
 	ns := c.applicationNamespace(spec)
-	tenantID := c.dispatchTenant(spec)
+	namespaceID := c.dispatchNamespace(spec)
 	run := &entities.FlowRunInfo{
-		BaseEntity:  entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), TenantID: tenantID},
+		BaseEntity:  entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), Namespace: namespaceID},
 		AgentFlowID: spec.ID,
 		Version:     1,
 		Status:      entities.RunPending,
-		Priority:    entities.PriorityHigh,
-		Namespace:   ns,
+		Priority:      entities.PriorityHigh,
+		K8sNamespace:  ns,
 		Vars:        spec.Vars,
 	}
 	run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "controller"})
-	if _, err := c.api.CreateRun(ctx, tenantID, run); err != nil {
+	if _, err := c.api.CreateRun(ctx, namespaceID, run); err != nil {
 		c.logger.Error("Failed to create application run via apiserver", "flow_id", spec.ID, "error", err)
 	}
 }
 
 // applicationNamespace computes the K8s namespace for a flow's dedicated JM
-// Deployment. Per §1.3/§4.3 of docs/01-L1-Engine-Architecture.md, tenant
+// Deployment. Per §1.3/§4.3 of docs/01-L1-Engine-Architecture.md, namespace
 // isolation is per-TENANT namespace (not per-flow): every flow belonging to
-// the same tenant shares one namespace, and each flow's dedicated JM
+// the same namespace shares one namespace, and each flow's dedicated JM
 // Deployment is disambiguated by name alone
-// (flowgent-jobmanager-{tenantId}-{flowId} — see ensureApplicationInfra).
-// tenant.namespace_prefix already includes its own trailing separator
+// (flowgent-jobmanager-{namespaceId}-{flowId} — see ensureApplicationInfra).
+// namespace.namespace_prefix already includes its own trailing separator
 // (default "flowgent-" — see etc/flowgent.yaml), so it is concatenated
-// directly with the tenant ID, not joined with another "-" (which would
-// produce a malformed "flowgent--{tenantID}" namespace).
+// directly with the namespace ID, not joined with another "-" (which would
+// produce a malformed "flowgent--{namespaceID}" namespace).
 // pkg/api/pkg/handler/flow_def.go's applicationNamespace must compute the
 // exact same value so Trigger (Path A) and the Controller (Path B) agree on
 // which namespace a given flow's dedicated JM lives in — in particular both
 // sides must fall back to the same "flowgent-" namespace prefix (via
 // defaultNamespacePrefix, mirroring handler.defaultNamespacePrefix) and the
-// same default tenant ID (cfg.Runtime.Tenant.DefaultTenant) when a flow spec
-// doesn't carry its own TenantID. Without this shared fallback the two
+// same default namespace ID (cfg.Runtime.Namespace.DefaultNamespace) when a flow spec
+// doesn't carry its own Namespace. Without this shared fallback the two
 // components would silently disagree on the namespace and Application-mode
 // runs would never be picked up by their dedicated JM.
 func (c *FlowgentController) applicationNamespace(spec *entities.FlowInfo) string {
+	if spec.K8sNamespace != "" {
+		return spec.K8sNamespace
+	}
+	return defaultNamespacePrefix(c.cfg.Runtime.Namespace.NamespacePrefix) + c.dispatchNamespace(spec)
+}
+
+// dispatchNamespace resolves the namespace ID to use for a flow's dispatch
+// (namespace + JM/run Namespace), falling back from spec.Namespace to c.namespace
+// (the Controller's configured default namespace — see
+// pkg/cmd/pkg/controller/controller.go, always non-empty) to, as a last
+// resort, "default" — mirroring handler.defaultNamespace's fallback so the
+// two components never disagree even in a misconfigured edge case.
+func (c *FlowgentController) dispatchNamespace(spec *entities.FlowInfo) string {
 	if spec.Namespace != "" {
 		return spec.Namespace
 	}
-	return defaultNamespacePrefix(c.cfg.Runtime.Tenant.NamespacePrefix) + c.dispatchTenant(spec)
-}
-
-// dispatchTenant resolves the tenant ID to use for a flow's dispatch
-// (namespace + JM/run TenantID), falling back from spec.TenantID to c.tenant
-// (the Controller's configured default tenant — see
-// pkg/cmd/pkg/controller/controller.go, always non-empty) to, as a last
-// resort, "default" — mirroring handler.defaultTenantID's fallback so the
-// two components never disagree even in a misconfigured edge case.
-func (c *FlowgentController) dispatchTenant(spec *entities.FlowInfo) string {
-	if spec.TenantID != "" {
-		return spec.TenantID
-	}
-	if c.tenant != "" {
-		return c.tenant
+	if c.namespace != "" {
+		return c.namespace
 	}
 	return "default"
 }
@@ -416,11 +416,11 @@ func defaultNamespacePrefix(prefix string) string {
 	return prefix
 }
 
-func (c *FlowgentController) buildJMDeployment(name, namespace, tenantID string, spec *entities.FlowInfo) *appsv1.Deployment {
+func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID string, spec *entities.FlowInfo) *appsv1.Deployment {
 	replicas := int32(1)
 	labels := map[string]string{
 		"app":                "flowgent-jobmanager",
-		"flowgent.io/tenant": tenantID,
+		"flowgent.io/namespace": namespaceID,
 		"flowgent.io/flow":   spec.ID,
 		"flowgent.io/mode":   "application",
 	}

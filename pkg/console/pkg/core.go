@@ -32,10 +32,10 @@ func (fc *FlowgentConsole) GetLLM(id string) (*entities.LlmProviderInfo, error) 
 	return fc.getStores().llm.Get(fc.ctx, id)
 }
 
-// AddLLM saves a new LLM provider. It assigns an ID, tenant, and timestamps.
+// AddLLM saves a new LLM provider. It assigns an ID, namespace, and timestamps.
 func (fc *FlowgentConsole) AddLLM(p *entities.LlmProviderInfo) error {
 	p.ID = uuid.New().String()
-	p.TenantID = fc.tenant
+	p.Namespace = fc.namespace
 	p.CreatedAt = time.Now()
 	p.UpdatedAt = time.Now()
 	return fc.getStores().llm.Save(fc.ctx, p)
@@ -72,7 +72,7 @@ func (fc *FlowgentConsole) GetChannel(id string) (*entities.NotifyChannelInfo, e
 // AddChannel saves a new notification channel.
 func (fc *FlowgentConsole) AddChannel(ch *entities.NotifyChannelInfo) error {
 	ch.ID = uuid.New().String()
-	ch.TenantID = fc.tenant
+	ch.Namespace = fc.namespace
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = time.Now()
 	return fc.getStores().channels.Save(fc.ctx, ch)
@@ -108,7 +108,7 @@ func (fc *FlowgentConsole) GetAgent(name string) (*entities.AgentInfo, error) {
 
 // AddAgent saves a new agent.
 func (fc *FlowgentConsole) AddAgent(a *entities.AgentInfo) error {
-	a.TenantID = fc.tenant
+	a.Namespace = fc.namespace
 	a.CreatedAt = time.Now()
 	a.UpdatedAt = time.Now()
 	return fc.getStores().agents.Save(fc.ctx, a)
@@ -144,7 +144,7 @@ func (fc *FlowgentConsole) GetMCP(name string) (*entities.McpInfo, error) {
 
 // AddMCP saves a new MCP.
 func (fc *FlowgentConsole) AddMCP(m *entities.McpInfo) error {
-	m.TenantID = fc.tenant
+	m.Namespace = fc.namespace
 	m.CreatedAt = time.Now()
 	m.UpdatedAt = time.Now()
 	return fc.getStores().mcps.Save(fc.ctx, m)
@@ -183,7 +183,7 @@ func (fc *FlowgentConsole) AddFlow(spec *entities.FlowInfo) error {
 	if spec.ID == "" {
 		spec.ID = uuid.New().String()
 	}
-	spec.TenantID = fc.tenant
+	spec.Namespace = fc.namespace
 	if spec.Kind == "" {
 		spec.Kind = "flow"
 	}
@@ -232,7 +232,7 @@ func (fc *FlowgentConsole) AddSkill(spec *entities.FlowInfo) error {
 	if spec.ID == "" {
 		spec.ID = uuid.New().String()
 	}
-	spec.TenantID = fc.tenant
+	spec.Namespace = fc.namespace
 	return fc.getStores().flows.SaveSpec(fc.ctx, spec, "console", "added via console")
 }
 
@@ -267,7 +267,7 @@ func (fc *FlowgentConsole) GetRun(id string) (*entities.FlowRunInfo, error) {
 // CreateRun creates a new pending run for the given flow ID.
 func (fc *FlowgentConsole) CreateRun(flowID string) (*entities.FlowRunInfo, error) {
 	run := &entities.FlowRunInfo{
-		BaseEntity:  entities.BaseEntity{ID: uuid.New().String(), TenantID: fc.tenant, CreatedAt: time.Now()},
+		BaseEntity:  entities.BaseEntity{ID: uuid.New().String(), Namespace: fc.namespace, CreatedAt: time.Now()},
 		AgentFlowID: flowID,
 		Status:      entities.RunPending,
 	}

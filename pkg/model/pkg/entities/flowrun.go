@@ -34,7 +34,7 @@ type FlowRunInfo struct {
 	SharedMemory map[string]any            `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty" db:"-"`
 	ExecPlans    map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty" db:"-"`
 
-	Namespace string            `json:"namespace,omitempty"`
+	K8sNamespace string            `json:"namespace,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Priority  Priority          `json:"priority,omitempty"`
 }

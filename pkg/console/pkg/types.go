@@ -27,7 +27,7 @@ type WalletExport struct {
 // ResourceMetadata holds the metadata block common to all K8s-style resources.
 type ResourceMetadata struct {
 	Name        string            `json:"name" yaml:"name"`
-	Tenant      string            `json:"tenant,omitempty" yaml:"tenant,omitempty"`
+	Namespace      string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Status      string            `json:"status,omitempty" yaml:"status,omitempty"`
 	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
@@ -39,7 +39,7 @@ type ResourceMetadata struct {
 //	kind: Agent|Flow|FlowRun|MCP|LLMProvider|NotifyChannel|Skill
 //	metadata:
 //	  name: xxx
-//	  tenant: default
+//	  namespace: default
 //	spec: {...}
 type ResourceImport struct {
 	APIVersion string            `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`

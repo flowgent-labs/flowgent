@@ -12,8 +12,8 @@ SonarQube security issues on a target repository.
 
 | Component | Value |
 |-----------|-------|
-| Platform | K3s single-node |
-| Namespace | `default` (infra), `flowgent-{tenant}` (per-tenant JM pods) |
+| Platform | K8S single-node |
+| Namespace | `default` (infra), `flowgent-{namespace}` (per-namespace JM pods) |
 | Mode | Application only |
 | Flow Under Test | `security-autonomy-fixer` (24 nodes, 11 phases) |
 | MCP GitHub | `https://api.githubcopilot.com/mcp/` (Streamable HTTP) |
@@ -70,7 +70,7 @@ manually execute individual `verifier/*.py` files.
 
 ## 2.1 Environment Reset
 
-Before every real (non-dry-run) execution against a live K3s cluster, reset
+Before every real (non-dry-run) execution against a live K8S cluster, reset
 shared state to avoid false positives/negatives from stale Deployments, PG rows,
 and MQTT messages.
 
@@ -81,7 +81,7 @@ helm uninstall flowgent -n default
 # 2. Delete leftover JM Deployments (all namespaces)
 kubectl delete deployment -A -l flowgent.io/mode=application
 
-# 2b. Delete per-tenant namespaces
+# 2b. Delete per-namespace namespaces
 kubectl get ns -l flowgent.io/mode=application -o name | xargs -r kubectl delete
 
 # 3. Wipe PostgreSQL data
@@ -199,7 +199,7 @@ numbered prefix:
 
 | Layer | Prefix | Name | Focus |
 |-------|--------|------|-------|
-| L0 | 1x_ | Infra Readiness | K3s cluster, Helm, pods, console import, OTEL infrastructure |
+| L0 | 1x_ | Infra Readiness | K8S cluster, Helm, pods, console import, OTEL infrastructure |
 | L1 | 2x_ | Flowgent Engine | API Server CRUD, Controller, Messager, Notifier, A2A, Wallet |
 | L2 | 3x_ | Application | E2E security fixer pipeline, PR verification, knowledge RAG, volumes |
 
@@ -234,12 +234,12 @@ Shared utilities for the split E2E (31-34) sub-verifiers live in `verifier/_comm
 
 ### 4.1.1 Purpose
 
-Validate K3s cluster health, external dependency availability, Helm deployment
+Validate K8S cluster health, external dependency availability, Helm deployment
 state, and pod readiness before running any functional scenarios.
 
 ### 4.1.2 Prerequisites
 
-- K3s cluster accessible (`KUBECONFIG` set)
+- K8S cluster accessible (`KUBECONFIG` set)
 - `kubectl`, `helm`, `docker` on PATH
 - Python `requests` library installed
 
@@ -247,8 +247,8 @@ state, and pod readiness before running any functional scenarios.
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 1.1 | `kubectl get nodes` | KUBECONFIG pointing to K3s | At least 1 node with `Ready` status |
-| 1.2 | `kubectl get pods -n kube-system` | K3s cluster running | All system pods `Running` |
+| 1.1 | `kubectl get nodes` | KUBECONFIG pointing to K8S | At least 1 node with `Ready` status |
+| 1.2 | `kubectl get pods -n kube-system` | K8S cluster running | All system pods `Running` |
 | 1.3 | `GET {SONARQUBE_URL}/api/system/health` | `config.SONARQUBE_URL` | HTTP 200, body contains `health` or `status` field |
 | 1.4 | TCP connect to `EMQX_HOST:EMQX_PORT` | `config.EMQX_HOST`, `config.EMQX_PORT` | Connection accepted (non-blocking) |
 | 1.5 | `docker images flowgent-core` | Docker daemon running | Image `flowgent-core` listed |
@@ -344,30 +344,30 @@ PostgreSQL persistence, and confirm MQTT lifecycle event publishing.
 
 | Step | Entity | Table | REST Path | Expected Input | Expected Output |
 |------|--------|-------|-----------|----------------|-----------------|
-| 2.1 | AgentFlow | `orh_agentflow` | `POST /api/v1/{tenant}/flows` | `{id, nodes, edges, priority}` | HTTP 200/201, body contains `id` |
-| 2.2 | AgentFlow | `orh_agentflow` | `GET /api/v1/{tenant}/flows` | — | JSON array of flows |
-| 2.3 | AgentFlow | `orh_agentflow` | `GET /api/v1/{tenant}/flows/{id}` | Flow ID | Flow object with `version`, `nodes`, `edges` |
-| 2.4 | AgentFlow | `orh_agentflow` | `PUT /api/v1/{tenant}/flows/{id}` | `{description, version}` | HTTP 200, `version` incremented |
-| 2.5 | AgentFlow | `orh_agentflow` | `DELETE /api/v1/{tenant}/flows/{id}` | Flow ID | HTTP 200/204, soft-deleted (`del_flag=true`) |
-| 2.6 | FlowRun | `orh_flowrun` | `POST /api/v1/{tenant}/runs` | `{agentflow_id, priority}` | HTTP 201, body contains `id`, `status=PENDING` |
-| 2.7 | FlowRun | `orh_flowrun` | `GET /api/v1/{tenant}/runs/{id}` | Run ID | Run object with `status`, `created_at` |
-| 2.8 | TaskRun | `task_runs` | `GET /api/v1/{tenant}/runs/{id}/tasks` | Run ID | JSON array of task runs (may be empty) |
-| 2.9 | Agent | `llm_agent` | `POST /api/v1/{tenant}/agents` | `{name, model, instruction}` | HTTP 200/201, body contains `name` |
-| 2.10 | Agent | `llm_agent` | `GET /api/v1/{tenant}/agents/{name}` | Agent name | Agent object with `model`, `instruction` |
-| 2.11 | MCP | `llm_mcp` | `POST /api/v1/{tenant}/mcp` | `{name, type, url, enabled}` | HTTP 201, body contains `id` |
-| 2.12 | MCP | `llm_mcp` | `PUT /api/v1/{tenant}/mcp/{name}` | `{enabled: true/false}` | HTTP 200, `enabled` toggled |
-| 2.13 | Provider | `llm_providers` | `POST /api/v1/{tenant}/llm/providers` | `{type, endpoint, models[]}` | HTTP 201, body contains `id` |
+| 2.1 | AgentFlow | `orh_agentflow` | `POST /api/v1/{namespace}/flows` | `{id, nodes, edges, priority}` | HTTP 200/201, body contains `id` |
+| 2.2 | AgentFlow | `orh_agentflow` | `GET /api/v1/{namespace}/flows` | — | JSON array of flows |
+| 2.3 | AgentFlow | `orh_agentflow` | `GET /api/v1/{namespace}/flows/{id}` | Flow ID | Flow object with `version`, `nodes`, `edges` |
+| 2.4 | AgentFlow | `orh_agentflow` | `PUT /api/v1/{namespace}/flows/{id}` | `{description, version}` | HTTP 200, `version` incremented |
+| 2.5 | AgentFlow | `orh_agentflow` | `DELETE /api/v1/{namespace}/flows/{id}` | Flow ID | HTTP 200/204, soft-deleted (`del_flag=true`) |
+| 2.6 | FlowRun | `orh_flowrun` | `POST /api/v1/{namespace}/runs` | `{agentflow_id, priority}` | HTTP 201, body contains `id`, `status=PENDING` |
+| 2.7 | FlowRun | `orh_flowrun` | `GET /api/v1/{namespace}/runs/{id}` | Run ID | Run object with `status`, `created_at` |
+| 2.8 | TaskRun | `task_runs` | `GET /api/v1/{namespace}/runs/{id}/tasks` | Run ID | JSON array of task runs (may be empty) |
+| 2.9 | Agent | `llm_agent` | `POST /api/v1/{namespace}/agents` | `{name, model, instruction}` | HTTP 200/201, body contains `name` |
+| 2.10 | Agent | `llm_agent` | `GET /api/v1/{namespace}/agents/{name}` | Agent name | Agent object with `model`, `instruction` |
+| 2.11 | MCP | `llm_mcp` | `POST /api/v1/{namespace}/mcp` | `{name, type, url, enabled}` | HTTP 201, body contains `id` |
+| 2.12 | MCP | `llm_mcp` | `PUT /api/v1/{namespace}/mcp/{name}` | `{enabled: true/false}` | HTTP 200, `enabled` toggled |
+| 2.13 | Provider | `llm_providers` | `POST /api/v1/{namespace}/llm/providers` | `{type, endpoint, models[]}` | HTTP 201, body contains `id` |
 | 2.14 | Approval | `human_approvals` | `POST /api/v1/human/approvals` | `{run_id, node_id}` | HTTP 201, body contains `token` |
-| 2.15 | Channel | `nfy_channel` | `POST /api/v1/{tenant}/notifications/channels` | `{name, channel_type, config}` | HTTP 201, body contains `id` |
+| 2.15 | Channel | `nfy_channel` | `POST /api/v1/{namespace}/notifications/channels` | `{name, channel_type, config}` | HTTP 201, body contains `id` |
 
 ### 4.4.4 MQTT Lifecycle Event Steps
 
 | Step | REST Action | Expected MQTT Topic | Expected Payload |
 |------|------------|---------------------|------------------|
-| 4.1 | `POST /flows` | `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated` | `{action: "created", agentflow_id, version}` |
-| 4.2 | `PUT /flows/{id}` | `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/updated` | `{action: "updated", agentflow_id, version++}` |
-| 4.3 | `DELETE /flows/{id}` | `flowgent/v1/{tenant}/flows/{id}/ctrl/flow/deleted` | `{action: "deleted", agentflow_id}` |
-| 4.4 | `POST /runs` | `flowgent/v1/{tenant}/flows/{id}/runs/{rid}/ctrl/run/created` | `{action: "created", run_id}` |
+| 4.1 | `POST /flows` | `flowgent/v1/{namespace}/flows/{id}/ctrl/flow/updated` | `{action: "created", agentflow_id, version}` |
+| 4.2 | `PUT /flows/{id}` | `flowgent/v1/{namespace}/flows/{id}/ctrl/flow/updated` | `{action: "updated", agentflow_id, version++}` |
+| 4.3 | `DELETE /flows/{id}` | `flowgent/v1/{namespace}/flows/{id}/ctrl/flow/deleted` | `{action: "deleted", agentflow_id}` |
+| 4.4 | `POST /runs` | `flowgent/v1/{namespace}/flows/{id}/runs/{rid}/ctrl/run/created` | `{action: "created", run_id}` |
 
 ### 4.4.5 Pass/Fail Criteria
 
@@ -416,11 +416,11 @@ JM Deployments in response to flow CRUD events.
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 4.1 | `POST /api/v1/{tenant}/flows` | `{id, nodes: [noop], edges: [], priority: "high"}` | HTTP 200/201, JM Deployment created in `flowgent-{tenant}` namespace |
-| 4.2 | Wait for Deployment | — | `flowgent-jobmanager-{tenant}-{flow_id}` exists, 1 replica |
+| 4.1 | `POST /api/v1/{namespace}/flows` | `{id, nodes: [noop], edges: [], priority: "high"}` | HTTP 200/201, JM Deployment created in `flowgent-{namespace}` namespace |
+| 4.2 | Wait for Deployment | — | `flowgent-jobmanager-{namespace}-{flow_id}` exists, 1 replica |
 | 4.3 | Verify Deployment spec | Deployment name | Container env includes `FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}` |
 | 4.4 | Wait for JM Pod | `app=flowgent-jobmanager,flowgent.io/flow={flow_id}` | Pod reaches `Running` within 60s |
-| 4.5 | `DELETE /api/v1/{tenant}/flows/{id}` | Flow ID | HTTP 200/204 |
+| 4.5 | `DELETE /api/v1/{namespace}/flows/{id}` | Flow ID | HTTP 200/204 |
 | 4.6 | Wait for GC | — | JM Deployment deleted within 60s |
 
 ### 4.6.4 Steps — Flow UPDATE Lifecycle
@@ -428,7 +428,7 @@ JM Deployments in response to flow CRUD events.
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
 | 5.1 | Create flow + wait for Deployment | (same as 4.1-4.2) | JM Deployment running |
-| 5.2 | `PUT /api/v1/{tenant}/flows/{id}` | `{description: "updated", version: 2}` | HTTP 200 |
+| 5.2 | `PUT /api/v1/{namespace}/flows/{id}` | `{description: "updated", version: 2}` | HTTP 200 |
 | 5.3 | Check Deployment generation | — | Generation incremented (Controller triggered rolling update) |
 
 ### 4.6.5 Steps — MQTT Event Verification
@@ -440,7 +440,7 @@ JM Deployments in response to flow CRUD events.
 
 ### 4.6.6 Pass/Fail Criteria
 
-- **PASS**: Controller creates JM Deployment in correct tenant namespace with
+- **PASS**: Controller creates JM Deployment in correct namespace namespace with
   correct env vars; Deployment deleted on flow delete; MQTT events published
 - **FAIL**: JM Deployment not created within 30s, wrong namespace, env vars missing
 
@@ -460,7 +460,7 @@ topics.
 
 ### 4.7.3 Topic Verification Steps
 
-All topics use the prefix `flowgent/v1/{tenant}/flows/{flowId}/runs/{runId}/`.
+All topics use the prefix `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/`.
 
 | Step | Topic Suffix | Publisher | Subscriber | Expected Payload |
 |------|-------------|-----------|------------|------------------|
@@ -481,7 +481,7 @@ respective scenarios (23, 13).
 ```
 JM → exec/plans → TM
        ├→ sandbox/trigger → Sandbox (seccomp) → sandbox/result → TM
-       ├→ PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id} (persist output via REST)
+       ├→ PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id} (persist output via REST)
        └→ exec/results (state only) → JM
 ```
 
@@ -593,8 +593,8 @@ and ANALYZE phases completed correctly.
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 32.1 | Poll run status | `GET /api/v1/{tenant}/runs/{run_id}` | Status reaches terminal state |
-| 32.2 | Fetch task list | `GET /api/v1/{tenant}/runs/{run_id}/tasks` | Task array returned |
+| 32.1 | Poll run status | `GET /api/v1/{namespace}/runs/{run_id}` | Status reaches terminal state |
+| 32.2 | Fetch task list | `GET /api/v1/{namespace}/runs/{run_id}/tasks` | Task array returned |
 | 32.3 | Verify `get-commit` | Task output | `commit_sha` populated |
 | 32.4 | Verify `scan-sonarqube` | Task output | Issues array present |
 | 32.5 | Verify `aggregate-issues` | Task output | Normalized issues with source/rule/severity fields |
@@ -692,16 +692,16 @@ and asynchronous knowledge extraction after flow runs.
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 36.1 | `POST /api/v1/{tenant}/knowledge` | `{title, content, tags: ["security", "java"]}` | HTTP 201, knowledge entry with `id` |
-| 36.2 | `GET /api/v1/{tenant}/knowledge` | — | JSON array with created entry |
-| 36.3 | `GET /api/v1/{tenant}/knowledge/{id}` | Knowledge ID | Entry with correct `title`, `content`, `tags` |
-| 36.4 | `PUT /api/v1/{tenant}/knowledge/{id}` | `{content: "updated content"}` | HTTP 200, content updated |
-| 36.5 | `POST /api/v1/{tenant}/knowledge/search` | `{query: "SQL injection", top_k: 5}` | Matching entries ranked by relevance |
-| 36.6 | `GET /api/v1/{tenant}/knowledge/tags` | — | JSON array with all distinct tags |
-| 36.7 | `DELETE /api/v1/{tenant}/knowledge/{id}` | Knowledge ID | HTTP 200/204 |
+| 36.1 | `POST /api/v1/{namespace}/knowledge` | `{title, content, tags: ["security", "java"]}` | HTTP 201, knowledge entry with `id` |
+| 36.2 | `GET /api/v1/{namespace}/knowledge` | — | JSON array with created entry |
+| 36.3 | `GET /api/v1/{namespace}/knowledge/{id}` | Knowledge ID | Entry with correct `title`, `content`, `tags` |
+| 36.4 | `PUT /api/v1/{namespace}/knowledge/{id}` | `{content: "updated content"}` | HTTP 200, content updated |
+| 36.5 | `POST /api/v1/{namespace}/knowledge/search` | `{query: "SQL injection", top_k: 5}` | Matching entries ranked by relevance |
+| 36.6 | `GET /api/v1/{namespace}/knowledge/tags` | — | JSON array with all distinct tags |
+| 36.7 | `DELETE /api/v1/{namespace}/knowledge/{id}` | Knowledge ID | HTTP 200/204 |
 | 36.8 | Trigger flow with LLM node | Flow with `knowledge_search` config | LLM node system prompt contains injected knowledge |
 | 36.9 | Wait for run completion | Run ID | Run reaches `COMPLETED` |
-| 36.10 | Verify knowledge updated | `GET /api/v1/{tenant}/knowledge?source=flow_run` | New entries created from node outputs |
+| 36.10 | Verify knowledge updated | `GET /api/v1/{namespace}/knowledge?source=flow_run` | New entries created from node outputs |
 
 ### 4.12.4 Knowledge Injection Verification
 
@@ -732,7 +732,7 @@ sandbox containers.
 
 ### 4.13.2 Prerequisites
 
-- Scenario 11 passed (K3s running)
+- Scenario 11 passed (K8S running)
 - PVC provisioner available
 
 ### 4.13.3 Steps
@@ -761,11 +761,11 @@ sandbox containers.
 | `MQTT publish timeout` | EMQX pod not ready | `kubectl get pods \| grep emqx` |
 | `PG connection failed` | PostgreSQL credentials wrong | Check `config.py` PG_* vars |
 | `ImagePullBackOff` | flowgent-core image missing | Re-run `docker save \| k3s ctr images import` |
-| `JM Deployment not created` | Controller not running or RBAC missing | Check ClusterRoleBinding for tenant namespace |
+| `JM Deployment not created` | Controller not running or RBAC missing | Check ClusterRoleBinding for namespace namespace |
 | `Jaeger trace not found` | OTEL not configured | Verify `OTEL_EXPORTER_OTLP_ENDPOINT` env |
 | `Human approval timeout` | WebSocket not connected | Check notifier pod logs |
-| `MCP not found: github/sonarqube` | MCPs not registered or TM not restarted | Verify `GET /api/v1/{tenant}/mcp`, restart TM pods |
-| `LLM provider not found: default` | No LLM provider registered | `POST /api/v1/{tenant}/llm/providers` |
+| `MCP not found: github/sonarqube` | MCPs not registered or TM not restarted | Verify `GET /api/v1/{namespace}/mcp`, restart TM pods |
+| `LLM provider not found: default` | No LLM provider registered | `POST /api/v1/{namespace}/llm/providers` |
 | `DiskPressure taint` | Node disk >95% | Clean Docker images, journald logs, caches |
 | `.last_run_id not found` | Scenario 31 not run before 32/33/34 | Run `python3 runner.py --skip-sonarqube --skip-build --skip-import --skip-deploy -s 31` first |
 
@@ -797,7 +797,7 @@ kubectl exec -it deploy/flowgent-postgres -- psql -U flowgent -d flowgent -c \
 
 # 6. Performance Benchmarks
 
-Expected execution times (K3s single-node, 4 CPU, 8GB RAM):
+Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 
 | Scenario | Duration | Bottleneck |
 |----------|----------|------------|
@@ -829,7 +829,7 @@ Expected execution times (K3s single-node, 4 CPU, 8GB RAM):
 ### 7.1.1 TM → JM Communication
 - **State-only callback**: `exec/results` contains `{plan_id, node_id, state}` only
 - NO output data in MQTT message
-- Output persisted via REST `PUT /api/v1/{tenant}/runs/{id}/tasks/{task_id}`
+- Output persisted via REST `PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id}`
 
 ### 7.1.2 Lifecycle Event Publisher
 - Only API Server publishes `ctrl/*` events (`ctrl/flow/updated`, `ctrl/flow/deleted`,
@@ -837,8 +837,8 @@ Expected execution times (K3s single-node, 4 CPU, 8GB RAM):
 - TM and JM do NOT publish lifecycle events
 
 ### 7.1.3 Application Mode Only
-- Every flow gets a dedicated JM Deployment in `{prefix}{tenant}` namespace
-- Deployment named `flowgent-jobmanager-{tenant}-{flow_id}`
+- Every flow gets a dedicated JM Deployment in `{prefix}{namespace}` namespace
+- Deployment named `flowgent-jobmanager-{namespace}-{flow_id}`
 - Controller dispatches at most once per flow-definition version (on-new-definition)
 
 ### 7.1.4 DAG Dependency Coordination

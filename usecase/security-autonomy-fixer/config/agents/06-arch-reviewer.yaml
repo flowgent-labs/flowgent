@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: arch-reviewer
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Architecture reviewer that validates patches against system design principles, coupling, and cohesion

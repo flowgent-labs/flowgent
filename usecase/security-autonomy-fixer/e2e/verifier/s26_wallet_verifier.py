@@ -14,7 +14,7 @@ ONLY process with private-key access. It performs TWO jobs and nothing more:
        POST   /api/v1/wallet/sign          (sync sign - convenience)
   2. Async signing via MQTT
        sub  $share/wallet-pool/flowgent/v1/+/flows/+/runs/+/sign/request
-       pub  flowgent/v1/{tenant}/flows/{flow}/runs/{run}/sign/response
+       pub  flowgent/v1/{namespace}/flows/{flow}/runs/{run}/sign/response
 
 Architecture boundary (docs/02-L1-x402-Economic-Support.md section 5.1):
   The wallet is a DUMB SIGNER. All x402 logic - parsing the 402 response,
@@ -51,7 +51,7 @@ except ImportError:
 
 WALLET_URL = config.WALLET_URL
 WALLET_NAME = config.WALLET_NAME
-TENANT = config.K3S_TENANT
+NAMESPACE = config.K8S_NAMESPACE
 EMQX_HOST = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 TOPIC_PREFIX = "flowgent/v1"
@@ -63,12 +63,12 @@ def rand_id() -> str:
 
 # -- Topic builders (mirror pkg/messager/pkg/messager.go) ----------
 
-def sign_request_topic(tenant: str, flow: str, run: str) -> str:
-    return f"{TOPIC_PREFIX}/{tenant}/flows/{flow}/runs/{run}/sign/request"
+def sign_request_topic(namespace: str, flow: str, run: str) -> str:
+    return f"{TOPIC_PREFIX}/{namespace}/flows/{flow}/runs/{run}/sign/request"
 
 
-def sign_response_topic(tenant: str, flow: str, run: str) -> str:
-    return f"{TOPIC_PREFIX}/{tenant}/flows/{flow}/runs/{run}/sign/response"
+def sign_response_topic(namespace: str, flow: str, run: str) -> str:
+    return f"{TOPIC_PREFIX}/{namespace}/flows/{flow}/runs/{run}/sign/response"
 
 
 # -- InterMessage envelope helpers (mirror mqtt.go json marshaling) -
@@ -226,7 +226,7 @@ def test_mqtt_sign_flow() -> bool:
         return True
 
     received = {}
-    resp_topic = sign_response_topic(TENANT, flow_id, run_id)
+    resp_topic = sign_response_topic(NAMESPACE, flow_id, run_id)
 
     def on_message(client, userdata, msg):
         try:
@@ -247,11 +247,11 @@ def test_mqtt_sign_flow() -> bool:
             "request_id": req_id,
             "wallet": name,
             "payload": "unsigned-x402-payment-payload",
-            "tenant_id": TENANT,
+            "namespace_id": NAMESPACE,
             "flow_id": flow_id,
             "run_id": run_id,
         }
-        req_topic = sign_request_topic(TENANT, flow_id, run_id)
+        req_topic = sign_request_topic(NAMESPACE, flow_id, run_id)
         client.publish(req_topic, wrap_envelope(req_id, sign_req), qos=1)
         print(f"      -> published unsigned SignRequest to {req_topic}")
 

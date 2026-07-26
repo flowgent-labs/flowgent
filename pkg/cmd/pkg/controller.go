@@ -56,12 +56,12 @@ func startController(cfgPath string) error {
 	logger := utils.NewLogger(logMode, logLevel)
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Runtime.Tenant.DefaultTenant
-	if tenant == "" {
-		tenant = "default"
+	namespace := svcCfg.Runtime.Namespace.DefaultNamespace
+	if namespace == "" {
+		namespace = "default"
 	}
 
-	stateClient := &client.TaskStateClient{Client: apiClient, Tenant: tenant}
+	stateClient := &client.TaskStateClient{Client: apiClient, Namespace: namespace}
 	humanClient := &client.HumanApprovalClient{Client: apiClient}
 
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
@@ -71,7 +71,7 @@ func startController(cfgPath string) error {
 		ApprovalInfo: humanClient,
 		Logger:        logger,
 		APIServerURL:  svcCfg.Runtime.APIServerURL,
-		Tenant:        tenant,
+		Namespace:        namespace,
 	})
 	if err != nil {
 		return fmt.Errorf("create resource manager: %w", err)
@@ -86,7 +86,7 @@ func startController(cfgPath string) error {
 		logger.Info("Controller using static discovery client (env vars)")
 	}
 
-	flowCtrl := ctrl.NewFlowgentController(apiClient, tenant, rm, logger, svcCfg, cfgPath, disc)
+	flowCtrl := ctrl.NewFlowgentController(apiClient, namespace, rm, logger, svcCfg, cfgPath, disc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

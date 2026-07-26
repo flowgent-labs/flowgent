@@ -12,7 +12,7 @@ import (
 
 func testController(cfg *config.FlowgentConfig) *FlowgentController {
 	return &FlowgentController{
-		tenant:            "default",
+		namespace:            "default",
 		logger:            utils.NewLogger("JSON", "ERROR"),
 		cfg:               cfg,
 		running:           make(map[string]context.CancelFunc),
@@ -103,42 +103,42 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 	}
 }
 
-// TestApplicationNamespace verifies namespace is derived per-TENANT (not
-// per-flow), per docs/01-L1-Engine-Architecture.md §1.3 ("each tenant gets
-// its own namespace") / §4.3 ("namespace={tenant}") — flows belonging to the
-// same tenant must resolve to the same namespace, since each flow's
+// TestApplicationNamespace verifies namespace is derived per-NAMESPACE (not
+// per-flow), per docs/01-L1-Engine-Architecture.md §1.3 ("each namespace gets
+// its own namespace") / §4.3 ("namespace={namespace}") — flows belonging to the
+// same namespace must resolve to the same namespace, since each flow's
 // dedicated JM Deployment is only disambiguated by name
-// (flowgent-jobmanager-{tenantId}-{flowId}), not by a separate namespace.
+// (flowgent-jobmanager-{namespaceId}-{flowId}), not by a separate namespace.
 // It also mirrors pkg/api/pkg/handler.TestApplicationNamespace, which must
 // never diverge from this one (see applicationNamespace doc comment).
 func TestApplicationNamespace(t *testing.T) {
 	c := testController(&config.FlowgentConfig{
-		Tenant: config.TenantConfig{NamespacePrefix: "flowgent-"},
+		Runtime: config.RuntimeConfig{Namespace: config.NamespaceConfig{NamespacePrefix: "flowgent-"}},
 	})
 
 	t.Run("uses explicit namespace when set", func(t *testing.T) {
-		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}, Namespace: "custom-ns"}
+		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}, K8sNamespace: "custom-ns"}
 		if got := c.applicationNamespace(spec); got != "custom-ns" {
 			t.Errorf("applicationNamespace() = %q, want %q", got, "custom-ns")
 		}
 	})
 
-	t.Run("derives from namespacePrefix + tenant ID without double dash", func(t *testing.T) {
-		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow", TenantID: "acme"}}
+	t.Run("derives from namespacePrefix + namespace ID without double dash", func(t *testing.T) {
+		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow", Namespace: "acme"}}
 		if got := c.applicationNamespace(spec); got != "flowgent-acme" {
 			t.Errorf("applicationNamespace() = %q, want %q", got, "flowgent-acme")
 		}
 	})
 
-	t.Run("two flows of the same tenant share one namespace", func(t *testing.T) {
-		spec1 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", TenantID: "acme"}}
-		spec2 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", TenantID: "acme"}}
+	t.Run("two flows of the same namespace share one namespace", func(t *testing.T) {
+		spec1 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", Namespace: "acme"}}
+		spec2 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", Namespace: "acme"}}
 		if ns1, ns2 := c.applicationNamespace(spec1), c.applicationNamespace(spec2); ns1 != ns2 {
-			t.Errorf("expected same-tenant flows to share a namespace, got %q vs %q", ns1, ns2)
+			t.Errorf("expected same-namespace flows to share a namespace, got %q vs %q", ns1, ns2)
 		}
 	})
 
-	t.Run("falls back to controller's default tenant when spec.TenantID is unset", func(t *testing.T) {
+	t.Run("falls back to controller's default namespace when spec.Namespace is unset", func(t *testing.T) {
 		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}}
 		if got := c.applicationNamespace(spec); got != "flowgent-default" {
 			t.Errorf("applicationNamespace() = %q, want %q", got, "flowgent-default")

@@ -3,7 +3,7 @@ kind: Flow
 data:
   id: autotest-generation
   priority: medium
-  tenant_id: default
+  namespace_id: default
   description: |
     Enterprise auto test code generation agentflow:
     1. FETCH — Retrieves requirements from Confluence via its REST API.

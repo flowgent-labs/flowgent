@@ -49,13 +49,13 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 		"run_id", run.ID,
 		"agentflow_id", spec.ID,
 		"priority", spec.Priority,
-		"tenant", spec.TenantID,
-		"namespace", spec.Namespace,
+		"namespace_id", spec.Namespace,
+		"k8s_namespace", spec.K8sNamespace,
 	)
 
 	run.Priority = spec.Priority
+	run.K8sNamespace = spec.K8sNamespace
 	run.Namespace = spec.Namespace
-	run.TenantID = spec.TenantID
 
 	master := NewJobMaster(m.state, m.rm, m.logger, m.cfg)
 	if m.knowledgeClient != nil {
@@ -66,9 +66,9 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 
 // StartRunPoller polls for pending AgentFlowRuns via the apiserver API
 // and dispatches them via the JobManager.
-func StartRunPoller(ctx context.Context, api *client.FlowgentClient, tenant string,
+func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace string,
 	jm *JobManager, flows map[string]*entities.FlowInfo,
-	namespace, agentFlowID string) {
+	k8sNamespace, agentFlowID string) {
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -77,7 +77,7 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, err := api.ListRuns(ctx, tenant, string(entities.RunPending), namespace, agentFlowID, 1, 50)
+			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), k8sNamespace, agentFlowID, 1, 50)
 			if err != nil {
 				slog.Warn("poller ListRuns failed", "err", err)
 				continue
@@ -86,12 +86,12 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, tenant stri
 				if run.Status != entities.RunPending {
 					continue
 				}
-				if namespace != "" && run.Namespace != namespace {
+				if k8sNamespace != "" && run.K8sNamespace != k8sNamespace {
 					continue
 				}
 				spec := flows[run.AgentFlowID]
 				if spec == nil {
-					if apiSpec, err := api.GetFlow(ctx, tenant, run.AgentFlowID); err == nil && apiSpec != nil {
+					if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
 						spec = apiSpec
 						slog.Debug("poller loaded flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
 					}

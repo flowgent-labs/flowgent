@@ -60,10 +60,10 @@ paths:
     post:
       summary: Receive an SCM (GitHub/GitLab/Gitea) webhook and trigger matching flows
       description: >
-        Global (non tenant-scoped) endpoint. The per-provider request body is
+        Global (non namespace-scoped) endpoint. The per-provider request body is
         normalized into a canonical event; every flow whose triggers declare a
         matching {provider, event} gets a new PENDING run created under its own
-        tenant. Returns 202 with the list of triggered run IDs (empty list is
+        namespace. Returns 202 with the list of triggered run IDs (empty list is
         not an error — most deliveries match no configured trigger).
       operationId: receiveWebhook
       parameters:

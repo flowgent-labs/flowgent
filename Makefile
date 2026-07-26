@@ -27,11 +27,12 @@ help:
 	@echo "    make build:wallet             Build the flowgent-wallet binary."
 	@echo ""
 	@echo "  Secrets (Kubernetes):"
-	@echo "    make deploy:secret:llm:<p>    Create flowgent-llm-<p> (p=deepseek|openai|bailian) KEY=<apikey>"
-	@echo "    make deploy:secret:wallet     Create flowgent-wallet KEY=<master-key>"
-	@echo "    make deploy:secret:mcp:<s>    Create flowgent-mcp-<s> (s=github|sonarqube|..) KEY=<token>"
-	@echo "    make deploy:secret:notifier:<c> Create flowgent-notifier-<c> (c=telegram|slack|dingtalk|webhook|email)"
-	@echo "    make deploy:secret:custom:<n> Create flowgent-custom-<n> VALUE=<secret> [KEY=<name>]"
+	@echo "    make deploy:secret:<ns>:llm:<p>    Create flowgent-<ns>-llm-<p> (p=deepseek|openai|bailian) KEY=<apikey>"
+	@echo "    make deploy:secret:<ns>:wallet     Create flowgent-<ns>-wallet KEY=<master-key>"
+	@echo "    make deploy:secret:<ns>:mcp:<s>    Create flowgent-<ns>-mcp-<s> (s=github|sonarqube|..) KEY=<token>"
+	@echo "    make deploy:secret:<ns>:notifier:<c> Create flowgent-<ns>-notifier-<c> (c=telegram|slack|dingtalk|webhook|email)"
+	@echo "    make deploy:secret:<ns>:custom:<n> Create flowgent-<ns>-custom-<n> VALUE=<secret> [KEY=<name>]"
+	@echo "    Namespace defaults to 'default' if omitted: make deploy:secret:default:llm:deepseek KEY=sk-xxx"
 	@echo ""
 	@echo "  Test:"
 	@echo "    make test test-x402 test-it fmt clean"
@@ -122,98 +123,82 @@ fmt:
 
 # ── Secrets ───────────────────────────────────────────────────
 # K8s Secret management for Flowgent microservices.
+# Target format: deploy:secret:<namespace>:<type>:<name>
+# Namespace defaults to 'default'.
 # All targets accept KEY (plain text) or KEY_B64 (base64-encoded).
-# Override SECRET_NS to target a namespace other than default.
-SECRET_NS ?= default
+#
+#   make deploy:secret:default:llm:deepseek    KEY=sk-xxx
+#   make deploy:secret:default:wallet          KEY=<master-key>
+#   make deploy:secret:default:mcp:github      KEY=<gh-pat>
+#   make deploy:secret:default:notifier:slack  KEY=<webhook-url>
+#   make deploy:secret:default:notifier:email  SMTP_HOST=.. SMTP_PASS=..
+#   make deploy:secret:default:custom:nexus3   VALUE=<secret> [KEY=name]
 
-# ── deploy:secret:llm:<provider> ──────────────────────────────────
-# LLM provider API keys. Creates secret flowgent-llm-<provider>
-# with key "apikey".
-#   make deploy:secret:llm:deepseek KEY=sk-xxx
-#   make deploy:secret:llm:openai   KEY=sk-xxx
-#   make deploy:secret:llm:bailian  KEY=sk-xxx
-deploy-secret-llm-%:
-	@[ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || \
-	  { echo "ERROR: KEY or KEY_B64 is required. Usage: make deploy:secret:llm:$* KEY=<api-key>"; exit 1; }
-	@_val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
-	kubectl delete secret flowgent-llm-$* -n $(SECRET_NS) --ignore-not-found=true; \
-	kubectl create secret generic flowgent-llm-$* -n $(SECRET_NS) --from-literal=apikey="$$_val"; \
-	echo "✓ Secret flowgent-llm-$* (key: apikey, len: $${#_val})"
-
-# ── deploy:secret:wallet ──────────────────────────────────────────
-# Wallet master encryption key. Creates secret flowgent-wallet
-# with key "master.key".
-#   make deploy:secret:wallet KEY=<master-key>
-deploy-secret-wallet:
-	@[ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || \
-	  { echo "ERROR: KEY or KEY_B64 is required. Usage: make deploy:secret:wallet KEY=<master-key>"; exit 1; }
-	@_val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
-	kubectl delete secret flowgent-wallet -n $(SECRET_NS) --ignore-not-found=true; \
-	kubectl create secret generic flowgent-wallet -n $(SECRET_NS) --from-literal=master.key="$$_val"; \
-	echo "✓ Secret flowgent-wallet (key: master.key, len: $${#_val})"
-
-# ── deploy:secret:notifier:<channel> ───────────────────────────────
-# Notifier channel credentials. Creates secret flowgent-notifier-<channel>.
-#   make deploy:secret:notifier:telegram  KEY=<bot-token>
-#   make deploy:secret:notifier:slack     KEY=<webhook-url>
-#   make deploy:secret:notifier:dingtalk  KEY=<webhook-url>
-#   make deploy:secret:notifier:webhook   KEY=<signing-secret>
-#   make deploy:secret:notifier:email     SMTP_HOST=.. SMTP_PASS=.. \
-#                                         [SMTP_PORT=587] [SMTP_USER=..] [SMTP_FROM=..]
-deploy-secret-notifier-%:
-	@case "$*" in \
-	  telegram) _key=bot_token ;; \
-	  slack|dingtalk) _key=webhook_url ;; \
-	  webhook) _key=signing_secret ;; \
-	  email) ;; \
-	  *) echo "ERROR: Unknown channel '$*'. Supported: telegram slack dingtalk webhook email"; exit 1 ;; \
-	esac; \
-	if [ "$*" = "email" ]; then \
-	  [ -n "$(SMTP_HOST)" ] || { echo "ERROR: SMTP_HOST is required for email"; exit 1; }; \
-	  [ -n "$(SMTP_PASS)" ] || { echo "ERROR: SMTP_PASS is required for email"; exit 1; }; \
-	  kubectl delete secret flowgent-notifier-email -n $(SECRET_NS) --ignore-not-found=true; \
-	  kubectl create secret generic flowgent-notifier-email -n $(SECRET_NS) \
-	    --from-literal=smtp_host="$(SMTP_HOST)" \
-	    --from-literal=smtp_port="$(or $(SMTP_PORT),587)" \
-	    --from-literal=username="$(SMTP_USER)" \
-	    --from-literal=password="$(SMTP_PASS)" \
-	    --from-literal=from="$(SMTP_FROM)"; \
-	  echo "✓ Secret flowgent-notifier-email (keys: smtp_host, smtp_port, username, password, from)"; \
-	else \
-	  [ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || \
-	    { echo "ERROR: KEY or KEY_B64 is required for $*"; exit 1; }; \
-	  _val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
-	  kubectl delete secret flowgent-notifier-$* -n $(SECRET_NS) --ignore-not-found=true; \
-	  kubectl create secret generic flowgent-notifier-$* -n $(SECRET_NS) --from-literal="$$_key=$$_val"; \
-	  echo "✓ Secret flowgent-notifier-$* (key: $$_key, len: $${#_val})"; \
-	fi
-
-# ── deploy:secret:mcp:<server> ────────────────────────────────────
-# MCP server backend auth tokens (static web_token). Creates secret
-# flowgent-mcp-<server> with key "token".
-#   make deploy:secret:mcp:github     KEY=<gh-pat>
-#   make deploy:secret:mcp:sonarqube  KEY=<sq-api-token>
-deploy-secret-mcp-%:
-	@[ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || \
-	  { echo "ERROR: KEY or KEY_B64 is required. Usage: make deploy:secret:mcp:$* KEY=<api-token>"; exit 1; }
-	@_val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
-	kubectl delete secret flowgent-mcp-$* -n $(SECRET_NS) --ignore-not-found=true; \
-	kubectl create secret generic flowgent-mcp-$* -n $(SECRET_NS) --from-literal=token="$$_val"; \
-	echo "✓ Secret flowgent-mcp-$* (key: token, len: $${#_val})"
-
-# ── deploy:secret:custom:<name> ────────────────────────────────────
-# Generic custom secrets for L2 skills, external integrations, etc.
-# Creates secret flowgent-custom-<name>.
-#   make deploy:secret:custom:nexus3   VALUE=<secret>
-#   make deploy:secret:custom:my-skill KEY=api_token VALUE=<token>
-deploy-secret-custom-%:
-	@[ -n "$(VALUE)" ] || [ -n "$(VALUE_B64)" ] || \
-	  { echo "ERROR: VALUE or VALUE_B64 is required. Usage: make deploy:secret:custom:$* VALUE=<secret> [KEY=secret_key]"; exit 1; }
-	@_key="$(or $(KEY),value)"; \
-	_val="$$(if [ -n "$(VALUE_B64)" ]; then echo "$(VALUE_B64)" | base64 -d 2>/dev/null; else echo '$(VALUE)'; fi)"; \
-	kubectl delete secret flowgent-custom-$* -n $(SECRET_NS) --ignore-not-found=true; \
-	kubectl create secret generic flowgent-custom-$* -n $(SECRET_NS) --from-literal="$$_key=$$_val"; \
-	echo "✓ Secret flowgent-custom-$* (key: $$_key, len: $${#_val})"
+deploy-secret-%:
+	@_ns=$$(echo "$*" | cut -d- -f1); \
+	_type=$$(echo "$*" | cut -d- -f2); \
+	_name=$$(echo "$*" | cut -d- -f3-); \
+	case "$$_type" in \
+	  llm) \
+	    [ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || { echo "ERROR: KEY or KEY_B64 is required."; exit 1; }; \
+	    _val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
+	    kubectl delete secret flowgent-$$_ns-llm-$$_name -n $$_ns --ignore-not-found=true; \
+	    kubectl create secret generic flowgent-$$_ns-llm-$$_name -n $$_ns --from-literal=apikey="$$_val"; \
+	    echo "✓ Secret flowgent-$$_ns-llm-$$_name (key: apikey, len: $${#_val})"; \
+	    ;; \
+	  wallet) \
+	    [ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || { echo "ERROR: KEY or KEY_B64 is required."; exit 1; }; \
+	    _val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
+	    kubectl delete secret flowgent-$$_ns-wallet -n $$_ns --ignore-not-found=true; \
+	    kubectl create secret generic flowgent-$$_ns-wallet -n $$_ns --from-literal=master.key="$$_val"; \
+	    echo "✓ Secret flowgent-$$_ns-wallet (key: master.key, len: $${#_val})"; \
+	    ;; \
+	  notifier) \
+	    case "$$_name" in \
+	      telegram)  _key=bot_token      ;; \
+	      slack|dingtalk)  _key=webhook_url   ;; \
+	      webhook)   _key=signing_secret  ;; \
+	      email)     ;; \
+	      *) echo "ERROR: Unknown notifier '$$_name'. Supported: telegram slack dingtalk webhook email"; exit 1 ;; \
+	    esac; \
+	    if [ "$$_name" = "email" ]; then \
+	      [ -n "$(SMTP_HOST)" ] || { echo "ERROR: SMTP_HOST is required for email"; exit 1; }; \
+	      [ -n "$(SMTP_PASS)" ] || { echo "ERROR: SMTP_PASS is required for email"; exit 1; }; \
+	      kubectl delete secret flowgent-$$_ns-notifier-email -n $$_ns --ignore-not-found=true; \
+	      kubectl create secret generic flowgent-$$_ns-notifier-email -n $$_ns \
+	        --from-literal=smtp_host="$(SMTP_HOST)" \
+	        --from-literal=smtp_port="$(or $(SMTP_PORT),587)" \
+	        --from-literal=username="$(SMTP_USER)" \
+	        --from-literal=password="$(SMTP_PASS)" \
+	        --from-literal=from="$(SMTP_FROM)"; \
+	      echo "✓ Secret flowgent-$$_ns-notifier-email (keys: smtp_host, smtp_port, username, password, from)"; \
+	    else \
+	      [ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || { echo "ERROR: KEY or KEY_B64 is required."; exit 1; }; \
+	      _val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
+	      kubectl delete secret flowgent-$$_ns-notifier-$$_name -n $$_ns --ignore-not-found=true; \
+	      kubectl create secret generic flowgent-$$_ns-notifier-$$_name -n $$_ns --from-literal="$$_key=$$_val"; \
+	      echo "✓ Secret flowgent-$$_ns-notifier-$$_name (key: $$_key, len: $${#_val})"; \
+	    fi; \
+	    ;; \
+	  mcp) \
+	    [ -n "$(KEY)" ] || [ -n "$(KEY_B64)" ] || { echo "ERROR: KEY or KEY_B64 is required."; exit 1; }; \
+	    _val="$$(if [ -n "$(KEY_B64)" ]; then echo "$(KEY_B64)" | base64 -d 2>/dev/null; else echo '$(KEY)'; fi)"; \
+	    kubectl delete secret flowgent-$$_ns-mcp-$$_name -n $$_ns --ignore-not-found=true; \
+	    kubectl create secret generic flowgent-$$_ns-mcp-$$_name -n $$_ns --from-literal=token="$$_val"; \
+	    echo "✓ Secret flowgent-$$_ns-mcp-$$_name (key: token, len: $${#_val})"; \
+	    ;; \
+	  custom) \
+	    [ -n "$(VALUE)" ] || [ -n "$(VALUE_B64)" ] || { echo "ERROR: VALUE or VALUE_B64 is required."; exit 1; }; \
+	    _key="$(or $(KEY),value)"; \
+	    _val="$$(if [ -n "$(VALUE_B64)" ]; then echo "$(VALUE_B64)" | base64 -d 2>/dev/null; else echo '$(VALUE)'; fi)"; \
+	    kubectl delete secret flowgent-$$_ns-custom-$$_name -n $$_ns --ignore-not-found=true; \
+	    kubectl create secret generic flowgent-$$_ns-custom-$$_name -n $$_ns --from-literal="$$_key=$$_val"; \
+	    echo "✓ Secret flowgent-$$_ns-custom-$$_name (key: $$_key, len: $${#_val})"; \
+	    ;; \
+	  *) \
+	    echo "ERROR: Unknown deploy-secret type '$$_type'. Expected: llm|wallet|notifier|mcp|custom"; exit 1; \
+	    ;; \
+	esac
 
 # ── Colon-name translation (make build:image:core → make build-image-core) ──
 # GNU Make treats ':' as literal in goal names, but not in rule definitions.

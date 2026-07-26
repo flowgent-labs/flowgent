@@ -36,7 +36,7 @@ type TaskManagerConfig struct {
 	State             TaskStateStore
 	ApprovalInfo      executor.HumanApprovalStore
 	APIServerURL      string // API server URL for runtime resource resolution
-	Tenant            string // default tenant for API calls
+	Namespace            string // default namespace for API calls
 	Logger            *utils.Logger
 	HeartbeatInterval time.Duration
 	SandboxMessager   messager.IMessager
@@ -72,11 +72,11 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	// Runtime resolvers — TM owns MCP/agent/LLM lifecycle, resolved via API at execution time.
 	apiClient := client.NewFlowgentClient(cfg.APIServerURL)
 	mcpMgr := mcp.NewMcpManager(cfg.HttpClient)
-	llmLoader := &client.LlmProviderClient{Client: apiClient, Tenant: cfg.Tenant}
+	llmLoader := &client.LlmProviderClient{Client: apiClient, Namespace: cfg.Namespace}
 	llmClient := llm.NewLlmProviderManager(llmLoader)
 
 	// Load MCP server definitions from DB (via apiserver API).
-	mcpLoader := &client.McpProviderClient{Client: apiClient, Tenant: cfg.Tenant}
+	mcpLoader := &client.McpProviderClient{Client: apiClient, Namespace: cfg.Namespace}
 	if mcps, err := mcpLoader.ListMCPs(context.Background()); err == nil {
 		slog.Debug("taskmanager loaded MCP servers", "count", len(mcps))
 		for _, m := range mcps {
@@ -98,12 +98,12 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	}
 
 	router := executor.NewTaskExecutorRouter()
-	agentExec := executor.NewAgentExecutor(llmClient, apiClient, cfg.Tenant)
+	agentExec := executor.NewAgentExecutor(llmClient, apiClient, cfg.Namespace)
 	agentExec.SetKnowledgeRetriever(apiClient) // RAG: cross-workflow knowledge injection
 	router.Register(agentExec)
 	router.Register(&executor.ConditionExecutor{})
 	router.Register(executor.NewToolExecutor(mcpMgr, cfg.HttpClient))
-	router.Register(executor.NewSupervisorExecutor(llmClient, apiClient, cfg.Tenant))
+	router.Register(executor.NewSupervisorExecutor(llmClient, apiClient, cfg.Namespace))
 	router.Register(&executor.CommitteeExecutor{})
 	router.Register(&executor.MapExecutor{})
 	router.Register(&executor.JoinExecutor{})

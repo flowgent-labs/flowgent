@@ -49,7 +49,7 @@ func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ch.ID = uuid.New().String()
-	ch.TenantID = r.PathValue("tenant")
+	ch.Namespace = r.PathValue("namespace")
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &ch); err != nil {

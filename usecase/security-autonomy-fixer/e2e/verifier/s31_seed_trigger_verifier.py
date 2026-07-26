@@ -16,14 +16,14 @@ def verify_seed(s, conn):
     passed = 0
 
     for name in c.AGENT_NAMES:
-        r = s.get(f"{c.API}/api/v1/{c.TENANT}/agents/{name}")
+        r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/agents/{name}")
         if r.status_code == 200:
             passed += 1
         else:
             print(f"  WARN agent '{name}' GET returned {r.status_code}")
 
     for name in c.MCP_NAMES:
-        r = s.get(f"{c.API}/api/v1/{c.TENANT}/mcp/{name}")
+        r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/mcp/{name}")
         if r.status_code == 200:
             passed += 1
         else:
@@ -37,10 +37,10 @@ def verify_seed(s, conn):
 
 def verify_trigger(s, conn):
     """Trigger flow via manual endpoint (webhook fallback). Returns run_id."""
-    print(f"\n-- [31 Trigger] POST /api/v1/{c.TENANT}/flows/{c.FLOW_ID}/trigger --")
+    print(f"\n-- [31 Trigger] POST /api/v1/{c.NAMESPACE}/flows/{c.FLOW_ID}/trigger --")
     run_id = None
 
-    trigger_url = f"{c.API}/api/v1/{c.TENANT}/flows/{c.FLOW_ID}/trigger"
+    trigger_url = f"{c.API}/api/v1/{c.NAMESPACE}/flows/{c.FLOW_ID}/trigger"
     r = s.post(trigger_url, json={"vars": {}})
     if r.status_code in (200, 201, 202):
         resp_data = r.json() if r.text else {}
@@ -118,9 +118,9 @@ def run():
     edge_count = len(flow_def.get("edges", []))
     print(f"\n-- Flow definition: {c.FLOW_ID} ({node_count} nodes, {edge_count} edges) --")
 
-    s.delete(f"{c.API}/api/v1/{c.TENANT}/flows/{c.FLOW_ID}")
+    s.delete(f"{c.API}/api/v1/{c.NAMESPACE}/flows/{c.FLOW_ID}")
     time.sleep(0.5)
-    r = s.post(f"{c.API}/api/v1/{c.TENANT}/flows", json=flow_def)
+    r = s.post(f"{c.API}/api/v1/{c.NAMESPACE}/flows", json=flow_def)
     if r.status_code not in (200, 201):
         raise AssertionError(f"create flow returned {r.status_code}: {r.text[:200]}")
     print(f"  OK Flow definition created (status={r.status_code})")

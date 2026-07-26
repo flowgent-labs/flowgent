@@ -7,7 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Setup K3s
+      - name: Setup K8S
         run: |
           curl -sfL https://get.k3s.io | sh -
           sudo k3s kubectl wait --for=condition=Ready node --all --timeout=60s

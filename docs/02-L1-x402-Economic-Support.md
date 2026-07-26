@@ -179,7 +179,7 @@ REST API on `:9901`:
 
 MQTT signing:
 - Subscribe: `$share/wallet-pool/flowgent/v1/+/flows/+/runs/+/sign/request`
-- Publish: `flowgent/v1/{tenant}/flows/{flow}/runs/{run}/sign/response`
+- Publish: `flowgent/v1/{namespace}/flows/{flow}/runs/{run}/sign/response`
 - Request/response payloads: `messager.SignRequest` / `messager.SignResponse`
 
 **Important boundary:** Wallet service is a signer and key manager only. It does **not** parse HTTP 402 responses, evaluate policy, create `PaymentIntent`, or call the facilitator. Those steps live in the TM-side x402 client (`pkg/core/pkg/client/`).

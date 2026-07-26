@@ -2,7 +2,7 @@ consoleVersion: core.flowgent.io/v1
 kind: Agent
 metadata:
   name: supervisor
-  tenant: default
+  namespace: default
   labels: {}
   status: active
   description: Senior autonomous orchestration controller that plans, routs, and supervises the security fix pipeline

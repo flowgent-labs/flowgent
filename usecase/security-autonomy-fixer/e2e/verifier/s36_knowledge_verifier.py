@@ -22,9 +22,9 @@ import os
 
 from common import config
 
-API = config.K3S_APISERVER_URL
-TENANT = config.K3S_TENANT
-BASE = f"{API}/api/v1/{TENANT}"
+API = config.K8S_APISERVER_URL
+NAMESPACE = config.K8S_NAMESPACE
+BASE = f"{API}/api/v1/{NAMESPACE}"
 
 SEED_TITLE = "SQL Injection Prevention in Java"
 

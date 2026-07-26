@@ -13,7 +13,7 @@ import (
 // terminal state.
 func TestTM_TaskLifecycle(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "tm-lifecycle", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "tm-lifecycle", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
@@ -38,7 +38,7 @@ func TestTM_TaskLifecycle(t *testing.T) {
 // carry {plan_id, node_id, state} only — output is persisted via REST.
 func TestTM_ExecResultStateOnly(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "tm-state-only", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "tm-state-only", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes:      []entities.Node{entities.Node{ID: "step-a", Type: entities.NoopNode}, entities.Node{ID: "step-b", Type: entities.NoopNode}},

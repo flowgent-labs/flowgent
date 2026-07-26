@@ -73,8 +73,8 @@ func securityFixerFlow() *entities.FlowInfo {
 
 func TestKnowledge_CRUD(t *testing.T) {
 	fs := it.New(t, securityFixerFlow())
-	tenant := fs.Tenant
-	base := fs.APIURL + "/api/v1/" + tenant + "/knowledge"
+	namespace := fs.Namespace
+	base := fs.APIURL + "/api/v1/" + namespace + "/knowledge"
 
 	body := map[string]any{
 		"title": "SQL Injection Prevention", "content": "Use PreparedStatement.",
@@ -196,7 +196,7 @@ func TestKnowledge_CRUD(t *testing.T) {
 func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 	llmLog := &externalmock.LLMCallLog{}
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "rag-wiring", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "rag-wiring", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
@@ -206,8 +206,8 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 		Edges: []entities.Edge{entities.Edge{From: "detect", To: "fix"}},
 	}
 	fs := it.NewWithLLMLog(t, flow, llmLog)
-	tenant := fs.Tenant
-	base := fs.APIURL + "/api/v1/" + tenant + "/knowledge"
+	namespace := fs.Namespace
+	base := fs.APIURL + "/api/v1/" + namespace + "/knowledge"
 
 	seed := map[string]any{
 		"title": "DevSecOps SQL Injection Best Practice", "content": "Use PreparedStatement.",
@@ -252,15 +252,15 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 
 func TestKnowledge_PostHandle(t *testing.T) {
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "knowledge-posthandle", TenantID: "test"},
+		BaseEntity: entities.BaseEntity{ID: "knowledge-posthandle", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes:      []entities.Node{entities.Node{ID: "step-a", Type: entities.NoopNode}, entities.Node{ID: "step-b", Type: entities.NoopNode}},
 		Edges:      []entities.Edge{entities.Edge{From: "step-a", To: "step-b"}},
 	}
 	fs := it.New(t, flow)
-	tenant := fs.Tenant
-	base := fs.APIURL + "/api/v1/" + tenant + "/knowledge"
+	namespace := fs.Namespace
+	base := fs.APIURL + "/api/v1/" + namespace + "/knowledge"
 
 	ids := fs.TriggerGitHubPR(44, "ghi11111")
 	if len(ids) == 0 {

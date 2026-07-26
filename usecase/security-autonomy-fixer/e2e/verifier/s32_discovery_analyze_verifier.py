@@ -124,7 +124,7 @@ def run():
     conn = c.pg_connect()
     for i in range(polls):
         time.sleep(c.POLL_INTERVAL_S)
-        r = s.get(f"{c.API}/api/v1/{c.TENANT}/runs/{run_id}")
+        r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/runs/{run_id}")
         if r.status_code == 200:
             status = r.json().get("status", "?")
             print(f"  [{i * c.POLL_INTERVAL_S}s] status={status}")

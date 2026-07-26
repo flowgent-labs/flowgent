@@ -328,19 +328,19 @@ type NotifierEmailCfg struct {
 	SMTPPort int `json:"smtp_port" yaml:"smtp_port"`
 }
 
-// ─── Tenant ────────────────────────────────────────────────────
+// ─── Namespace ────────────────────────────────────────────────────
 
-// TenantConfig configures multi-tenant isolation.
-type TenantConfig struct {
-	DefaultTenant   string `json:"default_tenant" yaml:"default_tenant"`
-	NamespacePrefix string `json:"namespace_prefix" yaml:"namespace_prefix"`
+// NamespaceConfig configures namespace isolation.
+type NamespaceConfig struct {
+	DefaultNamespace string `json:"default_namespace" yaml:"default_namespace"`
+	NamespacePrefix  string `json:"namespace_prefix" yaml:"namespace_prefix"`
 }
 
 // RuntimeConfig holds operational parameters set at deploy time (env vars, not YAML).
 // These are populated by viper from FLOWGENT__RUNTIME__* env vars.
 type RuntimeConfig struct {
 	APIServerURL    string              `json:"api_server_url" yaml:"api_server_url"`
-	Namespace       string              `json:"namespace" yaml:"namespace"`
+	K8sNamespace    string                `json:"k8s_namespace" yaml:"k8s_namespace"`
 	AgentFlowID     string              `json:"agent_flow_id" yaml:"agent_flow_id"`
 	TMID            string              `json:"tm_id" yaml:"tm_id"`
 	TMDeploy        string              `json:"tm_deploy" yaml:"tm_deploy"`
@@ -351,15 +351,15 @@ type RuntimeConfig struct {
 	JMConfigMap     string              `json:"jm_config_map" yaml:"jm_config_map"`
 	PodIndex        int                 `json:"pod_index" yaml:"pod_index"`
 	PodTotal        int                 `json:"pod_total" yaml:"pod_total"`
-	Tenant          TenantConfig          `json:"tenant" yaml:"tenant"`
+	Namespace       NamespaceConfig        `json:"namespace" yaml:"namespace"`
 	CredentialPaths CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.
-// Two-level hierarchy, flow overrides tenant:
+// Two-level hierarchy, flow overrides namespace:
 //
-//	/var/secret/flowgent/{tenant}/credentials          (tenant-level)
-//	/var/secret/flowgent/{tenant}/{flow}/credentials    (flow-level)
+//	/var/secret/flowgent/{namespace}/credentials          (namespace-level)
+//	/var/secret/flowgent/{namespace}/{flow}/credentials    (flow-level)
 //
 // Only taskmanager, sandbox, and notifier load these at startup.
 type CredentialPathsConfig struct {
@@ -401,7 +401,7 @@ func Load(path string) (*FlowgentConfig, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Load CSI-mounted credentials (tenant + flow level)
+	// Load CSI-mounted credentials (namespace + flow level)
 	creds := loadCSICredentials(cfg.Runtime.CredentialPaths.BasePath)
 	if len(creds) > 0 {
 		cfg.ResolvedCredentials = creds
@@ -524,10 +524,10 @@ func keyToEnvSegment(s string) string {
 
 // loadCSICredentials reads credential files from CSI-mounted paths:
 //
-//	{basePath}/{tenant}/secret/.credentials          (tenant-level)
-//	{basePath}/{tenant}/{flowId}/secret/.credentials  (flow-level)
+//	{basePath}/{namespace}/secret/.credentials          (namespace-level)
+//	{basePath}/{namespace}/{flowId}/secret/.credentials  (flow-level)
 //
-// Files are KEY=VALUE format, flow-level overrides tenant-level.
+// Files are KEY=VALUE format, flow-level overrides namespace-level.
 // If basePath is empty, defaults to /var/flowgent.
 func loadCSICredentials(basePath string) map[string]string {
 	if basePath == "" {
@@ -535,7 +535,7 @@ func loadCSICredentials(basePath string) map[string]string {
 	}
 	result := make(map[string]string)
 
-	// Scan for tenant directories
+	// Scan for namespace directories
 	entries, err := os.ReadDir(basePath)
 	if err != nil {
 		return result
@@ -544,16 +544,16 @@ func loadCSICredentials(basePath string) map[string]string {
 		if !e.IsDir() {
 			continue
 		}
-		tenant := e.Name()
-		// Tenant-level credentials
-		tenantCredFile := filepath.Join(basePath, tenant, "secret", ".credentials")
-		if m := readEnvFile(tenantCredFile); len(m) > 0 {
+		namespace := e.Name()
+		// Namespace-level credentials
+		nsCredFile := filepath.Join(basePath, namespace, "secret", ".credentials")
+		if m := readEnvFile(nsCredFile); len(m) > 0 {
 			for k, v := range m {
 				result[k] = v
 			}
 		}
 		// Flow-level credentials (scan subdirs)
-		flowEntries, err := os.ReadDir(filepath.Join(basePath, tenant))
+		flowEntries, err := os.ReadDir(filepath.Join(basePath, namespace))
 		if err != nil {
 			continue
 		}
@@ -561,7 +561,7 @@ func loadCSICredentials(basePath string) map[string]string {
 			if !fe.IsDir() {
 				continue
 			}
-			flowCredFile := filepath.Join(basePath, tenant, fe.Name(), "secret", ".credentials")
+			flowCredFile := filepath.Join(basePath, namespace, fe.Name(), "secret", ".credentials")
 			if m := readEnvFile(flowCredFile); len(m) > 0 {
 				for k, v := range m {
 					result[k] = v

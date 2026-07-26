@@ -68,9 +68,9 @@ func (s *FlowPostgresStore) SaveSpec(ctx context.Context, spec *entities.FlowInf
 		nextVer = 1
 	}
 	_, err := s.inner.Pool.Exec(ctx,
-		`INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,priority,tenant_id)
+		`INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,priority,namespace_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (agentflow_id,version) DO UPDATE SET definition=$4,comment=$6,priority=$7,updated_at=NOW()`,
-		uuid.New().String(), spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.TenantID)
+		uuid.New().String(), spec.ID, nextVer, b, createdBy, comment, string(spec.Priority), spec.Namespace)
 	return err
 }
 func (s *FlowPostgresStore) GetSpec(ctx context.Context, id string) (*entities.FlowInfo, error) {

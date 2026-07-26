@@ -84,7 +84,7 @@ func scanApproval(s scanner) (*entities.ApprovalInfo, error) {
 		&e.ID, &e.Token, &e.AgentFlowRunID, &e.TaskRunID, &e.Status,
 		&e.Approved, &e.Comment, &e.Timeout,
 		&expiresAt, &resolvedAt,
-		&e.Description, &e.TenantID,
+		&e.Description, &e.Namespace,
 		&createdAtStr, &e.CreatedBy, &updatedAtStr, &e.UpdatedBy, &e.DelFlag,
 	)
 	if err != nil {

@@ -252,7 +252,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	s.runResultsMu.Lock()
 	if s.runResults[runID] == nil {
 		s.runResults[runID] = make(map[string]chan execResult)
-		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.TenantID, plan.AgentFlowDefinitionID, runID),
+		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.Namespace, plan.AgentFlowDefinitionID, runID),
 			func(topic string, payload []byte) {
 				var er execResult
 				if err := json.Unmarshal(payload, &er); err != nil {
@@ -276,7 +276,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	s.runResultsMu.Unlock()
 
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.TenantID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
+	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
 		ID: plan.PlanID,
 		Headers: map[string]string{
 			"task_run_id": plan.AgentFlowRunID,

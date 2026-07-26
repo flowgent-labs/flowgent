@@ -58,9 +58,9 @@ func readJSON(resp *http.Response, into any) error {
 
 // ─── Agents ──────────────────────────────────────────────────────
 
-// ListAgents returns all agent definitions for a tenant.
-func (c *FlowgentClient) ListAgents(ctx context.Context, tenant string) ([]*entities.AgentInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agents", nil)
+// ListAgents returns all agent definitions for a namespace.
+func (c *FlowgentClient) ListAgents(ctx context.Context, namespace string) ([]*entities.AgentInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/agents", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListAgents: %w", err)
 	}
@@ -72,8 +72,8 @@ func (c *FlowgentClient) ListAgents(ctx context.Context, tenant string) ([]*enti
 }
 
 // GetAgent returns a single agent definition.
-func (c *FlowgentClient) GetAgent(ctx context.Context, tenant, name string) (*entities.AgentInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/agents/"+name, nil)
+func (c *FlowgentClient) GetAgent(ctx context.Context, namespace, name string) (*entities.AgentInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/agents/"+name, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetAgent: %w", err)
 	}
@@ -94,8 +94,8 @@ func (c *FlowgentClient) GetAgent(ctx context.Context, tenant, name string) (*en
 
 // ─── AgentFlow CRUD ──────────────────────────────────────────────
 
-func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]entities.FlowVersionInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/flows", nil)
+func (c *FlowgentClient) ListFlows(ctx context.Context, namespace string) ([]entities.FlowVersionInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/flows", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListFlows: %w", err)
 	}
@@ -106,8 +106,8 @@ func (c *FlowgentClient) ListFlows(ctx context.Context, tenant string) ([]entiti
 	return items, nil
 }
 
-func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*entities.FlowInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/flows/"+flowID, nil)
+func (c *FlowgentClient) GetFlow(ctx context.Context, namespace, flowID string) (*entities.FlowInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/flows/"+flowID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetFlow: %w", err)
 	}
@@ -126,9 +126,9 @@ func (c *FlowgentClient) GetFlow(ctx context.Context, tenant, flowID string) (*e
 	return &spec, nil
 }
 
-func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *entities.FlowInfo) error {
+func (c *FlowgentClient) CreateFlow(ctx context.Context, namespace string, spec *entities.FlowInfo) error {
 	b, _ := json.Marshal(spec)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/flows", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows", bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("CreateFlow: %w", err)
 	}
@@ -140,9 +140,9 @@ func (c *FlowgentClient) CreateFlow(ctx context.Context, tenant string, spec *en
 	return nil
 }
 
-func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, spec *entities.FlowInfo) error {
+func (c *FlowgentClient) UpdateFlow(ctx context.Context, namespace, flowID string, spec *entities.FlowInfo) error {
 	b, _ := json.Marshal(spec)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/flows/"+flowID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/flows/"+flowID, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("UpdateFlow: %w", err)
 	}
@@ -154,8 +154,8 @@ func (c *FlowgentClient) UpdateFlow(ctx context.Context, tenant, flowID string, 
 	return nil
 }
 
-func (c *FlowgentClient) DeleteFlow(ctx context.Context, tenant, flowID string) error {
-	resp, err := c.do(ctx, "DELETE", "/api/v1/"+tenant+"/flows/"+flowID, nil)
+func (c *FlowgentClient) DeleteFlow(ctx context.Context, namespace, flowID string) error {
+	resp, err := c.do(ctx, "DELETE", "/api/v1/"+namespace+"/flows/"+flowID, nil)
 	if err != nil {
 		return fmt.Errorf("DeleteFlow: %w", err)
 	}
@@ -169,10 +169,10 @@ func (c *FlowgentClient) DeleteFlow(ctx context.Context, tenant, flowID string) 
 
 // ─── FlowRun ─────────────────────────────────────────────────────
 
-// CreateRun creates a run directly with explicit tenant, namespace, and trigger info.
-func (c *FlowgentClient) CreateRun(ctx context.Context, tenant string, run *entities.FlowRunInfo) (*entities.FlowRunInfo, error) {
+// CreateRun creates a run directly with explicit namespace, namespace, and trigger info.
+func (c *FlowgentClient) CreateRun(ctx context.Context, namespace string, run *entities.FlowRunInfo) (*entities.FlowRunInfo, error) {
 	b, _ := json.Marshal(run)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/runs", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("CreateRun: %w", err)
 	}
@@ -184,10 +184,10 @@ func (c *FlowgentClient) CreateRun(ctx context.Context, tenant string, run *enti
 }
 
 // TriggerRun creates a PENDING run via the trigger endpoint.
-func (c *FlowgentClient) TriggerRun(ctx context.Context, tenant, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) (*entities.FlowRunInfo, error) {
+func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) (*entities.FlowRunInfo, error) {
 	payload := map[string]any{"agentflow_id": agentFlowID, "vars": vars, "trigger": trigger}
 	b, _ := json.Marshal(payload)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/flows/trigger", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows/trigger", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
@@ -195,13 +195,13 @@ func (c *FlowgentClient) TriggerRun(ctx context.Context, tenant, agentFlowID str
 	if err := readJSON(resp, &out); err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	slog.Debug("api client TriggerRun", "tenant", tenant, "agentFlowID", agentFlowID)
+	slog.Debug("api client TriggerRun", "namespace", namespace, "agentFlowID", agentFlowID)
 	return &out, nil
 }
 
-// GetRun returns a run by tenant and ID.
-func (c *FlowgentClient) GetRun(ctx context.Context, tenant, runID string) (*entities.FlowRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/runs/"+runID, nil)
+// GetRun returns a run by namespace and ID.
+func (c *FlowgentClient) GetRun(ctx context.Context, namespace, runID string) (*entities.FlowRunInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetRun: %w", err)
 	}
@@ -221,13 +221,13 @@ func (c *FlowgentClient) GetRun(ctx context.Context, tenant, runID string) (*ent
 }
 
 // ListRuns returns runs with optional filters. status, namespace, and flowID may be empty.
-func (c *FlowgentClient) ListRuns(ctx context.Context, tenant, status, namespace, flowID string, page, size int) (*entities.Page[entities.FlowRunInfo], error) {
+func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, k8sNamespace, flowID string, page, size int) (*entities.Page[entities.FlowRunInfo], error) {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
 	}
-	if namespace != "" {
-		q.Set("namespace", namespace)
+	if k8sNamespace != "" {
+		q.Set("k8s_namespace", k8sNamespace)
 	}
 	if flowID != "" {
 		q.Set("agentflow_id", flowID)
@@ -238,7 +238,7 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, tenant, status, namespace
 	if size > 0 {
 		q.Set("size", strconv.Itoa(size))
 	}
-	raw := "/api/v1/" + tenant + "/runs?" + q.Encode()
+	raw := "/api/v1/" + namespace + "/runs?" + q.Encode()
 	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListRuns: %w", err)
@@ -251,9 +251,9 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, tenant, status, namespace
 }
 
 // UpdateRunStatus updates the status of a run.
-func (c *FlowgentClient) UpdateRunStatus(ctx context.Context, tenant, runID, status string, errStr string) error {
+func (c *FlowgentClient) UpdateRunStatus(ctx context.Context, namespace, runID, status string, errStr string) error {
 	b, _ := json.Marshal(map[string]string{"status": status, "error": errStr})
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/runs/"+runID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("UpdateRunStatus: %w", err)
 	}
@@ -266,8 +266,8 @@ func (c *FlowgentClient) UpdateRunStatus(ctx context.Context, tenant, runID, sta
 }
 
 // CancelRun cancels a run.
-func (c *FlowgentClient) CancelRun(ctx context.Context, tenant, runID string) error {
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/runs/"+runID+"/cancel", nil)
+func (c *FlowgentClient) CancelRun(ctx context.Context, namespace, runID string) error {
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs/"+runID+"/cancel", nil)
 	if err != nil {
 		return fmt.Errorf("CancelRun: %w", err)
 	}
@@ -282,9 +282,9 @@ func (c *FlowgentClient) CancelRun(ctx context.Context, tenant, runID string) er
 // ─── TaskRuns ────────────────────────────────────────────────────
 
 // CreateTaskRun persists a new task run.
-func (c *FlowgentClient) CreateTaskRun(ctx context.Context, tenant, runID string, task *entities.TaskRunInfo) error {
+func (c *FlowgentClient) CreateTaskRun(ctx context.Context, namespace, runID string, task *entities.TaskRunInfo) error {
 	b, _ := json.Marshal(task)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/runs/"+runID+"/tasks", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs/"+runID+"/tasks", bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("CreateTaskRun: %w", err)
 	}
@@ -297,9 +297,9 @@ func (c *FlowgentClient) CreateTaskRun(ctx context.Context, tenant, runID string
 }
 
 // UpdateTaskRun updates an existing task run (status, output, error).
-func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, tenant, runID, taskID string, task *entities.TaskRunInfo) error {
+func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, namespace, runID, taskID string, task *entities.TaskRunInfo) error {
 	b, _ := json.Marshal(task)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/runs/"+runID+"/tasks/"+taskID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID+"/tasks/"+taskID, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("UpdateTaskRun: %w", err)
 	}
@@ -312,8 +312,8 @@ func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, tenant, runID, taskI
 }
 
 // ListTaskRuns returns all tasks for a run.
-func (c *FlowgentClient) ListTaskRuns(ctx context.Context, tenant, runID string) ([]*entities.TaskRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/runs/"+runID+"/tasks", nil)
+func (c *FlowgentClient) ListTaskRuns(ctx context.Context, namespace, runID string) ([]*entities.TaskRunInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/tasks", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListTaskRuns: %w", err)
 	}
@@ -325,8 +325,8 @@ func (c *FlowgentClient) ListTaskRuns(ctx context.Context, tenant, runID string)
 }
 
 // GetTaskRun returns a single task run.
-func (c *FlowgentClient) GetTaskRun(ctx context.Context, tenant, runID, taskID string) (*entities.TaskRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/runs/"+runID+"/tasks/"+taskID, nil)
+func (c *FlowgentClient) GetTaskRun(ctx context.Context, namespace, runID, taskID string) (*entities.TaskRunInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/tasks/"+taskID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetTaskRun: %w", err)
 	}
@@ -346,7 +346,7 @@ func (c *FlowgentClient) GetTaskRun(ctx context.Context, tenant, runID, taskID s
 }
 
 // SavePlan creates/updates the execution plan state via apiserver.
-func (c *FlowgentClient) SavePlan(ctx context.Context, tenant, runID string, plan *entities.ExecutionPlan) error {
+func (c *FlowgentClient) SavePlan(ctx context.Context, namespace, runID string, plan *entities.ExecutionPlan) error {
 	// execution plans flow through the tasks endpoint
 	task := &entities.TaskRunInfo{
 		BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
@@ -356,7 +356,7 @@ func (c *FlowgentClient) SavePlan(ctx context.Context, tenant, runID string, pla
 		Input:          plan.Input,
 		ExecID:         plan.PlanID,
 	}
-	return c.CreateTaskRun(ctx, tenant, runID, task)
+	return c.CreateTaskRun(ctx, namespace, runID, task)
 }
 
 // ─── Human Approvals ─────────────────────────────────────────────
@@ -391,9 +391,9 @@ func (c *FlowgentClient) ListPendingApprovals(ctx context.Context) ([]entities.A
 
 // ─── Notifier Channels ───────────────────────────────────────────
 
-// ListChannels returns notification channels for a tenant.
-func (c *FlowgentClient) ListChannels(ctx context.Context, tenant string) ([]entities.NotifyChannelInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/notifications/channels", nil)
+// ListChannels returns notification channels for a namespace.
+func (c *FlowgentClient) ListChannels(ctx context.Context, namespace string) ([]entities.NotifyChannelInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/notifications/channels", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListChannels: %w", err)
 	}
@@ -405,9 +405,9 @@ func (c *FlowgentClient) ListChannels(ctx context.Context, tenant string) ([]ent
 }
 
 // CreateChannel creates a notification channel.
-func (c *FlowgentClient) CreateChannel(ctx context.Context, tenant string, ch *entities.NotifyChannelInfo) (*entities.NotifyChannelInfo, error) {
+func (c *FlowgentClient) CreateChannel(ctx context.Context, namespace string, ch *entities.NotifyChannelInfo) (*entities.NotifyChannelInfo, error) {
 	b, _ := json.Marshal(ch)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/notifications/channels", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/notifications/channels", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("CreateChannel: %w", err)
 	}
@@ -419,8 +419,8 @@ func (c *FlowgentClient) CreateChannel(ctx context.Context, tenant string, ch *e
 }
 
 // GetChannel returns a single notification channel.
-func (c *FlowgentClient) GetChannel(ctx context.Context, tenant, id string) (*entities.NotifyChannelInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/notifications/channels/"+id, nil)
+func (c *FlowgentClient) GetChannel(ctx context.Context, namespace, id string) (*entities.NotifyChannelInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/notifications/channels/"+id, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetChannel: %w", err)
 	}
@@ -440,9 +440,9 @@ func (c *FlowgentClient) GetChannel(ctx context.Context, tenant, id string) (*en
 }
 
 // UpdateChannel updates a notification channel.
-func (c *FlowgentClient) UpdateChannel(ctx context.Context, tenant, id string, ch *entities.NotifyChannelInfo) (*entities.NotifyChannelInfo, error) {
+func (c *FlowgentClient) UpdateChannel(ctx context.Context, namespace, id string, ch *entities.NotifyChannelInfo) (*entities.NotifyChannelInfo, error) {
 	b, _ := json.Marshal(ch)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+tenant+"/notifications/channels/"+id, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/notifications/channels/"+id, bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("UpdateChannel: %w", err)
 	}
@@ -454,8 +454,8 @@ func (c *FlowgentClient) UpdateChannel(ctx context.Context, tenant, id string, c
 }
 
 // DeleteChannel deletes a notification channel.
-func (c *FlowgentClient) DeleteChannel(ctx context.Context, tenant, id string) error {
-	resp, err := c.do(ctx, "DELETE", "/api/v1/"+tenant+"/notifications/channels/"+id, nil)
+func (c *FlowgentClient) DeleteChannel(ctx context.Context, namespace, id string) error {
+	resp, err := c.do(ctx, "DELETE", "/api/v1/"+namespace+"/notifications/channels/"+id, nil)
 	if err != nil {
 		return fmt.Errorf("DeleteChannel: %w", err)
 	}
@@ -470,8 +470,8 @@ func (c *FlowgentClient) DeleteChannel(ctx context.Context, tenant, id string) e
 // ─── LLM Providers ───────────────────────────────────────────────
 
 // ListLLMProviders returns DB-backed LLM provider definitions.
-func (c *FlowgentClient) ListLLMProviders(ctx context.Context, tenant string) ([]*entities.LlmProviderInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/llm/providers", nil)
+func (c *FlowgentClient) ListLLMProviders(ctx context.Context, namespace string) ([]*entities.LlmProviderInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/llm/providers", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListLLMProviders: %w", err)
 	}
@@ -485,8 +485,8 @@ func (c *FlowgentClient) ListLLMProviders(ctx context.Context, tenant string) ([
 // ─── MCP Servers ──────────────────────────────────────────────────
 
 // ListMCPs returns DB-backed MCP server definitions.
-func (c *FlowgentClient) ListMCPs(ctx context.Context, tenant string) ([]*entities.McpInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+tenant+"/mcp", nil)
+func (c *FlowgentClient) ListMCPs(ctx context.Context, namespace string) ([]*entities.McpInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/mcp", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListMCPs: %w", err)
 	}
@@ -500,13 +500,13 @@ func (c *FlowgentClient) ListMCPs(ctx context.Context, tenant string) ([]*entiti
 // ─── Knowledge ─────────────────────────────────────────────────────
 
 // SearchKnowledge performs a semantic/keyword search over the knowledge base.
-func (c *FlowgentClient) SearchKnowledge(ctx context.Context, tenant string, query string, topK int, tags []string) ([]*entities.KnowledgeEntry, error) {
+func (c *FlowgentClient) SearchKnowledge(ctx context.Context, namespace string, query string, topK int, tags []string) ([]*entities.KnowledgeEntry, error) {
 	body, _ := json.Marshal(map[string]any{
 		"query": query,
 		"top_k": topK,
 		"tags":  tags,
 	})
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/knowledge/search", bytes.NewReader(body))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/knowledge/search", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("SearchKnowledge: %w", err)
 	}
@@ -518,9 +518,9 @@ func (c *FlowgentClient) SearchKnowledge(ctx context.Context, tenant string, que
 }
 
 // CreateKnowledge creates a knowledge entry via the API.
-func (c *FlowgentClient) CreateKnowledge(ctx context.Context, tenant string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error) {
+func (c *FlowgentClient) CreateKnowledge(ctx context.Context, namespace string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error) {
 	b, _ := json.Marshal(entry)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+tenant+"/knowledge", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/knowledge", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("CreateKnowledge: %w", err)
 	}
@@ -533,9 +533,9 @@ func (c *FlowgentClient) CreateKnowledge(ctx context.Context, tenant string, ent
 
 // ─── Watch (long-poll) ───────────────────────────────────────────
 
-// WatchFlows calls GET /api/v1/{tenant}/flows/watch?since=N (long-poll).
-func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since int64) ([]entities.FlowVersionInfo, int64, error) {
-	raw := fmt.Sprintf("/api/v1/%s/flows/watch?since=%d", tenant, since)
+// WatchFlows calls GET /api/v1/{namespace}/flows/watch?since=N (long-poll).
+func (c *FlowgentClient) WatchFlows(ctx context.Context, namespace string, since int64) ([]entities.FlowVersionInfo, int64, error) {
+	raw := fmt.Sprintf("/api/v1/%s/flows/watch?since=%d", namespace, since)
 	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("WatchFlows: %w", err)
@@ -566,25 +566,25 @@ func (c *FlowgentClient) WatchFlows(ctx context.Context, tenant string, since in
 // Implements the narrow interface expected by the jobmanager engine package.
 type RunStateClient struct {
 	Client *FlowgentClient
-	Tenant string
+	Namespace string
 }
 
 func (a *RunStateClient) UpdateRun(ctx context.Context, run *entities.FlowRunInfo) error {
-	return a.Client.UpdateRunStatus(ctx, a.Tenant, run.ID, string(run.Status), run.Error)
+	return a.Client.UpdateRunStatus(ctx, a.Namespace, run.ID, string(run.Status), run.Error)
 }
 
 func (a *RunStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
-	return a.Client.UpdateTaskRun(ctx, a.Tenant, task.AgentFlowRunID, task.ID, task)
+	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.AgentFlowRunID, task.ID, task)
 }
 
 // TaskStateClient adapts FlowgentClient for TM/SlotWorker task persistence.
 type TaskStateClient struct {
 	Client *FlowgentClient
-	Tenant string
+	Namespace string
 }
 
 func (a *TaskStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
-	return a.Client.UpdateTaskRun(ctx, a.Tenant, task.AgentFlowRunID, task.ID, task)
+	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.AgentFlowRunID, task.ID, task)
 }
 
 // HumanApprovalClient adapts FlowgentClient for HumanExecutor approval creation.
@@ -599,15 +599,15 @@ func (a *HumanApprovalClient) CreateApproval(ctx context.Context, approval *enti
 // NotifierClient is the client-side adapter for the notifier server's API calls.
 type NotifierClient struct {
 	Client   *FlowgentClient
-	Tenant   string
+	Namespace   string
 	routes   map[string]*model.SubscriptionRoute
 	routesMu sync.Mutex
 }
 
-func NewNotifierClient(c *FlowgentClient, tenant string) *NotifierClient {
+func NewNotifierClient(c *FlowgentClient, namespace string) *NotifierClient {
 	return &NotifierClient{
 		Client: c,
-		Tenant: tenant,
+		Namespace: namespace,
 		routes: make(map[string]*model.SubscriptionRoute),
 	}
 }
@@ -616,8 +616,8 @@ func (a *NotifierClient) ListPendingApprovals(ctx context.Context) ([]entities.A
 	return a.Client.ListPendingApprovals(ctx)
 }
 
-func (a *NotifierClient) ListChannels(ctx context.Context, tenantID string) ([]entities.NotifyChannelInfo, error) {
-	return a.Client.ListChannels(ctx, tenantID)
+func (a *NotifierClient) ListChannels(ctx context.Context, namespaceID string) ([]entities.NotifyChannelInfo, error) {
+	return a.Client.ListChannels(ctx, namespaceID)
 }
 
 func (a *NotifierClient) SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error {
@@ -662,19 +662,19 @@ func (a *NotifierClient) CleanupOrphanedRoutes(ctx context.Context, podID string
 // LlmProviderClient adapts FlowgentClient for LLM provider loading.
 type LlmProviderClient struct {
 	Client *FlowgentClient
-	Tenant string
+	Namespace string
 }
 
 func (a *LlmProviderClient) ListProviders(ctx context.Context) ([]*entities.LlmProviderInfo, error) {
-	return a.Client.ListLLMProviders(ctx, a.Tenant)
+	return a.Client.ListLLMProviders(ctx, a.Namespace)
 }
 
 // McpProviderClient adapts FlowgentClient for MCP server definition loading.
 type McpProviderClient struct {
 	Client *FlowgentClient
-	Tenant string
+	Namespace string
 }
 
 func (a *McpProviderClient) ListMCPs(ctx context.Context) ([]*entities.McpInfo, error) {
-	return a.Client.ListMCPs(ctx, a.Tenant)
+	return a.Client.ListMCPs(ctx, a.Namespace)
 }

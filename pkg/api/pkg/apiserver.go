@@ -93,14 +93,14 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 
 	// ── Handlers ──
 	healthHandler := &handler.HealthHandler{}
-	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Tenant.NamespacePrefix, cfg.Runtime.Tenant.DefaultTenant, mqttPub)
+	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
 	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
 	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPub, logger)
 	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
 	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 	mcpHandler := handler.NewMcpHandler(storeImpl)
-	webhookHandler := handler.NewWebhookHandler(agentFlowHandler, logger, cfg.Runtime.Tenant.DefaultTenant)
+	webhookHandler := handler.NewWebhookHandler(agentFlowHandler, logger, cfg.Runtime.Namespace.DefaultNamespace)
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
