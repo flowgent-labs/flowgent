@@ -1,4 +1,4 @@
-.PHONY: help build build-core build-wallet build-image build-image-core build-image-wallet clean test test-x402 fmt
+.PHONY: help build build-core build-wallet build-image build-image-core build-image-wallet clean test-ut test-x402 test-it fmt
 
 BIN_DIR  ?= bin
 GO       ?= go
@@ -35,7 +35,7 @@ help:
 	@echo "    Namespace defaults to 'default' if omitted: make deploy:secret:default:llm:deepseek KEY=sk-xxx"
 	@echo ""
 	@echo "  Test:"
-	@echo "    make test test-x402 test-it fmt clean"
+	@echo "    make test-ut test-x402 test-it fmt clean"
 
 .DEFAULT_GOAL := help
 
@@ -93,7 +93,7 @@ build-wallet: bootstrap-go
 clean:
 	rm -rf $(BIN_DIR)/
 
-test:
+test-ut:
 	cd pkg/common    && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/model     && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/messager && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
@@ -116,7 +116,7 @@ test-x402:
 # service (GitHub, SonarQube, LLM) replaced by an in-process mock. Requires no
 # docker / k8s / broker / database — runs on a clean Ubuntu CI runner.
 test-it:
-	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 300s ./...
+	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -v -count=1 -timeout 300s ./...
 
 # Auth integration tests need a live LDAP (GLAuth) / OIDC (Keycloak) container:
 #   cd deploy/docker/glauth   && docker compose up -d   (then: make test-it-ldap)
