@@ -39,10 +39,13 @@ help:
 
 .DEFAULT_GOAL := help
 
-# ── Bootstrap: regenerates go.work and go.sum on clean clone ────
-# All go.sum, go.work.sum, and go.work are committed in git — a clean
-# clone already has everything it needs for a deterministic build.
-# Sync only runs when go.work itself is missing (shouldn't happen).
+# ── Bootstrap: regenerates go.work on clean clone ────
+# go.work with `use` directives is Go's equivalent of Maven's reactor —
+# it tells Go all sibling modules live locally. No `go work sync`
+# (that would ping the proxy to validate pseudo-versions and trigger
+# "downloading myself" network calls). All go.sum / go.work.sum are
+# committed in git — a clean clone builds deterministically with
+# zero network resolution of local modules.
 _GO_MODULES = migration \
 	pkg/a2a pkg/api pkg/cache pkg/cmd pkg/common pkg/config \
 	pkg/console pkg/controller pkg/core pkg/messager pkg/model \
@@ -53,7 +56,6 @@ bootstrap-go:
 		echo "INFO: go.work missing, regenerating..."; \
 		$(GO) work init; \
 		for m in $(_GO_MODULES); do $(GO) work use ./$$m; done; \
-		$(GO) work sync; \
 	fi
 
 # ── Docker builds ─────────────────────────────────────────────────
