@@ -337,6 +337,18 @@ var GitHubMCPTools = []mcpToolDef{
 		RestAction: "/repos/wl4g/rengine/commits?per_page=1",
 	},
 	{
+		Name:        "get_latest_commit",
+		Description: "Get the latest commit on the default branch",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"owner": map[string]any{"type": "string"},
+				"repo":  map[string]any{"type": "string"},
+			},
+		},
+		RestAction: "/repos/wl4g/rengine/commits?per_page=1",
+	},
+	{
 		Name:        "create_branch",
 		Description: "Create a new branch from a base ref",
 		InputSchema: map[string]any{
@@ -346,6 +358,19 @@ var GitHubMCPTools = []mcpToolDef{
 				"repo":  map[string]any{"type": "string"},
 				"ref":   map[string]any{"type": "string"},
 				"sha":   map[string]any{"type": "string"},
+			},
+		},
+		RestAction: "/repos/wl4g/rengine/git/refs",
+	},
+	{
+		Name:        "commit_and_push",
+		Description: "Create a ref (commit) and push to a branch",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"owner":  map[string]any{"type": "string"},
+				"repo":   map[string]any{"type": "string"},
+				"branch": map[string]any{"type": "string"},
 			},
 		},
 		RestAction: "/repos/wl4g/rengine/git/refs",
@@ -404,13 +429,27 @@ var GitHubMCPTools = []mcpToolDef{
 		RestAction: "/repos/wl4g/rengine/issues/4/comments",
 	},
 	{
+		Name:        "create_issue_comment",
+		Description: "Add a comment to an issue or pull request (alias)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"owner":        map[string]any{"type": "string"},
+				"repo":         map[string]any{"type": "string"},
+				"issue_number": map[string]any{"type": "integer"},
+				"body":         map[string]any{"type": "string"},
+			},
+		},
+		RestAction: "/repos/wl4g/rengine/issues/4/comments",
+	},
+	{
 		Name:        "pull_request_read",
 		Description: "Get pull request details",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"owner":         map[string]any{"type": "string"},
-				"repo":          map[string]any{"type": "string"},
+				"owner":           map[string]any{"type": "string"},
+				"repo":            map[string]any{"type": "string"},
 				"pull_request_id": map[string]any{"type": "integer"},
 			},
 		},
@@ -443,6 +482,27 @@ var SonarQubeMCPTools = []mcpToolDef{
 		},
 	},
 	{
+		Name:        "get_issues",
+		Description: "Get all issues for a project (alias for get_overall_issues)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project_key": map[string]any{"type": "string"},
+				"severities":  map[string]any{"type": "string"},
+			},
+		},
+		RestAction: "/api/issues/search?projectKeys=rengine&severities=BLOCKER,CRITICAL,MAJOR&ps=50",
+		RestParser: func(body []byte) (any, error) {
+			var result struct {
+				Issues []map[string]any `json:"issues"`
+			}
+			if err := json.Unmarshal(body, &result); err != nil {
+				return nil, err
+			}
+			return map[string]any{"total": len(result.Issues), "issues": result.Issues}, nil
+		},
+	},
+	{
 		Name:        "GetProjectsExportFindings",
 		Description: "Export all findings of a specific project branch",
 		InputSchema: map[string]any{
@@ -454,5 +514,15 @@ var SonarQubeMCPTools = []mcpToolDef{
 		},
 		RestAction: "/api/ce/component?component=rengine",
 	},
+	{
+		Name:        "get_jobs_by_commit",
+		Description: "Get project analyses (jobs) by project key",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"repo": map[string]any{"type": "string"},
+			},
+		},
+		RestAction: "/api/project_analyses/search?project=rengine",
+	},
 }
-
