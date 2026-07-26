@@ -21,6 +21,9 @@ func RunMigrations(db *sql.DB, dbType string) error {
 	if err := ensureMigrationTable(db); err != nil {
 		return fmt.Errorf("ensure migration table: %w", err)
 	}
+	if err := renameLegacyTenantColumns(db); err != nil {
+		return fmt.Errorf("rename legacy tenant columns: %w", err)
+	}
 
 	entries, err := fs.ReadDir(migration.FS, dbType)
 	if err != nil {
@@ -79,6 +82,9 @@ func RunMigrationsPG(pool *pgxpool.Pool, dbType string) error {
 	if err := ensureMigrationTablePG(pool); err != nil {
 		return fmt.Errorf("ensure migration table: %w", err)
 	}
+	if err := renameLegacyTenantColumnsPG(pool); err != nil {
+		return fmt.Errorf("rename legacy tenant columns: %w", err)
+	}
 
 	entries, err := fs.ReadDir(migration.FS, dbType)
 	if err != nil {
@@ -127,6 +133,86 @@ func RunMigrationsPG(pool *pgxpool.Pool, dbType string) error {
 			if err := recordMigrationPG(pool, ver, f.Name()); err != nil {
 				return fmt.Errorf("record %s: %w", filePath, err)
 			}
+		}
+	}
+	return nil
+}
+
+// renameLegacyTenantColumns renames tenant_id → namespace_id in every table
+// that still carries the old name. Idempotent — if the column is already
+// namespace_id, the ALTER TABLE is a no-op (SQLite returns an error we ignore).
+func renameLegacyTenantColumns(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return err
+		}
+		tables = append(tables, t)
+	}
+
+	for _, t := range tables {
+		cols, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", t))
+		if err != nil {
+			continue
+		}
+		var hasTenantID bool
+		var hasNamespaceID bool
+		for cols.Next() {
+			var cid int
+			var name, ctype string
+			var notnull int
+			var dflt sql.NullString
+			var pk int
+			if err := cols.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				continue
+			}
+			if name == "tenant_id" {
+				hasTenantID = true
+			}
+			if name == "namespace_id" {
+				hasNamespaceID = true
+			}
+		}
+		cols.Close()
+		if hasTenantID && !hasNamespaceID {
+			_, _ = db.Exec(fmt.Sprintf("ALTER TABLE %s RENAME COLUMN tenant_id TO namespace_id", t))
+		}
+	}
+	return nil
+}
+
+// renameLegacyTenantColumnsPG is the PostgreSQL equivalent of renameLegacyTenantColumns.
+func renameLegacyTenantColumnsPG(pool *pgxpool.Pool) error {
+	rows, err := pool.Query(context.Background(), `
+		SELECT table_name FROM information_schema.columns
+		WHERE column_name = 'tenant_id'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var tables []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return err
+		}
+		tables = append(tables, t)
+	}
+	for _, t := range tables {
+		var hasNs bool
+		_ = pool.QueryRow(context.Background(), `
+			SELECT count(1) FROM information_schema.columns
+			WHERE table_name = $1 AND column_name = 'namespace_id'`, t).Scan(&hasNs)
+		if !hasNs {
+			_, _ = pool.Exec(context.Background(),
+				fmt.Sprintf("ALTER TABLE %s RENAME COLUMN tenant_id TO namespace_id", t))
 		}
 	}
 	return nil
