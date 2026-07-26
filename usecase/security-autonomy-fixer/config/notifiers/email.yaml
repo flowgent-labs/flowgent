@@ -1,0 +1,18 @@
+consoleVersion: core.flowgent.io/v1
+kind: NotifyChannel
+metadata:
+  name: security-email
+  tenant: default
+  labels:
+    channel: email
+    catalog: notification
+  status: active
+  description: Email notification channel — sends security fix reports to the security team
+
+data:
+  provider: email
+  config:
+    smtp_host: ${SMTP_HOST:smtp.company.com}
+    smtp_port: ${SMTP_PORT:587}
+    from: flowgent@company.com
+    to: ${NOTIFY_EMAIL_TO:security-team@company.com}

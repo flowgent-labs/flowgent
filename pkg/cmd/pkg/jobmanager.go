@@ -66,7 +66,7 @@ func startJobManager(cfgPath string) error {
 	defer q.Close()
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Tenant.DefaultTenant
+	tenant := svcCfg.Runtime.Tenant.DefaultTenant
 	if tenant == "" {
 		tenant = "default"
 	}

@@ -1,0 +1,15 @@
+consoleVersion: core.flowgent.io/v1
+kind: MCP
+metadata:
+  name: github
+  tenant: default
+  labels:
+    catalog: version-control,devops
+    protocol: streamable-http
+  status: active
+  description: Official GitHub MCP server for branch management, commits, pull requests, and PR comments via Streamable HTTP
+data:
+  type: http
+  url: https://api.githubcopilot.com/mcp/
+  headers:
+    Authorization: Bearer ${GITHUB_TOKEN}

@@ -129,7 +129,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	host, port := pgHostPort()
 	cfg := &config.FlowgentConfig{
-		Tenant:        config.TenantConfig{DefaultTenant: tenant, NamespacePrefix: "flowgent-"},
+		Runtime:       config.RuntimeConfig{Tenant: config.TenantConfig{DefaultTenant: tenant, NamespacePrefix: "flowgent-"}},
 		Orchestration: config.OrchestrationConfig{MaxConcurrentFlows: 8, FlowExecutionTimeout: "120s", MaxNodeRetries: 2},
 	}
 	cfg.Storage.Type = "POSTGRE"

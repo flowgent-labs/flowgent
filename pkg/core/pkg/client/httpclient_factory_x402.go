@@ -38,7 +38,7 @@ func NewHttpClient(cfg *config.FlowgentConfig, q messager.IMessager) model.IFlow
 	var sc model.SignClient
 	if q != nil {
 		var err error
-		sc, err = signclient.NewMqttSignClient(q, cfg.Tenant.DefaultTenant, "", "", 30*time.Second)
+		sc, err = signclient.NewMqttSignClient(q, cfg.Runtime.Tenant.DefaultTenant, "", "", 30*time.Second)
 		if err != nil {
 			slog.Warn("MQTT sign client unavailable, falling back to GenericHttpClient", "err", err)
 			return NewGenericHttpClient(30 * time.Second)

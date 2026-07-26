@@ -187,8 +187,8 @@ x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pk
 | 5 | `docs/00` uses old terminology: `WorkflowSpec`, `WorkflowRun`, `workflow` node type, `vote` node type | ~20+ occurrences |
 | 6 | `docs/01` §6.1 says "10 Node Types" but code has 12 | Table missing `skill` and `join` |
 | 7 | `docs/01` §6.1 calls it `agentflow` executor; code file is `subflow.go`, TaskType is `"subflow"` | Naming drift |
-| 8 | `docs/01` §16.2 references `etc/flows/`, `etc/agents/`, `etc/skills/` — these directories don't exist | Actual files are in `use-cases/` |
-| 9 | `docs/20` references `etc/flows/` for flow YAMLs — doesn't exist | Should be `use-cases/flows/` |
+| 8 | `docs/01` §16.2 references `etc/flows/`, `etc/agents/`, `etc/skills/` — these directories don't exist | Actual files are in `usecase/` |
+| 9 | `docs/20` references `etc/flows/` for flow YAMLs — doesn't exist | Should be `usecase/flows/` |
 
 ### 3.3 Low Priority (stale references)
 
@@ -208,7 +208,7 @@ x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pk
 | `01-L1-Engine-Architecture.md` | Engine architecture (merged skills/sandbox/config §13-16) | Current — some gaps (see §3) |
 | `02-L1-x402-Economic-Support.md` | x402 payment protocol support | Current — aligned to `pkg/core/pkg/client` + `pkg/wallet/pkg` |
 | `04-DEPLOY-Build-Deps-Images.md` | Docker build guide for facilitator/anvil/solana | Current |
-| `10-USE-CASES.md` | Use case catalog linking to use-cases/ configs | Current |
+| `10-USE-CASES.md` | Use case catalog linking to usecase/ configs | Current |
 | `20-TEST-e2e-guide.md` | E2E test guide | Current — some stale paths |
 
 ---
@@ -257,5 +257,5 @@ src/
 1. **Wire `skill` and `sandbox` executors** into the TaskManager router, or remove them if intentionally deferred
 2. **Drop or implement `flowgent sandbox` CLI**, align with docs
 3. **Fix `docs/01` §6.1** — add `skill` and `join` to node type table; rename `agentflow` → `subflow` or vice versa for consistency
-4. **Fix `docs/20`** — DeepSeek env var, stale file references (`etc/flows/` → `use-cases/flows/`)
-5. **Decide on `etc/` vs `use-cases/`** — if `etc/` is runtime config and `use-cases/` is sample configs, document the distinction clearly
+4. **Fix `docs/20`** — DeepSeek env var, stale file references (`etc/flows/` → `usecase/flows/`)
+5. **Decide on `etc/` vs `usecase/`** — if `etc/` is runtime config and `usecase/` is sample configs, document the distinction clearly

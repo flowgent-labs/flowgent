@@ -81,9 +81,9 @@ func defaultNamespacePrefix(prefix string) string {
 
 // defaultTenantID falls back to "default" when unset, mirroring the
 // tenant-fallback convention used by every cmd/ entrypoint (see e.g.
-// pkg/cmd/pkg/controller/controller.go) — cfg.Tenant.DefaultTenant has no
+// pkg/cmd/pkg/controller/controller.go) — cfg.Runtime.Tenant.DefaultTenant has no
 // viper default of its own (pkg/config/pkg/config.go TenantConfig), so an
-// omitted tenant: block in the ConfigMap must still resolve consistently
+// omitted runtime.tenant block in the ConfigMap must still resolve consistently
 // here and in the Controller (applicationNamespace / c.tenant).
 func defaultTenantID(tenant string) string {
 	if tenant == "" {

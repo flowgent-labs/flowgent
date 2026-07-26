@@ -8,11 +8,6 @@ global:
     tag: latest
     pullPolicy: IfNotPresent
 
-  # Credential file paths mounted in pods (K8s Secrets).
-  # Hierarchy: flow-level overrides tenant-level.
-  credentialPaths:
-    basePath: "/var/flowgent"
-
 # ═══════════════════════════════════════════════════════════════
 # Middleware — enabled=true deploys as part of this chart.
 # enabled=false uses existing external middleware via K8s Secret.
@@ -256,17 +251,20 @@ orchestration:
   maxNodeRetries: 3
 
 # ═══════════════════════════════════════════════════════════════
-# Tenant — multi-tenancy defaults
+# Runtime — deploy-time operational parameters under runtime: in config.
+# Includes tenant isolation, credential paths, and other runtime settings.
 #
 # namespacePrefix MUST match between the apiserver (Trigger routing) and the
 # Controller (per-tenant JM Deployment namespace placement — every flow's
 # dedicated JM Deployment lives in its tenant's shared namespace,
 # "{namespacePrefix}{tenantID}") — see pkg/controller/pkg/controller.go
-# applicationNamespace doc comment. Both already fall back to "flowgent-" in
-# Go if left unset here, but setting it explicitly keeps the rendered
-# ConfigMap self-documenting and in sync with etc/flowgent.yaml (the
-# non-Helm default config).
+# applicationNamespace doc comment.
 # ═══════════════════════════════════════════════════════════════
-tenant:
-  defaultTenant: "default"
-  namespacePrefix: "flowgent-"
+runtime:
+  tenant:
+    defaultTenant: "default"
+    namespacePrefix: "flowgent-"
+  # Credential file paths mounted in pods (K8s Secrets).
+  # Hierarchy: flow-level overrides tenant-level.
+  credentialPaths:
+    basePath: "/var/flowgent"

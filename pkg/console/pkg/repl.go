@@ -58,8 +58,8 @@ func RunREPL(cfgPath string, args []string, verbose bool) {
 		ctx: context.Background(),
 	}
 
-	if serviceCfg.Tenant.DefaultTenant != "" {
-		state.tenant = serviceCfg.Tenant.DefaultTenant
+	if serviceCfg.Runtime.Tenant.DefaultTenant != "" {
+		state.tenant = serviceCfg.Runtime.Tenant.DefaultTenant
 	}
 
 	// Batch mode: execute command line and exit

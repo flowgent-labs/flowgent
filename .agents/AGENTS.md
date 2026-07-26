@@ -55,14 +55,14 @@
 | Doc | Summary |
 |-----|---------|
 | [docs/10-L2-USE-CASES.md](../docs/10-L2-USE-CASES.md) | Use case catalog; primary: Security Autonomy Fixer (12-phase CI/CD security pipeline) |
-| [use-cases/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md](../use-cases/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md) | E2E verification context doc for Python scenario suite (runner.py, 8 scenarios) |
-| [use-cases/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md](../use-cases/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md) | SonarQube v26.4.0 Docker Compose deployment guide |
+| [usecase/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md](../usecase/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md) | E2E verification context doc for Python scenario suite (runner.py, 8 scenarios) |
+| [usecase/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md](../usecase/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md) | SonarQube v26.4.0 Docker Compose deployment guide |
 
 ## Skills & MCPs
 
 | Doc | Summary |
 |-----|---------|
-| [use-cases/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md](../use-cases/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md) | nexus3-retrieval skill: AI-agent tool catalog for Nexus3 REST API + SonatypeIQ |
+| [usecase/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md](../usecase/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md) | nexus3-retrieval skill: AI-agent tool catalog for Nexus3 REST API + SonatypeIQ |
 
 ## Key Directories
 
@@ -70,7 +70,7 @@
 pkg/          Go modules (api, cache, cmd, config, core, messager, model, notifier, sandbox, store, wallet)
 deploy/       Docker (docker/) + Helm chart (helm/flowgent/)
 etc/          Reference config (flowgent.yaml)
-use-cases/     Primary use case (security-autonomy-fixer: agents, flows, skills, e2e-verification)
+usecase/     Primary use case (security-autonomy-fixer: agents, flows, skills, e2e-verification)
 docs/         Architecture (01-03 L1) + Use Cases (10 L2)
 tests/        E2E/integration tests
 ```

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
@@ -32,14 +33,18 @@ type MQTTClient interface {
 // and pushes messages to local WS connections. The scanner publishes to
 // the correct pod's channel based on the subscription routing table.
 type FlowgentNotifierManager struct {
-	client     *client.NotifierClient
-	mqtt       MQTTClient
-	senders    map[string]Sender
-	podID      string
-	wsClients  map[string]*wsConn
-	httpClient model.IFlowgentAPIClient
-	mu         sync.RWMutex
-	logger     *slog.Logger
+	client          *client.NotifierClient
+	mqtt            MQTTClient
+	senders         map[string]Sender
+	podID           string
+	wsClients       map[string]*wsConn
+	httpClient      model.IFlowgentAPIClient
+	mu              sync.RWMutex
+	logger          *slog.Logger
+	scanInterval    time.Duration
+	cleanupInterval time.Duration
+	routeTimeout    time.Duration
+	notifierCfg     *config.NotifierConfig
 }
 
 // WSConn is an active WebSocket client connection.
@@ -65,25 +70,29 @@ func (c *wsConn) Done() <-chan struct{} { return c.done }
 func (c *wsConn) Close() { close(c.done) }
 
 // NewFlowgentNotifierManager creates a notification service with the given client and optional MQTT client.
-func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentAPIClient) *FlowgentNotifierManager {
+func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentAPIClient, notifierCfg *config.NotifierConfig) *FlowgentNotifierManager {
 	hostname, _ := os.Hostname()
 	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
 
 	svc := &FlowgentNotifierManager{
-		client:     c,
-		mqtt:       mqtt,
-		senders:    make(map[string]Sender),
-		podID:      podID,
-		wsClients:  make(map[string]*wsConn),
-		httpClient: httpClient,
-		logger:     slog.Default().With("component", "notification"),
+		client:          c,
+		mqtt:            mqtt,
+		senders:         make(map[string]Sender),
+		podID:           podID,
+		wsClients:       make(map[string]*wsConn),
+		httpClient:      httpClient,
+		logger:          slog.Default().With("component", "notification"),
+		scanInterval:    parseDuration(notifierCfg.ScanInterval, 5*time.Second),
+		cleanupInterval: parseDuration(notifierCfg.CleanupInterval, 30*time.Second),
+		routeTimeout:    parseDuration(notifierCfg.RouteTimeout, 5*time.Minute),
+		notifierCfg:     notifierCfg,
 	}
 
-	// Register built-in senders
-	svc.senders["telegram"] = &TelegramSender{}
+	// Register built-in senders with global defaults applied.
+	svc.senders["telegram"] = &TelegramSender{BaseURL: notifierCfg.Telegram.BaseURL}
 	svc.senders["dingtalk"] = &DingTalkSender{}
 	svc.senders["slack"] = &SlackSender{}
-	svc.senders["email"] = &EmailSender{}
+	svc.senders["email"] = &EmailSender{SMTPPort: notifierCfg.Email.SMTPPort}
 	svc.senders["webhook"] = &WebhookSender{}
 
 	// Inject HTTP client into senders that support it.
@@ -96,6 +105,17 @@ func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpC
 	}
 
 	return svc
+}
+
+func parseDuration(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 // PodID returns the unique pod identifier for MQTT routing.
@@ -235,7 +255,7 @@ func (s *FlowgentNotifierManager) UnregisterWS(ctx context.Context, wsID string)
 }
 
 func (s *FlowgentNotifierManager) scanHumanApprovals(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(s.scanInterval)
 	defer ticker.Stop()
 
 	seen := make(map[string]bool)
@@ -316,6 +336,8 @@ func (s *FlowgentNotifierManager) notifyChannels(ctx context.Context, recipient,
 			continue
 		}
 
+		s.applyDefaults(sender)
+
 		if err := configureSender(sender, ch.Config); err != nil {
 			s.logger.Warn("configure sender", "channel", ch.Name, "error", err)
 			continue
@@ -329,14 +351,27 @@ func (s *FlowgentNotifierManager) notifyChannels(ctx context.Context, recipient,
 	}
 }
 
+func (s *FlowgentNotifierManager) applyDefaults(sender Sender) {
+	switch st := sender.(type) {
+	case *TelegramSender:
+		if s.notifierCfg.Telegram.BaseURL != "" {
+			st.BaseURL = s.notifierCfg.Telegram.BaseURL
+		}
+	case *EmailSender:
+		if s.notifierCfg.Email.SMTPPort != 0 && st.SMTPPort == 0 {
+			st.SMTPPort = s.notifierCfg.Email.SMTPPort
+		}
+	}
+}
+
 func (s *FlowgentNotifierManager) cleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(s.cleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			n, err := s.client.CleanupOrphanedRoutes(ctx, s.podID, 5*time.Minute)
+			n, err := s.client.CleanupOrphanedRoutes(ctx, s.podID, s.routeTimeout)
 			if err != nil {
 				s.logger.Error("cleanup orphaned routes", "error", err)
 			} else if n > 0 {

@@ -81,7 +81,7 @@ func startAllInOne(cfgPath string) error {
 	defer storeImpl.(interface{ Close() error }).Close()
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Tenant.DefaultTenant
+	tenant := svcCfg.Runtime.Tenant.DefaultTenant
 	if tenant == "" {
 		tenant = "default"
 	}
@@ -169,9 +169,6 @@ func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
 
 func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *handler.NotifierWSBridge) {
 	notifSvc := notifier.CreateNotifierService(state.apiClient, state.cfg, state.httpClient)
-	if notifSvc == nil {
-		return nil, nil
-	}
 	go func() { _ = notifSvc.Start(context.Background()) }()
 	return notifSvc, handler.NewNotifierWSBridge(&notifier.NotifToWSAdapter{Svc: notifSvc})
 }
@@ -189,7 +186,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 			state.cfg.Messager.MQTT.Password)
 	}
 
-	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Tenant.NamespacePrefix, state.cfg.Tenant.DefaultTenant, mqttPub)
+	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Tenant.NamespacePrefix, state.cfg.Runtime.Tenant.DefaultTenant, mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	humanHandler := handler.NewHumanHandler(state.store, mqttPub, state.logger)
 	runHandler := handler.NewFlowRunHandler(state.store, mqttPub, state.logger)
@@ -197,7 +194,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
 	mcpHandler := handler.NewMcpHandler(state.store)
 	knowledgeHandler := handler.NewKnowledgeHandler(state.store)
-	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Tenant.DefaultTenant)
+	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Runtime.Tenant.DefaultTenant)
 
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,

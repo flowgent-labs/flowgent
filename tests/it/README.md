@@ -2,7 +2,7 @@
 
 **集成测试定义：除外部 API 走本地 Mock，其余全部使用真实组件（Docker PostgreSQL、真实 Sandbox 等）。MCP 协议走 in-process bridge，无需 Docker 容器。**
 
-与 `use-cases/` 真实 E2E 的核心区别：此处外部 API 全部本地模拟，可零依赖 `go test` 运行（仅需 Docker PostgreSQL）；真实案例测试依赖外部真实 API（GitHub、SonarQube 等）。
+与 `usecase/` 真实 E2E 的核心区别：此处外部 API 全部本地模拟，可零依赖 `go test` 运行（仅需 Docker PostgreSQL）；真实案例测试依赖外部真实 API（GitHub、SonarQube 等）。
 
 ```bash
 # 1. Start real middleware
@@ -16,14 +16,14 @@ go test github.com/flowgent-labs/flowgent/tests/it/... -count=1 -timeout 300s -p
 
 ```
 tests/it/
-  runner.go               ← 总入口：ITRunner harness（对应 use-cases/.../runner.py）
+  runner.go               ← 总入口：ITRunner harness（对应 usecase/.../runner.py）
   externalmock/            ← 外部 API Mock（LLM、GitHub、SonarQube、Telegram）
     base_api_mocksvc.go    ← Mock LLM server (random port)
     github_api_mocksvc.go  ← Mock GitHub REST API (fixed :19002)
     sonarqube_api_mocksvc.go ← Mock SonarQube REST API (fixed :19001)
     telegram_api_mocksvc.go  ← Mock Telegram Bot API (fixed :19003)
     mcp_bridge.go          ← In-process MCP↔REST bridge (:13080/:13081)
-  engine/                  ← 各模块集成测试（对应 use-cases/.../scenarios/）
+  engine/                  ← 各模块集成测试（对应 usecase/.../scenarios/）
   apiserver/
   controller/
   notifier/

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"log/slog"
 	"os"
@@ -45,25 +46,14 @@ func startNotifierService(cfgPath string) error {
 		return err
 	}
 
-	if !serviceCfg.Notifier.Enabled {
-		log.Println("Notification service is disabled in config")
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		return nil
-	}
-
 	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
 	httpClient := client.NewHttpClient(serviceCfg, nil)
 	notifSvc := notifierpkg.CreateNotifierService(apiClient, serviceCfg, httpClient)
-	if notifSvc == nil {
-		log.Println("Notification service is disabled in config")
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		return nil
-	}
 	defer notifSvc.Shutdown()
+
+	if err := notifSvc.Start(context.Background()); err != nil {
+		return err
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

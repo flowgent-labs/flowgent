@@ -88,7 +88,7 @@ func TestNewFlowDefHandlerDefaultNamespacePrefix(t *testing.T) {
 // TestDefaultTenantID ensures an empty defaultTenant (e.g. because a
 // deployment's ConfigMap omits the tenant: block entirely) falls back to
 // "default", mirroring the fallback every cmd/ entrypoint applies to
-// cfg.Tenant.DefaultTenant (see e.g. pkg/cmd/pkg/controller/controller.go)
+// cfg.Runtime.Tenant.DefaultTenant (see e.g. pkg/cmd/pkg/controller/controller.go)
 // — without this, an unconfigured tenant.default_tenant would silently
 // diverge from the Controller's own fallback and Application-mode runs
 // would never be picked up by their dedicated JM.

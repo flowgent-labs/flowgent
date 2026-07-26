@@ -37,8 +37,6 @@ type FlowgentConfig struct {
 	Sandbox             SandboxConfig         `json:"sandbox" yaml:"sandbox"`
 	Wallet              *WalletConfig         `json:"wallet" yaml:"wallet"`
 	Notifier            NotifierConfig        `json:"notifier" yaml:"notifier"`
-	CredentialPaths     CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
-	Tenant              TenantConfig          `json:"tenant" yaml:"tenant"`
 	Runtime             RuntimeConfig         `json:"runtime" yaml:"runtime"`
 	ResolvedCredentials map[string]string     `json:"-" yaml:"-"`
 }
@@ -300,9 +298,34 @@ type McpInfo = entities.McpInfo
 
 // ─── Notifier ─────────────────────────────────────────────────
 
-// NotifierConfig configures the notifier service. Channels are managed via DB CRUD API.
+// NotifierConfig configures the notifier service (always-on daemon like apiserver).
+// Channels are managed via DB CRUD API; this struct holds low-level tech settings.
 type NotifierConfig struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	ScanInterval    string              `json:"scan_interval" yaml:"scan_interval"`
+	CleanupInterval string              `json:"cleanup_interval" yaml:"cleanup_interval"`
+	RouteTimeout    string              `json:"route_timeout" yaml:"route_timeout"`
+	WebSocket       NotifierWSConfig    `json:"websocket" yaml:"websocket"`
+	Telegram        NotifierTelegramCfg `json:"telegram" yaml:"telegram"`
+	Email           NotifierEmailCfg    `json:"email" yaml:"email"`
+}
+
+// NotifierWSConfig holds WebSocket push notification settings for the notifier.
+type NotifierWSConfig struct {
+	PingInterval   string `json:"ping_interval" yaml:"ping_interval"`
+	WriteTimeout   string `json:"write_timeout" yaml:"write_timeout"`
+	MaxMessageSize int    `json:"max_message_size" yaml:"max_message_size"`
+}
+
+// NotifierTelegramCfg holds global Telegram Bot API defaults.
+// Per-channel config (bot_token, chat_id) is stored in the DB.
+type NotifierTelegramCfg struct {
+	BaseURL string `json:"base_url" yaml:"base_url"`
+}
+
+// NotifierEmailCfg holds global SMTP defaults.
+// Per-channel config (host, username, password, from) is stored in the DB.
+type NotifierEmailCfg struct {
+	SMTPPort int `json:"smtp_port" yaml:"smtp_port"`
 }
 
 // ─── Tenant ────────────────────────────────────────────────────
@@ -316,18 +339,20 @@ type TenantConfig struct {
 // RuntimeConfig holds operational parameters set at deploy time (env vars, not YAML).
 // These are populated by viper from FLOWGENT__RUNTIME__* env vars.
 type RuntimeConfig struct {
-	APIServerURL    string `json:"api_server_url" yaml:"api_server_url"`
-	Namespace       string `json:"namespace" yaml:"namespace"`
-	AgentFlowID     string `json:"agent_flow_id" yaml:"agent_flow_id"`
-	TMID            string `json:"tm_id" yaml:"tm_id"`
-	TMDeploy        string `json:"tm_deploy" yaml:"tm_deploy"`
-	TMSlots         int    `json:"tm_slots" yaml:"tm_slots"`
-	ControllerLabel string `json:"controller_label" yaml:"controller_label"`
-	JMImage         string `json:"jm_image" yaml:"jm_image"`
-	TMImage         string `json:"tm_image" yaml:"tm_image"`
-	JMConfigMap     string `json:"jm_config_map" yaml:"jm_config_map"`
-	PodIndex        int    `json:"pod_index" yaml:"pod_index"`
-	PodTotal        int    `json:"pod_total" yaml:"pod_total"`
+	APIServerURL    string              `json:"api_server_url" yaml:"api_server_url"`
+	Namespace       string              `json:"namespace" yaml:"namespace"`
+	AgentFlowID     string              `json:"agent_flow_id" yaml:"agent_flow_id"`
+	TMID            string              `json:"tm_id" yaml:"tm_id"`
+	TMDeploy        string              `json:"tm_deploy" yaml:"tm_deploy"`
+	TMSlots         int                 `json:"tm_slots" yaml:"tm_slots"`
+	ControllerLabel string              `json:"controller_label" yaml:"controller_label"`
+	JMImage         string              `json:"jm_image" yaml:"jm_image"`
+	TMImage         string              `json:"tm_image" yaml:"tm_image"`
+	JMConfigMap     string              `json:"jm_config_map" yaml:"jm_config_map"`
+	PodIndex        int                 `json:"pod_index" yaml:"pod_index"`
+	PodTotal        int                 `json:"pod_total" yaml:"pod_total"`
+	Tenant          TenantConfig          `json:"tenant" yaml:"tenant"`
+	CredentialPaths CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.
@@ -377,7 +402,7 @@ func Load(path string) (*FlowgentConfig, error) {
 	}
 
 	// Load CSI-mounted credentials (tenant + flow level)
-	creds := loadCSICredentials(cfg.CredentialPaths.BasePath)
+	creds := loadCSICredentials(cfg.Runtime.CredentialPaths.BasePath)
 	if len(creds) > 0 {
 		cfg.ResolvedCredentials = creds
 	}

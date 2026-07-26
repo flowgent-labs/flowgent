@@ -64,9 +64,6 @@ data:
       max_concurrent_flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
       flow_execution_timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
       max_node_retries: {{ .Values.orchestration.maxNodeRetries | default 3 }}
-    tenant:
-      default_tenant: {{ .Values.tenant.defaultTenant | default "default" | quote }}
-      namespace_prefix: {{ .Values.tenant.namespacePrefix | default "flowgent-" | quote }}
     messager:
       type: {{ .Values.messaging.type | quote }}
       mqtt:
@@ -76,8 +73,12 @@ data:
       provider: {{ .Values.lock.provider | default "memory" | quote }}
     notifier:
       enabled: {{ .Values.notifier.enabled }}
-    credential_paths:
-      base_path: {{ .Values.global.credentialPaths.basePath | default "/var/flowgent" | quote }}
+    runtime:
+      tenant:
+        default_tenant: {{ .Values.runtime.tenant.defaultTenant | default "default" | quote }}
+        namespace_prefix: {{ .Values.runtime.tenant.namespacePrefix | default "flowgent-" | quote }}
+      credential_paths:
+        base_path: {{ .Values.runtime.credentialPaths.basePath | default "/var/flowgent" | quote }}
     wallet:
       enabled: {{ .Values.wallet.enabled | default false }}
       secret_store:

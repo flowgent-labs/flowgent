@@ -380,7 +380,7 @@ func (c *FlowgentController) createApplicationRun(ctx context.Context, spec *ent
 // which namespace a given flow's dedicated JM lives in — in particular both
 // sides must fall back to the same "flowgent-" namespace prefix (via
 // defaultNamespacePrefix, mirroring handler.defaultNamespacePrefix) and the
-// same default tenant ID (cfg.Tenant.DefaultTenant) when a flow spec
+// same default tenant ID (cfg.Runtime.Tenant.DefaultTenant) when a flow spec
 // doesn't carry its own TenantID. Without this shared fallback the two
 // components would silently disagree on the namespace and Application-mode
 // runs would never be picked up by their dedicated JM.
@@ -388,7 +388,7 @@ func (c *FlowgentController) applicationNamespace(spec *entities.FlowInfo) strin
 	if spec.Namespace != "" {
 		return spec.Namespace
 	}
-	return defaultNamespacePrefix(c.cfg.Tenant.NamespacePrefix) + c.dispatchTenant(spec)
+	return defaultNamespacePrefix(c.cfg.Runtime.Tenant.NamespacePrefix) + c.dispatchTenant(spec)
 }
 
 // dispatchTenant resolves the tenant ID to use for a flow's dispatch

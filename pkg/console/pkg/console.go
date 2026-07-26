@@ -48,8 +48,8 @@ func NewFlowgentConsole(cfg *config.FlowgentConfig) (*FlowgentConsole, error) {
 		ctx:   context.Background(),
 	}
 
-	if cfg.Tenant.DefaultTenant != "" {
-		fc.tenant = cfg.Tenant.DefaultTenant
+	if cfg.Runtime.Tenant.DefaultTenant != "" {
+		fc.tenant = cfg.Runtime.Tenant.DefaultTenant
 	}
 
 	fc.initSecretStore(cfg)

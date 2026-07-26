@@ -1971,10 +1971,10 @@ flowgent console -c etc/staging.yaml -- import /tmp/prod-export.yaml
 
 # 3. Or — import individual resource files from a config directory
 flowgent console -c etc/dev.yaml -- import \
-  use-cases/security-autonomy-fixer/config/agents/ \
-  use-cases/security-autonomy-fixer/config/flows/ \
-  use-cases/security-autonomy-fixer/config/mcps/ \
-  use-cases/security-autonomy-fixer/config/skills/
+  usecase/security-autonomy-fixer/config/agents/ \
+  usecase/security-autonomy-fixer/config/flows/ \
+  usecase/security-autonomy-fixer/config/mcps/ \
+  usecase/security-autonomy-fixer/config/skills/
 ```
 
 ### 20.8 Module Dependency

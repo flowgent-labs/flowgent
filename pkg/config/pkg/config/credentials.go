@@ -93,7 +93,7 @@ func CredentialPathsOrDefault(cfg *FlowgentConfig) CredentialPathsConfig {
 	if cfg == nil {
 		return CredentialPathsConfig{BasePath: "/var/flowgent"}
 	}
-	c := cfg.CredentialPaths
+	c := cfg.Runtime.CredentialPaths
 	if c.BasePath == "" {
 		c.BasePath = "/var/flowgent"
 	}

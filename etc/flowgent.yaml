@@ -232,65 +232,42 @@ sandbox:
     slots_per_pod: 4                 # concurrent script executions per pod
 
 # ── Notifier Service ─────────────────────────────────────────────────────────
-#    Channels are DB-managed via the management console or REST API.
-#    The enabled flag controls whether the notifier process starts at all.
+#    Always-on daemon (like apiserver). Channels are DB-managed via the
+#    management console or REST API. This section holds low-level tech settings
+#    that apply across all channels.
 notifier:
-  enabled: false                    # set true to enable the notifier service
-  # Channels are managed via the DB CRUD API, not static config.
-  # Example (for reference only — use `flowgent console` to create):
-  # channels:
-  #   - name: telegram-ops
-  #     provider: telegram
-  #     enabled: false
-  #     config:
-  #       bot_token: "${TELEGRAM_BOT_TOKEN}"
-  #       chat_id: "-1001234567890"
-  #   - name: dingtalk-ops
-  #     provider: dingtalk
-  #     enabled: false
-  #     config:
-  #       webhook_url: "${DINGTALK_WEBHOOK_URL}"
-  #       secret: "${DINGTALK_SECRET}"
-  #   - name: slack-ops
-  #     provider: slack
-  #     enabled: false
-  #     config:
-  #       webhook_url: "${SLACK_WEBHOOK_URL}"
-  #       channel: "#flowgent-alerts"
-  #   - name: email-ops
-  #     provider: email
-  #     enabled: false
-  #     config:
-  #       smtp_host: "smtp.example.com"
-  #       smtp_port: 587
-  #       username: "flowgent@example.com"
-  #       password: "<YOUR_SMTP_PASSWORD>"
-  #       from: "flowgent@example.com"
-  #   - name: webhook-generic
-  #     provider: webhook
-  #     enabled: false
-  #     config:
-  #       url: "https://hooks.example.com/flowgent"
-  #       headers:
-  #         X-Custom: "value"
-
-# ── Multi-Tenant ─────────────────────────────────────────────────────────────
-tenant:
-  default_tenant: "default"
-  namespace_prefix: "flowgent-"
-
-# ── Credential Paths ─────────────────────────────────────────────────────────
-#    CSI-mounted credential files hierarchy (tenant + flow level):
-#      {basePath}/{tenant}/secret/.credentials          (tenant-level)
-#      {basePath}/{tenant}/{flow}/secret/.credentials   (flow-level)
-#    Flow-level credentials override tenant-level.
-credential_paths:
-  base_path: "/var/flowgent"
+  # Polling interval for pending human-approval scans.
+  scan_interval: 5s
+  # Interval for cleaning up orphaned WebSocket subscription routes.
+  cleanup_interval: 30s
+  # Max age for subscription routes before they are considered orphaned.
+  route_timeout: 5m
+  # WebSocket push notification settings.
+  websocket:
+    ping_interval: 30s
+    write_timeout: 10s
+    max_message_size: 65536
+  # Telegram Bot API defaults. Per-channel config (bot_token, chat_id) is in DB.
+  telegram:
+    base_url: "https://api.telegram.org"
+  # Email (SMTP) defaults. Per-channel config (host, username, from) is in DB.
+  email:
+    smtp_port: 587
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 #    Operational parameters typically set via FLOWGENT__RUNTIME__* env vars
 #    rather than in the static config file.
 runtime:
+  # Tenant isolation defaults
+  tenant:
+    default_tenant: "default"
+    namespace_prefix: "flowgent-"
+  # CSI-mounted credential files hierarchy (tenant + flow level):
+  #   {basePath}/{tenant}/secret/.credentials          (tenant-level)
+  #   {basePath}/{tenant}/{flow}/secret/.credentials   (flow-level)
+  # Flow-level credentials override tenant-level.
+  credential_paths:
+    base_path: "/var/flowgent"
   api_server_url: "http://apiserver:9999"
   namespace: "default"
   # agentFlowId: ""              # set by JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)

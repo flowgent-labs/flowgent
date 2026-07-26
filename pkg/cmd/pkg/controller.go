@@ -56,7 +56,7 @@ func startController(cfgPath string) error {
 	logger := utils.NewLogger(logMode, logLevel)
 
 	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
-	tenant := svcCfg.Tenant.DefaultTenant
+	tenant := svcCfg.Runtime.Tenant.DefaultTenant
 	if tenant == "" {
 		tenant = "default"
 	}

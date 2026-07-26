@@ -386,8 +386,8 @@ func resolveStoreConfig(cfg *config.FlowgentConfig) storeConfig {
 	c.provider = sc.Provider
 	c.masterKeyFile = sc.MasterKeyFile
 	c.vault = sc.Vault
-	if cfg.CredentialPaths.BasePath != "" {
-		c.csiBasePath = cfg.CredentialPaths.BasePath
+	if cfg.Runtime.CredentialPaths.BasePath != "" {
+		c.csiBasePath = cfg.Runtime.CredentialPaths.BasePath
 	} else {
 		c.csiBasePath = "/var/flowgent"
 	}

@@ -30,8 +30,8 @@ Flowgent is an AI-native universal orchestration engine modeled after Apache Fli
 
 ```bash
 git clone git@github.com:flowgent-labs/flowgent.git && cd flowgent
-make build-all         # build for all images on docker
-make build-host-all    # build for all binaries on host
+make build:image     # build Docker images (core + wallet)
+make build            # build all binaries (core + wallet + MCPs)
 ```
 
 - Run with a config file (required):

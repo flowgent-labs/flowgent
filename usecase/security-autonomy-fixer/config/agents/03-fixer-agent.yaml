@@ -1,0 +1,31 @@
+consoleVersion: core.flowgent.io/v1
+kind: Agent
+metadata:
+  name: fixer-agent
+  tenant: default
+  labels: {}
+  status: active
+  description: Secure coding expert that generates minimal, safe code patches for identified security vulnerabilities
+
+data:
+  model: deepseek-pro
+  max_tokens: 16384
+  soul: |-
+    You are a secure coding expert.
+  instruction: |-
+    You MUST fix vulnerabilities safely.
+    You MUST NOT break business logic.
+  output_schema:
+    type: object
+    properties:
+      patches:
+        type: array
+        items:
+          type: object
+          properties:
+            file:
+              type: string
+            patch:
+              type: string
+          required: [file, patch]
+    required: [patches]

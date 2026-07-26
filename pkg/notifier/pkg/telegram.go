@@ -16,10 +16,18 @@ import (
 type TelegramSender struct {
 	BotToken string `json:"bot_token"`
 	ChatID   string `json:"chat_id"`
+	BaseURL  string `json:"base_url"`
 	client   model.IFlowgentAPIClient
 }
 
 func (s *TelegramSender) Type() string { return "telegram" }
+
+func (s *TelegramSender) baseURL() string {
+	if s.BaseURL != "" {
+		return s.BaseURL
+	}
+	return "https://api.telegram.org"
+}
 
 func (s *TelegramSender) SetHTTPClient(c model.IFlowgentAPIClient) { s.client = c }
 
@@ -49,7 +57,7 @@ func (s *TelegramSender) Send(ctx context.Context, recipient, title, body string
 	}
 	b, _ := json.Marshal(payload)
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", s.BotToken)
+	url := fmt.Sprintf("%s/bot%s/sendMessage", s.baseURL(), s.BotToken)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return err
