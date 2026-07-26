@@ -1,0 +1,21 @@
+go 1.26.0
+
+use (
+	./migration
+	./pkg/a2a
+	./pkg/api
+	./pkg/cache
+	./pkg/cmd
+	./pkg/common
+	./pkg/config
+	./pkg/console
+	./pkg/controller
+	./pkg/core
+	./pkg/messager
+	./pkg/model
+	./pkg/notifier
+	./pkg/sandbox
+	./pkg/store
+	./pkg/wallet
+	./tests
+)

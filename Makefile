@@ -39,6 +39,23 @@ help:
 
 .DEFAULT_GOAL := help
 
+# ── Bootstrap: regenerates go.work and go.sum on clean clone ────
+# All go.sum, go.work.sum, and go.work are committed in git — a clean
+# clone already has everything it needs for a deterministic build.
+# Sync only runs when go.work itself is missing (shouldn't happen).
+_GO_MODULES = migration \
+	pkg/a2a pkg/api pkg/cache pkg/cmd pkg/common pkg/config \
+	pkg/console pkg/controller pkg/core pkg/messager pkg/model \
+	pkg/notifier pkg/sandbox pkg/store pkg/wallet tests
+
+bootstrap-go:
+	@if [ ! -f go.work ]; then \
+		echo "INFO: go.work missing, regenerating..."; \
+		$(GO) work init; \
+		for m in $(_GO_MODULES); do $(GO) work use ./$$m; done; \
+		$(GO) work sync; \
+	fi
+
 # ── Docker builds ─────────────────────────────────────────────────
 
 build-image: build-image-core build-image-wallet
@@ -61,11 +78,11 @@ endif
 
 build: build-core build-wallet
 
-build-core:
+build-core: bootstrap-go
 	@mkdir -p $(BIN_DIR)
 	cd pkg/cmd && CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -tags "$(TAGS_X402)" -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent-core ./pkg/
 
-build-wallet:
+build-wallet: bootstrap-go
 	@mkdir -p $(BIN_DIR)
 	cd pkg/wallet && CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent-wallet ./pkg/cmd/
 
