@@ -127,7 +127,7 @@ test-x402:
 # service (GitHub, SonarQube, LLM) replaced by an in-process mock. Requires no
 # docker / k8s / broker / database — runs on a clean Ubuntu CI runner.
 test-it:
-	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -v -count=1 -timeout 300s ./...
+	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -v -count=1 -timeout 300s ./probe ./apiserver ./controller ./engine ./externalmock ./knowledge ./notifier ./sandbox .
 
 # Auth integration tests need a live LDAP (GLAuth) / OIDC (Keycloak) container:
 #   cd deploy/docker/glauth   && docker compose up -d   (then: make test-it-ldap)

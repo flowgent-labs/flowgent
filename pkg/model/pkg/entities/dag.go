@@ -20,6 +20,7 @@ const (
 	HumanNode      NodeType = "human"
 	SupervisorNode NodeType = "supervisor"
 	SandboxNode    NodeType = "sandbox"
+	JoinNode       NodeType = "join"
 	NoopNode       NodeType = "noop"
 )
 

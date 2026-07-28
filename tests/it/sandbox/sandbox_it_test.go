@@ -26,9 +26,10 @@ func TestSandbox_ExecutorWiring(t *testing.T) {
 		t.Fatalf("expected 1 run, got %v", runIDs)
 	}
 	status := fs.WaitRun(runIDs[0], 30*time.Second)
-	if status != string(entities.RunCompleted) && status != string(entities.RunFailed) {
-		t.Fatalf("run status = %q, expected COMPLETED or FAILED", status)
+	if status != string(entities.RunCompleted) {
+		t.Fatalf("run status = %q, expected COMPLETED", status)
 	}
+	fs.ExpectTaskCount(runIDs[0], 1)
 }
 
 func TestSandbox_NoopFallback(t *testing.T) {
@@ -36,8 +37,8 @@ func TestSandbox_NoopFallback(t *testing.T) {
 		BaseEntity: entities.BaseEntity{ID: "sb-noop", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{entities.Node{ID: "pre-sandbox", Type: entities.NoopNode}, entities.Node{ID: "post-sandbox", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{entities.Edge{From: "pre-sandbox", To: "post-sandbox"}},
+		Nodes:      []entities.Node{{ID: "pre-sandbox", Type: entities.NoopNode}, {ID: "post-sandbox", Type: entities.NoopNode}},
+		Edges:      []entities.Edge{{From: "pre-sandbox", To: "post-sandbox"}},
 	}
 
 	fs := it.New(t, flow)
@@ -48,4 +49,5 @@ func TestSandbox_NoopFallback(t *testing.T) {
 	if status := fs.WaitRun(runIDs[0], 30*time.Second); status != string(entities.RunCompleted) {
 		t.Fatalf("run status = %q, want COMPLETED", status)
 	}
+	fs.ExpectTaskCount(runIDs[0], 2)
 }

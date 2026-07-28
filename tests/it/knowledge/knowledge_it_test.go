@@ -8,71 +8,12 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
 	"github.com/flowgent-labs/flowgent/tests/it"
+	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
 )
-func boolPtr(b bool) *bool { return &b }
-
-func securityFixerFlow() *entities.FlowInfo {
-	return &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "security-autonomy-fixer"},
-		Vars:       map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
-		Triggers: []entities.TriggerDef{
-			{Type: "webhook", Provider: "github", Events: []string{"pull_request", "push"}},
-		},
-		Nodes: []entities.Node{
-			{ID: "get-commit", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "get_latest_commit", "repo": "${vars.repo}"}},
-			{ID: "scan-sonarqube", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project_key": "${vars.project_key}", "severities": "BLOCKER,CRITICAL,MAJOR"}},
-			{ID: "aggregate-issues", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
-			{ID: "review-security", Type: entities.AgentNode, Agent: "security-reviewer"},
-			{ID: "review-quality", Type: entities.AgentNode, Agent: "quality-reviewer"},
-			{ID: "review-arch", Type: entities.AgentNode, Agent: "arch-reviewer"},
-			{
-				ID:       "committee",
-				Type:     entities.CommitteeNode,
-				Strategy: map[string]any{"type": "majority"},
-				Input:    map[string]any{"votes": []any{"${review-security}", "${review-quality}", "${review-arch}"}},
-			},
-			{
-				ID:         "is-approved",
-				Type:       entities.ConditionNode,
-				Expression: "${input.approved == true}",
-				Input:      map[string]any{"approved": "${committee.decision}"},
-			},
-			{ID: "commit-fixes", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "commit_and_push", "branch": "fix/flowgent_sec_auto_fix"}},
-			{ID: "create-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pull_request", "base": "main", "head": "fix/flowgent_sec_auto_fix"}},
-			{ID: "rescan", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_jobs_by_commit", "repo": "${vars.repo}"}},
-			{ID: "compare-results", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "summary-report", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "notify-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_issue_comment", "pr_number": 4}},
-			{ID: "end", Type: entities.NoopNode},
-		},
-		Edges: []entities.Edge{
-			{From: "get-commit", To: "scan-sonarqube"},
-			{From: "scan-sonarqube", To: "aggregate-issues"},
-			{From: "aggregate-issues", To: "generate-fixes"},
-			{From: "generate-fixes", To: "review-security"},
-			{From: "generate-fixes", To: "review-quality"},
-			{From: "generate-fixes", To: "review-arch"},
-			{From: "review-security", To: "committee"},
-			{From: "review-quality", To: "committee"},
-			{From: "review-arch", To: "committee"},
-			{From: "committee", To: "is-approved"},
-			{From: "is-approved", To: "commit-fixes", Condition: boolPtr(true)},
-			{From: "is-approved", To: "generate-fixes", Condition: boolPtr(false)},
-			{From: "commit-fixes", To: "create-pr"},
-			{From: "create-pr", To: "rescan"},
-			{From: "rescan", To: "compare-results"},
-			{From: "compare-results", To: "summary-report"},
-			{From: "summary-report", To: "notify-pr"},
-			{From: "notify-pr", To: "end"},
-		},
-	}
-}
 
 func TestKnowledge_CRUD(t *testing.T) {
-	fs := it.New(t, securityFixerFlow())
+	fs := it.New(t, it.SecurityFixerFlow())
 	namespace := fs.Namespace
 	base := fs.APIURL + "/api/v1/" + namespace + "/knowledge"
 
@@ -199,11 +140,8 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 		BaseEntity: entities.BaseEntity{ID: "rag-wiring", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes: []entities.Node{
-			{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "fix", Type: entities.AgentNode, Agent: "fixer-agent"},
-		},
-		Edges: []entities.Edge{entities.Edge{From: "detect", To: "fix"}},
+		Nodes:      []entities.Node{{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector"}, {ID: "fix", Type: entities.AgentNode, Agent: "fixer-agent"}},
+		Edges:      []entities.Edge{{From: "detect", To: "fix"}},
 	}
 	fs := it.NewWithLLMLog(t, flow, llmLog)
 	namespace := fs.Namespace
@@ -248,6 +186,7 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 		t.Fatal("LLM was never called — flow did not reach agent node")
 	}
 	t.Logf("flow status=%s, LLM called %d times, retriever active", status, llmLog.Count())
+	fs.ExpectTaskCount(runID, 2)
 }
 
 func TestKnowledge_PostHandle(t *testing.T) {
@@ -255,8 +194,8 @@ func TestKnowledge_PostHandle(t *testing.T) {
 		BaseEntity: entities.BaseEntity{ID: "knowledge-posthandle", Namespace: "test"},
 		Vars:       map[string]any{"repo": "wl4g/rengine"},
 		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{entities.Node{ID: "step-a", Type: entities.NoopNode}, entities.Node{ID: "step-b", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{entities.Edge{From: "step-a", To: "step-b"}},
+		Nodes:      []entities.Node{{ID: "step-a", Type: entities.NoopNode}, {ID: "step-b", Type: entities.NoopNode}},
+		Edges:      []entities.Edge{{From: "step-a", To: "step-b"}},
 	}
 	fs := it.New(t, flow)
 	namespace := fs.Namespace
@@ -270,6 +209,9 @@ func TestKnowledge_PostHandle(t *testing.T) {
 
 	status := fs.WaitRun(runID, 60*time.Second)
 	t.Logf("flow final status = %s", status)
+	if status != string(entities.RunCompleted) {
+		t.Fatalf("run status = %q, want COMPLETED", status)
+	}
 
 	time.Sleep(2 * time.Second)
 
@@ -289,4 +231,5 @@ func TestKnowledge_PostHandle(t *testing.T) {
 	} else {
 		t.Log("no post-handle knowledge entries yet (async)")
 	}
+	fs.ExpectTaskCount(runID, 2)
 }

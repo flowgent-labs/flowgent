@@ -605,6 +605,12 @@ func NodeToTaskType(nt entities.NodeType) entities.TaskType {
 		return entities.TaskHuman
 	case entities.AgentFlowNode:
 		return entities.TaskSubflow
+	case entities.SandboxNode:
+		return entities.TaskSandbox
+	case entities.SkillNode:
+		return entities.TaskSkill
+	case entities.JoinNode:
+		return entities.TaskJoin
 	default:
 		return entities.TaskNoop
 	}

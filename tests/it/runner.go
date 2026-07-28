@@ -27,6 +27,8 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
@@ -202,6 +204,18 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	// ── engine ──
 	logProgress("[engine] starting resource manager and job manager")
 	apiClient := client.NewFlowgentClient(srv.URL)
+
+	// In-process messager for sandbox executor round-trip: the sandbox
+	// executor publishes triggers and subscribes for results via this
+	// queue; the embedded sandbox runner (started inside TaskManager)
+	// consumes triggers and publishes results on the same queue.
+	sbWorkspace, err := os.MkdirTemp("", "flowgent-it-sandbox-*")
+	if err != nil {
+		t.Fatalf("create sandbox workspace: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sbWorkspace) })
+	inMemQ := messager.NewLocalMessager(1000)
+
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider:     engine.ProviderStandalone,
 		PoolSize:     8,
@@ -210,6 +224,9 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		Logger:       logger,
 		APIServerURL: srv.URL,
 		Namespace:    namespace,
+		Messager:     inMemQ,
+		SandboxWorkspace: sbWorkspace,
+		SandboxPolicy:    &model.SandboxPolicy{},
 	})
 	if err != nil {
 		t.Fatalf("create resource manager: %v", err)
@@ -387,3 +404,82 @@ func (r *ITRunner) RunStatus(runID string) string {
 }
 
 
+
+// ─── shared fixtures ─────────────────────────────────────────────────────
+
+// SecurityFixerFlow returns the canonical security-autonomy-fixer flow used across
+// apiserver, knowledge, and notifier IT tests. It models the full DevSecOps pipeline.
+func SecurityFixerFlow() *entities.FlowInfo {
+	return &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "security-autonomy-fixer"},
+		Vars:       map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
+		Triggers: []entities.TriggerDef{
+			{Type: "webhook", Provider: "github", Events: []string{"pull_request", "push"}},
+		},
+		Nodes: []entities.Node{
+			{ID: "get-commit", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "get_latest_commit", "repo": "${vars.repo}"}},
+			{ID: "scan-sonarqube", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project_key": "${vars.project_key}", "severities": "BLOCKER,CRITICAL,MAJOR"}},
+			{ID: "aggregate-issues", Type: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "review-security", Type: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "review-quality", Type: entities.AgentNode, Agent: "quality-reviewer"},
+			{ID: "review-arch", Type: entities.AgentNode, Agent: "arch-reviewer"},
+			{
+				ID: "committee", Type: entities.CommitteeNode,
+				Strategy: map[string]any{"type": "majority"},
+				Input:    map[string]any{"votes": []any{"${review-security}", "${review-quality}", "${review-arch}"}},
+			},
+			{
+				ID: "is-approved", Type: entities.ConditionNode,
+				Expression: "${input.approved == true}",
+				Input:      map[string]any{"approved": "${committee.decision}"},
+			},
+			{ID: "commit-fixes", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "commit_and_push", "branch": "fix/flowgent_sec_auto_fix"}},
+			{ID: "create-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pull_request", "base": "main", "head": "fix/flowgent_sec_auto_fix"}},
+			{ID: "rescan", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_jobs_by_commit", "repo": "${vars.repo}"}},
+			{ID: "compare-results", Type: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "summary-report", Type: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "notify-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_issue_comment", "pr_number": 4}},
+			{ID: "end", Type: entities.NoopNode},
+		},
+		Edges: []entities.Edge{
+			{From: "get-commit", To: "scan-sonarqube"},
+			{From: "scan-sonarqube", To: "aggregate-issues"},
+			{From: "aggregate-issues", To: "generate-fixes"},
+			{From: "generate-fixes", To: "review-security"},
+			{From: "generate-fixes", To: "review-quality"},
+			{From: "generate-fixes", To: "review-arch"},
+			{From: "review-security", To: "committee"},
+			{From: "review-quality", To: "committee"},
+			{From: "review-arch", To: "committee"},
+			{From: "committee", To: "is-approved"},
+			{From: "is-approved", To: "commit-fixes", Condition: boolPtr(true)},
+			{From: "is-approved", To: "generate-fixes", Condition: boolPtr(false)},
+			{From: "commit-fixes", To: "create-pr"},
+			{From: "create-pr", To: "rescan"},
+			{From: "rescan", To: "compare-results"},
+			{From: "compare-results", To: "summary-report"},
+			{From: "summary-report", To: "notify-pr"},
+			{From: "notify-pr", To: "end"},
+		},
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// ─── database assertions ──────────────────────────────────────────────────
+
+// ExpectTaskCount verifies the number of task rows created for a given run.
+func (r *ITRunner) ExpectTaskCount(runID string, min int) {
+	r.T.Helper()
+	var n int
+	if err := r.pool.QueryRow(r.T.Context(),
+		`SELECT COUNT(*) FROM task_runs WHERE agentflow_run_id = $1`, runID,
+	).Scan(&n); err != nil {
+		r.T.Fatalf("count task_runs: %v", err)
+	}
+	if n < min {
+		r.T.Fatalf("task count for run %s = %d, want >= %d", runID, n, min)
+	}
+	r.T.Logf("task_runs count = %d (min %d)", n, min)
+}

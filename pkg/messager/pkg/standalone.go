@@ -7,6 +7,7 @@ import (
 
 // LocalMessager implements Messager using in-memory handler dispatch.
 // Handlers registered via Subscribe are called synchronously from Publish.
+// Supports MQTT-style single-level wildcards (+) and $share/ prefix strips.
 type LocalMessager struct {
 	mu   sync.Mutex
 	subs map[string][]SubHandler
@@ -21,7 +22,7 @@ func NewLocalMessager(size int) *LocalMessager {
 
 func (q *LocalMessager) Publish(ctx context.Context, topic string, msg *InterMessage) error {
 	q.mu.Lock()
-	handlers := q.subs[topic]
+	handlers := q.matchHandlers(topic)
 	q.mu.Unlock()
 	for _, h := range handlers {
 		h(topic, msg.Payload)
@@ -37,6 +38,71 @@ func (q *LocalMessager) Subscribe(ctx context.Context, topic string, handler Sub
 	}
 	q.subs[topic] = append(q.subs[topic], handler)
 	return nil
+}
+
+// matchHandlers returns all handlers whose subscription topic matches the
+// published topic. Supports MQTT single-level wildcards (+). Subscriptions
+// with a $share/ prefix are normalized before matching.
+func (q *LocalMessager) matchHandlers(topic string) []SubHandler {
+	var handlers []SubHandler
+	topicParts := splitTopic(topic)
+	for sub, hs := range q.subs {
+		subNormalized := stripSharePrefix(sub)
+		if topicMatch(subNormalized, topicParts) {
+			handlers = append(handlers, hs...)
+		}
+	}
+	return handlers
+}
+
+func stripSharePrefix(topic string) string {
+	if len(topic) > 7 && topic[:7] == "$share/" {
+		if idx := indexByteAfterSlash(topic, 7); idx > 0 {
+			return topic[idx+1:]
+		}
+	}
+	return topic
+}
+
+func indexByteAfterSlash(s string, start int) int {
+	for i := start; i < len(s); i++ {
+		if s[i] == '/' {
+			return i
+		}
+	}
+	return -1
+}
+
+func splitTopic(topic string) []string {
+	if topic == "" {
+		return nil
+	}
+	parts := make([]string, 0, 8)
+	start := 0
+	for i := 0; i < len(topic); i++ {
+		if topic[i] == '/' {
+			parts = append(parts, topic[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, topic[start:])
+	return parts
+}
+
+func topicMatch(subPattern string, pubParts []string) bool {
+	subParts := splitTopic(subPattern)
+	if len(subParts) != len(pubParts) {
+		return false
+	}
+	for i, sp := range subParts {
+		if sp == "+" {
+			continue // single-level wildcard: match anything at this level
+		}
+		if sp != pubParts[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (q *LocalMessager) Ack(ctx context.Context, msgID string) error  { return nil }
