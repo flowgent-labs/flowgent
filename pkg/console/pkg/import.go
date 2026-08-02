@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,9 +18,26 @@ import (
 
 // --- K8s-style single-resource parsing ---
 
+// replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
+// Unknown patterns (flow template vars, DAG references) are left unchanged.
+func replaceEnvVars(s string) string {
+	re := regexp.MustCompile(`\$\{([^}]+)\}`)
+	return re.ReplaceAllStringFunc(s, func(match string) string {
+		key := match[2 : len(match)-1]
+		if val, ok := os.LookupEnv(key); ok && val != "" {
+			return val
+		}
+		return match // keep original if env var not set
+	})
+}
+
 // ParseResourceImport detects and parses a K8s-style {kind, metadata, spec}
 // resource. Also accepts flat-style {kind, name, namespace, ..., spec} as fallback.
+// replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
+// Unknown patterns (flow template vars, DAG references) are left unchanged.
 func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
+	// Resolve env vars in raw YAML before parsing
+	raw = []byte(replaceEnvVars(string(raw)))
 	if fm == "yaml" {
 		var generic map[string]any
 		if err := yaml.Unmarshal(raw, &generic); err != nil {
@@ -61,6 +79,16 @@ func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
 				return nil, false
 			}
 			ri.Spec = specJSON
+		} else if data, ok := generic["data"]; ok {
+			specJSON, err := json.Marshal(data)
+			if err != nil {
+				return nil, false
+			}
+			ri.Spec = specJSON
+		}
+		// accept consoleVersion as an alias for apiVersion
+		if ri.APIVersion == "" {
+			ri.APIVersion = toString(generic["consoleVersion"])
 		}
 		return ri, true
 	}
@@ -124,6 +152,9 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		a.CreatedAt = time.Now()
 		a.UpdatedAt = time.Now()
+		if a.ID == "" {
+			a.ID = uuid.New().String()
+		}
 		if a.Name == "" && ri.metadataName() != "" {
 			a.Name = ri.metadataName()
 		}
@@ -142,10 +173,21 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		m.CreatedAt = time.Now()
 		m.UpdatedAt = time.Now()
+		if m.ID == "" {
+			m.ID = uuid.New().String()
+		}
+		if m.Status == "active" {
+			m.Enabled = true
+		}
 		if m.Name == "" && ri.metadataName() != "" {
 			m.Name = ri.metadataName()
 		}
 		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.namespace)
+			// Align Enabled with Status so that MCPs imported with status=active are
+			// immediately usable. TM skips MCPs with enabled=false (taskmanager.go:83).
+			if m.Status == "active" {
+				m.Enabled = true
+			}
 		if err := ls.mcps.Save(fc.ctx, &m); err != nil {
 			fmt.Printf("Error saving MCP %s: %v\n", m.Name, err)
 			return false
@@ -286,6 +328,9 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		m.UpdatedAt = time.Now()
 		if m.ID == "" {
 			m.ID = uuid.New().String()
+		}
+		if m.Status == "active" {
+			m.Enabled = true
 		}
 		if err := ls.mcps.Save(fc.ctx, m); err != nil {
 			return counts, fmt.Errorf("mcp %s: %w", m.Name, err)

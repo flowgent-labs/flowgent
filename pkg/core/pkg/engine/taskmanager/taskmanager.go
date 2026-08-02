@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -78,14 +79,22 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	// Load MCP server definitions from DB (via apiserver API).
 	mcpLoader := &client.McpProviderClient{Client: apiClient, Namespace: cfg.Namespace}
 	if mcps, err := mcpLoader.ListMCPs(context.Background()); err == nil {
-		slog.Debug("taskmanager loaded MCP servers", "count", len(mcps))
+		slog.Info("taskmanager loaded MCP servers", "count", len(mcps))
 		for _, m := range mcps {
+			slog.Info("taskmanager MCP candidate", "name", m.Name, "enabled", m.Enabled, "type", m.Type)
 			if !m.Enabled || m.Name == "" {
-				slog.Debug("taskmanager skip MCP", "name", m.Name, "enabled", m.Enabled)
+				slog.Info("taskmanager skip MCP", "name", m.Name, "enabled", m.Enabled)
 				continue
 			}
-			slog.Debug("taskmanager register MCP", "name", m.Name, "type", m.Type, "url", m.URL)
-			mcpMgr.Register(m.Name, m.URL, m.Headers)
+			slog.Info("taskmanager register MCP", "name", m.Name, "type", m.Type, "url", m.URL)
+			// Expand ${ENV_VAR} placeholders in headers and URL
+			headers := make(map[string]string)
+			for k, v := range m.Headers {
+				headers[k] = os.ExpandEnv(v)
+			}
+			url := os.ExpandEnv(m.URL)
+			slog.Info("taskmanager MCP resolved", "name", m.Name, "url", url)
+			mcpMgr.Register(m.Name, url, headers)
 		}
 	} else {
 		slog.Warn("taskmanager ListMCPs failed", "err", err)

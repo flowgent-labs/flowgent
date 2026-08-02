@@ -100,7 +100,7 @@ func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := q.Get("status")
-	namespace := q.Get("namespace")
+	namespace := q.Get("k8s_namespace")
 	flowID := q.Get("agentflow_id")
 	filtered := filterRuns(runs.Items, status, namespace, flowID)
 	w.Header().Set("Content-Type", "application/json")

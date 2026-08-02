@@ -381,6 +381,10 @@ func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, 
 	if run.Namespace == "" {
 		run.Namespace = spec.Namespace
 	}
+	// Align K8sNamespace with Namespace so JM poller's k8s_namespace filter matches.
+	// The poller filters runs by k8s_namespace (jobmanager.go:89) and without this,
+	// runs with empty K8sNamespace get silently skipped.
+	run.K8sNamespace = run.Namespace
 	run.SetTrigger(trigger)
 	if err := h.frStore.Create(ctx, run); err != nil {
 		return "", err

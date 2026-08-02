@@ -101,12 +101,13 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 	mcpHandler := handler.NewMcpHandler(storeImpl)
 	webhookHandler := handler.NewWebhookHandler(agentFlowHandler, logger, cfg.Runtime.Namespace.DefaultNamespace)
+	knowledgeHandler := handler.NewKnowledgeHandler(storeImpl)
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Routes ──
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, nil)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler)
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(cfg.Auth)
 	if err != nil {
