@@ -1,4 +1,4 @@
-package taskplan
+package task
 
 import (
 	"context"
@@ -12,38 +12,38 @@ import (
 	"github.com/google/uuid"
 )
 
-// TaskPlanSQLiteStore wraps store.SQLiteGenericStore[entities.TaskRunInfo].
-type TaskPlanSQLiteStore struct {
+// TaskSQLiteStore wraps store.SQLiteGenericStore[entities.TaskRunInfo].
+type TaskSQLiteStore struct {
 	inner *store.SQLiteGenericStore[entities.TaskRunInfo]
 }
 
-func NewTaskPlanSQLiteStore(conn *sql.DB) *TaskPlanSQLiteStore {
-	return &TaskPlanSQLiteStore{
+func NewTaskSQLiteStore(conn *sql.DB) *TaskSQLiteStore {
+	return &TaskSQLiteStore{
 		inner: &store.SQLiteGenericStore[entities.TaskRunInfo]{
 			Conn: conn, Table: "task_runs", IDCol: "id",
 		},
 	}
 }
 
-func (s *TaskPlanSQLiteStore) Get(ctx context.Context, id string) (*entities.TaskRunInfo, error) {
+func (s *TaskSQLiteStore) Get(ctx context.Context, id string) (*entities.TaskRunInfo, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *TaskPlanSQLiteStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.TaskRunInfo], error) {
+func (s *TaskSQLiteStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.TaskRunInfo], error) {
 	return s.inner.Select(ctx, req)
 }
-func (s *TaskPlanSQLiteStore) Save(ctx context.Context, e *entities.TaskRunInfo) error {
+func (s *TaskSQLiteStore) Save(ctx context.Context, e *entities.TaskRunInfo) error {
 	return s.inner.Save(ctx, e)
 }
-func (s *TaskPlanSQLiteStore) Delete(ctx context.Context, id string) error {
+func (s *TaskSQLiteStore) Delete(ctx context.Context, id string) error {
 	return s.inner.Delete(ctx, id)
 }
 
-func (s *TaskPlanSQLiteStore) GetByExecID(ctx context.Context, execID string) (*entities.TaskRunInfo, error) {
+func (s *TaskSQLiteStore) GetByExecID(ctx context.Context, execID string) (*entities.TaskRunInfo, error) {
 	row := s.inner.Conn.QueryRowContext(ctx, "SELECT * FROM task_runs WHERE exec_id=?1", execID)
 	return scanTaskRun(row)
 }
 
-func (s *TaskPlanSQLiteStore) CreateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
+func (s *TaskSQLiteStore) CreateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
 	e.ID = uuid.New().String()
 	now := time.Now().UTC()
 	e.CreatedAt = now
@@ -51,7 +51,7 @@ func (s *TaskPlanSQLiteStore) CreateTaskRun(ctx context.Context, e *entities.Tas
 	return s.inner.Save(ctx, e)
 }
 
-func (s *TaskPlanSQLiteStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
+func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
 	output, err := json.Marshal(e.Output)
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func (s *TaskPlanSQLiteStore) UpdateTaskRun(ctx context.Context, e *entities.Tas
 	return err
 }
 
-func (s *TaskPlanSQLiteStore) ListByFlowRun(ctx context.Context, flowRunID string) ([]*entities.TaskRunInfo, error) {
+func (s *TaskSQLiteStore) ListByFlowRun(ctx context.Context, flowRunID string) ([]*entities.TaskRunInfo, error) {
 	rows, err := s.inner.Conn.QueryContext(ctx, "SELECT * FROM task_runs WHERE agentflow_run_id=?1 ORDER BY sequence ASC", flowRunID)
 	if err != nil {
 		return nil, err

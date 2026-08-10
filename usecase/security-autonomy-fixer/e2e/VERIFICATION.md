@@ -1,5 +1,158 @@
 # 1. Overview
 
+> **Runtime note (2026-08-08):** when `SONARQUBE_URL` is provided, the runner
+> health-checks that externally managed service and does not reset a local
+> Compose stack. Each E2E round still performs a full Flowgent Helm redeploy.
+> EMQX readiness precedes the apiserver runtime rollout so MQTT lifecycle
+> publication is verified against a live broker. The apiserver rollout and
+> healthz check precede controller/notifier rollout so dependent components do
+> not record startup connection-refused errors against an unready API server.
+> The deployer also injects cross-namespace FQDNs for MQTT, API server, and
+> Jaeger, plus JM/TM/Sandbox images, before application-mode pods start. Full
+> redeploy installs system services in `flowgen-system`, clears stale
+> controller-created application-mode Deployments and pods in `flowgent-{namespace}`,
+> and removes legacy workers from `default`, so no worker pod survives across DB resets.
+> Security fixer runs in E2E are verifier-triggered only. Importing flow
+> definitions is metadata registration and must not create idle JM/TM/Sandbox
+> Deployments; Controller starts a per-flow JM only while a real run is
+> `PENDING`, `RUNNING`, or `PAUSED`.
+> Flow definitions are imported idempotently as version `1`; repeated runner or
+> verifier imports must not create additional flow versions.
+> MQTT topic namespace segments use the tenant namespace such as `default`, not
+> the K8s application namespace `flowgent-default`. Active-run JM, TM, and
+> Sandbox pods run in the application namespace and are verified there.
+> The controller ClusterRole must hold every permission it grants to the
+> application-namespace `flowgent-runtime` Role; otherwise Kubernetes rejects
+> Role creation as RBAC privilege escalation and JM can start without being able
+> to scale TM/Sandbox workers.
+> Completed/no-active application runtime is retained for the configured
+> `runtime.tm_orphan_timeout` observation window (default `3m`) so final
+> verifiers can inspect TM/Sandbox pod-internal shared workspace state; deleting
+> the flow definition still removes JM/TM/Sandbox immediately.
+> Runtime `$share/*` subscriptions are load-balanced both by the broker and by
+> any local multi-handler dispatcher inside a component process. Verifier
+> subscribers must remain ordinary non-`$share` subscriptions so they observe
+> messages without consuming production work.
+> Runtime credentials are not inherited implicitly from the host by JM/TM/Sandbox
+> pods. The runner sources `~/.bashrc`, `~/.bash_profile`, and
+> `~/.wl4gshrc.sec`, creates `flowgent-e2e-runtime-env` in both the system
+> namespace and `flowgent-{namespace}`, and Helm sets
+> `runtime.credential_env_secret` so Controller-created JM pods and JM-created
+> TM/Sandbox pods mount it via optional `envFrom.secretRef`.
+> When host proxy variables are present, the same runtime Secret also carries
+> `HTTP_PROXY`/`HTTPS_PROXY` plus `NO_PROXY` for JM/TM/Sandbox. Localhost proxy
+> values are rewritten to the pod default gateway derived from the node PodCIDR
+> (falling back to node InternalIP) so sandbox tasks can reach GitHub from
+> inside pods; `NO_PROXY` must include `.svc`,
+> `.cluster.local`, and cluster CIDRs so internal Flowgent service calls never
+> go through the external proxy.
+> MQTT client IDs must be unique per component process/pod. Static configured
+> IDs such as `flowgent` are only a base; runtime publishers append a host/pod
+> identity so EMQX cannot disconnect another Flowgent component with the same
+> client ID.
+> Sandbox task results with a non-empty `error` field are task failures, even
+> when the sandbox service publishes a result message. Verifiers must not treat
+> `SUCCESS` rows with hidden sandbox errors as valid execution.
+> Sandbox network allowlists accept host-only, `host:port`, and URL values; the
+> seccomp layer resolves them to concrete `host:port` rules, applies user
+> notification to outbound `connect`, and sandbox scripts execute from their task
+> directory so `input.json` is available. Per-node
+> `network_policy.allowed` entries must be concrete host/URL values because
+> sandbox seccomp policy construction is not a DAG variable interpolation path.
+> Sandbox shell scripts must not embed `${vars.*}` DAG placeholders directly;
+> pass needed values through node `args` and read them from `input.json`.
+> Seccomp notifier setup is part of sandbox correctness: after re-exec starts,
+> the parent must close inherited socketpair fds and either receive the notifier
+> fd promptly or fail the sandbox task. A sandbox trigger without a matching
+> `sandbox/result` message is a hard failure, even if the child process exits.
+> Allowlist/denylist enforcement uses `SECCOMP_FILTER_FLAG_NEW_LISTENER` and
+> `SECCOMP_IOCTL_NOTIF_RECV/SEND`; ordinary fd `read/write` is not a valid
+> seccomp user-notification transport.
+> When sandbox scripts use an outbound proxy, the allowlist must include the
+> actual proxy endpoint because seccomp observes `connect(proxy_ip,proxy_port)`,
+> not the HTTP CONNECT target such as `github.com:443`.
+> Sandbox stdout JSON is semantic node output. The sandbox result keeps
+> `stdout`/`stderr` diagnostics, stores parsed JSON under `parsed`, and exposes
+> parsed object fields at top level so `${node.field}` DAG references work for
+> sandbox-produced values such as `${git-clone.path}`.
+> Sandbox result publication is reliable only when `Publish` succeeds; transient
+> MQTT publish errors must be retried and must not be logged as successful
+> publication. MQTT publish/connect token timeouts are failures, not success.
+> The in-cluster EMQX deployment must allow packets larger than the
+> `read-source-files` source-context payload. The Helm chart sets
+> `emqx.maxPacketSize=8MB`; a broker-side max-packet disconnect is a hard
+> infrastructure/config failure, not an acceptable verifier warning.
+> The `read-source-files` node intentionally selects a bounded context window
+> before `generate-fixes`: skip obvious generated/Swagger files, prefer the
+> smallest real source files, and pass at most one file plus its selected issues.
+> Verifier expectations should validate that selected issue/file contract rather
+> than requiring the LLM to process the full SonarQube issue set in one prompt.
+> Component MQTT clients must actively recover from broker-side disconnects:
+> failed publishes trigger a reconnect, and reconnect must restore all
+> process-local subscriptions before the DAG can be considered healthy.
+> The K8s ResourceManager plan timeout must remain longer than the TM
+> SandboxExecutor result-file fallback window so a written `result.json` can
+> still be converted into `exec/results`. TM SandboxExecutor must listen for
+> `sandbox/result` and poll the shared `result.json`; whichever arrives first
+> completes the node.
+> TM slot workers must treat `exec/results` publication as mandatory. Transient
+> MQTT publish errors on the TM→JM callback path require retry; a task persisted
+> as `SUCCESS` without a delivered `exec/results` message is not a valid DAG
+> progression signal.
+> When `sandbox.deployment.enabled=true`, TM pods must not start embedded
+> sandbox runners. Dedicated JM-owned Sandbox pods consume flow-scoped
+> `sandbox/trigger` messages through `$share/sandbox-pool-{namespace}-{flow}`;
+> each pod runs `SandboxSlotWorker` slots. Verifiers observe the same messages
+> with ordinary non-`$share` subscriptions only.
+
+## 1.0 Latest Three-Round Verification
+
+On 2026-08-10, the security-autonomy-fixer E2E suite was run through three
+complete current-code rounds after the namespace/lifecycle/Sandbox ResourceManager
+changes. A valid round means PostgreSQL reset, fresh core build and image import,
+full Helm uninstall/install redeploy, component readiness, console import of all
+use-case resources, and `runner.py` execution from scenario 11 through scenario
+37.
+
+| Round | Capstone run ID | Result | s31 PR baseline -> s35 PR commits | New Flowgent security-fix commits |
+|---|---|---|---|---|
+| 1 | `dcade7bb-92ae-47e4-b73a-f6619c0ad298` | `16/16 passed` | 92 -> 94 | `19fd7329`, `7c6731ea` |
+| 2 | `fdcd3bb8-7e0a-4b67-95f0-f4a2692fda92` | `16/16 passed` | 96 -> 98 | `35e3827f`, `03fd0a3d` |
+| 3 | `624cfc51-0250-4e7f-aa88-289166863e01` | `16/16 passed` | 100 -> 102 | `8a7a5ce0`, `7ceb6f8e` |
+
+The final report is `e2e/reports/00_summary.md` with duration `240.4s` for the
+third current-code round. The first two reports are archived under
+`e2e/reports/archived-20260810-025000/` and
+`e2e/reports/archived-20260810-030524/`. The same current-code round set also
+verified:
+
+- Helm rendered `runtime.tm_orphan_timeout: "3m"` and
+  `runtime.credential_env_secret: "flowgent-e2e-runtime-env"` into the live
+  ConfigMap.
+- System services ran in `flowgen-system`; JM/TM/Sandbox ran in
+  `flowgent-default`. Imported Skills (`nexus3-retrieval` and `sub-fix`) stayed
+  metadata-only and did not create independent JM/TM/Sandbox runtime.
+- JM ResourceManager scaled TM and Sandbox Deployments from zero only after
+  active task demand. Sandbox pods subscribed with
+  `$share/sandbox-pool-{namespace}-{flow}` and executed work through
+  `SandboxSlotWorker` slots.
+- `s31` through `s34` used ordinary non-`$share` MQTT audit subscriptions and
+  observed `exec/plans`, `exec/results`, `sandbox/trigger`, and
+  `sandbox/result` without joining L1 worker consumer groups.
+- `s32` observed `24/24` `exec/plans`, `24/24` `exec/results`, and `3/3`
+  `sandbox/trigger` plus `sandbox/result` messages for the final run.
+- `s32` required non-empty SonarQube issue aggregation, git-clone output, and
+  source-file context before remediation.
+- `s35` required new Flowgent security-fix commits after the s31 PR baseline,
+  not historical PR commits.
+- `s37` verified the shared workspace only via `kubectl exec` inside the
+  TaskManager pod, checking `/var/flowgent`, the current run hierarchy
+  `/var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}`, and the
+  git-clone task repo path
+  `/var/flowgent/default/security-autonomy-fixer/{run_id}/{git_clone_task_id}/repos/rengine/.git`.
+  No verifier directly inspected or mutated the host
+  `/mnt/disk1/flowgent/e2e` tree.
+
 ## 1.1 Purpose
 
 > **Core goal**: Verify that Flowgent's `security-autonomy-fixer` agent flow can
@@ -13,9 +166,10 @@ SonarQube security issues on a target repository.
 | Component | Value |
 |-----------|-------|
 | Platform | K8S single-node |
-| Namespace | `default` (infra), `flowgent-{namespace}` (per-namespace JM pods) |
+| Namespace | `flowgen-system` (system services), `flowgent-default` (JM/TM/Sandbox runtime for tenant namespace `default`) |
 | Mode | Application only |
-| Flow Under Test | `security-autonomy-fixer` (24 nodes, 11 phases) |
+| Flow Under Test | `security-autonomy-fixer` (27 nodes, 11 phases) |
+| Shared workspace | `/var/flowgent` inside TM/Sandbox pods; runtime tree is `/var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}` and Rengine clone is under the `git-clone` task directory |
 | MCP GitHub | `https://api.githubcopilot.com/mcp/` (Streamable HTTP) |
 | MCP SonarQube | `http://172.29.235.101:18080/mcp` (local, configured the Upstream Bearer Auth, you can call directly.) |
 | Test target PR | `https://github.com/wl4g/rengine/pull/4` (Really PR) |
@@ -37,6 +191,17 @@ python3 runner.py --no-verify
 # Verify only (assume infra is already up)
 python3 runner.py --skip-sonarqube --skip-build --skip-import --skip-deploy
 ```
+
+`runner.py` automatically sources `~/.bashrc`, `~/.bash_profile`, and
+`~/.wl4gshrc.sec` before importing E2E config or running `console import`.
+Missing files are ignored. This keeps non-interactive executions aligned with
+interactive SSH shells and lets config placeholders such as
+`${DEEPSEEK_API_KEY_FLOWGENT}` resolve from the host environment without logging
+secret values.
+When `KUBECONFIG` is unset or points at an empty file, runner/deployer/shared
+verifier config use the first non-empty candidate from `KUBECONFIG`,
+`~/.kube/config`, and `/etc/rancher/k3s/k3s.yaml`, avoiding both root-only
+fallback surprises and zero-byte user kubeconfig failures after k3s restarts.
 
 | Script | Purpose |
 |--------|---------|
@@ -74,38 +239,184 @@ Before every real (non-dry-run) execution against a live K8S cluster, reset
 shared state to avoid false positives/negatives from stale Deployments, PG rows,
 and MQTT messages.
 
+`runner.py` performs this reset automatically for full pipeline runs: it clears
+the Flowgent PostgreSQL `public` schema before Helm redeploy/import, then imports
+only the current `security-autonomy-fixer/config` resources. Verify-only mode
+(`--skip-sonarqube --skip-build --skip-import --skip-deploy`) does not reset PG.
+
 ```bash
+# 0. Source secrets
+for f in ~/.bashrc ~/.bash_profile ~/.wl4gshrc.sec; do
+  [ -f "$f" ] && source "$f" || true
+done
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+if [ ! -s "$KUBECONFIG" ] && [ -s /etc/rancher/k3s/k3s.yaml ]; then
+  export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+fi
+export GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+export DEEPSEEK_API_KEY_FLOWGENT="${DEEPSEEK_API_KEY_FLOWGENT:-${DEEPSEEK_API_KEY:-}}"
+
 # 1. Tear down Helm release
-helm uninstall flowgent -n default
+sudo helm uninstall flowgent -n default --kubeconfig ~/.kube/config
 
-# 2. Delete leftover JM Deployments (all namespaces)
-kubectl delete deployment -A -l flowgent.io/mode=application
+# 2. Delete leftover application-mode Deployments, pods, and namespaces
+sudo kubectl delete deployment -A -l flowgent.io/mode=application --force --grace-period=0
+sudo kubectl delete pod -A -l flowgent.io/mode=application --force --grace-period=0 --wait=false
+sudo kubectl delete pod -n default -l 'flowgent/role in (worker,sandbox-worker)' --force --grace-period=0 --wait=false
+sudo kubectl delete ns -l 'flowgent.io/mode=application' --force --grace-period=0
 
-# 2b. Delete per-namespace namespaces
-kubectl get ns -l flowgent.io/mode=application -o name | xargs -r kubectl delete
-
-# 3. Wipe PostgreSQL data
-kubectl exec -it deploy/flowgent-postgres -n default -- \
-  psql -U flowgent -d flowgent -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+# 3. Wipe PostgreSQL data (external PG via docker)
+PG_IP=$(sudo docker inspect sigbot_e2e_164364_postgres --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' | awk '{print $1}')
+sudo docker exec sigbot_e2e_164364_postgres sh -c \
+  "PGPASSWORD=test psql -U test -d flowgent -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'"
 
 # 4. Rebuild and re-import image
-make build-image-core
-docker save flowgent-core:latest | sudo k3s ctr images import -
+# runner.py checks root disk headroom around image build/import and prunes only
+# transient Docker builder cache plus /tmp/go-build* when close to kubelet
+# eviction thresholds.
+HTTPS_PROXY=http://127.0.0.1:8800 make build:core
+sudo DOCKER_BUILDKIT=1 docker build --build-arg BUILD_TAGS="x402" \
+  -t localhost/flowgent-core:latest -f deploy/docker/Dockerfile.core .
+sudo docker save localhost/flowgent-core:latest | sudo k3s ctr images import -
 
-# 5. Fresh install (Application mode — no global.mode value)
-helm install flowgent deploy/helm/flowgent \
+# 4b. Mirror runtime credentials into both namespaces without printing values.
+# runner.py performs this automatically as flowgent-e2e-runtime-env.
+
+# 5. Import config YAMLs into PG (before Helm install)
+./bin/flowgent-core --config etc/flowgent.yaml console import \
+  usecase/security-autonomy-fixer/config
+
+# 6. Fresh Helm install (Application mode)
+sudo helm install flowgent deploy/helm/flowgent \
+  --kubeconfig ~/.kube/config \
   --set global.image.repository=localhost/flowgent-core \
   --set global.image.tag=latest \
   --set postgresql.enabled=false \
   --set emqx.enabled=true \
   --set redis.enabled=false \
-  -n default
+  --set apiserver.replicas=1 \
+  --set controller.replicas=1 \
+  --set notifier.replicas=1 \
+  --set a2a.enabled=false \
+  --set wallet.enabled=false \
+  -n default --wait --timeout 300s
 
-# 6. Wait for pods
-kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=flowgent -n default --timeout=120s
+# 7. Post-install fixes (BUG WORKAROUNDS — see §8)
 
-# 7. Set GitHub token (required before running scenarios 31-35)
-source ~/.bashrc && export GITHUB_TOKEN=$GH_TOKEN
+# 7a. Set PG + MQTT env vars on all deployments
+PG_IP=$(sudo docker inspect sigbot_e2e_164364_postgres --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' | awk '{print $1}')
+EMQX_IP=$(sudo kubectl get svc flowgent-emqx -n default -o jsonpath='{.spec.clusterIP}')
+for depl in flowgent-apiserver flowgent-controller flowgent-notifier; do
+  sudo kubectl set env deployment/$depl -n default \
+    FLOWGENT__STORAGE__TYPE=POSTGRE \
+    "FLOWGENT__STORAGE__POSTGRES__DSN=postgres://test:test@${PG_IP}:5432/flowgent?sslmode=disable" \
+    "FLOWGENT__STORAGE__POSTGRES__HOST=${PG_IP}" \
+    FLOWGENT__STORAGE__POSTGRES__PORT=5432 \
+    FLOWGENT__STORAGE__POSTGRES__USERNAME=test \
+    FLOWGENT__STORAGE__POSTGRES__PASSWORD=test \
+    FLOWGENT__STORAGE__POSTGRES__DATABASE=flowgent \
+    FLOWGENT__MESSAGER__TYPE=mqtt \
+    "FLOWGENT__MESSAGER__MQTT__BROKER=tcp://${EMQX_IP}:1883"
+done
+
+# 7b. Enable MCPs
+API_IP=$(sudo kubectl get svc flowgent-apiserver -n default -o jsonpath='{.spec.clusterIP}')
+for mcp in github sonarqube; do
+  curl -s -X PUT "http://${API_IP}:9999/api/v1/default/mcp/${mcp}" \
+    -H "Content-Type: application/json" -d '{"enabled": true}'
+done
+
+# 7c. Copy ConfigMap to flowgent-default namespace (required before JM deploys)
+sudo kubectl get configmap flowgent-config -n default -o yaml | \
+  sed 's/namespace: default/namespace: flowgent-default/' | \
+  sudo kubectl apply -f -
+
+# 7d. Set imagePullPolicy on JM pods after controller creates them (wait first)
+sleep 30
+sudo kubectl patch deploy -n flowgent-default -l app=flowgent-jobmanager \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"jobmanager","imagePullPolicy":"IfNotPresent"}]}}}}'
+# Also set PG + MQTT env vars on JM deployments
+for dep in $(sudo kubectl get deploy -n flowgent-default -o name); do
+  sudo kubectl set env $dep -n flowgent-default \
+    FLOWGENT__STORAGE__TYPE=POSTGRE \
+    "FLOWGENT__STORAGE__POSTGRES__DSN=postgres://test:test@${PG_IP}:5432/flowgent?sslmode=disable" \
+    "FLOWGENT__STORAGE__POSTGRES__HOST=${PG_IP}" \
+    FLOWGENT__STORAGE__POSTGRES__PORT=5432 \
+    FLOWGENT__STORAGE__POSTGRES__USERNAME=test \
+    FLOWGENT__STORAGE__POSTGRES__PASSWORD=test \
+    FLOWGENT__STORAGE__POSTGRES__DATABASE=flowgent \
+    FLOWGENT__MESSAGER__TYPE=mqtt \
+    "FLOWGENT__MESSAGER__MQTT__BROKER=tcp://${EMQX_IP}:1883" \
+    FLOWGENT__RUNTIME__TM_IMAGE=localhost/flowgent-core:latest \
+    FLOWGENT__RUNTIME__JM_IMAGE=localhost/flowgent-core:latest \
+    FLOWGENT__RUNTIME__SANDBOX_IMAGE=localhost/flowgent-core:latest
+done
+
+# 7e. Create sandbox deployment manually (BUG: sandbox.image missing, PVC RWX)
+sudo kubectl apply -f - << 'SBOXEOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flowgent-sandbox
+  namespace: default
+  labels:
+    app.kubernetes.io/component: sandbox
+    flowgent/role: sandbox-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      flowgent/role: sandbox-worker
+  template:
+    metadata:
+      labels:
+        flowgent/role: sandbox-worker
+    spec:
+      containers:
+      - name: sandbox
+        image: localhost/flowgent-core:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/app/flowgent", "sandbox", "start"]
+        env:
+        - name: FLOWGENT__CONFIG__FILE
+          value: /etc/flowgent/flowgent.yaml
+        - name: FLOWGENT__MESSAGER__MQTT__BROKER
+          value: "tcp://${EMQX_IP}:1883"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/flowgent
+        - name: sandbox-workspace
+          mountPath: /var/flowgent
+      volumes:
+      - name: config
+        configMap:
+          name: flowgent-taskmanager-config
+      - name: sandbox-workspace
+        hostPath:
+          path: /mnt/disk1/flowgent/e2e
+          type: DirectoryOrCreate
+SBOXEOF
+
+# 7f. Fix sandbox ConfigMap (BUG: sandbox.image missing in config, taskmanager-config needed)
+sudo kubectl get configmap flowgent-config -n default -o yaml | \
+  sed 's/name: flowgent-config/name: flowgent-taskmanager-config/' | \
+  python3 -c "
+import sys,yaml
+cm=yaml.safe_load(sys.stdin)
+inner=yaml.safe_load(cm['data']['flowgent.yaml'])
+inner['sandbox']['deployment']['image']='localhost/flowgent-core:latest'
+cm['data']['flowgent.yaml']=yaml.dump(inner, default_flow_style=False)
+print(yaml.dump(cm, default_flow_style=False))
+" | sudo kubectl replace --force -f -
+
+# 8. Wait for all pods
+sudo kubectl wait --for=condition=Ready pod \
+  -l app.kubernetes.io/instance=flowgent -n default --timeout=300s
+
+# 9. Wait for JM pods (controller needs time)
+sleep 30
+sudo kubectl wait --for=condition=Ready pod \
+  -l app=flowgent-jobmanager -n flowgent-default --timeout=120s
 ```
 
 ## 2.2 Config Bootstrapping
@@ -114,16 +425,39 @@ After a clean reset (which wipes PG), the database is empty. Every E2E run must
 re-seed agents and MCPs. **The GitHub MCP has a `${GITHUB_TOKEN}` placeholder
 in its YAML that must be resolved from the environment before seeding.**
 
-### 2.2.1 Set GitHub Token
+### 2.2.1 Set GitHub and LLM Environment
 
-The canonical token source is `GH_TOKEN` in `~/.bashrc`. Export it as
-`GITHUB_TOKEN` so the seed scripts can resolve the YAML placeholder:
+The canonical secret source for E2E execution is the host shell environment
+after sourcing `~/.bashrc`, `~/.bash_profile`, and `~/.wl4gshrc.sec`. The runner
+does this automatically. Manual commands should use the same pattern:
 
 ```bash
-source ~/.bashrc
-export GITHUB_TOKEN=$GH_TOKEN
-# Verify: echo $GITHUB_TOKEN | head -c 10  # should show token prefix
+for f in ~/.bashrc ~/.bash_profile ~/.wl4gshrc.sec; do
+  [ -f "$f" ] && source "$f" || true
+done
+export GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+export DEEPSEEK_API_KEY_FLOWGENT="${DEEPSEEK_API_KEY_FLOWGENT:-${DEEPSEEK_API_KEY:-}}"
+
+# Non-secret presence checks only:
+[ -n "${GITHUB_TOKEN:-}" ] && echo "GITHUB_TOKEN=set"
+[ -n "${DEEPSEEK_API_KEY_FLOWGENT:-}" ] && echo "DEEPSEEK_API_KEY_FLOWGENT=set"
 ```
+
+`config/llmproviders/deepseek.yaml` resolves the DeepSeek API key from
+`${DEEPSEEK_API_KEY_FLOWGENT}` during `flowgent-core console import`.
+JM/TM/Sandbox pods get runtime credentials only through the K8s Secret named by
+`runtime.credential_env_secret`; host env alone is insufficient once execution
+enters Kubernetes.
+If `HTTP_PROXY`/`HTTPS_PROXY` are present in the sourced host environment, the
+E2E deployer injects them into the same runtime Secret after rewriting
+`localhost`/`127.0.0.1` to the pod default gateway derived from the node PodCIDR
+(with node InternalIP as a fallback). This is required for sandbox `git-clone`
+to reach GitHub in GFW environments. The deployer also merges
+Flowgent/Kubernetes service domains into `NO_PROXY` and exports
+`FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY={pod_proxy_host}:{port}` for console import.
+The `git-clone` node probes the injected proxy before cloning, retries transient
+clone failures, and falls back to the pod default gateway proxy with the same
+proxy port if the primary injected proxy is unreachable.
 
 ### 2.2.2 Automatic Seeding (via e2e/runner.py console import)
 
@@ -142,8 +476,10 @@ LLM providers, notifiers, and skills from the `config/` directory.
 ### 2.2.3 Manual Bootstrap (alternative to console import)
 
 ```bash
-source ~/.bashrc
-export GITHUB_TOKEN=$GH_TOKEN
+for f in ~/.bashrc ~/.bash_profile ~/.wl4gshrc.sec; do
+  [ -f "$f" ] && source "$f" || true
+done
+export GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
 # Register GitHub MCP with resolved token
 curl -s -X POST http://localhost:9999/api/v1/default/mcp \
@@ -207,22 +543,22 @@ numbered prefix:
 
 | # | File | Layer | Description |
 |---|------|-------|-------------|
-| 11 | `11_infra_readiness_verifier.py` | L0 | Helm deployment, pod readiness, healthz |
-| 12 | `12_console_import_verifier.py` | L0 | Console binary, import command, DB verification |
-| 13 | `13_otel_verifier.py` | L0 | OTEL infrastructure + Jaeger span coverage |
-| 21 | `21_apiserver_verifier.py` | L1 | REST CRUD + lifecycle events |
-| 22 | `22_notifier_verifier.py` | L1 | Multi-channel delivery |
-| 23 | `23_controller_verifier.py` | L1 | Application mode: JM pod lifecycle |
-| 24 | `24_messager_verifier.py` | L1 | MQTT topics + sandbox chain |
-| 25 | `25_a2a_protocol_verifier.py` | L1 | Agent card discovery, task submit |
-| 26 | `26_wallet_verifier.py` | L1 | x402 key mgmt + MQTT signing |
-| 31 | `31_seed_trigger_verifier.py` | L2 | E2E: agent/MCP registration, flow creation, trigger |
-| 32 | `32_discovery_analyze_verifier.py` | L2 | E2E: commit fetch, SonarQube scan, issue aggregation |
-| 33 | `33_remediation_verifier.py` | L2 | E2E: fix gen, review, vote, supervisor, human gate |
-| 34 | `34_delivery_report_verifier.py` | L2 | E2E: branch/commit/PR, rescan, report, PG final |
-| 35 | `35_pr_commit_verifier.py` | L2 | Agent-produced fix commits on target PR |
-| 36 | `36_knowledge_verifier.py` | L2 | RAG retrieval, injection, post-handle |
-| 37 | `37_volume_workspace_verifier.py` | L2 | PVC, mount, git clone & file RW |
+| 11 | `s11_infra_readiness_verifier.py` | L0 | Helm deployment, pod readiness, healthz |
+| 12 | `s12_console_import_verifier.py` | L0 | Console binary, import command, DB verification |
+| 13 | `s13_otel_verifier.py` | L0 | OTEL infrastructure + Jaeger span coverage |
+| 21 | `s21_apiserver_verifier.py` | L1 | REST CRUD + lifecycle events |
+| 22 | `s22_notifier_verifier.py` | L1 | Multi-channel delivery |
+| 23 | `s23_controller_verifier.py` | L1 | Application mode: JM pod lifecycle |
+| 24 | `s24_messager_verifier.py` | L1 | MQTT topics + sandbox chain |
+| 25 | `s25_a2a_protocol_verifier.py` | L1 | Agent card discovery, task submit |
+| 26 | `s26_wallet_verifier.py` | L1 | x402 key mgmt + MQTT signing |
+| 31 | `s31_seed_trigger_verifier.py` | L2 | E2E: agent/MCP registration, flow creation, trigger |
+| 32 | `s32_discovery_analyze_verifier.py` | L2 | E2E: commit fetch, SonarQube scan, issue aggregation |
+| 33 | `s33_remediation_verifier.py` | L2 | E2E: fix gen, review, vote, supervisor, human gate |
+| 34 | `s34_delivery_report_verifier.py` | L2 | E2E: branch/commit/PR, rescan, report, PG final |
+| 35 | `s35_pr_commit_verifier.py` | L2 | Agent-produced fix commits on target PR |
+| 36 | `s36_knowledge_verifier.py` | L2 | RAG retrieval, injection, post-handle |
+| 37 | `s37_volume_workspace_verifier.py` | L2 | PVC, mount, git clone & file RW |
 
 Shared utilities for the split E2E (31-34) sub-verifiers live in `verifier/_common.py`.
 
@@ -287,11 +623,14 @@ tree import, and PostgreSQL verification that config rows were created.
 | 1.3 | Verify PG: `llm_agent` | — | Agent rows created |
 | 1.4 | Verify PG: `llm_mcp` | — | MCP rows created |
 | 1.5 | Verify PG: `llm_providers` | — | LLM provider rows created |
+| 1.6 | Verify imported `git-clone.network_policy.allowed` | Sourced/deployer env | No unresolved `${FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY}` placeholder; includes `github.com` and the resolved proxy allowlist entry |
 
 ### 4.2.4 Pass/Fail Criteria
 
-- **PASS**: Binary exits 0, all config categories have PG rows
-- **FAIL**: Binary crashes, PG rows missing for any config category
+- **PASS**: Binary exits 0, all config categories have PG rows, and the imported
+  `git-clone` sandbox network allowlist contains the resolved proxy endpoint
+- **FAIL**: Binary crashes, PG rows missing for any config category, or the
+  `git-clone` proxy allowlist placeholder remains unresolved after import
 
 ---
 
@@ -304,26 +643,35 @@ tree import, and PostgreSQL verification that config rows were created.
 
 Validate OTEL infrastructure: Jaeger Query API accessibility, exporter
 configuration, and that traces can be delivered to the Jaeger backend.
-This is an infrastructure-level check — the full E2E span coverage verification
-is handled by scenario 34 (Delivery & Report).
+s13 triggers one real `security-autonomy-fixer` run and treats the Jaeger trace
+for that `run.id` plus phases 1-7 node span coverage as hard gates.
+Recent startup logs are accepted as OTEL-enabled evidence when present; if those
+logs have rotated or the pod was replaced, the verifier falls back to the live
+pod/config runtime state. This fallback does not replace the mandatory Jaeger
+trace and core span checks.
 
 ### 4.3.2 Prerequisites
 
-- Jaeger all-in-one running (Query API reachable on port 16686)
-- OTEL exporter configured in `mgmt.otel` ConfigMap section
+- K8s Flowgent Jaeger Query API reachable on local port `16687`
+- OTEL exporter configured in `mgmt.otel` ConfigMap section or equivalent pod
+  runtime env override
 
 ### 4.3.3 Steps
 
 | Step | Action | Expected Input | Expected Output | Mandatory |
 |------|--------|---------------|-----------------|-----------|
-| 1.1 | `GET /api/services` | Jaeger Query API | HTTP 200, service list returned | **YES** |
-| 1.2 | Verify `flowgent-jobmanager` service | Service list | Service appears in Jaeger | **YES** |
-| 1.3 | Verify `flowgent-taskmanager` service | Service list | Service appears in Jaeger | Informational |
+| 1.1 | Verify JM/API OTEL-enabled evidence | Recent logs or live pod/config state | OTEL enabled for both components | **YES** |
+| 1.2 | `GET /api/services` | Jaeger Query API | HTTP 200, service list returned | **YES** |
+| 1.3 | Query Jaeger traces by `run.id` | Triggered run ID | At least one matching trace | **YES** |
+| 1.4 | Validate core node spans | Trace spans | All phases 1-7 nodes have spans | **YES** |
+| 1.5 | Sample span attributes | Trace spans | `flowgent.node_id`/task type visible | Informational |
 
 ### 4.3.4 Pass/Fail Criteria
 
-- **PASS**: Jaeger Query API reachable, both JM and TM services registered
-- **FAIL**: Jaeger unreachable, no services visible
+- **PASS**: OTEL is enabled in runtime evidence, Jaeger Query API is reachable,
+  at least one trace matches the run ID, and every phases 1-7 core node has a span
+- **FAIL**: Runtime OTEL evidence missing, Jaeger unreachable, run trace missing,
+  or any core node span is absent
 
 ---
 
@@ -347,8 +695,8 @@ PostgreSQL persistence, and confirm MQTT lifecycle event publishing.
 | 2.1 | AgentFlow | `orh_agentflow` | `POST /api/v1/{namespace}/flows` | `{id, nodes, edges, priority}` | HTTP 200/201, body contains `id` |
 | 2.2 | AgentFlow | `orh_agentflow` | `GET /api/v1/{namespace}/flows` | — | JSON array of flows |
 | 2.3 | AgentFlow | `orh_agentflow` | `GET /api/v1/{namespace}/flows/{id}` | Flow ID | Flow object with `version`, `nodes`, `edges` |
-| 2.4 | AgentFlow | `orh_agentflow` | `PUT /api/v1/{namespace}/flows/{id}` | `{description, version}` | HTTP 200, `version` incremented |
-| 2.5 | AgentFlow | `orh_agentflow` | `DELETE /api/v1/{namespace}/flows/{id}` | Flow ID | HTTP 200/204, soft-deleted (`del_flag=true`) |
+| 2.4 | AgentFlow | `orh_agentflow` | `PUT /api/v1/{namespace}/flows/{id}` | `{description}` | HTTP 200, deterministic version `1` row updated |
+| 2.5 | AgentFlow | `orh_agentflow` | `DELETE /api/v1/{namespace}/flows/{id}` | Flow ID | HTTP 200/204, soft-deleted (`del_flag=true`) and no longer visible through `GET` or `LIST` |
 | 2.6 | FlowRun | `orh_flowrun` | `POST /api/v1/{namespace}/runs` | `{agentflow_id, priority}` | HTTP 201, body contains `id`, `status=PENDING` |
 | 2.7 | FlowRun | `orh_flowrun` | `GET /api/v1/{namespace}/runs/{id}` | Run ID | Run object with `status`, `created_at` |
 | 2.8 | TaskRun | `task_runs` | `GET /api/v1/{namespace}/runs/{id}/tasks` | Run ID | JSON array of task runs (may be empty) |
@@ -371,8 +719,8 @@ PostgreSQL persistence, and confirm MQTT lifecycle event publishing.
 
 ### 4.4.5 Pass/Fail Criteria
 
-- **PASS**: All CRUD endpoints return correct status codes, PG rows match API responses, MQTT events published for lifecycle changes
-- **FAIL**: Any CRUD endpoint returns 5xx, PG/API data mismatch, MQTT events missing
+- **PASS**: All CRUD endpoints return correct status codes, PG rows match API responses, soft-deleted rows disappear from API `GET/LIST`, MQTT events published for lifecycle changes, and verifier-created setup flows are cleaned up
+- **FAIL**: Any CRUD endpoint returns 5xx, PG/API data mismatch, DELETE leaves a resource readable/listed, verifier setup flows leak, or MQTT lifecycle events are missing
 
 ---
 
@@ -405,8 +753,9 @@ Validate EMQX broker connectivity and notification topic subscription.
 
 ### 4.6.1 Purpose
 
-Validate Application mode flow lifecycle: Controller creates/updates/deletes K8s
-JM Deployments in response to flow CRUD events.
+Validate Application mode runtime lifecycle: Controller treats flow CRUD as
+metadata registration, creates JM/TM/Sandbox resources only for active runs, and cleans
+them up when no active run remains.
 
 ### 4.6.2 Prerequisites
 
@@ -416,20 +765,21 @@ JM Deployments in response to flow CRUD events.
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 4.1 | `POST /api/v1/{namespace}/flows` | `{id, nodes: [noop], edges: [], priority: "high"}` | HTTP 200/201, JM Deployment created in `flowgent-{namespace}` namespace |
-| 4.2 | Wait for Deployment | — | `flowgent-jobmanager-{namespace}-{flow_id}` exists, 1 replica |
-| 4.3 | Verify Deployment spec | Deployment name | Container env includes `FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}` |
-| 4.4 | Wait for JM Pod | `app=flowgent-jobmanager,flowgent.io/flow={flow_id}` | Pod reaches `Running` within 60s |
-| 4.5 | `DELETE /api/v1/{namespace}/flows/{id}` | Flow ID | HTTP 200/204 |
-| 4.6 | Wait for GC | — | JM Deployment deleted within 60s |
+| 4.1 | `POST /api/v1/{namespace}/flows` | `{id, nodes: [short sandbox], edges: [], priority: "high"}` | HTTP 200/201, no JM/TM/Sandbox Deployment created before trigger |
+| 4.2 | `POST /api/v1/{namespace}/flows/{id}/trigger` | Empty/manual trigger payload | `run_id` returned |
+| 4.3 | Wait for Deployments | — | `flowgent-jobmanager-{namespace}-{flow_id}`, `flowgent-taskmanager-{namespace}-{flow_id}`, and `flowgent-sandbox-{namespace}-{flow_id}` exist in `flowgent-{namespace}` with TM/Sandbox replicas `1` for one pending sandbox task and configured slots |
+| 4.4 | Verify JM Deployment spec | Deployment name | Container env includes `FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}` and `envFrom.secretRef=flowgent-e2e-runtime-env`; when host proxy env is present, the Secret contains pod-reachable `HTTP_PROXY`/`HTTPS_PROXY` and merged `NO_PROXY` |
+| 4.5 | Wait for JM/TM/Sandbox Pods | Flow-scoped labels | JM, flow-owned TM, and flow-owned Sandbox pods reach `Running` |
+| 4.6 | `DELETE /api/v1/{namespace}/flows/{id}` | Flow ID | HTTP 200/204 and subsequent `GET` returns 404 |
+| 4.7 | Wait for GC | — | JM and JM-owned TM/Sandbox Deployments deleted |
 
 ### 4.6.4 Steps — Flow UPDATE Lifecycle
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 5.1 | Create flow + wait for Deployment | (same as 4.1-4.2) | JM Deployment running |
+| 5.1 | Create metadata-only flow | `{id, nodes: [noop], edges: [], priority: "high"}` | HTTP 200/201 and no idle JM/TM/Sandbox Deployment |
 | 5.2 | `PUT /api/v1/{namespace}/flows/{id}` | `{description: "updated", version: 2}` | HTTP 200 |
-| 5.3 | Check Deployment generation | — | Generation incremented (Controller triggered rolling update) |
+| 5.3 | Re-check idle resources | Flow-scoped JM/TM/Sandbox names | Still no JM/TM/Sandbox Deployment without an active run |
 
 ### 4.6.5 Steps — MQTT Event Verification
 
@@ -440,9 +790,14 @@ JM Deployments in response to flow CRUD events.
 
 ### 4.6.6 Pass/Fail Criteria
 
-- **PASS**: Controller creates JM Deployment in correct namespace namespace with
-  correct env vars; Deployment deleted on flow delete; MQTT events published
-- **FAIL**: JM Deployment not created within 30s, wrong namespace, env vars missing
+- **PASS**: Controller creates JM Deployment in the correct application namespace
+  with correct env vars and runtime credential Secret reference; runtime proxy
+  values are pod-reachable when configured; API DELETE hides the flow; the JM
+  Deployment is deleted on flow delete; MQTT events published
+- **FAIL**: JM Deployment not created within 30s, wrong namespace, env vars
+  missing, runtime proxy values point at localhost/127.0.0.1 inside pod env,
+  DELETE leaves the flow readable, or Controller fails to delete the JM
+  Deployment within 60s
 
 ---
 
@@ -580,9 +935,10 @@ trigger the flow run, and verify the run_id is correctly recorded.
 |------|--------|---------------|-----------------|
 | 11.1 | Seed agents from `config/agents/*.yaml` | Agent YAML files | Agents registered (API 200/201) |
 | 11.2 | Seed MCPs from `config/mcps/*.yaml` | MCP YAML files (token resolved) | MCPs registered (API 201) |
-| 11.3 | Create flow definition via API | `security-autonomy-fixer.yaml` (24 nodes, 28 edges) | Flow created |
-| 11.4 | Trigger flow run | Manual trigger or webhook fallback | run_id returned and persisted to `.last_run_id` |
-| 11.5 | Verify PG: `orh_flowrun` | run_id | Row exists with correct `status` |
+| 11.3 | Create flow definition via API | `security-autonomy-fixer.yaml` with env placeholders resolved | Flow created |
+| 11.4 | Capture PR baseline | GitHub PR #4 commits before trigger | `.last_pr_baseline.json` stores commit count/head/shas |
+| 11.5 | Trigger flow run | Manual trigger or webhook fallback | run_id returned and persisted to `.last_run_id` |
+| 11.6 | Verify PG: `orh_flowrun` | run_id | Row exists with correct `status` |
 
 ### 4.10.2 Scenario 32 — Discovery & Analyze
 
@@ -595,9 +951,10 @@ and ANALYZE phases completed correctly.
 |------|--------|---------------|-----------------|
 | 32.1 | Poll run status | `GET /api/v1/{namespace}/runs/{run_id}` | Status reaches terminal state |
 | 32.2 | Fetch task list | `GET /api/v1/{namespace}/runs/{run_id}/tasks` | Task array returned |
-| 32.3 | Verify `get-commit` | Task output | `commit_sha` populated |
-| 32.4 | Verify `scan-sonarqube` | Task output | Issues array present |
+| 32.3 | Verify `get-commit` | Task output | `commit_sha` or GitHub MCP `sha` populated |
+| 32.4 | Verify `scan-sonarqube` | Task output | Issues array present, including JSON wrapped in MCP `text` |
 | 32.5 | Verify `aggregate-issues` | Task output | Normalized issues with source/rule/severity fields |
+| 32.6 | Verify sandbox analyze nodes | Task rows + MQTT audit | `git-clone` and `read-source-files` completed without hidden sandbox errors; `read-source-files` skipped generated code and selected a bounded single-file `issues[]`/`files[]` context; non-`$share` audit saw sandbox trigger/result messages |
 
 ### 4.10.3 Scenario 33 — Remediation
 
@@ -606,7 +963,7 @@ committee vote, supervisor safety gate, and human approval routing.
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 33.1 | Verify `generate-fixes` | Task output | Patches array with file+patch entries |
+| 33.1 | Verify `generate-fixes` | Task output | Compact JSON with at most one changed full-file entry in `files[]` and matching `patches[]` metadata (`file`, `rule`, `description`) |
 | 33.2 | Verify `review-security` | Task output | Decision + reason fields |
 | 33.3 | Verify `review-quality` | Task output | Decision + reason fields |
 | 33.4 | Verify `review-arch` | Task output | Decision + reason fields |
@@ -623,21 +980,22 @@ report generation, and PG final state coverage across all phases.
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
 | 34.1 | Verify `create-branch` | Task status | COMPLETED |
-| 34.2 | Verify `commit-fixes` | Task status | COMPLETED |
-| 34.3 | Verify `create-pr` | Task output | PR URL present |
+| 34.2 | Verify `commit-fixes` / `commit-to-existing` | Task status + output text | COMPLETED and GitHub MCP output contains no `failed to`/`validation failed`/`error:` marker |
+| 34.3 | Verify `create-pr` | Task status + output text | COMPLETED and no hidden MCP failure on the selected branch |
 | 34.4 | Verify re-scan chain | 5 nodes (trigger-rescan → fix-complete) | All COMPLETED |
-| 34.5 | Verify `summary-report` | Task output | Report with content |
+| 34.5 | Verify `summary-report` | Task output | Report with content when the report path is reached; otherwise path-dependent skip is recorded |
 | 34.6 | Verify `notify-pr` | Task status | COMPLETED |
-| 34.7 | Verify PG: all phases | `task_runs` table | Every phase has ≥1 completed task |
+| 34.7 | Verify PG: all phases | `task_runs` table | Every non-optional phase has ≥1 completed task |
 
 ### 4.10.5 Pass/Fail Criteria (E2E capstone, all 31-34)
 
 - **PASS**: Flow reaches `COMPLETED`; all nodes in executed phases complete;
   `task_runs` rows persisted with output; REST task APIs return correct data;
-  PG state consistent with API responses
+  PG state consistent with API responses; non-`$share` MQTT audit observes
+  `exec/plans`, `exec/results`, `sandbox/trigger`, and `sandbox/result`
 - **FAIL**: Flow hangs (timeout), no task rows persisted, REST/PG mismatch
-- **PARTIAL**: Flow runs but some nodes fail (e.g. LLM provider missing) —
-  acceptable if infrastructure/plumbing is verified
+- **FAIL**: Any task row has a hidden sandbox error despite success status,
+  or PR #4 receives no Flowgent-produced fix commit in scenario 35
 
 ---
 
@@ -660,17 +1018,19 @@ verification — it checks what agents delivered, not just pipeline execution.
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
 | 35.1 | `GET /repos/{owner}/{repo}/pulls/{number}` | `wl4g/rengine`, PR #4 | PR metadata: `title`, `state` (open/merged), `changed_files`, `additions`, `deletions` |
-| 35.2 | `GET /repos/{owner}/{repo}/commits?sha={branch}&per_page=50` | Branch `fix/flowgent_sec_auto_fix` | Commit list with SHA, author, message |
-| 35.3 | Classify commits | Commit messages | Flowgent commits identified by message patterns |
-| 35.4 | `GET /repos/{owner}/{repo}/pulls/{number}/files?per_page=100` | PR #4 | File list with `filename`, `additions`, `deletions`, `status` |
-| 35.5 | Classify files | File paths | Test files vs source files |
+| 35.2 | Load `.last_pr_baseline.json` | Scenario 31 output | Pre-trigger commit count/head/shas available |
+| 35.3 | `GET /repos/{owner}/{repo}/pulls/{number}/commits` | PR #4 | Full PR commit list with SHA, author, message |
+| 35.4 | Classify commits | Commit messages + baseline shas | At least one new Flowgent security-fix commit after s31 baseline |
+| 35.5 | `GET /repos/{owner}/{repo}/pulls/{number}/files?per_page=100` | PR #4 | File list with `filename`, `additions`, `deletions`, `status` |
+| 35.6 | Classify files | File paths | Test files vs source files |
 
 ### 4.11.4 Pass/Fail Criteria
 
-- **PASS (full)**: ≥1 Flowgent-authored commit found AND ≥1 test file changed
-- **PASS (with caveat)**: PR accessible but no Flowgent commits — indicates MCP
-  tool nodes lacked valid credentials (pipeline ran but couldn't push)
-- **FAIL**: PR not accessible (critical), branch has no commits (critical)
+- **PASS**: PR accessible, PR has commits, and at least one new Flowgent
+  security-fix commit appears after the Scenario 31 baseline
+- **FAIL**: PR not accessible, baseline missing, branch has no commits, or PR #4
+  contains only historical Flowgent commits with no new security-fix commit from
+  the current run
 
 ---
 
@@ -696,7 +1056,7 @@ and asynchronous knowledge extraction after flow runs.
 | 36.2 | `GET /api/v1/{namespace}/knowledge` | — | JSON array with created entry |
 | 36.3 | `GET /api/v1/{namespace}/knowledge/{id}` | Knowledge ID | Entry with correct `title`, `content`, `tags` |
 | 36.4 | `PUT /api/v1/{namespace}/knowledge/{id}` | `{content: "updated content"}` | HTTP 200, content updated |
-| 36.5 | `POST /api/v1/{namespace}/knowledge/search` | `{query: "SQL injection", top_k: 5}` | Matching entries ranked by relevance |
+| 36.5 | `POST /api/v1/{namespace}/knowledge/search` | `{query: "SQL injection parameterized query", top_k: 5}` | Matching entries returned by tokenized keyword search |
 | 36.6 | `GET /api/v1/{namespace}/knowledge/tags` | — | JSON array with all distinct tags |
 | 36.7 | `DELETE /api/v1/{namespace}/knowledge/{id}` | Knowledge ID | HTTP 200/204 |
 | 36.8 | Trigger flow with LLM node | Flow with `knowledge_search` config | LLM node system prompt contains injected knowledge |
@@ -727,27 +1087,53 @@ injects them into the system prompt. Verification checks:
 
 ### 4.13.1 Purpose
 
-Validate PVC provisioning, volume mount, git clone, and file read/write within
-sandbox containers.
+Validate hostPath volume mount, workspace writability, and git clone evidence
+within **TM/Sandbox Pod containers** (NOT on the host filesystem).
 
-### 4.13.2 Prerequisites
+### 4.13.2 CRITICAL Constraints
 
-- Scenario 11 passed (K8S running)
-- PVC provisioner available
+> **IMPORTANT — 以下约束必须严格遵守:**
+>
+> 1. **工作区目录 `/mnt/disk1/flowgent/e2e/` 必须由 security-autonomy-fixer 的
+>    DAG tasks (如 `git-clone` sandbox node) 在执行时自动创建。**
+>    verifier 脚本绝不可直接在宿主机上操作此目录（不创建、不写入、不删除）。
+>
+> 2. **所有校验必须通过 `kubectl exec` 进入 TM Pod 或 Sandbox Pod 容器内部进行。**
+>    宿主机上的 `/mnt/disk1/flowgent/e2e/` 只是 hostPath 挂载源，
+>    容器内看到的才是真实的工作区状态。
+>
+> 3. **验证 rengine clone 证据时，必须在容器内查找 `.git` 目录、源码文件等，**
+>    绝不能直接在宿主机路径上 `ls`、`find` 或 `git clone`。
+>
+> 4. **在完整 s11-s37 轮次中，工作区必须已由当前 flow run 创建。**
+>    `s37` 会读取 `.last_run_id`，并在容器内检查当前 run 的
+>    `/var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}` 目录和
+>    git-clone task 下的 `repos/rengine/.git`。若未找到，完整轮次必须 FAIL。
 
-### 4.13.3 Steps
+### 4.13.3 Prerequisites
+
+- Scenario 11 passed (K8S running, Helm deployed)
+- Shared TM or Sandbox pod Running in tenant namespace (`default`)
+- `security-autonomy-fixer` flow triggered and DAG execution reached `git-clone` node
+
+### 4.13.4 Steps
 
 | Step | Action | Expected Input | Expected Output |
 |------|--------|---------------|-----------------|
-| 37.1 | Verify PVC exists | PVC name from config | PVC in `Bound` state |
-| 37.2 | Verify git clone | Repository URL | Files cloned into workspace |
-| 37.3 | Verify file read | File path in workspace | File content accessible |
-| 37.4 | Verify file write | File path in workspace | Write succeeds, content persisted |
+| 37.1 | Load `.last_run_id` | Scenario 31 output | Current run ID available |
+| 37.2 | Find running TM/Sandbox pod via `kubectl get pods -n default -l flowgent/role=worker` | KUBECONFIG | Pod name and namespace returned |
+| 37.3 | `kubectl exec` into pod: verify workspace dir inside container | Container workspace path | Directory exists |
+| 37.4 | Verify workspace volumeMount in deployment spec | TM/Sandbox deployment YAML | workspace volumeMount and hostPath source present |
+| 37.5 | `kubectl exec` into pod: verify writable flag | Container workspace path | `test -w` succeeds without creating files |
+| 37.6 | `kubectl exec` into pod: inspect current run subdirectories | `/var/flowgent/default/security-autonomy-fixer/{run_id}` | Sandbox task directories exist for `git-clone`, `read-source-files`, and `wait-rescan` |
+| 37.7 | `kubectl exec` into pod: verify legacy path absent | `/var/flowgent/default/security-autonomy-fixer/runs/{run_id}` | Legacy `runs/plans/span` workspace absent for the current run |
+| 37.8 | `kubectl exec` into pod: locate cloned repo at expected path | `/var/flowgent/default/security-autonomy-fixer/{run_id}/{git_clone_task_id}/repos/rengine/.git` | `.git` directory found exactly at expected repo path |
+| 37.9 | `kubectl exec` into pod: `ls` + `git log` + file count inside repo dir | Repo directory path | Source files present, git history visible, `pom.xml` exists |
 
-### 4.13.4 Pass/Fail Criteria
+### 4.13.5 Pass/Fail Criteria
 
-- **PASS**: PVC bound, git clone succeeds, file RW works
-- **FAIL**: PVC not bound, clone fails, I/O errors
+- **PASS**: TM/Sandbox pod found, workspace volume mount configured, writable, current-run task directories present, rengine `.git` found under the git-clone task directory with source files
+- **FAIL**: No TM/Sandbox pod running, workspace volumeMount missing, current run workspace missing, legacy `runs/plans` workspace still used, or the git-clone task repo `.git` is absent
 
 ---
 
@@ -762,10 +1148,16 @@ sandbox containers.
 | `PG connection failed` | PostgreSQL credentials wrong | Check `config.py` PG_* vars |
 | `ImagePullBackOff` | flowgent-core image missing | Re-run `docker save \| k3s ctr images import` |
 | `JM Deployment not created` | Controller not running or RBAC missing | Check ClusterRoleBinding for namespace namespace |
+| Deleted `test-flow-*` JM/TM keeps reappearing | Soft-deleted flow is still visible to API/Controller, or application-mode cleanup missed old pods/deployments | Verify API `GET /flows/{id}` returns 404 after DELETE, `LIST /flows` omits it, and redeploy deletes `flowgent.io/mode=application` pods/deployments |
+| `GET` after DELETE returns HTTP 500 | Handler mapped store not-found/no-row errors to internal server error | Map not-found store errors to HTTP 404; s21 treats any 5xx after DELETE as failure |
+| `init MCP github ... server returned 4xx` | TM pod lacks `GITHUB_TOKEN` because runtime credential Secret was missing or not mounted | Verify `flowgent-e2e-runtime-env` exists in `default` and `flowgent-default`, and JM/TM pod templates use `envFrom.secretRef` |
+| `git-clone` sandbox task times out or shows `Failed to connect to github.com port 443` | Sandbox pod did not receive a pod-reachable HTTPS proxy | Verify `flowgent-e2e-runtime-env` contains `HTTPS_PROXY` rewritten to the pod default gateway or another pod-reachable host, not `127.0.0.1`, and `NO_PROXY` includes `.svc`/`.cluster.local` |
 | `Jaeger trace not found` | OTEL not configured | Verify `OTEL_EXPORTER_OTLP_ENDPOINT` env |
+| `Jaeger services only contains jaeger-all-in-one` | Flowgent exporter did not ingest a startup span | Check Flowgent OTEL init logs; provider should fail startup if ForceFlush cannot export |
+| s13 has Jaeger spans but cannot find `OTEL tracing enabled` in logs | Startup log line rotated or pod log window changed | s13 should use live pod/config OTEL evidence as fallback while still requiring Jaeger trace and core span coverage |
 | `Human approval timeout` | WebSocket not connected | Check notifier pod logs |
 | `MCP not found: github/sonarqube` | MCPs not registered or TM not restarted | Verify `GET /api/v1/{namespace}/mcp`, restart TM pods |
-| `LLM provider not found: default` | No LLM provider registered | `POST /api/v1/{namespace}/llm/providers` |
+| `LLM provider not found: default` | LLM provider missing, inactive, or imported with non-runtime status | Verify `llm_providers.status='ACTIVE'` after console import |
 | `DiskPressure taint` | Node disk >95% | Clean Docker images, journald logs, caches |
 | `.last_run_id not found` | Scenario 31 not run before 32/33/34 | Run `python3 runner.py --skip-sonarqube --skip-build --skip-import --skip-deploy -s 31` first |
 
@@ -785,8 +1177,8 @@ kubectl logs deploy/flowgent-taskmanager -n flowgent-default --tail=100
 # EMQX dashboard
 open http://localhost:18083  # admin / public
 
-# Jaeger UI
-open http://localhost:16686
+# K8s Flowgent Jaeger UI (runner port-forward)
+open http://localhost:16687
 
 # PostgreSQL query
 kubectl exec -it deploy/flowgent-postgres -- psql -U flowgent -d flowgent -c \
@@ -803,7 +1195,7 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 |----------|----------|------------|
 | 11 — Infrastructure | 10-15s | K8s API queries |
 | 12 — Console Import | 5-10s | Binary startup + DB writes |
-| 13 — OTEL | 5-10s | Jaeger API queries |
+| 13 — OTEL | 10-15m | Full flow trigger + Jaeger span queries |
 | 21 — API Server CRUD | 20-30s | DB writes + MQTT events |
 | 22 — Notifier | 5-10s | MQTT connect + subscribe |
 | 23 — Controller | 40-60s | K8s Deployment creation |
@@ -811,14 +1203,14 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 | 25 — A2A Protocol | 5-10s | HTTP round-trips |
 | 26 — Wallet | 15-20s | Key generation + MQTT signing |
 | 31 — Seed & Trigger | 10-15s | Agent/MCP registration + flow creation |
-| 32 — Discovery & Analyze | 60-120s | SonarQube scan + poll |
+| 32 — Discovery & Analyze | 60-180s | SonarQube scan + git clone/read-source + poll |
 | 33 — Remediation | 120-300s | LLM calls (fix gen + reviews) |
 | 34 — Delivery & Report | 60-120s | Git ops + re-scan + report |
 | 35 — PR Verification | 5-10s | GitHub API calls |
 | 36 — Knowledge RAG | 15-30s | Knowledge CRUD + search + flow run |
-| 37 — Volume Workspace | 10-20s | PVC binding + git clone |
+| 37 — Volume Workspace | 10-20s | Pod-internal mount + clone evidence |
 
-**Total suite runtime**: ~15-30 minutes (dominated by scenarios 32-33 LLM calls)
+**Total suite runtime**: ~25-60 minutes (dominated by scenarios 13, 32, and 33 full-flow/LLM calls)
 
 ---
 
@@ -837,9 +1229,12 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 - TM and JM do NOT publish lifecycle events
 
 ### 7.1.3 Application Mode Only
-- Every flow gets a dedicated JM Deployment in `{prefix}{namespace}` namespace
-- Deployment named `flowgent-jobmanager-{namespace}-{flow_id}`
-- Controller dispatches at most once per flow-definition version (on-new-definition)
+- A flow definition alone does not allocate runtime pods.
+- While a flow has at least one `PENDING`, `RUNNING`, or `PAUSED` run, Controller
+  owns one dedicated JM Deployment in `{prefix}{namespace}` named
+  `flowgent-jobmanager-{namespace}-{flow_id}`.
+- When no active run remains, Controller deletes that JM and the JM-owned TM
+  Deployment. Scheduled/webhook/API triggers create runs; imports do not.
 
 ### 7.1.4 DAG Dependency Coordination
 - JM outer-loop calls `Ready()` to discover newly-unblocked nodes
@@ -858,6 +1253,56 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 - TM parses HTTP 402, builds unsigned payloads, evaluates policy, calls facilitator
 - Wallet only signs opaque payloads (no x402 parsing, no policy evaluation)
 
+## 7.2 Verifier Contract
+
+- `runner.py` is the only supported scenario entry point; every real round must
+  execute the full ordered suite `s11` through `s37`.
+- `s11` and `s12` are hard gates: Helm pod readiness, apiserver health, console
+  import, and resource counts fail the suite on mismatch.
+- `s11` must fail if a full redeploy/import leaves verifier-created
+  `test-flow-*` application-mode pods/deployments behind or if metadata-only
+  imports allocate idle application JM/TM/Sandbox runtime resources.
+- Runner-owned localhost tunnels must repeatedly pass apiserver health, EMQX TCP,
+  and Jaeger Query probes before any scenario starts.
+- MQTT audit subscribers used by `s31` through `s34` are ordinary non-`$share`
+  subscriptions. They observe real `ctrl/run/created`, `exec/plans`,
+  `exec/results`, `sandbox/trigger`, and `sandbox/result` topics without
+  joining the L1 worker consumer groups.
+- Application-mode runtime checks require controller-created JM pods only after a
+  real run exists. TM and Sandbox readiness must be flow-scoped in
+  `flowgent-{namespace}` and sized from active task load divided by configured
+  slots.
+- Runtime credential checks require `flowgent-e2e-runtime-env` in both the
+  system namespace and the application namespace, and `envFrom.secretRef` on
+  Controller-created JM plus JM-created TM/Sandbox pod templates. When host
+  proxy env is present, the same checks require pod-reachable proxy values in
+  that Secret because sandbox `git-clone` cannot use host-local `127.0.0.1`.
+- Scenario 31 API seeding must resolve the same environment placeholders as
+  console import; it must not overwrite the imported flow with literal E2E
+  placeholders such as `${FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY}`.
+- API CRUD checks must treat soft-delete visibility as a hard contract:
+  after DELETE, the resource may remain in PG with `del_flag=true`, but API
+  `GET` must return 404 and API `LIST` must not include it.
+- In application mode with sandbox deployment enabled, only Sandbox pods should
+  subscribe to `$share/sandbox-pool/.../sandbox/trigger`; TM embedded sandbox
+  runners are disabled.
+- The security-autonomy-fixer DAG currently has 27 nodes. The existing PR path is
+  `check-existing-pr -> pr-exists -> commit-to-existing -> trigger-rescan`; the
+  new-PR path is `create-branch -> commit-fixes -> create-pr -> trigger-rescan`.
+- In K8s application mode, each active-run JM labels its TM Deployment with the
+  parent JM name/namespace. The Controller deletes JMs/TMs immediately when the
+  flow is deleted or no active run remains, and observes unexpected parent-JM
+  disappearance for `runtime.tm_orphan_timeout` (default `3m`) only while an
+  active run still exists.
+- JM pollers must claim a run through the configured distributed lock before
+  starting a JobMaster. Helm renders `lock.provider=postgres` when
+  `storage.type=POSTGRE`, otherwise `memory` for local SQLite deployments.
+- `s37` verifies the shared workspace only via `kubectl exec` inside TM/Sandbox
+  containers at `/var/flowgent`; verifier code must not create, modify, or scan
+  the host path `/mnt/disk1/flowgent/e2e`. It must verify the current
+  `.last_run_id` workspace and the expected git-clone task repo path, not
+  arbitrary stale `.git` directories.
+
 ---
 
 # 8. References
@@ -865,6 +1310,7 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 - **Architecture**: `docs/01-L1-Engine-Architecture.md`
 - **Economic Layer**: `docs/02-L1-x402-Economic-Support.md`
 - **Use Cases**: `docs/10-L2-USE-CASES.md`
+- **Known Issues**: `usecase/security-autonomy-fixer/e2e/KNOW_ISSUE.md`
 - **Flow Definition**: `usecase/security-autonomy-fixer/config/flows/security-autonomy-fixer.yaml`
 - **Agent Definitions**: `usecase/security-autonomy-fixer/config/agents/*.yaml`
 - **MCP Servers**: `usecase/security-autonomy-fixer/config/mcps/`

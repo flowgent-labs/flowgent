@@ -9,20 +9,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
 // SandboxExecutor dispatches scripts to sandbox runner pods via MQTT + shared
 // workspace volume. The workspace is a persistent volume mounted to both TM and
 // sandbox pods, organized as:
 //
-//	{workspace}/{namespace}/{agentflow_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+//	{workspace}/{namespace_id}/{flow_id}/{run_id}/{task_plan_id}/
 //	  ├── script.{py,sh,js}
+//	  ├── input.json
 //	  ├── result.json
 //	  ├── status
 //	  └── original/   (pre-modification snapshot for undo)
@@ -52,7 +54,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 	}
 
 	spanID := newSpanID()
-	scriptPath := e.buildPath(plan, spanID)
+	scriptPath := e.buildPath(plan)
 	plan.NodeSpec.ScriptPath = scriptPath
 
 	if err := e.writeScript(plan); err != nil {
@@ -71,7 +73,7 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 	}
 
 	trigger := &model.SandboxTrigger{
-		Namespace:      plan.Namespace,
+		Namespace:     plan.Namespace,
 		FlowID:        plan.AgentFlowDefinitionID,
 		RunID:         plan.AgentFlowRunID,
 		PlanID:        plan.PlanID,
@@ -116,26 +118,33 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 
 	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
 
-	select {
-	case <-waitCtx.Done():
-		if result, err := e.readResultFile(scriptPath); err == nil {
+	for {
+		select {
+		case result := <-resultCh:
 			return result, nil
+		case <-poll.C:
+			if result, err := e.readResultFile(scriptPath); err == nil {
+				return result, nil
+			}
+		case <-waitCtx.Done():
+			if result, err := e.readResultFile(scriptPath); err == nil {
+				return result, nil
+			}
+			return &entities.TaskResult{Error: "sandbox execution timeout"}, nil
 		}
-		return &entities.TaskResult{Error: "sandbox execution timeout"}, nil
-	case result := <-resultCh:
-		return result, nil
 	}
 }
 
-func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan, spanID string) string {
+func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan) string {
 	return filepath.Join(
 		e.workspace,
 		sanitize(plan.Namespace),
 		sanitize(plan.AgentFlowDefinitionID),
-		"runs", plan.AgentFlowRunID,
-		"plans", plan.PlanID,
-		spanID,
+		sanitize(plan.AgentFlowRunID),
+		sanitize(plan.PlanID),
 	)
 }
 
@@ -198,8 +207,12 @@ func newSpanID() string {
 }
 
 func sanitize(s string) string {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return "default"
 	}
+	s = strings.ReplaceAll(s, "/", "_")
+	s = strings.ReplaceAll(s, "\\", "_")
+	s = strings.ReplaceAll(s, "..", "_")
 	return s
 }

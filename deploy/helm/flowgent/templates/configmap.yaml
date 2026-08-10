@@ -50,7 +50,10 @@ data:
       sqlite:
         dir: .flowgent/sqlite
       {{- end }}
-    {{- if .Values.postgresql.enabled }}
+      {{- if .Values.storage.postgres.dsn }}
+      postgres:
+        dsn: {{ .Values.storage.postgres.dsn | quote }}
+      {{- else if .Values.postgresql.enabled }}
       postgres:
         host: "{{ include "flowgent.fullname" . }}-postgresql"
         port: 5432
@@ -59,7 +62,7 @@ data:
         password: flowgent
         min_connections: 2
         max_connections: 20
-    {{- end }}
+      {{- end }}
     orchestration:
       max_concurrent_flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
       flow_execution_timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
@@ -70,10 +73,14 @@ data:
         broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
         client_id: "flowgent"
     lock:
-      provider: {{ .Values.lock.provider | default "memory" | quote }}
+      provider: {{ .Values.lock.provider | default (ternary "postgres" "memory" (eq (.Values.storage.type | default "SQLITE") "POSTGRE")) | quote }}
     notifier:
       enabled: {{ .Values.notifier.enabled }}
     runtime:
+      system_namespace: {{ .Values.runtime.systemNamespace | default "flowgen-system" | quote }}
+      k8s_namespace: {{ .Values.runtime.systemNamespace | default .Release.Namespace | quote }}
+      tm_orphan_timeout: {{ .Values.runtime.tmOrphanTimeout | default "3m" | quote }}
+      credential_env_secret: {{ .Values.runtime.credentialEnvSecret | default "" | quote }}
       namespace:
         default_namespace: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
         namespace_prefix: {{ .Values.runtime.namespace.namespacePrefix | default "flowgent-" | quote }}
@@ -85,7 +92,8 @@ data:
         provider: default
         master_key_file: {{ .Values.wallet.keyFile | default "/var/secrets/flowgent/master.key" | quote }}
     sandbox:
-      workspace: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" | quote }}
+      workspace: {{ .Values.sandbox.workspace | default "/var/flowgent" | quote }}
+      host_workspace: {{ .Values.sandbox.hostWorkspace | default "/mnt/disk1/flowgent/e2e" | quote }}
       policy:
         network:
           mode: {{ .Values.sandbox.policy.network.mode | default "none" | quote }}
@@ -95,8 +103,8 @@ data:
         max_timeout: {{ .Values.sandbox.policy.maxTimeout | default "600s" | quote }}
       deployment:
         enabled: true
-        min_replicas: {{ .Values.sandbox.replicas | default 2 }}
-        max_replicas: {{ add (.Values.sandbox.replicas | default 2) 5 }}
+        min_replicas: {{ .Values.sandbox.minReplicas | default 0 }}
+        max_replicas: {{ .Values.sandbox.maxReplicas | default 10 }}
         resources:
           cpu: {{ .Values.sandbox.resources.limits.cpu | default "2" | quote }}
           memory: {{ .Values.sandbox.resources.limits.memory | default "2Gi" | quote }}

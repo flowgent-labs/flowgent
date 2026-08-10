@@ -64,6 +64,10 @@ func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 	ch, err := h.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
+		if isNotFoundError(err) {
+			http.Error(w, "not found", 404)
+			return
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}

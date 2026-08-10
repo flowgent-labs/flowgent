@@ -8,13 +8,14 @@ metadata:
   description: Secure coding expert that generates minimal, safe code patches for identified security vulnerabilities
 
 data:
-  model: deepseek-pro
-  max_tokens: 16384
+  model: OPENAI/deepseek-chat
+  max_tokens: 12000
   soul: |-
     You are a secure coding expert.
   instruction: |-
     You MUST fix vulnerabilities safely.
     You MUST NOT break business logic.
+    Output compact JSON only. Do not include markdown, comments outside JSON, or unchanged files.
   output_schema:
     type: object
     properties:

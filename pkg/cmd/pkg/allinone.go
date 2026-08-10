@@ -45,7 +45,7 @@ type allInOneState struct {
 	store       store.IStore
 	apiClient   *client.FlowgentClient
 	httpClient  model.IFlowgentAPIClient
-	namespace      string
+	namespace   string
 	taskClient  *client.TaskStateClient
 	humanClient *client.HumanApprovalClient
 	logger      *utils.Logger
@@ -91,7 +91,7 @@ func startAllInOne(cfgPath string) error {
 		store:       storeImpl,
 		apiClient:   apiClient,
 		httpClient:  client.NewHttpClient(svcCfg, nil),
-		namespace:      namespace,
+		namespace:   namespace,
 		taskClient:  &client.TaskStateClient{Client: apiClient, Namespace: namespace},
 		humanClient: &client.HumanApprovalClient{Client: apiClient},
 		logger:      logger,
@@ -154,13 +154,13 @@ func flattenSubflows(m map[string]entities.FlowInfo) []entities.FlowInfo {
 
 func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
 	rm, _ := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:      engine.ProviderStandalone,
-		PoolSize:      state.cfg.Orchestration.MaxConcurrentFlows,
-		TaskState:     state.taskClient,
+		Provider:     engine.ProviderStandalone,
+		PoolSize:     state.cfg.Orchestration.MaxConcurrentFlows,
+		TaskState:    state.taskClient,
 		ApprovalInfo: state.humanClient,
-		Logger:        state.logger,
-		APIServerURL:  state.cfg.Runtime.APIServerURL,
-		Namespace:        state.namespace,
+		Logger:       state.logger,
+		APIServerURL: state.cfg.Runtime.APIServerURL,
+		Namespace:    state.namespace,
 	})
 	return rm
 }
@@ -181,7 +181,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	var mqttPub handler.MQTTPublisher
 	if state.cfg.Messager.Type == "mqtt" && state.cfg.Messager.MQTT.Broker != "" {
 		mqttPub = newRawMQTTPublisher(state.cfg.Messager.MQTT.Broker,
-			state.cfg.Messager.MQTT.ClientID,
+			uniqueRawMQTTClientID(state.cfg.Messager.MQTT.ClientID),
 			state.cfg.Messager.MQTT.Username,
 			state.cfg.Messager.MQTT.Password)
 	}
@@ -206,9 +206,9 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 		slog.Error("auth service setup failed", "error", err)
 		os.Exit(1)
 	}
-		authSvc.Register(oidc.NewService(state.cfg.Auth.OIDC, authSvc.TokenService()))
-		authSvc.Register(ldap.NewService(state.cfg.Auth.LDAP, authSvc.TokenService()))
-		restHandler = authSvc.Middleware()(restMux)
+	authSvc.Register(oidc.NewService(state.cfg.Auth.OIDC, authSvc.TokenService()))
+	authSvc.Register(ldap.NewService(state.cfg.Auth.LDAP, authSvc.TokenService()))
+	restHandler = authSvc.Middleware()(restMux)
 
 	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
 	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
@@ -270,7 +270,7 @@ func startA2AServer(state *allInOneState) *http.Server {
 	a2aMux.HandleFunc("GET /.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(a2a.AgentCard{
 			Name: state.cfg.ServiceName, Description: "Flowgent orchestration engine",
-			URL: fmt.Sprintf("http://%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
+			URL:     fmt.Sprintf("http://%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
 			Version: "dev", Capabilities: a2a.AgentCapabilities{Streaming: false},
 		})
 	})
@@ -284,7 +284,7 @@ func startA2AServer(state *allInOneState) *http.Server {
 			return
 		}
 		run := &entities.FlowRunInfo{
-			BaseEntity: entities.BaseEntity{ID: uuid.NewString()},
+			BaseEntity:  entities.BaseEntity{ID: uuid.NewString()},
 			AgentFlowID: req.AgentFlowID, Version: 1,
 			Status: entities.RunPending, Vars: req.Vars,
 		}
@@ -304,7 +304,7 @@ func startA2AServer(state *allInOneState) *http.Server {
 	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
 
 	a2aSrv := &http.Server{
-		Addr: fmt.Sprintf("%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
+		Addr:    fmt.Sprintf("%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
 		Handler: a2aMux, ReadTimeout: readTO, WriteTimeout: writeTO,
 	}
 	go func() {
@@ -392,11 +392,14 @@ func newRawMQTTPublisher(broker, clientID, username, password string) handler.MQ
 		opts.SetPassword(password)
 	}
 	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
+	if token := client.Connect(); !token.WaitTimeout(15 * time.Second) {
+		slog.Warn("mqtt broker connect timeout, lifecycle events disabled")
+		return nil
+	} else if token.Error() != nil {
 		slog.Warn("mqtt broker not available, lifecycle events disabled", "error", token.Error())
 		return nil
 	}
-	slog.Info("MQTT lifecycle event publishing enabled", "broker", broker)
+	slog.Info("MQTT lifecycle event publishing enabled", "broker", broker, "client_id", clientID)
 	return &rawMQTTPublisher{client: client}
 }
 
@@ -406,8 +409,22 @@ type rawMQTTPublisher struct {
 
 func (p *rawMQTTPublisher) Publish(ctx context.Context, topic string, payload []byte) error {
 	token := p.client.Publish(topic, 1, false, payload)
-	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
+	if !token.WaitTimeout(5 * time.Second) {
+		return fmt.Errorf("mqtt publish timeout")
+	}
+	if token.Error() != nil {
 		return token.Error()
 	}
 	return nil
+}
+
+func uniqueRawMQTTClientID(base string) string {
+	if base == "" {
+		base = "flowgent-allinone"
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return base
+	}
+	return fmt.Sprintf("%s-%s", base, host)
 }

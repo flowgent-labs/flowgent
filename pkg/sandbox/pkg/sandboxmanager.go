@@ -31,8 +31,34 @@ type FlowgentSandboxManager struct {
 	image       string
 	workspace   string
 	distributed bool
+	slots       int
+	namespaceID string
+	flowID      string
 
 	stopCh chan struct{}
+}
+
+type sandboxJob struct {
+	topic   string
+	payload []byte
+}
+
+// SandboxSlotWorker is the smallest sandbox compute unit inside one sandbox pod.
+type SandboxSlotWorker struct {
+	ID      string
+	manager *FlowgentSandboxManager
+	jobs    <-chan sandboxJob
+}
+
+func (sw *SandboxSlotWorker) Start(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-sw.jobs:
+			sw.manager.handleTrigger(ctx, sw.ID, job.topic, job.payload)
+		}
+	}
 }
 
 // NewFlowgentSandboxManager creates a sandbox worker.
@@ -56,6 +82,7 @@ func NewFlowgentSandboxManager(id string, q messager.IMessager, image, workspace
 		image:       image,
 		workspace:   workspace,
 		distributed: false,
+		slots:       1,
 		stopCh:      make(chan struct{}),
 	}
 }
@@ -64,31 +91,49 @@ func (w *FlowgentSandboxManager) GetID() string { return w.ID }
 
 func (w *FlowgentSandboxManager) SetDistributed(v bool) { w.distributed = v }
 
+func (w *FlowgentSandboxManager) SetSlots(slots int) {
+	if slots <= 0 {
+		slots = 1
+	}
+	w.slots = slots
+}
+
+func (w *FlowgentSandboxManager) SetScope(namespaceID, flowID string) {
+	w.namespaceID = namespaceID
+	w.flowID = flowID
+}
+
 // Start subscribes to sandbox triggers and blocks until ctx is done.
 func (w *FlowgentSandboxManager) Start(ctx context.Context) error {
-	subTopic := "$share/sandbox-pool/" + messager.TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
-	if !w.distributed {
-		subTopic = messager.TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
+	subTopic := w.subscriptionTopic()
+	slotCount := w.slots
+	if slotCount <= 0 {
+		slotCount = 1
+	}
+	slog.Info("sandbox manager subscribing",
+		"id", w.ID, "topic", subTopic, "distributed", w.distributed,
+		"slots", slotCount, "namespace", w.namespaceID, "flow", w.flowID)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan sandboxJob, slotCount)
+	for i := 0; i < slotCount; i++ {
+		worker := &SandboxSlotWorker{
+			ID:      fmt.Sprintf("%s-slot-%d", w.ID, i),
+			manager: w,
+			jobs:    jobs,
+		}
+		go worker.Start(workerCtx)
 	}
 
-	w.queue.Subscribe(ctx, subTopic, func(topic string, payload []byte) {
-		var trigger model.SandboxTrigger
-		if err := json.Unmarshal(payload, &trigger); err != nil {
-			slog.Error("invalid sandbox trigger", "error", err)
-			return
+	if err := w.queue.Subscribe(ctx, subTopic, func(topic string, payload []byte) {
+		select {
+		case jobs <- sandboxJob{topic: topic, payload: payload}:
+		case <-ctx.Done():
 		}
-
-		script, err := w.readScriptFromVolume(&trigger)
-		if err != nil {
-			w.publishError(&trigger, "read script: "+err.Error())
-			return
-		}
-
-		os.WriteFile(filepath.Join(trigger.ScriptPath, "status"), []byte("RUNNING"), 0644)
-
-		result := w.execute(ctx, &trigger, script)
-		w.publishResult(&trigger, result)
-	})
+	}); err != nil {
+		return err
+	}
 
 	select {
 	case <-ctx.Done():
@@ -96,6 +141,62 @@ func (w *FlowgentSandboxManager) Start(ctx context.Context) error {
 	case <-w.stopCh:
 		return nil
 	}
+}
+
+func (w *FlowgentSandboxManager) subscriptionTopic() string {
+	filter := messager.TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
+	group := "sandbox-pool"
+	if w.namespaceID != "" && w.flowID != "" {
+		filter = fmt.Sprintf("%s/%s/flows/%s/runs/+/sandbox/trigger", messager.TopicPrefix, w.namespaceID, w.flowID)
+		group = "sandbox-pool-" + sanitizeShareGroup(w.namespaceID) + "-" + sanitizeShareGroup(w.flowID)
+	}
+	if !w.distributed {
+		return filter
+	}
+	return "$share/" + group + "/" + filter
+}
+
+func sanitizeShareGroup(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "default"
+	}
+	var b strings.Builder
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+func (w *FlowgentSandboxManager) handleTrigger(ctx context.Context, workerID, topic string, payload []byte) {
+	var trigger model.SandboxTrigger
+	if err := json.Unmarshal(payload, &trigger); err != nil {
+		slog.Error("invalid sandbox trigger", "worker", workerID, "error", err)
+		return
+	}
+	slog.Info("sandbox trigger received", "worker", workerID, "topic", topic, "plan_id", trigger.PlanID, "runtime", trigger.Runtime)
+
+	script, err := w.readScriptFromVolume(&trigger)
+	if err != nil {
+		if err := w.publishError(ctx, &trigger, "read script: "+err.Error()); err != nil {
+			slog.Error("sandbox result publish failed", "worker", workerID, "plan_id", trigger.PlanID, "error", err)
+		}
+		return
+	}
+
+	os.WriteFile(filepath.Join(trigger.ScriptPath, "status"), []byte("RUNNING"), 0644)
+
+	result := w.execute(ctx, &trigger, script)
+	if err := w.publishResult(ctx, &trigger, result); err != nil {
+		slog.Error("sandbox result publish failed", "worker", workerID, "plan_id", trigger.PlanID, "error", err)
+		return
+	}
+	slog.Info("sandbox result published", "worker", workerID, "plan_id", trigger.PlanID, "has_error", result != nil && result.Error != "")
 }
 
 func (w *FlowgentSandboxManager) Stop() {
@@ -171,7 +272,11 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(),
+	baseEnv := cmd.Env
+	if len(baseEnv) == 0 {
+		baseEnv = os.Environ()
+	}
+	cmd.Env = append(baseEnv,
 		"HOME=/tmp",
 		"SANDBOX_MODE=1",
 	)
@@ -182,12 +287,31 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 	if err := cmd.Start(); err != nil {
 		return &entities.TaskResult{Error: "start script: " + err.Error()}
 	}
+	for _, f := range cmd.ExtraFiles {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
 
 	var notifier *seccomp.Notifier
 	if notifCh != nil {
-		notifier = <-notifCh
+		select {
+		case notifier = <-notifCh:
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return &entities.TaskResult{Error: "seccomp notifier handshake: " + ctx.Err().Error()}
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return &entities.TaskResult{Error: "seccomp notifier handshake timed out"}
+		}
 		if notifier != nil {
 			go notifier.Start()
+		} else {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return &entities.TaskResult{Error: "seccomp notifier handshake failed"}
 		}
 	}
 
@@ -215,9 +339,7 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 	}
 
 	output := map[string]any{"exit_code": 0, "stdout": stdout.String(), "stderr": stderr.String(), "runtime": runtime}
-	if parsed, ok := tryParseJSON(stdout.String()); ok {
-		output["parsed"] = parsed
-	}
+	attachParsedOutput(output, stdout.String())
 	result := &entities.TaskResult{Output: output}
 	w.writeResultFile(scriptPath, result)
 	os.WriteFile(filepath.Join(scriptPath, "status"), []byte("SUCCESS"), 0644)
@@ -268,9 +390,7 @@ func (w *FlowgentSandboxManager) executeInDocker(ctx context.Context, scriptPath
 	}
 
 	output := map[string]any{"stdout": stdout.String(), "stderr": stderr.String(), "runtime": runtime}
-	if parsed, ok := tryParseJSON(stdout.String()); ok {
-		output["parsed"] = parsed
-	}
+	attachParsedOutput(output, stdout.String())
 	result := &entities.TaskResult{Output: output}
 	w.writeResultFile(scriptPath, result)
 	os.WriteFile(filepath.Join(scriptPath, "status"), []byte("SUCCESS"), 0644)
@@ -309,7 +429,7 @@ func (w *FlowgentSandboxManager) checkBanned(script string) string {
 	return ""
 }
 
-func (w *FlowgentSandboxManager) publishResult(trigger *model.SandboxTrigger, result *entities.TaskResult) {
+func (w *FlowgentSandboxManager) publishResult(ctx context.Context, trigger *model.SandboxTrigger, result *entities.TaskResult) error {
 	payload, _ := json.Marshal(result)
 	namespaceID := trigger.Namespace
 	if namespaceID == "" {
@@ -317,14 +437,28 @@ func (w *FlowgentSandboxManager) publishResult(trigger *model.SandboxTrigger, re
 	}
 	resultTopic := messager.SandboxResultTopic(namespaceID, trigger.FlowID, trigger.RunID)
 
-	_ = w.queue.Publish(context.Background(), resultTopic, &messager.InterMessage{
-		ID:      trigger.PlanID,
-		Payload: payload,
-	})
+	msg := &messager.InterMessage{ID: trigger.PlanID, Payload: payload}
+	var lastErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		if err := w.queue.Publish(ctx, resultTopic, msg); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			slog.Warn("sandbox result publish retry",
+				"id", w.ID, "plan_id", trigger.PlanID, "topic", resultTopic,
+				"attempt", attempt, "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
+	}
+	return lastErr
 }
 
-func (w *FlowgentSandboxManager) publishError(trigger *model.SandboxTrigger, errStr string) {
-	w.publishResult(trigger, &entities.TaskResult{Error: errStr})
+func (w *FlowgentSandboxManager) publishError(ctx context.Context, trigger *model.SandboxTrigger, errStr string) error {
+	return w.publishResult(ctx, trigger, &entities.TaskResult{Error: errStr})
 }
 
 func (w *FlowgentSandboxManager) writeResultFile(scriptPath string, result *entities.TaskResult) {
@@ -347,6 +481,26 @@ func extForRuntime(runtime string) string {
 
 func tryParseJSON(s string) (map[string]any, bool) {
 	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, false
+	}
+	if v, ok := parseJSONObject(s); ok {
+		return v, true
+	}
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if v, ok := parseJSONObject(line); ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func parseJSONObject(s string) (map[string]any, bool) {
 	if !strings.HasPrefix(s, "{") {
 		return nil, false
 	}
@@ -355,6 +509,19 @@ func tryParseJSON(s string) (map[string]any, bool) {
 		return nil, false
 	}
 	return v, true
+}
+
+func attachParsedOutput(output map[string]any, stdout string) {
+	parsed, ok := tryParseJSON(stdout)
+	if !ok {
+		return
+	}
+	output["parsed"] = parsed
+	for k, v := range parsed {
+		if _, exists := output[k]; !exists {
+			output[k] = v
+		}
+	}
 }
 
 func cpuToDocker(cpu string) string {

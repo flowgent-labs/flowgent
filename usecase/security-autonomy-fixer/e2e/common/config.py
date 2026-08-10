@@ -8,20 +8,39 @@ Override via environment variables or by editing the defaults below.
 import os
 
 
+def _is_kubeconfig_candidate(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
+
+
+def _default_kubeconfig() -> str:
+    candidates = (
+        os.getenv("KUBECONFIG", ""),
+        os.path.expanduser("~/.kube/config"),
+        "/etc/rancher/k3s/k3s.yaml",
+    )
+    for path in candidates:
+        if _is_kubeconfig_candidate(path):
+            return path
+    return os.path.expanduser("~/.kube/config")
+
+
 # ── K8S / K8s API ───────────────────────────────────────────────
 K8S_APISERVER_URL = os.getenv("FLOWGENT_K8S_APISERVER", "http://localhost:9999")
 K8S_A2A_URL       = os.getenv("FLOWGENT_K8S_A2A",       "http://localhost:9992")
-K8S_KUBECONFIG    = os.getenv("KUBECONFIG",              os.path.expanduser("~/.kube/config"))
-K8S_NAMESPACE     = os.getenv("FLOWGENT_K8S_NAMESPACE",  "default")
-K8S_NAMESPACE        = os.getenv("FLOWGENT_K8S_NAMESPACE",     "default")
+K8S_KUBECONFIG    = _default_kubeconfig()
+os.environ["KUBECONFIG"] = K8S_KUBECONFIG
+SYSTEM_NAMESPACE  = os.getenv("FLOWGENT_SYSTEM_NAMESPACE", "flowgen-system")
+NAMESPACE_ID      = os.getenv("FLOWGENT_NAMESPACE_ID", "default")
+K8S_NAMESPACE     = SYSTEM_NAMESPACE
 # Must match namespace.namespace_prefix (etc/flowgent.yaml / helm values.yaml
 # namespace.namespacePrefix, both default "flowgent-") — this is the PREFIX of
 # where the Controller places each flow's dedicated JM Deployment (Application
 # mode): namespace = "{prefix}{namespace_id}" (per-NAMESPACE, not per-flow — every
-# flow of the same namespace shares one namespace), NOT K8S_NAMESPACE. See
+# flow of the same namespace shares one namespace), NOT SYSTEM_NAMESPACE. See
 # pkg/controller/pkg/controller.go applicationNamespace / pkg/api/pkg/handler/
 # flow_def.go applicationNamespace.
 K8S_APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K8S_APP_NAMESPACE_PREFIX", "flowgent-")
+K8S_APP_NAMESPACE = f"{K8S_APP_NAMESPACE_PREFIX}{NAMESPACE_ID}"
 
 # ── PostgreSQL ───────────────────────────────────────────────────
 PG_HOST     = os.getenv("FLOWGENT_PG_HOST",     "localhost")
@@ -37,7 +56,7 @@ EMQX_PORT     = int(os.getenv("FLOWGENT_EMQX_PORT", "1883"))
 EMQX_DASHBOARD = int(os.getenv("FLOWGENT_EMQX_DASHBOARD", "18083"))
 
 # ── Jaeger / OTEL ────────────────────────────────────────────────
-JAEGER_UI_URL  = os.getenv("FLOWGENT_JAEGER_UI",  "http://localhost:16686")
+JAEGER_UI_URL  = os.getenv("FLOWGENT_JAEGER_UI",  "http://localhost:16687")
 JAEGER_OTLP    = os.getenv("FLOWGENT_JAEGER_OTLP", "http://localhost:4318")
 
 # ── SonarQube ────────────────────────────────────────────────────

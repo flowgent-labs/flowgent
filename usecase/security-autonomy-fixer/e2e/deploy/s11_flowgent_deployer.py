@@ -2,8 +2,8 @@
 """
 Deploy Script S11 — Flowgent Helm deployment and readiness check.
 
-Deploys (or upgrades) the Flowgent Helm chart and waits for all pods to be
-Ready before handing off to the verifier suite.
+Fully redeploys the Flowgent Helm chart and waits for all pods to be Ready
+before handing off to the verifier suite.
 
 Usage:
   python3 s11_flowgent_deployer.py [--namespace NS] [--release NAME] [--timeout S]
@@ -13,17 +13,489 @@ import sys
 import os
 import time
 import argparse
+import base64
+import copy
+import ipaddress
 import json
+import socket
+import subprocess
+from urllib.parse import urlsplit, urlunsplit
+import yaml
 
 from common import HELM_CHART, run_cmd
 
-DEFAULT_NAMESPACE = "default"
+DEFAULT_NAMESPACE = os.getenv("FLOWGENT_SYSTEM_NAMESPACE", "flowgen-system")
 DEFAULT_RELEASE = "flowgent"
 DEFAULT_TIMEOUT = 300
+FLOWGENT_IMAGE = "localhost/flowgent-core:latest"
+FLOWGENT_PG_CONTAINER = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "sigbot_e2e_164364_postgres")
+APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K8S_APP_NAMESPACE_PREFIX", "flowgent-")
+TENANT_NAMESPACE = os.getenv("FLOWGENT_NAMESPACE_ID", "default")
+RUNTIME_CREDENTIAL_SECRET = os.getenv("FLOWGENT_E2E_RUNTIME_SECRET", "flowgent-e2e-runtime-env")
+RUNTIME_CREDENTIAL_KEYS = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "SONARQUBE_TOKEN",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_API_KEY_FLOWGENT",
+)
+RUNTIME_PROXY_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
+NO_PROXY_DEFAULTS = (
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    ".svc",
+    ".svc.cluster.local",
+    ".cluster.local",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "flowgent-apiserver",
+    "flowgent-emqx",
+    "flowgent-jaeger",
+)
+
+def _usable_kubeconfig(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
+
+
+def _select_kubeconfig() -> str:
+    candidates = (
+        os.environ.get("KUBECONFIG", ""),
+        os.path.expanduser("~/.kube/config"),
+        "/etc/rancher/k3s/k3s.yaml",
+    )
+    for path in candidates:
+        if _usable_kubeconfig(path):
+            return path
+    return ""
+
+
+selected_kubeconfig = _select_kubeconfig()
+if selected_kubeconfig:
+    os.environ["KUBECONFIG"] = selected_kubeconfig
+
+
+def _kubectl(args, timeout=60):
+    return run_cmd(["kubectl"] + args, timeout=timeout)
+
+
+def _helm(args, timeout=300):
+    return run_cmd(["helm"] + args, timeout=timeout)
+
+
+def _cleanup_application_resources():
+    print("\n-- Cleaning application-mode resources --")
+    for ns in sorted({DEFAULT_NAMESPACE, "default", _application_namespace()}):
+        _kubectl([
+            "delete", "deployment", "-n", ns,
+            "-l", "app.kubernetes.io/component in (taskmanager,sandbox)",
+            "--ignore-not-found=true", "--force", "--grace-period=0",
+        ], timeout=120)
+        _kubectl([
+            "delete", "pod", "-n", ns,
+            "-l", "flowgent/role in (worker,sandbox-worker)",
+            "--ignore-not-found=true", "--force", "--grace-period=0", "--wait=false",
+        ], timeout=60)
+    _kubectl([
+        "delete", "deployment", "-A",
+        "-l", "flowgent.io/mode=application",
+        "--ignore-not-found=true", "--force", "--grace-period=0",
+    ], timeout=120)
+    _kubectl([
+        "delete", "pod", "-A",
+        "-l", "flowgent.io/mode=application",
+        "--ignore-not-found=true", "--force", "--grace-period=0", "--wait=false",
+    ], timeout=60)
+    _kubectl([
+        "delete", "ns",
+        "-l", "flowgent.io/mode=application",
+        "--ignore-not-found=true", "--force", "--grace-period=0", "--wait=false",
+    ], timeout=30)
+    _force_finalize_terminating_application_namespaces()
+    _wait_labeled_resources_gone("deployments", "flowgent.io/mode=application", timeout=60)
+    _wait_labeled_resources_gone("pods", "flowgent.io/mode=application", timeout=60)
+
+
+def _wait_labeled_resources_gone(kind, selector, timeout=60):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rc, out = _kubectl(["get", kind, "-A", "-l", selector, "-o", "json"], timeout=20)
+        if rc != 0:
+            time.sleep(2)
+            continue
+        try:
+            items = json.loads(out).get("items", [])
+        except json.JSONDecodeError:
+            time.sleep(2)
+            continue
+        if not items:
+            print(f"  {kind} with {selector}: cleaned")
+            return True
+        names = [f"{i.get('metadata', {}).get('namespace')}/{i.get('metadata', {}).get('name')}" for i in items[:5]]
+        print(f"  Waiting for {len(items)} {kind} to disappear: {names}")
+        time.sleep(3)
+    print(f"  WARN: {kind} with {selector} still exist after {timeout}s")
+    return False
+
+
+def _force_finalize_terminating_application_namespaces():
+    rc, out = _kubectl([
+        "get", "ns", "-l", "flowgent.io/mode=application", "-o", "json",
+    ], timeout=20)
+    if rc != 0:
+        return
+    try:
+        namespaces = json.loads(out).get("items", [])
+    except json.JSONDecodeError:
+        return
+    for ns in namespaces:
+        meta = ns.get("metadata", {})
+        name = meta.get("name")
+        if not name or not meta.get("deletionTimestamp"):
+            continue
+        print(f"  Finalizing stuck terminating namespace: {name}")
+        ns.setdefault("spec", {})["finalizers"] = []
+        result = subprocess.run(
+            ["kubectl", "replace", "--raw", f"/api/v1/namespaces/{name}/finalize", "-f", "-"],
+            input=json.dumps(ns),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"  WARN: namespace finalize failed for {name}: {result.stderr[:200]}")
+
+
+def _uninstall_release(release, namespace):
+    print("\n-- Uninstalling existing Helm release --")
+    rc, out = _helm(["list", "-n", namespace, "-q", "--filter", f"^{release}$"], timeout=30)
+    if rc != 0 or release not in out.splitlines():
+        print(f"  Release '{release}' not installed in namespace '{namespace}'.")
+        return True
+    rc, _ = _helm(["uninstall", release, "-n", namespace, "--wait", "--timeout", "180s"], timeout=240)
+    if rc != 0:
+        print(f"  ERROR: helm uninstall failed for {release}")
+        return False
+    return True
+
+
+def _docker_container_ip(container):
+    rc, out = run_cmd([
+        "docker", "inspect", container,
+        "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+    ], timeout=20)
+    if rc == 0 and out.strip():
+        return out.strip().split()[0]
+    return os.getenv("FLOWGENT_PG_HOST", "127.0.0.1")
+
+
+def _runtime_env(namespace, release):
+    pg_host = _docker_container_ip(FLOWGENT_PG_CONTAINER)
+    pg_port = os.getenv("FLOWGENT_PG_PORT", "5432")
+    pg_user = os.getenv("FLOWGENT_PG_USER", "test")
+    pg_password = os.getenv("FLOWGENT_PG_PASSWORD", "test")
+    pg_database = os.getenv("FLOWGENT_PG_DATABASE", "flowgent")
+    pg_dsn = f"postgres://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_database}?sslmode=disable"
+    mqtt_broker = f"tcp://{release}-emqx.{namespace}.svc.cluster.local:1883"
+    api_url = f"http://{release}-apiserver.{namespace}.svc.cluster.local:9999"
+    jaeger_endpoint = f"{release}-jaeger.{namespace}.svc.cluster.local:4318"
+    return {
+        "FLOWGENT__STORAGE__TYPE": "POSTGRE",
+        "FLOWGENT__STORAGE__POSTGRES__DSN": pg_dsn,
+        "FLOWGENT__STORAGE__POSTGRES__HOST": pg_host,
+        "FLOWGENT__STORAGE__POSTGRES__PORT": pg_port,
+        "FLOWGENT__STORAGE__POSTGRES__USERNAME": pg_user,
+        "FLOWGENT__STORAGE__POSTGRES__PASSWORD": pg_password,
+        "FLOWGENT__STORAGE__POSTGRES__DATABASE": pg_database,
+        "FLOWGENT__MESSAGER__TYPE": "mqtt",
+        "FLOWGENT__MESSAGER__MQTT__BROKER": mqtt_broker,
+        "FLOWGENT__RUNTIME__API_SERVER_URL": api_url,
+        "FLOWGENT__RUNTIME__SYSTEM_NAMESPACE": namespace,
+        "FLOWGENT__RUNTIME__K8S_NAMESPACE": namespace,
+        "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE": TENANT_NAMESPACE,
+        "FLOWGENT__RUNTIME__JM_IMAGE": FLOWGENT_IMAGE,
+        "FLOWGENT__RUNTIME__TM_IMAGE": FLOWGENT_IMAGE,
+        "FLOWGENT__RUNTIME__SANDBOX_IMAGE": FLOWGENT_IMAGE,
+        "FLOWGENT__MGMT__OTEL__ENDPOINT": jaeger_endpoint,
+    }
+
+
+def _set_runtime_env(namespace, release, deployments):
+    env_map = _runtime_env(namespace, release)
+    env_args = [f"{k}={v}" for k, v in env_map.items()]
+    ok = True
+    for deploy in deployments:
+        rc, _ = _kubectl(["set", "env", f"deployment/{deploy}", "-n", namespace, *env_args], timeout=60)
+        ok = ok and rc == 0
+    return ok
+
+
+def _service_cluster_ip(namespace, service):
+    rc, out = _kubectl([
+        "get", "svc", service, "-n", namespace,
+        "-o", "jsonpath={.spec.clusterIP}",
+    ], timeout=20)
+    return out.strip() if rc == 0 else ""
+
+
+def _application_namespace():
+    return f"{APP_NAMESPACE_PREFIX}{TENANT_NAMESPACE}"
+
+
+def _kubectl_jsonpath(jsonpath):
+    result = subprocess.run(
+        ["kubectl", "get", "nodes", "-o", f"jsonpath={jsonpath}"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _node_internal_ip():
+    return _kubectl_jsonpath('{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+
+
+def _pod_proxy_host():
+    override = os.getenv("FLOWGENT_E2E_POD_PROXY_HOST")
+    if override:
+        return override
+    pod_cidr = _kubectl_jsonpath("{.items[0].spec.podCIDR}")
+    if pod_cidr:
+        try:
+            network = ipaddress.ip_network(pod_cidr, strict=False)
+            return str(next(network.hosts()))
+        except Exception:
+            pass
+    return _node_internal_ip()
+
+
+def _rewrite_local_proxy_for_pod(value):
+    if not value:
+        return value
+    parsed = urlsplit(value)
+    host = (parsed.hostname or "").lower()
+    if host not in ("localhost", "127.0.0.1", "::1"):
+        return value
+    pod_host = _pod_proxy_host()
+    if not pod_host:
+        return value
+    userinfo = ""
+    if parsed.username:
+        userinfo = parsed.username
+        if parsed.password:
+            userinfo += f":{parsed.password}"
+        userinfo += "@"
+    port = f":{parsed.port}" if parsed.port else ""
+    return urlunsplit((parsed.scheme, f"{userinfo}{pod_host}{port}", parsed.path, parsed.query, parsed.fragment))
+
+
+def _proxy_allowlist_entry(proxy_data):
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        value = proxy_data.get(key)
+        if not value:
+            continue
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        if not host:
+            continue
+        port = parsed.port
+        if not port:
+            port = 443 if parsed.scheme == "https" else 80
+        return f"{host}:{port}"
+    return "github.com"
+
+
+def _merge_no_proxy(existing):
+    merged = []
+    seen = set()
+    for item in (existing or "").split(","):
+        value = item.strip()
+        if value and value not in seen:
+            merged.append(value)
+            seen.add(value)
+    for value in NO_PROXY_DEFAULTS:
+        if value not in seen:
+            merged.append(value)
+            seen.add(value)
+    return ",".join(merged)
+
+
+def _runtime_proxy_data():
+    data = {}
+    for key in RUNTIME_PROXY_KEYS:
+        value = os.environ.get(key)
+        if value:
+            data[key] = _rewrite_local_proxy_for_pod(value)
+
+    for upper, lower in (("HTTP_PROXY", "http_proxy"), ("HTTPS_PROXY", "https_proxy"), ("ALL_PROXY", "all_proxy")):
+        if upper in data and lower not in data:
+            data[lower] = data[upper]
+        if lower in data and upper not in data:
+            data[upper] = data[lower]
+
+    if data:
+        no_proxy = _merge_no_proxy(os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or "")
+        data["NO_PROXY"] = no_proxy
+        data["no_proxy"] = no_proxy
+    return data
+
+
+def _runtime_credential_data():
+    data = {key: os.environ[key] for key in RUNTIME_CREDENTIAL_KEYS if os.environ.get(key)}
+    if "GITHUB_TOKEN" not in data and data.get("GH_TOKEN"):
+        data["GITHUB_TOKEN"] = data["GH_TOKEN"]
+    if "DEEPSEEK_API_KEY_FLOWGENT" not in data and data.get("DEEPSEEK_API_KEY"):
+        data["DEEPSEEK_API_KEY_FLOWGENT"] = data["DEEPSEEK_API_KEY"]
+    if "DEEPSEEK_API_KEY" not in data and data.get("DEEPSEEK_API_KEY_FLOWGENT"):
+        data["DEEPSEEK_API_KEY"] = data["DEEPSEEK_API_KEY_FLOWGENT"]
+    proxy_data = _runtime_proxy_data()
+    data.update(proxy_data)
+    os.environ[PROXY_ALLOWLIST_ENV] = _proxy_allowlist_entry(proxy_data)
+    return data
+
+
+def _ensure_runtime_credential_secret(namespaces):
+    data = _runtime_credential_data()
+    if not data:
+        print(f"  WARN: no runtime credential env vars found; deleting stale {RUNTIME_CREDENTIAL_SECRET} secrets")
+        for ns in namespaces:
+            _kubectl(["delete", "secret", RUNTIME_CREDENTIAL_SECRET, "-n", ns, "--ignore-not-found=true"], timeout=20)
+        return False
+
+    encoded = {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}
+    ok = True
+    for ns in namespaces:
+        secret = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": RUNTIME_CREDENTIAL_SECRET, "namespace": ns},
+            "type": "Opaque",
+            "data": encoded,
+        }
+        result = subprocess.run(
+            ["kubectl", "apply", "-f", "-"],
+            input=json.dumps(secret),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"  ERROR: apply runtime credential secret failed for {ns}: {result.stderr[:200]}")
+            ok = False
+            continue
+    if ok:
+        print(f"  Runtime credential Secret ready: {RUNTIME_CREDENTIAL_SECRET} namespaces={','.join(namespaces)} keys={','.join(sorted(data))}")
+        print(f"  Runtime proxy allowlist entry: {os.environ.get(PROXY_ALLOWLIST_ENV, 'github.com')}")
+    return ok
+
+
+def _wait_tcp(host, port, label, timeout=120):
+    print(f"\n-- Waiting for {label} TCP readiness ({host}:{port}, timeout={timeout}s) --")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, int(port)), timeout=2):
+                print(f"  {label} TCP ready: {host}:{port}")
+                return True
+        except OSError as exc:
+            print(f"  {label} not accepting connections yet: {exc}")
+            time.sleep(3)
+    print(f"  ERROR: {label} did not accept TCP connections within {timeout}s")
+    return False
+
+
+def _ensure_application_configmap(namespace, release):
+    app_ns = _application_namespace()
+    print(f"\n-- Ensuring application namespace config ({app_ns}) --")
+    create_ns = subprocess.run(
+        ["kubectl", "create", "namespace", app_ns, "--dry-run=client", "-o", "json"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if create_ns.returncode != 0:
+        print(f"  ERROR: render namespace failed: {create_ns.stderr[:200]}")
+        return False
+    apply_ns = subprocess.run(
+        ["kubectl", "apply", "-f", "-"],
+        input=create_ns.stdout,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if apply_ns.returncode != 0:
+        print(f"  ERROR: apply namespace failed: {apply_ns.stderr[:200]}")
+        return False
+    _kubectl([
+        "label", "namespace", app_ns,
+        "flowgent.io/mode=application",
+        f"flowgent.io/namespace={TENANT_NAMESPACE}",
+        "--overwrite",
+    ], timeout=20)
+
+    rc, cm_json = _kubectl(["get", "configmap", f"{release}-config", "-n", namespace, "-o", "json"], timeout=20)
+    if rc != 0:
+        return False
+    cm = json.loads(cm_json)
+    flowgent_yaml = yaml.safe_load(cm.get("data", {}).get("flowgent.yaml", "")) or {}
+    flowgent_yaml.setdefault("mgmt", {}).setdefault("otel", {})["endpoint"] = (
+        f"{release}-jaeger.{namespace}.svc.cluster.local:4318"
+    )
+    flowgent_yaml.setdefault("messager", {}).setdefault("mqtt", {})["broker"] = (
+        f"tcp://{release}-emqx.{namespace}.svc.cluster.local:1883"
+    )
+    runtime = flowgent_yaml.setdefault("runtime", {})
+    runtime["api_server_url"] = f"http://{release}-apiserver.{namespace}.svc.cluster.local:9999"
+    runtime["system_namespace"] = namespace
+    runtime["k8s_namespace"] = namespace
+    runtime.setdefault("namespace", {})["default_namespace"] = TENANT_NAMESPACE
+    runtime["jm_image"] = FLOWGENT_IMAGE
+    runtime["tm_image"] = FLOWGENT_IMAGE
+    sandbox_deploy = flowgent_yaml.setdefault("sandbox", {}).setdefault("deployment", {})
+    sandbox_deploy["image"] = FLOWGENT_IMAGE
+    base_labels = cm.get("metadata", {}).get("labels", {})
+
+    for dest_ns in (namespace, app_ns):
+        dest_cm = copy.deepcopy(cm)
+        dest_yaml = copy.deepcopy(flowgent_yaml)
+        dest_runtime = dest_yaml.setdefault("runtime", {})
+        dest_runtime["system_namespace"] = namespace
+        dest_runtime["k8s_namespace"] = dest_ns
+        dest_cm.setdefault("data", {})["flowgent.yaml"] = yaml.safe_dump(dest_yaml, sort_keys=False)
+        dest_cm["metadata"] = {
+            "name": f"{release}-config",
+            "namespace": dest_ns,
+            "labels": base_labels,
+        }
+        dest_cm.pop("status", None)
+        apply_cm = subprocess.run(
+            ["kubectl", "apply", "-f", "-"],
+            input=json.dumps(dest_cm),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if apply_cm.returncode != 0:
+            print(f"  ERROR: apply configmap failed for {dest_ns}: {apply_cm.stderr[:200]}")
+            return False
+    print(f"  Application config ready: {app_ns}/{release}-config")
+    return True
 
 
 def helm_install_or_upgrade(release, namespace):
-    print(f"\n-- Deploying Flowgent Helm chart --")
+    print(f"\n-- Full redeploy Flowgent Helm chart --")
     print(f"  Release: {release}, Namespace: {namespace}")
     print(f"  Chart:   {HELM_CHART}")
 
@@ -31,25 +503,77 @@ def helm_install_or_upgrade(release, namespace):
         print(f"  ERROR: Helm chart not found: {HELM_CHART}")
         return False
 
-    # Check if release already exists
-    rc, out = run_cmd(["helm", "list", "-n", namespace, "-o", "json"], timeout=30)
-    exists = False
-    if rc == 0 and out:
-        try:
-            releases = json.loads(out)
-            exists = any(r.get("name") == release for r in releases)
-        except json.JSONDecodeError:
-            pass
+    _cleanup_application_resources()
+    for legacy_ns in sorted({"default"} - {namespace}):
+        _uninstall_release(release, legacy_ns)
+    if not _uninstall_release(release, namespace):
+        return False
 
-    if exists:
-        print(f"  Release '{release}' exists — upgrading...")
-        cmd = ["helm", "upgrade", release, HELM_CHART, "-n", namespace, "--wait", "--timeout", "300s"]
-    else:
-        print(f"  Release '{release}' not found — installing...")
-        cmd = ["helm", "install", release, HELM_CHART, "-n", namespace, "--create-namespace", "--wait", "--timeout", "300s"]
+    runtime_env = _runtime_env(namespace, release)
+    cmd = [
+        "install", release, HELM_CHART,
+        "-n", namespace, "--create-namespace", "--wait", "--timeout", "300s",
+        "--set", "global.image.repository=localhost/flowgent-core",
+        "--set", "global.image.tag=latest",
+        "--set", "global.image.pullPolicy=IfNotPresent",
+        "--set", f"runtime.systemNamespace={namespace}",
+        "--set", f"runtime.namespace.defaultNamespace={TENANT_NAMESPACE}",
+        "--set", f"runtime.credentialEnvSecret={RUNTIME_CREDENTIAL_SECRET}",
+        "--set", "sandbox.minReplicas=0",
+        "--set", "storage.type=POSTGRE",
+        "--set-string", f"storage.postgres.dsn={runtime_env['FLOWGENT__STORAGE__POSTGRES__DSN']}",
+        "--set", "postgresql.enabled=false",
+        "--set", "emqx.enabled=true",
+        "--set", "redis.enabled=false",
+        "--set", "apiserver.replicas=1",
+        "--set", "controller.replicas=1",
+        "--set", "notifier.replicas=1",
+        "--set", "a2a.enabled=false",
+        "--set", "wallet.enabled=false",
+    ]
+    rc, _ = _helm(cmd, timeout=360)
+    if rc != 0:
+        return False
+    # The apiserver initializes its lifecycle publisher once at startup.  Make
+    # the broker ready before the runtime-env rollout starts the apiserver.
+    rc, _ = _kubectl([
+        "rollout", "status", f"deployment/{release}-emqx", "-n", namespace,
+        "--timeout=300s",
+    ], timeout=330)
+    if rc != 0:
+        return False
+    emqx_ip = _service_cluster_ip(namespace, f"{release}-emqx")
+    if not emqx_ip or not _wait_tcp(emqx_ip, 1883, "EMQX MQTT", timeout=120):
+        return False
+    print("\n-- Applying runtime env to API server --")
+    if not _set_runtime_env(namespace, release, [f"{release}-apiserver"]):
+        return False
+    if not _wait_rollout(namespace, f"{release}-apiserver", DEFAULT_TIMEOUT):
+        return False
+    if not health_check(namespace, release):
+        return False
 
-    rc, _ = run_cmd(cmd, timeout=360)
+    print("\n-- Applying runtime env to dependent Helm deployments --")
+    if not _set_runtime_env(namespace, release, [f"{release}-controller", f"{release}-notifier"]):
+        return False
+    if not _ensure_application_configmap(namespace, release):
+        return False
+    if not _ensure_runtime_credential_secret([namespace, _application_namespace()]):
+        return False
+    return wait_for_rollouts(namespace, release, DEFAULT_TIMEOUT)
+
+
+def _wait_rollout(namespace, deploy, timeout):
+    rc, _ = _kubectl(["rollout", "status", f"deployment/{deploy}", "-n", namespace, f"--timeout={timeout}s"], timeout=timeout + 30)
     return rc == 0
+
+
+def wait_for_rollouts(namespace, release, timeout):
+    print(f"\n-- Waiting for deployment rollouts (timeout={timeout}s) --")
+    ok = True
+    for deploy in (f"{release}-apiserver", f"{release}-controller", f"{release}-notifier", f"{release}-emqx", f"{release}-jaeger"):
+        ok = _wait_rollout(namespace, deploy, timeout) and ok
+    return ok
 
 
 def wait_for_pods(namespace, release, timeout):

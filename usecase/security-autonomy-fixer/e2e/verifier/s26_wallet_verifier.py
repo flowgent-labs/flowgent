@@ -51,7 +51,7 @@ except ImportError:
 
 WALLET_URL = config.WALLET_URL
 WALLET_NAME = config.WALLET_NAME
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
 EMQX_HOST = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 TOPIC_PREFIX = "flowgent/v1"

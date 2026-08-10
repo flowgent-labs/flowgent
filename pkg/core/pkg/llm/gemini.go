@@ -37,10 +37,11 @@ func newGeminiProvider(p *entities.LlmProviderInfo) *GeminiProvider {
 	}
 }
 
-func (p *GeminiProvider) Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error) {
+func (p *GeminiProvider) Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64, maxTokens int) (string, error) {
 	if err := p.limiter.Wait(ctx); err != nil {
 		return "", err
 	}
+	_ = maxTokens
 	// TODO: implement Gemini HTTP API using google.golang.org/genai
 	return "", fmt.Errorf("gemini: not yet implemented")
 }

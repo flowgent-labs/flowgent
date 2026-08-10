@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -12,11 +13,12 @@ import (
 
 func testController(cfg *config.FlowgentConfig) *FlowgentController {
 	return &FlowgentController{
-		namespace:            "default",
-		logger:            utils.NewLogger("JSON", "ERROR"),
-		cfg:               cfg,
-		running:           make(map[string]context.CancelFunc),
-		dispatchedVersion: make(map[string]int64),
+		namespace:               "default",
+		logger:                  utils.NewLogger("JSON", "ERROR"),
+		cfg:                     cfg,
+		running:                 make(map[string]context.CancelFunc),
+		runtimeCleanupFirstSeen: make(map[string]time.Time),
+		tmOrphanTimeout:         parseTMOrphanTimeout(cfg.Runtime.TMOrphanTimeout),
 	}
 }
 
@@ -45,9 +47,10 @@ func TestJmConfigMapName(t *testing.T) {
 func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 	c := testController(&config.FlowgentConfig{
 		Runtime: config.RuntimeConfig{
-			JMImage:      "flowgent:test",
-			JMConfigMap:  "flowgent-config",
-			APIServerURL: "http://apiserver:9999",
+			JMImage:             "flowgent:test",
+			JMConfigMap:         "flowgent-config",
+			APIServerURL:        "http://apiserver:9999",
+			CredentialEnvSecret: "flowgent-runtime-env",
 		},
 		Messager: config.MessagerConfig{
 			MQTT: config.MQTTConfig{Broker: "tcp://emqx:1883"},
@@ -91,15 +94,25 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		env[e.Name] = e.Value
 	}
 	wantEnv := map[string]string{
-		"FLOWGENT__RUNTIME__AGENT_FLOW_ID":  "my-flow",
-		"FLOWGENT__RUNTIME__NAMESPACE":      "flowgent-default",
-		"FLOWGENT__MESSAGER__MQTT__BROKER":  "tcp://emqx:1883",
-		"FLOWGENT__RUNTIME__API_SERVER_URL": "http://apiserver:9999",
+		"FLOWGENT__RUNTIME__AGENT_FLOW_ID":                "my-flow",
+		"FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE": "default",
+		"FLOWGENT__RUNTIME__TM_DEPLOY":                    "flowgent-taskmanager-default-my-flow",
+		"FLOWGENT__MESSAGER__MQTT__BROKER":                "tcp://emqx:1883",
+		"FLOWGENT__RUNTIME__API_SERVER_URL":               "http://apiserver:9999",
 	}
 	for k, want := range wantEnv {
 		if got := env[k]; got != want {
 			t.Errorf("env[%q] = %q, want %q", k, got, want)
 		}
+	}
+	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef == nil {
+		t.Fatalf("expected JM credential envFrom secret ref, got %#v", container.EnvFrom)
+	}
+	if got := container.EnvFrom[0].SecretRef.Name; got != "flowgent-runtime-env" {
+		t.Fatalf("JM credential secret = %q, want flowgent-runtime-env", got)
+	}
+	if container.EnvFrom[0].SecretRef.Optional == nil || !*container.EnvFrom[0].SecretRef.Optional {
+		t.Fatal("JM credential secret ref should be optional")
 	}
 }
 
@@ -183,38 +196,4 @@ func (f fakeDiscovery) IsLeader(ctx context.Context, labelSelector string) (bool
 }
 func (f fakeDiscovery) WatchPeers(ctx context.Context, labelSelector string) (<-chan []discovery.Peer, error) {
 	return nil, nil
-}
-
-// TestShouldDispatchOnNewDefinitionOnly is a regression test for a critical
-// bug where reconcile() unconditionally re-dispatched (i.e. created a brand
-// new FlowRun for) every known agentflow on every pollInterval (10s) tick,
-// forever — because the only gate was c.running[flowID], which is deleted
-// almost immediately after dispatchFlow returns (dispatch is a fast,
-// synchronous REST/K8s call, not a long-running execution). In a real
-// deployment this would create an unbounded, ever-growing stream of runs for
-// every flow that simply exists in the system.
-//
-// shouldDispatch implements the documented "on-new-definition" trigger
-// condition (docs/01-L1-Engine-Architecture.md §4.2): a flow must only be
-// auto-dispatched once per definition version.
-func TestShouldDispatchOnNewDefinitionOnly(t *testing.T) {
-	c := testController(&config.FlowgentConfig{})
-
-	if !c.shouldDispatch("flow-a", 1) {
-		t.Fatal("first sighting of flow-a@v1 should dispatch")
-	}
-	for i := 0; i < 5; i++ {
-		if c.shouldDispatch("flow-a", 1) {
-			t.Fatalf("repeated reconcile tick %d for unchanged flow-a@v1 must NOT re-dispatch", i)
-		}
-	}
-	if !c.shouldDispatch("flow-a", 2) {
-		t.Fatal("flow-a@v2 (new definition) should dispatch again")
-	}
-	if c.shouldDispatch("flow-a", 2) {
-		t.Fatal("repeated reconcile tick for unchanged flow-a@v2 must NOT re-dispatch")
-	}
-	if !c.shouldDispatch("flow-b", 1) {
-		t.Fatal("first sighting of a different flow-b@v1 should dispatch independently of flow-a")
-	}
 }

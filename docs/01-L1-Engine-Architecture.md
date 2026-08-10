@@ -204,59 +204,68 @@ fundamental differences:
 The API polling approach avoids CRD complexity and keeps the flow catalog
 behind the apiserver as the single DB gateway.
 
-### 1.3 Multi-Namespace Pod Naming
+### 1.3 Deployment Namespaces and Pod Naming
 
-Namespace isolation uses **K8s namespaces**: each namespace gets its own namespace.
-Pod names carry `namespace_id` + `flow_id` + `run_id` for observability:
+Namespace isolation uses two K8s layers:
+
+- **System namespace**: `flowgen-system` by default, configurable via
+  `runtime.system_namespace` or `FLOWGENT__RUNTIME__SYSTEM_NAMESPACE`.
+  Long-running platform services live here: apiserver, controller, notifier,
+  a2a, wallet, and middleware deployed by Helm.
+- **Application namespace**: `{runtime.namespace.namespace_prefix}{namespaceId}`
+  (default `flowgent-{namespaceId}`). Runtime workers live here:
+  jobmanager, taskmanager, and sandbox. A namespace's flows share the same
+  application namespace; per-flow ownership is expressed by deployment name and
+  labels.
+
+Pod names and labels carry `namespace_id` + `flow_id` for observability:
 
 **Components** (distributed mode):
 
-| Component | Required | Role |
-|-----------|----------|------|
-| apiserver | yes | REST API gateway, auth, triggers |
-| controller | yes | Flow discovery, run dispatch, hash-mod sharding |
-| jobmanager | yes | DAG orchestration, ExecutionPlan scheduling |
-| taskmanager | yes | Plan execution via router (12 node types) |
-| sandbox | yes | Isolated script execution worker |
-| notifier | yes | Multi-channel push + WebSocket SSE |
-| a2a | **optional** | Google Agent-to-Agent protocol endpoint |
-| wallet | **optional** | x402 Ed25519 payment signing |
+| Component | Required | K8s namespace | Role |
+|-----------|----------|---------------|------|
+| apiserver | yes | System namespace | REST API gateway, auth, triggers |
+| controller | yes | System namespace | Flow discovery, run dispatch, hash-mod sharding |
+| jobmanager | yes | Application namespace | DAG orchestration, task scheduling |
+| taskmanager | yes | Application namespace | Task execution via router (12 node types) |
+| sandbox | yes | Application namespace | Isolated script execution worker; JM/RM-managed like TM |
+| notifier | yes | System namespace | Multi-channel push + WebSocket SSE |
+| a2a | **optional** | System namespace | Google Agent-to-Agent protocol endpoint |
+| wallet | **optional** | System namespace | x402 Ed25519 payment signing |
 
 > **Note**: `a2a` and `wallet` are optional in distributed mode and default to `enabled: false`
 > in the Helm chart. Use `--set a2a.enabled=true` or `--set wallet.enabled=true` to enable.
 > In all-in-one mode, all components run in a single process regardless.
 
 ```
-Session (shared pool, default=namespaceId, {hash}=K8s suffix):
-  flowgent-{component}-default-{hash}
+System services (Helm release in flowgen-system, {hash}=K8s suffix):
+  flowgent-{component}-{hash}
 
-Application (dedicated per-run, {hash}=K8s suffix):
-  flowgent-{component}-{namespaceId}-{flowId}-{runId}-{hash}
+Application runtime (JM-owned, {hash}=K8s suffix):
+  flowgent-{component}-{namespaceId}-{flowId}-{hash}
 ```
 
 **Examples — Session mode (required components):**
 ```
-flowgent-apiserver-default-abc123
-flowgent-controller-default-ghi789
-flowgent-jobmanager-default-jkl012
-flowgent-taskmanager-default-mno345
-flowgent-sandbox-default-pqr678
-flowgent-notifier-default-stu901
+flowgent-apiserver-abc123
+flowgent-controller-ghi789
+flowgent-notifier-stu901
 ```
 
 **Examples — Application mode:**
 ```
-flowgent-jobmanager-rengine-vip-security-fixer-run-abc123-xyz001
-flowgent-taskmanager-rengine-vip-security-fixer-run-abc123-xyz002
-flowgent-sandbox-rengine-vip-security-fixer-run-abc123-xyz003
+flowgent-jobmanager-default-security-autonomy-fixer-xyz001
+flowgent-taskmanager-default-security-autonomy-fixer-xyz002
+flowgent-sandbox-default-security-autonomy-fixer-xyz003
 ```
 
 Labels on all pods:
 ```yaml
 flowgent.io/namespace:       "default"
-flowgent.io/agentflow_id: "security-fixer"   # empty for session pods
-flowgent.io/run_id:       "run-abc123"       # empty for session pods
-flowgent.io/mode:         "session" | "application"
+flowgent.io/flow:            "security-autonomy-fixer"
+flowgent.io/mode:            "application"
+flowgent.io/managed-by:      "jobmanager"    # TM/Sandbox only
+flowgent.io/parent-jobmanager: "flowgent-jobmanager-default-security-autonomy-fixer"
 ```
 
 ---
@@ -268,7 +277,8 @@ flowgent.io/mode:         "session" | "application"
 | **Only apiserver connects to DB (K8s-aligned)** | Single PG/SQLite client with caching — all other components (controller, JM, TM, sandbox, notifier) use MQTT or call apiserver REST. Aligns with Kubernetes' single-etcd-access pattern. Eliminates N×M connection pool complexity. |
 | **Controller gets flows via apiserver REST API, not PG scan** | `FlowgentClient.ListFlows()` and subscribes to MQTT lifecycle events for real-time changes. apiserver publishes flow lifecycle events on create/update/delete. Hash-mod sharding still applies. |
 | **Session = K8sRM (AutoScale=false), Application = K8sRM (AutoScale=true), All-in-one = StandaloneRM** | Flink-aligned naming. Session: pre-deployed fixed TM replicas, JM dispatches via MQTT. Application: per-flow K8s namespace, JM auto-scales TMs by queue depth. |
-| **JM → TM → sandbox management chain** | Each component manages only its direct subordinates: controller→JM, JM→TM, TM→sandbox. State flows back via MQTT → apiserver → PG. |
+| **JM → TM/Sandbox management chain with Controller orphan GC** | Controller owns per-flow JM Deployments only while a real run is active (`PENDING`/`RUNNING`/`PAUSED`); importing a flow definition or skill is metadata registration and does not allocate runtime pods. Each active JM owns labeled TM and Sandbox Deployments. Controller garbage-collects JM-owned runtime resources when no active run remains or the flow is deleted. Unexpected parent-JM disappearance while a run is still active is observed for `runtime.tm_orphan_timeout` (default `3m`) before runtime cleanup. State flows back via MQTT → apiserver → PG. |
+| **Runtime credentials enter pods through K8s Secret envFrom** | Host shell env is only a deployer/console-import input. Kubernetes runtime credentials for external MCPs, GitHub, SonarQube, and LLM calls are provided by the Secret named in `runtime.credential_env_secret`. Controller mounts it into per-flow JM pods, and JM's K8sRM mounts it into TM/Sandbox pods via optional `envFrom.secretRef`. |
 | **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
 | **JM unification: same binary, same DAG engine for both modes** | Session: `jobmanager start` → apiserver GET runs. Application: `jobmanager start --flow-id <id>` → apiserver GET runs for that flow. |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
@@ -641,7 +651,8 @@ busy, returns `INSUFFICIENT_RESOURCES` immediately. When a slot is acquired, cal
 
 ### 5.2 KubernetesResourceManager (production mode)
 
-Two responsibilities: **plan dispatch** and **TM pod management**.
+Three responsibilities: **task dispatch**, **TM pod management**, and
+**Sandbox pod management**.
 
 **Dispatch**: `Schedule()` is a **blocking** call — it does NOT fire-and-forget.
 It subscribes to `exec/results` for the run (once), registers a per-node Go channel
@@ -657,18 +668,33 @@ means the JM dispatches sibling nodes **sequentially** (one completes before the
 next is dispatched), not concurrently. See §3.4 for the full DAG coordination
 design.
 
-**TM pod management**: Manages a K8s Deployment (`flowgent-taskmanager`). On init,
-`ensureDeployment()` creates the Deployment if it doesn't exist.
+**TM pod management**: Manages a per-flow K8s Deployment
+(`flowgent-taskmanager-{namespaceId}-{flowId}` in application mode). A JM does
+not create idle TM pods on startup. When `Schedule()` sees pending tasks, it
+creates the Deployment if needed, labels it with its parent JM Deployment
+(`flowgent.io/parent-jobmanager`, `flowgent.io/parent-jobmanager-namespace`),
+scales to `ceil(pendingTasks / slotsPerTM)`, waits for the required replicas to
+be available, then publishes `exec/plans` so MQTT work is not lost before TM
+subscribers exist.
+
+**Sandbox pod management**: Sandbox is not a system daemon. The same JM-owned
+K8sRM manages a per-flow Sandbox Deployment
+(`flowgent-sandbox-{namespaceId}-{flowId}`) and scales it from zero only when
+scheduled tasks of type `sandbox` are active. Desired replicas are calculated as
+`ceil(pendingSandboxTasks / sandboxSlotsPerPod)`, bounded by
+`sandbox.deployment.min_replicas` and `max_replicas`. Each Sandbox pod runs
+`SandboxSlotWorker` goroutines (`slots_per_pod`) behind a single MQTT shared
+subscription scoped to that namespace/flow.
 
 A `scalingLoop` goroutine runs every 15-60s. In **application mode only**, it reads
-`pendingPlans` and `currentTMs`, calculates needed replicas via
-`needed = ceil(pendingPlans / slotsPerTM)`, and scales the K8s Deployment via the API.
+pending task counters and current replicas, calculates needed replicas, and
+reconciles the K8s Deployments via the API.
 In **session mode**, the goroutine exits immediately — TM replicas are pre-deployed
 by Helm and manually scaled by the admin.
 
 | | Session | Application |
 |---|---|---|
-| **TM replicas** | Helm `taskmanager.replicas` (admin-managed) | JM auto-scale via `scalingLoop` goroutine |
+| **TM replicas** | Helm `taskmanager.replicas` (admin-managed) | Starts at 0; JM auto-scales on `Schedule()` and `scalingLoop` by pending plans / slots |
 | **Slot goroutine** | NOT started (`autoScale=false` → early return) | Started and actively reconciles |
 | **Flink analogy** | Session Cluster — pre-allocated TaskManagers | Application Cluster — elastic TaskManagers |
 
@@ -676,8 +702,10 @@ by Helm and manually scaled by the admin.
 
 ## 6. TaskManager — MQTT Consumer + Executor (apiserver REST, NO DB)
 
-Long-running K8s Deployment (or in-process in all-in-one mode). Each TM pod runs N
-`SlotWorker` goroutines (default 4). Each slot independently dequeues one
+Session mode uses long-running K8s Deployments (or in-process workers in
+all-in-one mode). Application mode uses JM-owned, active-run TM Deployments that
+scale from zero and are removed when the owning run/flow no longer needs them.
+Each TM pod runs N `SlotWorker` goroutines (default 4). Each slot independently dequeues one
 `ExecutionPlan` from the MQTT queue (or channel), executes it via the
 `TaskExecutorRouter`, persists task status via the apiserver REST API
 (`TaskStateStore.SaveTask`), and reports the result back to JM via MQTT.
@@ -762,7 +790,8 @@ flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results
 # ── Sandbox Trigger: TM → Sandbox ─────────────────────────────
 flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/trigger
   TM publishes: model.SandboxTrigger (flowId, runId, scriptPath, ...)
-  Sandbox subscribes via $share/sandbox-pool/.../sandbox/trigger (load-balanced)
+  Sandbox subscribes via $share/sandbox-pool-{namespace}-{flow}/.../sandbox/trigger
+  (load-balanced across JM-owned sandbox pods and their SandboxSlotWorker slots)
 
 # ── Sandbox Result: Sandbox → TM ──────────────────────────────
 flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
@@ -951,17 +980,19 @@ election. TM capacity admin-managed via Helm.
 
 ### 9.3 Application Mode (VIP Dedicated Cluster) — current default (only mode)
 
-Controller detects a flow (every flow, since `priority` only accepts `"high"`
-while Session mode is disabled) → creates dedicated K8s JM Deployment
+Controller detects an active run for a flow (`PENDING`, `RUNNING`, or `PAUSED`)
+→ creates a dedicated K8s JM Deployment
 (`flowgent-jobmanager-{namespaceId}-{flowId}` — see `applicationNamespace` in
 `pkg/controller/pkg/controller.go`) in the flow's **namespace** namespace
 (`{namespace_prefix}{namespaceId}`, per §1.3 — every flow of the same namespace
 shares one namespace; Helm does not pre-create it, `ensureApplicationInfra`
-lazily creates it on first dispatch of any flow for that namespace) → JM
-auto-scales TMs. Flow completes → Controller cleans up the Deployment (the
-namespace namespace itself is left behind, since other flows of the same namespace
-may still be using it — see VERIFICATION.md Environment Reset for manual
-cleanup).
+lazily creates it on first active run for any flow in that namespace) → JM
+auto-scales TMs and Sandbox pods from zero based on active task load and
+configured slots. Flow or skill definition import/update alone creates no
+JM/TM/Sandbox pods. When no active run remains, Controller cleans up the JM and
+its JM-owned TM/Sandbox Deployments (the namespace namespace itself is left
+behind, since other flows of the same namespace may still be using it — see
+VERIFICATION.md Environment Reset for manual cleanup).
 
 ---
 
@@ -998,10 +1029,11 @@ There are two paths to trigger a run:
 1. CONTROLLER POLL
    → Controller polls apiserver ListFlows every 10s
    → Hash-mod shard: only processes owned flows (peer snapshot fetched once/tick)
-   → Detects flow trigger condition (cron / interval / on-new-definition)
+   → Registers cron / interval triggers for owned flow definitions
+   → Flow definition import/update alone is metadata only; no JM/TM allocation
    → (reserved) Session mode: FlowgentClient.CreateRun (PENDING, namespace="")
-   → Application mode: ensure K8s Deployment flowgent-jobmanager-{namespaceId}-{flowId}
-                       + FlowgentClient.CreateRun (PENDING, namespace={flow's dedicated ns})
+   → Application mode: API/webhook/cron creates FlowRun (PENDING)
+   → Active-run reconcile ensures K8s Deployment flowgent-jobmanager-{namespaceId}-{flowId}
 
 2. JM POLL
    → Dedicated JM picks up its own namespace runs
@@ -1313,7 +1345,7 @@ model (→ common)
 | `agentdef/` | Agent definition store (PG + SQLite) |
 | `agentflow/` | AgentFlow definition store (PG + SQLite) |
 | `flowrun/` | FlowRun store (PG + SQLite) |
-| `taskplan/` | TaskPlan store (PG + SQLite) |
+| `task/` | task store (PG + SQLite) |
 | `approval/` | Human approval store (PG + SQLite) |
 | `llmprovider/` | LLM provider store (PG + SQLite) |
 | `notifier/` | Notifier channel store (PG only) |
@@ -1523,8 +1555,9 @@ messages from the queue and reading/writing files through a shared workspace vol
 ### 18.2 Workspace Path Convention
 
 ```
-{workspace}/{namespace}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+{workspace}/{namespaceId}/{flowId}/{runId}/{taskId}/
   ├── script.{py,sh,js}
+  ├── input.json
   ├── result.json
   ├── status
   └── original/   (pre-modification snapshot)
@@ -1689,20 +1722,22 @@ Both session and application modes use a **ReadWriteMany PVC** for the sandbox
 workspace, provisioned once and shared across all sandbox pods.
 
 ```tree
-/var/flowgent/workspace/
-├── {namespace}/
-│   └── {definition_id}/
-│       ├── skills/                     ← skill scripts (read-only reference)
-│       └── runs/{run_id}/plans/{plan_id}/{span_id}/
-│           ├── script.sh               ← written by SandboxExecutor
-│           ├── result.json             ← written by SandboxRunner
-│           └── status
+/var/flowgent/
+├── {namespaceId}/
+│   └── {flowId}/
+│       └── {runId}/
+│           └── {taskId}/
+│               ├── script.sh           ← written by SandboxExecutor
+│               ├── input.json          ← written by SandboxExecutor
+│               ├── result.json         ← written by SandboxRunner
+│               ├── status
+│               └── original/
 ```
 
 | Mode | Workspace Path | Provisioning |
 |------|---------------|-------------|
-| Session | `/var/flowgent/workspace/{namespace}/{definition_id}/` | PVC (Helm pre-creates) |
-| Application | `/var/flowgent/workspace/{namespace}/{definition_id}/` | PVC (same path convention) |
+| Session | `/var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}/` | PVC/hostPath (Helm pre-creates mount source) |
+| Application | `/var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}/` | PVC/hostPath (same path convention) |
 | All-in-one | `os.TempDir()` | Process-local |
 
 Both modes use the same path convention — different namespaces and flows are
@@ -1710,23 +1745,21 @@ isolated by subdirectory, not by separate volumes.
 
 ### 18.7 Credential Injection
 
-External service credentials are injected into sandbox pods via K8s secrets,
-then inherited by child processes during script execution:
+External service credentials are injected into JM/TM/Sandbox pods via the K8s
+Secret named in `runtime.credential_env_secret`. Sandbox child processes inherit
+the sandbox pod environment during script execution:
 
 ```yaml
-# deploy/helm/flowgent/values.yaml
-sandbox:
-  credentials:
-    nexus3:     { url: "http://nexus3:8081", secret: "nexus3-creds" }
-    sonatypeiq: { url: "http://sonatypeiq:8070", secret: "iq-creds" }
+# flowgent.yaml
+runtime:
+  credential_env_secret: flowgent-runtime-env
 ```
 
 ```bash
 # Create secrets once per cluster
-kubectl create secret generic nexus3-creds \
-  --from-literal=username=admin --from-literal=password=admin
-kubectl create secret generic iq-creds \
-  --from-literal=username=iq-user --from-literal=password=iq-pass
+kubectl create secret generic flowgent-runtime-env \
+  --from-literal=GITHUB_TOKEN=... \
+  --from-literal=SONARQUBE_TOKEN=...
 ```
 
 - The sandbox runner passes all env vars to child processes:

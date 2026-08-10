@@ -13,7 +13,7 @@ require (
 	github.com/flowgent-labs/flowgent/sandbox v0.0.0
 	// github.com/flowgent-labs/flowgent/wallet v0.0.0   // UNUSED
 	github.com/google/uuid v1.6.0
-	// github.com/jackc/pgx/v5 v5.7.6  // UNUSED
+	github.com/jackc/pgx/v5 v5.7.6
 	github.com/redis/go-redis/v9 v9.17.0
 	github.com/robfig/cron/v3 v3.0.1
 	// github.com/spf13/viper v1.20.1  // UNUSED

@@ -6,7 +6,7 @@ import sys
 import os
 import json
 
-import _common as c
+from verifier import _common as c
 
 # ── Phase: DISCOVERY ──
 
@@ -15,24 +15,23 @@ def verify_discovery(tasks_by_node):
     nodes = c.PHASE_NODES[phase]
     print(f"\n-- [32 Discovery] Commit + scan verification --")
     passed = 0
-    total = 0
+    total = 2
 
     task = c.node_task(tasks_by_node, "get-commit")
-    if task and task.get("status") == "COMPLETED":
-        total += 1
+    if c.task_completed(task):
         output = c.parse_output(task)
-        if "commit_sha" in output and output["commit_sha"]:
-            print(f"  OK get-commit: commit_sha='{str(output['commit_sha'])[:20]}...'")
+        commit_sha = output.get("commit_sha") or output.get("sha")
+        if commit_sha:
+            print(f"  OK get-commit: commit_sha='{str(commit_sha)[:20]}...'")
             passed += 1
         else:
-            print(f"  WARN get-commit: output missing 'commit_sha' field")
+            print(f"  WARN get-commit: output missing 'commit_sha'/'sha' field")
     else:
         status = task.get("status") if task else "not_reached"
         print(f"  -- get-commit: status={status} (skipped)")
 
     task = c.node_task(tasks_by_node, "scan-sonarqube")
-    if task and task.get("status") == "COMPLETED":
-        total += 1
+    if c.task_completed(task):
         output = c.parse_output(task)
         issues = output.get("issues") or output.get("results") or output.get("data")
         if issues and isinstance(issues, list) and len(issues) > 0:
@@ -64,11 +63,10 @@ def verify_analyze(tasks_by_node):
     phase = "ANALYZE"
     print(f"\n-- [32 Analyze] Issue aggregation verification --")
     passed = 0
-    total = 0
+    total = 4
 
     task = c.node_task(tasks_by_node, "aggregate-issues")
-    if task and task.get("status") == "COMPLETED":
-        total = 2
+    if c.task_completed(task):
         output = c.parse_output(task)
         issues = output.get("issues") or output.get("results") or []
         if isinstance(issues, list) and len(issues) > 0:
@@ -95,6 +93,40 @@ def verify_analyze(tasks_by_node):
         status = task.get("status") if task else "not_reached"
         print(f"  -- aggregate-issues: status={status} (skipped)")
 
+    task = c.node_task(tasks_by_node, "git-clone")
+    if c.task_completed(task):
+        output = c.parse_output(task)
+        repo_path = output.get("path")
+        if isinstance(repo_path, str) and repo_path.startswith("/var/flowgent/"):
+            print(f"  OK git-clone: repo path={repo_path}")
+            passed += 1
+        else:
+            print(f"  WARN git-clone: missing /var/flowgent repo path in output")
+    else:
+        status = task.get("status") if task else "not_reached"
+        print(f"  WARN git-clone: status={status}")
+
+    task = c.node_task(tasks_by_node, "read-source-files")
+    if c.task_completed(task):
+        output = c.parse_output(task)
+        issues = output.get("issues") or []
+        files = output.get("files") or []
+        first_file = files[0] if isinstance(files, list) and files else {}
+        if (
+            isinstance(issues, list) and issues
+            and isinstance(files, list) and files
+            and isinstance(first_file, dict)
+            and first_file.get("path")
+            and first_file.get("content")
+        ):
+            print(f"  OK read-source-files: selected {len(issues)} issue(s), {len(files)} file(s)")
+            passed += 1
+        else:
+            print(f"  WARN read-source-files: no selected issue/file context")
+    else:
+        status = task.get("status") if task else "not_reached"
+        print(f"  WARN read-source-files: status={status}")
+
     print(f"  Result: {passed}/{total} checks passed")
     return passed, total
 
@@ -117,24 +149,32 @@ def run():
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
 
-    # Poll run until task data is available
-    print(f"\n-- Polling run {run_id} for task availability --")
-    status = "PENDING"
-    polls = max(1, c.FLOW_TIMEOUT_S // c.POLL_INTERVAL_S)
-    conn = c.pg_connect()
-    for i in range(polls):
-        time.sleep(c.POLL_INTERVAL_S)
-        r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/runs/{run_id}")
-        if r.status_code == 200:
-            status = r.json().get("status", "?")
-            print(f"  [{i * c.POLL_INTERVAL_S}s] status={status}")
-            if status in ("RUNNING", "PAUSED"):
-                c.try_approve_pending_human(s, run_id, conn)
-            if status in ("COMPLETED", "FAILED", "CANCELLED"):
-                break
-        else:
-            print(f"  [{i * c.POLL_INTERVAL_S}s] GET returned {r.status_code}")
-    print(f"  Final run status: {status}")
+    print("\n-- [32 Runtime Pods] Verify JM-created TM/Sandbox pods --")
+    c.ensure_global_mqtt_audit(run_id)
+    try:
+        c.wait_for_application_components(c.FLOW_ID, timeout=240)
+
+        # Poll run until task data is available
+        print(f"\n-- Polling run {run_id} for task availability --")
+        status = "PENDING"
+        polls = max(1, c.FLOW_TIMEOUT_S // c.POLL_INTERVAL_S)
+        conn = c.pg_connect()
+        for i in range(polls):
+            time.sleep(c.POLL_INTERVAL_S)
+            r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/runs/{run_id}")
+            if r.status_code == 200:
+                status = r.json().get("status", "?")
+                print(f"  [{i * c.POLL_INTERVAL_S}s] status={status}")
+                if status in ("RUNNING", "PAUSED"):
+                    c.try_approve_pending_human(s, run_id, conn)
+                if status in ("COMPLETED", "FAILED", "CANCELLED"):
+                    break
+            else:
+                print(f"  [{i * c.POLL_INTERVAL_S}s] GET returned {r.status_code}")
+        print(f"  Final run status: {status}")
+    finally:
+        messages = c.stop_global_mqtt_audit(run_id)
+    c.save_mqtt_audit(run_id, messages)
 
     # Fetch tasks
     print("\n-- Fetching task list from API --")
@@ -156,6 +196,10 @@ def run():
     results = []
     results.append(("Discovery", *verify_discovery(tbn)))
     results.append(("Analyze", *verify_analyze(tbn)))
+
+    print("\n-- [32 MQTT Audit] JM/TM/Sandbox message chain --")
+    c.assert_mqtt_suffixes(run_id, ["exec/plans", "exec/results", "sandbox/trigger", "sandbox/result"])
+    c.assert_completed_task_mqtt_coverage(run_id, tasks)
 
     total_checks = sum(r[2] for r in results)
     passed_checks = sum(r[1] for r in results)

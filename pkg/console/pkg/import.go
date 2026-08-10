@@ -61,7 +61,7 @@ func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
 		} else {
 			md := &ResourceMetadata{
 				Name:        toString(generic["name"]),
-				Namespace:      toString(generic["namespace"]),
+				Namespace:   toString(generic["namespace"]),
 				Status:      toString(generic["status"]),
 				Description: toString(generic["description"]),
 			}
@@ -127,6 +127,13 @@ func applyWrapperMeta(ri *ResourceImport, base *entities.BaseEntity, labels *map
 	}
 }
 
+func activeRuntimeStatus(status string) string {
+	if strings.EqualFold(status, "active") {
+		return "ACTIVE"
+	}
+	return status
+}
+
 func (ri *ResourceImport) metadataName() string {
 	if ri.Metadata != nil {
 		return ri.Metadata.Name
@@ -183,11 +190,11 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			m.Name = ri.metadataName()
 		}
 		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.namespace)
-			// Align Enabled with Status so that MCPs imported with status=active are
-			// immediately usable. TM skips MCPs with enabled=false (taskmanager.go:83).
-			if m.Status == "active" {
-				m.Enabled = true
-			}
+		// Align Enabled with Status so that MCPs imported with status=active are
+		// immediately usable. TM skips MCPs with enabled=false (taskmanager.go:83).
+		if m.Status == "active" {
+			m.Enabled = true
+		}
 		if err := ls.mcps.Save(fc.ctx, &m); err != nil {
 			fmt.Printf("Error saving MCP %s: %v\n", m.Name, err)
 			return false
@@ -204,6 +211,10 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		p.CreatedAt = time.Now()
 		p.UpdatedAt = time.Now()
 		applyWrapperMeta(ri, &p.BaseEntity, &p.Labels, fc.namespace)
+		if p.Status == "" {
+			p.Status = p.BaseEntity.Status
+		}
+		p.Status = activeRuntimeStatus(p.Status)
 		if err := ls.llm.Save(fc.ctx, &p); err != nil {
 			fmt.Printf("Error saving LLMProvider %s: %v\n", p.ID, err)
 			return false
@@ -264,21 +275,21 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		fmt.Printf("  OK Skill: %s\n", spec.ID)
 
-		case "notifychannel":
-			var ch entities.NotifyChannelInfo
-			if err := parseSpec(ri.Spec, &ch); err != nil {
-				fmt.Printf("Error parsing NotifyChannel spec in %s: %v\n", filePath, err)
-				return false
-			}
-			ch.ID = uuid.New().String()
-			ch.CreatedAt = time.Now()
-			ch.UpdatedAt = time.Now()
-			applyWrapperMeta(ri, &ch.BaseEntity, &ch.Labels, fc.namespace)
-			if err := ls.channels.Save(fc.ctx, &ch); err != nil {
-				fmt.Printf("Error saving NotifyChannel %s: %v\n", ch.Name, err)
-				return false
-			}
-			fmt.Printf("  OK NotifyChannel: %s\n", ch.Name)
+	case "notifychannel":
+		var ch entities.NotifyChannelInfo
+		if err := parseSpec(ri.Spec, &ch); err != nil {
+			fmt.Printf("Error parsing NotifyChannel spec in %s: %v\n", filePath, err)
+			return false
+		}
+		ch.ID = uuid.New().String()
+		ch.CreatedAt = time.Now()
+		ch.UpdatedAt = time.Now()
+		applyWrapperMeta(ri, &ch.BaseEntity, &ch.Labels, fc.namespace)
+		if err := ls.channels.Save(fc.ctx, &ch); err != nil {
+			fmt.Printf("Error saving NotifyChannel %s: %v\n", ch.Name, err)
+			return false
+		}
+		fmt.Printf("  OK NotifyChannel: %s\n", ch.Name)
 
 	default:
 		fmt.Printf("Unknown kind %q in %s — expected Agent|MCP|LLMProvider|Flow|FlowRun|NotifyChannel|Skill\n", ri.Kind, filePath)

@@ -14,9 +14,9 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
 	"github.com/flowgent-labs/flowgent/core/pkg/llm"
 	"github.com/flowgent-labs/flowgent/core/pkg/mcp"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	sandbox "github.com/flowgent-labs/flowgent/sandbox/pkg"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -31,20 +31,20 @@ type TaskStateStore interface {
 
 // TaskManagerConfig is the startup configuration for a TaskManager.
 type TaskManagerConfig struct {
-	ID                string
-	SlotCount         int
-	Messager          messager.IMessager
-	State             TaskStateStore
-	ApprovalInfo      executor.HumanApprovalStore
-	APIServerURL      string // API server URL for runtime resource resolution
-	Namespace            string // default namespace for API calls
-	Logger            *utils.Logger
-	HeartbeatInterval time.Duration
-	SandboxMessager   messager.IMessager
-	SandboxPolicy     *model.SandboxPolicy
-	SandboxWorkspace  string
+	ID                       string
+	SlotCount                int
+	Messager                 messager.IMessager
+	State                    TaskStateStore
+	ApprovalInfo             executor.HumanApprovalStore
+	APIServerURL             string // API server URL for runtime resource resolution
+	Namespace                string // default namespace for API calls
+	Logger                   *utils.Logger
+	HeartbeatInterval        time.Duration
+	SandboxMessager          messager.IMessager
+	SandboxPolicy            *model.SandboxPolicy
+	SandboxWorkspace         string
 	SandboxDeploymentEnabled bool
-	HttpClient        model.IFlowgentAPIClient // unified HTTP client (x402-aware when payments enabled)
+	HttpClient               model.IFlowgentAPIClient // unified HTTP client (x402-aware when payments enabled)
 }
 
 // TaskManager is a persistent worker that consumes ExecutionPlans from
@@ -181,7 +181,12 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 		return nil, err
 	}
 	task.Output = result.Output
-	task.Status = entities.Success
+	task.Error = result.Error
+	if result.Error != "" {
+		task.Status = entities.Failed
+	} else {
+		task.Status = entities.Success
+	}
 	now := time.Now()
 	task.FinishedAt = &now
 	plan.FinishedAt = &now

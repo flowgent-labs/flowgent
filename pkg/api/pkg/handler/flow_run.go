@@ -12,27 +12,27 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
+	"github.com/flowgent-labs/flowgent/store/pkg/task"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type FlowRunHandler struct {
 	runStore  flowrun.IFlowRunStore
-	taskStore taskplan.ITaskPlanStore
+	taskStore task.ITaskStore
 	mqtt      MQTTPublisher
 	logger    *utils.Logger
 }
 
 func NewFlowRunHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger) *FlowRunHandler {
 	var runStore flowrun.IFlowRunStore
-	var taskStore taskplan.ITaskPlanStore
+	var taskStore task.ITaskStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
 		runStore = flowrun.NewFlowRunPostgresStore(db)
-		taskStore = taskplan.NewTaskPlanPostgresStore(db)
+		taskStore = task.NewTaskPostgresStore(db)
 	case *sql.DB:
 		runStore = flowrun.NewFlowRunSQLiteStore(db)
-		taskStore = taskplan.NewTaskPlanSQLiteStore(db)
+		taskStore = task.NewTaskSQLiteStore(db)
 	}
 	return &FlowRunHandler{runStore: runStore, taskStore: taskStore, mqtt: mqtt, logger: logger}
 }
@@ -73,8 +73,8 @@ func (h *FlowRunHandler) publishRunCreatedEvent(ctx context.Context, run *entiti
 		"action":       "created",
 		"run_id":       run.ID,
 		"agentflow_id": run.AgentFlowID,
-		"namespace_id":    run.Namespace,
-		"namespace": run.K8sNamespace,
+		"namespace_id": run.Namespace,
+		"namespace":    run.K8sNamespace,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
 		h.logger.Warn("mqtt run created event publish failed", "topic", topic, "error", err)

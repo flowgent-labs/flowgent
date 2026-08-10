@@ -112,6 +112,80 @@ func TestKubernetesResourceManager_ScaleDeployment(t *testing.T) {
 	}
 }
 
+func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	rm := &KubernetesResourceManager{
+		kubeClient:               fakeClient,
+		namespace:                "default",
+		deployName:               "flowgent-taskmanager-default-sec-fix",
+		tmImage:                  "flowgent:test",
+		slotsPerTM:               4,
+		minTMs:                   2,
+		maxTMs:                   10,
+		currentTMs:               2,
+		idleTimeout:              5 * time.Minute,
+		planTimeout:              5 * time.Minute,
+		ownerNamespaceID:         "default",
+		ownerFlowID:              "sec-fix",
+		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix",
+		ownerJobManagerNamespace: "flowgent-default",
+		credentialEnvSecret:      "flowgent-runtime-env",
+	}
+
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("ensureDeployment: %v", err)
+	}
+
+	dep, err := fakeClient.AppsV1().Deployments("default").
+		Get(context.Background(), "flowgent-taskmanager-default-sec-fix", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if got := dep.Labels[LabelManagedBy]; got != LabelValueJobManager {
+		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueJobManager)
+	}
+	if got := dep.Labels[LabelParentJobManager]; got != "flowgent-jobmanager-default-sec-fix" {
+		t.Fatalf("LabelParentJobManager = %q", got)
+	}
+	if got := dep.Labels[LabelParentJobManagerNamespace]; got != "flowgent-default" {
+		t.Fatalf("LabelParentJobManagerNamespace = %q", got)
+	}
+	if got := dep.Spec.Selector.MatchLabels[LabelFlowID]; got != "sec-fix" {
+		t.Fatalf("selector flow label = %q, want sec-fix", got)
+	}
+	container := dep.Spec.Template.Spec.Containers[0]
+	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef == nil {
+		t.Fatalf("expected TM credential envFrom secret ref, got %#v", container.EnvFrom)
+	}
+	if got := container.EnvFrom[0].SecretRef.Name; got != "flowgent-runtime-env" {
+		t.Fatalf("TM credential secret = %q, want flowgent-runtime-env", got)
+	}
+	if container.EnvFrom[0].SecretRef.Optional == nil || !*container.EnvFrom[0].SecretRef.Optional {
+		t.Fatal("TM credential secret ref should be optional")
+	}
+}
+
+func TestKubernetesResourceManager_DesiredTMCountUsesSlots(t *testing.T) {
+	rm := &KubernetesResourceManager{slotsPerTM: 4, minTMs: 0, maxTMs: 10}
+
+	cases := []struct {
+		pending int64
+		want    int
+	}{
+		{pending: 0, want: 0},
+		{pending: 1, want: 1},
+		{pending: 4, want: 1},
+		{pending: 5, want: 2},
+		{pending: 40, want: 10},
+		{pending: 41, want: 10},
+	}
+	for _, tc := range cases {
+		if got := rm.desiredTMCount(tc.pending); got != tc.want {
+			t.Fatalf("desiredTMCount(%d) = %d, want %d", tc.pending, got, tc.want)
+		}
+	}
+}
+
 func TestKubernetesResourceManager_Shutdown(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	replicas := int32(2)
@@ -130,7 +204,7 @@ func TestKubernetesResourceManager_Shutdown(t *testing.T) {
 	rm := &KubernetesResourceManager{
 		kubeClient: fakeClient, namespace: "default",
 		deployName: "flowgent-taskmanager", currentTMs: 2,
-		minTMs: 1, maxTMs: 5,
+		minTMs: 0, maxTMs: 5,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rm.ctx = ctx
@@ -142,7 +216,7 @@ func TestKubernetesResourceManager_Shutdown(t *testing.T) {
 
 	scale, _ := fakeClient.AppsV1().Deployments("default").
 		GetScale(context.Background(), "flowgent-taskmanager", metav1.GetOptions{})
-	if scale.Spec.Replicas != 1 {
+	if scale.Spec.Replicas != int32(rm.minTMs) {
 		t.Errorf("expected replicas=%d after shutdown, got %d", rm.minTMs, scale.Spec.Replicas)
 	}
 }

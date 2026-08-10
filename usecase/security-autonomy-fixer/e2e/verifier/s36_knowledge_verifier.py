@@ -23,7 +23,7 @@ import os
 from common import config
 
 API = config.K8S_APISERVER_URL
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
 BASE = f"{API}/api/v1/{NAMESPACE}"
 
 SEED_TITLE = "SQL Injection Prevention in Java"

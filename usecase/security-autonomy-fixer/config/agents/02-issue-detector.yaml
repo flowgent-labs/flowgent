@@ -8,7 +8,7 @@ metadata:
   description: DevSecOps expert specializing in SonarQube SAST analysis, issue parsing, normalization, deduplication, and severity assessment
 
 data:
-  model: deepseek-pro
+  model: OPENAI/deepseek-chat
   max_tokens: 16384
   soul: |-
     You are a senior DevSecOps expert specializing in SAST/DAST/FOSS analysis.

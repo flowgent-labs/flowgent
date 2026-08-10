@@ -1,31 +1,31 @@
 consoleVersion: core.flowgent.io/v1
-kind: Flow
+kind: Skill
 metadata:
   name: sub-fix
   namespace: default
   labels: {}
   status: active
   description: Sub-flow for individual security issue analysis, patching, and validation per finding
-
 data:
   id: sub-fix
   nodes:
-    - id: analyze
-      kind: agent
-      data:
-        agent: fixer-agent
-      instruction: |
-        Analyze the issue only. DO NOT patch.
-    - id: patch
-      kind: agent
-      data:
-        agent: fixer-agent
-      instruction: |
-        Generate secure patch.
-    - id: validate
-      kind: tool
-      data:
-        tool: sonarqube
+  - id: analyze
+    kind: agent
+    instruction: 'Analyze the issue only. DO NOT patch.
+
+      '
+    agent: fixer-agent
+  - id: patch
+    kind: agent
+    instruction: 'Generate secure patch.
+
+      '
+    agent: fixer-agent
+  - id: validate
+    kind: tool
+    tool: sonarqube
   edges:
-    - { from: analyze, to: patch }
-    - { from: patch, to: validate }
+  - from: analyze
+    to: patch
+  - from: patch
+    to: validate

@@ -21,6 +21,7 @@ postgresql:
 emqx:
   enabled: false           # true = deploy EMQX in-cluster
   externalSecret: ""       # name of existing secret with key "broker"
+  maxPacketSize: "8MB"     # supports large DAG payloads such as source-file context
 
 redis:
   enabled: false           # true = deploy Redis in-cluster
@@ -44,10 +45,13 @@ jaeger:
 # ── Storage — persistent data backend
 storage:
   type: SQLITE                 # SQLITE | POSTGRE
+  postgres:
+    # External DSN. The E2E deployer supplies this when PostgreSQL is external.
+    dsn: ""
 
 # ── Distributed Lock Provider ───────────────────────────────
 lock:
-  provider: memory              # memory | postgres | redis
+  provider: ""                  # empty = postgres when storage.type=POSTGRE, otherwise memory
 
 # ── Inter-component Messaging (MQTT) ─────────────────────────
 messaging:
@@ -77,6 +81,8 @@ apiserver:
       - "/static/**"
       - "/_/healthz/**"
       - "/a2a/**"
+      - "/api/v1/**"
+      - "/api/v1/human/**"
 
 # ═══════════════════════════════════════════════════════════════
 # A2A — [optional] Google Agent-to-Agent Protocol Server
@@ -189,8 +195,11 @@ credentialProviders:
 #   K8sRM manages sandbox pods independently in distributed mode.
 # ═══════════════════════════════════════════════════════════════
 sandbox:
-  workspace: "/var/flowgent/workspace"
+  workspace: "/var/flowgent"
+  hostWorkspace: "/mnt/disk1/flowgent/e2e"
   slots: 4
+  minReplicas: 0
+  maxReplicas: 10
   resources:
     limits:
       cpu: "2"
@@ -261,6 +270,9 @@ orchestration:
 # applicationNamespace doc comment.
 # ═══════════════════════════════════════════════════════════════
 runtime:
+  systemNamespace: "flowgen-system"
+  tmOrphanTimeout: "3m"
+  credentialEnvSecret: ""
   namespace:
     defaultNamespace: "default"
     namespacePrefix: "flowgent-"

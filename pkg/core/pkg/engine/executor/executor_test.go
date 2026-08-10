@@ -211,10 +211,12 @@ func TestSubflowExecutor(t *testing.T) {
 // ── Test helpers ─────────────────────────────────────
 
 type testLLMClient struct {
-	response string
+	response      string
+	lastMaxTokens int
 }
 
-func (c *testLLMClient) Generate(_ context.Context, _, _, _ string, _ float64) (string, error) {
+func (c *testLLMClient) Generate(_ context.Context, _, _, _ string, _ float64, maxTokens int) (string, error) {
+	c.lastMaxTokens = maxTokens
 	return c.response, nil
 }
 
@@ -224,7 +226,7 @@ type retryLLM struct {
 	idx       int
 }
 
-func (c *retryLLM) Generate(_ context.Context, _, _, _ string, _ float64) (string, error) {
+func (c *retryLLM) Generate(_ context.Context, _, _, _ string, _ float64, _ int) (string, error) {
 	if c.onCall != nil {
 		c.onCall()
 	}
@@ -347,7 +349,7 @@ func TestSupervisorExecutor_DefaultContinue(t *testing.T) {
 func TestAgentExecutor_Success(t *testing.T) {
 	llm := &testLLMClient{response: `{"issues":[{"id":"ISS-001","severity":"high"}]}`}
 	srv := agentServer([]*entities.AgentInfo{
-		{Name: "issue-detector", Model: "test/gpt", Instruction: "find issues", Soul: "you are a scanner"},
+		{Name: "issue-detector", Model: "test/gpt", Instruction: "find issues", Soul: "you are a scanner", MaxTokens: 12000},
 	})
 	defer srv.Close()
 	apiClient := client.NewFlowgentClient(srv.URL)
@@ -363,6 +365,9 @@ func TestAgentExecutor_Success(t *testing.T) {
 	}
 	if result.Output == nil {
 		t.Fatal("expected output")
+	}
+	if llm.lastMaxTokens != 12000 {
+		t.Fatalf("expected max tokens 12000, got %d", llm.lastMaxTokens)
 	}
 }
 

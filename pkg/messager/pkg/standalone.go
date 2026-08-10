@@ -11,18 +11,20 @@ import (
 type LocalMessager struct {
 	mu   sync.Mutex
 	subs map[string][]SubHandler
+	next map[string]int
 }
 
 // NewLocalMessager creates an in-memory messager.
 func NewLocalMessager(size int) *LocalMessager {
 	return &LocalMessager{
 		subs: make(map[string][]SubHandler),
+		next: make(map[string]int),
 	}
 }
 
 func (q *LocalMessager) Publish(ctx context.Context, topic string, msg *InterMessage) error {
 	q.mu.Lock()
-	handlers := q.matchHandlers(topic)
+	handlers := q.matchHandlersLocked(topic)
 	q.mu.Unlock()
 	for _, h := range handlers {
 		h(topic, msg.Payload)
@@ -43,13 +45,19 @@ func (q *LocalMessager) Subscribe(ctx context.Context, topic string, handler Sub
 // matchHandlers returns all handlers whose subscription topic matches the
 // published topic. Supports MQTT single-level wildcards (+). Subscriptions
 // with a $share/ prefix are normalized before matching.
-func (q *LocalMessager) matchHandlers(topic string) []SubHandler {
+func (q *LocalMessager) matchHandlersLocked(topic string) []SubHandler {
 	var handlers []SubHandler
 	topicParts := splitTopic(topic)
 	for sub, hs := range q.subs {
 		subNormalized := stripSharePrefix(sub)
 		if topicMatch(subNormalized, topicParts) {
-			handlers = append(handlers, hs...)
+			if isSharedTopic(sub) && len(hs) > 0 {
+				idx := q.next[sub] % len(hs)
+				q.next[sub] = idx + 1
+				handlers = append(handlers, hs[idx])
+			} else {
+				handlers = append(handlers, hs...)
+			}
 		}
 	}
 	return handlers

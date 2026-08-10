@@ -70,12 +70,24 @@ func (s *KnowledgePostgresStore) Search(ctx context.Context, req entities.Knowle
 	if topK <= 0 {
 		topK = 20
 	}
+	terms := searchTerms(req.Query)
+	if len(terms) == 0 {
+		return []*entities.KnowledgeEntry{}, nil
+	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`SELECT %s FROM knowledge_entries WHERE del_flag = false AND (title ILIKE '%%' || $1 || '%%' OR content::text ILIKE '%%' || $1 || '%%')`, cols))
+	sb.WriteString(fmt.Sprintf(`SELECT %s FROM knowledge_entries WHERE del_flag = false AND (`, cols))
 
-	args := []any{req.Query}
-	argIdx := 2
+	args := make([]any, 0, len(terms)+len(req.Tags)+1)
+	termClauses := make([]string, len(terms))
+	argIdx := 1
+	for i, term := range terms {
+		termClauses[i] = fmt.Sprintf(`(title ILIKE '%%' || $%d || '%%' OR content::text ILIKE '%%' || $%d || '%%')`, argIdx, argIdx)
+		args = append(args, term)
+		argIdx++
+	}
+	sb.WriteString(strings.Join(termClauses, " OR "))
+	sb.WriteString(")")
 
 	if len(req.Tags) > 0 {
 		placeholders := make([]string, len(req.Tags))

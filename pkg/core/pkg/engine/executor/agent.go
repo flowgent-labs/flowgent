@@ -27,21 +27,21 @@ type KnowledgeRetriever interface {
 }
 
 type AgentExecutor struct {
-	llmClient    engine.LLMClient
-	client       *client.FlowgentClient
-	namespace       string
-	memStore     NodeMemoryStore
-	knowledge    KnowledgeRetriever
-	maxRetries   int
+	llmClient  engine.LLMClient
+	client     *client.FlowgentClient
+	namespace  string
+	memStore   NodeMemoryStore
+	knowledge  KnowledgeRetriever
+	maxRetries int
 }
 
 func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, namespace string) *AgentExecutor {
 	return &AgentExecutor{llmClient: llm, client: apiClient, namespace: namespace, maxRetries: 3}
 }
 
-func (e *AgentExecutor) SetMemoryStore(s NodeMemoryStore) { e.memStore = s }
+func (e *AgentExecutor) SetMemoryStore(s NodeMemoryStore)           { e.memStore = s }
 func (e *AgentExecutor) SetKnowledgeRetriever(k KnowledgeRetriever) { e.knowledge = k }
-func (e *AgentExecutor) TaskType() entities.TaskType         { return entities.TaskAgent }
+func (e *AgentExecutor) TaskType() entities.TaskType                { return entities.TaskAgent }
 
 func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	agent, err := e.client.GetAgent(ctx, e.namespace, plan.NodeSpec.Agent)
@@ -95,7 +95,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 
 	var lastErr error
 	for attempt := 0; attempt <= e.maxRetries; attempt++ {
-		resp, err := e.llmClient.Generate(ctx, soul, userPrompt, agent.Model, temperature)
+		resp, err := e.llmClient.Generate(ctx, soul, userPrompt, agent.Model, temperature, agent.MaxTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call failed: %w", err)
 			e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, "", attempt, lastErr.Error())

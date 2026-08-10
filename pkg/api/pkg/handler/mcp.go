@@ -67,6 +67,10 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *McpHandler) Get(w http.ResponseWriter, r *http.Request) {
 	m, err := h.store.Get(r.Context(), r.PathValue("name"))
 	if err != nil {
+		if isNotFoundError(err) {
+			http.Error(w, "not found", 404)
+			return
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}

@@ -24,8 +24,8 @@ Steps with Expected I/O:
     Input:   MQTT broker reachable; paho-mqtt installed
     Output:  Both event and result messages received within 5s
 
-  Step 5. Legacy Notify Queue Subscription
-    Action:  Subscribe to $share/notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event
+  Step 5. Notify Event Observation
+    Action:  Subscribe to flowgent/v1/+/flows/+/runs/+/notify/event
     Input:   MQTT broker reachable
     Output:  Subscription confirmed (message count reported)
 """
@@ -38,7 +38,7 @@ import requests
 from common import config
 
 API = config.K8S_APISERVER_URL
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
 EMQX = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 EMQX_DASH = config.EMQX_DASHBOARD
@@ -132,7 +132,7 @@ def run():
         client.on_message = on_message
         try:
             client.connect(EMQX, EMQX_PORT, 10)
-            client.subscribe(f"$share/notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event")
+            client.subscribe("flowgent/v1/+/flows/+/runs/+/notify/event")
             client.subscribe(result_topic)
             client.loop_start()
             time.sleep(0.3)
@@ -168,8 +168,8 @@ def run():
             print(f"      ✗ MQTT notify failed: {e}")
             results["MQTT Notify"] = False
 
-    # ── 5. Subscribe to legacy notify queue (opportunistic) ─────
-    print("\n  → [5] Legacy notify queue subscription...")
+    # ── 5. Observe the production topic without joining its worker group ─
+    print("\n  → [5] Non-shared notify event observation...")
     try:
         import paho.mqtt.client as mqtt
 
@@ -181,12 +181,12 @@ def run():
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         client.on_message = on_message
         client.connect(EMQX, EMQX_PORT, 10)
-        client.subscribe("$share/notify-pool/flowgent/v1/+/flows/+/runs/+/notify/event")
+        client.subscribe("flowgent/v1/+/flows/+/runs/+/notify/event")
         client.loop_start()
         time.sleep(2)
         client.loop_stop()
         client.disconnect()
-        print(f"      ✓ Subscribed to notify/event ({len(messages)} messages)")
+        print(f"      ✓ Observed notify/event without a shared subscription ({len(messages)} messages)")
         results["Notify Queue"] = True
     except Exception as e:
         print(f"      ⚠ Notify queue subscription: {e}")

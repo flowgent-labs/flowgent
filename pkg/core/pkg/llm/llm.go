@@ -12,7 +12,7 @@ import (
 
 // ILlmProvider is the interface each LLM provider implementation must satisfy.
 type ILlmProvider interface {
-	Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error)
+	Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64, maxTokens int) (string, error)
 }
 
 // LlmProviderLoader loads DB-backed LLM provider definitions via apiserver.
@@ -87,13 +87,13 @@ func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
 }
 
 // Generate routes the request to the appropriate provider instance.
-func (m *LlmProviderManager) Generate(ctx context.Context, systemPrompt, userPrompt, providerModel string, temperature float64) (string, error) {
+func (m *LlmProviderManager) Generate(ctx context.Context, systemPrompt, userPrompt, providerModel string, temperature float64, maxTokens int) (string, error) {
 	providerID, modelName := resolveProvider(providerModel, m.providers)
 	pc, ok := m.providers[providerID]
 	if !ok {
 		return "", fmt.Errorf("llm provider not found: %s", providerID)
 	}
-	return pc.Generate(ctx, systemPrompt, userPrompt, modelName, temperature)
+	return pc.Generate(ctx, systemPrompt, userPrompt, modelName, temperature, maxTokens)
 }
 
 func resolveProvider(providerModel string, providers map[string]ILlmProvider) (providerID, modelName string) {

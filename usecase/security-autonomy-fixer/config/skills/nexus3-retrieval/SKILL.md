@@ -45,7 +45,7 @@ Injected via environment variables (K8s Secrets → Sandbox Pod Env):
 Sandbox scripts execute in a shared workspace volume:
 
 ```
-{workspace}/{namespace}/{definition_id}/runs/{run_id}/plans/{plan_id}/{span_id}/
+{workspace}/{namespaceId}/{flowId}/{runId}/{taskId}/
   ├── script.sh        ← written by SandboxExecutor
   ├── result.json      ← written by SandboxRunner after execution
   └── status

@@ -69,6 +69,8 @@ auth:
     - "/swagger-ui/**"
     - "/.well-known/**"
     - "/a2a/**"
+    - "/api/v1/**"
+    - "/api/v1/human/**"
   oidc:
     enabled: false
     client_id: "<YOUR_OIDC_CLIENT_ID>"
@@ -137,17 +139,17 @@ cache:
 # ── Storage ──────────────────────────────────────────────────────────────────
 #    Type: SQLITE (all-in-one/dev) | POSTGRE (production/distributed)
 storage:
-  type: "SQLITE"                  # SQLITE | POSTGRE
+  type: "POSTGRE"                 # SQLITE | POSTGRE
   sqlite:
     dir: ".flowgent/sqlite"
   postgres:
-    # dsn: "postgres://user:pass@host:5432/db?sslmode=disable"  # alternative to host/port/db/user/password
+    dsn: "postgres://test:test@127.0.0.1:5432/flowgent?sslmode=disable"
     host: "127.0.0.1"
     port: 5432
     database: "flowgent"
     schema: "public"
-    username: postgres
-    password: "changeit"
+    username: test
+    password: "test"
     min_connections: 2
     max_connections: 20
     use_ssl: false
@@ -204,7 +206,8 @@ orchestration:
 #    model.SandboxPolicy / SandboxDeploymentConfig wire types (used over MQTT/DB),
 #    which retain snake_case field names — do not rename them to camelCase.
 sandbox:
-  workspace: "/var/flowgent/workspace"   # shared PVC, per-{namespace}/{flow_id} subdirs
+  workspace: "/var/flowgent"               # container mountPath inside TM/Sandbox pods
+  host_workspace: "/mnt/disk1/flowgent/e2e" # hostPath source on K8S node
   policy:
     network:
       mode: none                   # none | allowlist | denylist
@@ -269,7 +272,10 @@ runtime:
   credential_paths:
     base_path: "/var/flowgent"
   api_server_url: "http://apiserver:9999"
-  k8s_namespace: "default"
+  system_namespace: "flowgen-system"
+  k8s_namespace: "flowgen-system"
+  tm_orphan_timeout: "3m"
+  credential_env_secret: ""
   # agentFlowId: ""              # set by JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
   # tmId: ""                     # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
   tm_deploy: "flowgent-taskmanager"

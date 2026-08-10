@@ -2,7 +2,7 @@ package store_test
 
 // NOTE: package store_test (external/black-box test package) is required
 // here, not package store: the per-entity stores below (agentflow, flowrun,
-// taskplan, approval) all import store.SQLiteGenericStore from the parent
+// task, approval) all import store.SQLiteGenericStore from the parent
 // "store" package, so an in-package test here that also imported them would
 // create an import cycle (store -> flowrun -> store).
 //
@@ -10,7 +10,7 @@ package store_test
 // monolithic Store type these tests originally targeted (NewSQLiteStore with
 // CreateFlowRun/GetFlowRun/... methods) was removed when the codebase moved
 // to one store implementation per entity under store/pkg/{agentflow,flowrun,
-// taskplan,approval,...} (see "Enforce apiserver-only DB access pattern"
+// task,approval,...} (see "Enforce apiserver-only DB access pattern"
 // refactor).
 
 import (
@@ -20,10 +20,10 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	store "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	"github.com/flowgent-labs/flowgent/store/pkg/approval"
+	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
+	"github.com/flowgent-labs/flowgent/store/pkg/task"
 )
 
 func TestSQLiteConn_Init(t *testing.T) {
@@ -83,6 +83,20 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	if got.Status != entities.RunCancelled {
 		t.Errorf("expected CANCELLED after Cancel, got %s", got.Status)
 	}
+
+	if err := s.Delete(ctx, run.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(ctx, run.ID); err == nil {
+		t.Fatalf("Get returned soft-deleted run")
+	}
+	page, err = s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	if err != nil {
+		t.Fatalf("Select after delete: %v", err)
+	}
+	if page.TotalCount != 0 {
+		t.Fatalf("expected no active runs after delete, got %d", page.TotalCount)
+	}
 }
 
 func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
@@ -90,7 +104,7 @@ func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
 	defer conn.Close()
 	ctx := context.Background()
 	frStore := flowrun.NewFlowRunSQLiteStore(conn)
-	tpStore := taskplan.NewTaskPlanSQLiteStore(conn)
+	tpStore := task.NewTaskSQLiteStore(conn)
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	if err := frStore.Create(ctx, run); err != nil {
@@ -144,7 +158,7 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 	defer conn.Close()
 	ctx := context.Background()
 	frStore := flowrun.NewFlowRunSQLiteStore(conn)
-	tpStore := taskplan.NewTaskPlanSQLiteStore(conn)
+	tpStore := task.NewTaskSQLiteStore(conn)
 	apStore := approval.NewApprovalSQLiteStore(conn)
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
@@ -201,8 +215,8 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	s := flow.NewFlowSQLiteStore(conn)
 
 	def := &entities.FlowVersionInfo{
-		BaseEntity:  entities.BaseEntity{CreatedBy: "test"},
-		FlowID: "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
+		BaseEntity: entities.BaseEntity{CreatedBy: "test"},
+		FlowID:     "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
 		Comment: "initial",
 	}
 	if err := s.Save(ctx, def); err != nil {
@@ -231,5 +245,34 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	}
 	if page.TotalCount < 1 {
 		t.Errorf("expected at least 1 def, got %d", page.TotalCount)
+	}
+
+	if err := s.Delete(ctx, "flow-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(ctx, "flow-1"); err == nil {
+		t.Fatalf("Get returned soft-deleted flow")
+	}
+	if _, err := s.GetVersion(ctx, "flow-1", 1); err == nil {
+		t.Fatalf("GetVersion returned soft-deleted flow")
+	}
+	if _, err := s.GetSpec(ctx, "flow-1"); err == nil {
+		t.Fatalf("GetSpec returned soft-deleted flow")
+	}
+	page, err = s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	if err != nil {
+		t.Fatalf("Select after delete: %v", err)
+	}
+	if page.TotalCount != 0 {
+		t.Fatalf("expected no active defs after delete, got %d", page.TotalCount)
+	}
+
+	if err := s.SaveSpec(ctx, &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "flow-1"},
+	}, "test", "restore"); err != nil {
+		t.Fatalf("SaveSpec restore: %v", err)
+	}
+	if _, err := s.GetSpec(ctx, "flow-1"); err != nil {
+		t.Fatalf("GetSpec after restore: %v", err)
 	}
 }

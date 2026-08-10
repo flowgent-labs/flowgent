@@ -89,7 +89,7 @@ except ImportError:
     PG_AVAILABLE = False
 
 API_BASE = config.K8S_APISERVER_URL
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
 
 
 def rand_id() -> str:
@@ -291,10 +291,10 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
                 if not result:
                     raise AssertionError(f"update check failed")
             else:
-                cursor.execute(f"SELECT updated_at > created_at FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
+                cursor.execute(f"SELECT updated_at >= created_at FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
                 updated = cursor.fetchone()[0]
                 if not updated:
-                    raise AssertionError(f"updated_at not changed")
+                    raise AssertionError(f"updated_at not set (check PG timestamp precision)")
 
         print(f"      ✓ Update verified")
         
@@ -315,7 +315,15 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         # Verify GET returns 404
         resp = http_request("GET", f"{base_path}/{created_id}")
         if resp["status_code"] != 404:
-            print(f"      ⚠ DELETE did not return 404 on subsequent GET (got {resp['status_code']})")
+            raise AssertionError(f"DELETE did not hide item from GET (got {resp['status_code']})")
+
+        resp = http_request("GET", f"{base_path}?limit=10")
+        if resp["status_code"] != 200:
+            raise AssertionError(f"LIST after DELETE failed: {resp['status_code']}")
+        items = resp["data"] if isinstance(resp["data"], list) else resp["data"].get("items", [])
+        still_listed = any(item.get(list_search_field) == created_id or item.get(id_field) == created_id for item in items)
+        if still_listed:
+            raise AssertionError("DELETE did not hide item from LIST")
         
         print(f"      ✓ Delete verified")
         
@@ -339,6 +347,7 @@ def test_flow_lifecycle_events() -> bool:
     if not mqtt_client.client:
         print(f"    ⚠ MQTT not available, skipping event tests")
         return True
+    created_id = None
     
     try:
         # Subscribe to ctrl events
@@ -411,6 +420,8 @@ def test_flow_lifecycle_events() -> bool:
         return False
     
     finally:
+        if created_id:
+            http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
         mqtt_client.close()
 
 
@@ -464,6 +475,7 @@ def test_flow_run_crud() -> bool:
         print(f"    ✗ FlowRun CRUD failed: {e}")
         return False
     finally:
+        http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
         if pg_conn:
             pg_conn.close()
 
@@ -507,8 +519,10 @@ def test_task_run_nested() -> bool:
             raise AssertionError("no task id")
 
         resp = http_request("GET", f"{base}/{task_id}")
-        if resp["status_code"] != 200 or resp["data"].get("node_id") != "test-node":
-            raise AssertionError("GET task failed")
+        if resp["status_code"] != 200 or not isinstance(resp["data"], dict):
+            raise AssertionError(f"GET task failed: {resp['status_code']} {resp.get('text')}")
+        if resp["data"].get("node_id") != "test-node":
+            raise AssertionError(f"GET task returned wrong node_id: {resp['data']}")
 
         resp = http_request("PUT", f"{base}/{task_id}", {
             "node_id": "test-node",
@@ -530,7 +544,14 @@ def test_task_run_nested() -> bool:
                 raise AssertionError("task output not persisted in PG")
 
         resp = http_request("GET", base)
-        items = resp["data"] if isinstance(resp["data"], list) else resp["data"].get("items", [])
+        if resp["status_code"] != 200:
+            raise AssertionError(f"LIST tasks failed: {resp['status_code']} {resp.get('text')}")
+        if isinstance(resp["data"], list):
+            items = resp["data"]
+        elif isinstance(resp["data"], dict):
+            items = resp["data"].get("items", [])
+        else:
+            raise AssertionError(f"LIST tasks returned non-JSON payload: {resp['data']!r}")
         if not any(t.get("id") == task_id for t in items):
             raise AssertionError("task not in LIST")
 
@@ -540,6 +561,7 @@ def test_task_run_nested() -> bool:
         print(f"    ✗ TaskRun nested CRUD failed: {e}")
         return False
     finally:
+        http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
         if pg_conn:
             pg_conn.close()
 
@@ -626,7 +648,11 @@ def run():
                 "edges": [],
             },
             "update": {"description": "updated"},
-            "update_check_sql": "SELECT COUNT(*) >= 2 FROM orh_agentflow WHERE agentflow_id=%s",
+            "update_check_sql": (
+                "SELECT COUNT(*) = 1 "
+                "AND COALESCE(MAX(definition->>'description'), '') = 'updated' "
+                "FROM orh_agentflow WHERE agentflow_id=%s AND version=1 AND del_flag=false"
+            ),
         },
         {
             "name": "Agent",

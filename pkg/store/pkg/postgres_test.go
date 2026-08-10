@@ -12,7 +12,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	store "github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/taskplan"
+	"github.com/flowgent-labs/flowgent/store/pkg/task"
 )
 
 func testPGDSN() string {
@@ -83,7 +83,7 @@ func TestPostgresStore_TaskRunCRUD(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	frStore := flowrun.NewFlowRunPostgresStore(pool)
-	tpStore := taskplan.NewTaskPlanPostgresStore(pool)
+	tpStore := task.NewTaskPostgresStore(pool)
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	frStore.Create(ctx, run)

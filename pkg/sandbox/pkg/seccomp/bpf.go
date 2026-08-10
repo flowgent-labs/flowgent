@@ -27,9 +27,9 @@ const (
 //
 //	__NR_socket(41)   → block SOCK_RAW, allow others
 //	__NR_connect(42)  → mode "none": block; allowlist/denylist: USER_NOTIF
-//	__NR_sendto(44)   → mode "none": block; allowlist/denylist: USER_NOTIF
-//	__NR_sendmsg(46)  → mode "none": block; allowlist/denylist: USER_NOTIF
-//	__NR_sendmmsg(307)→ mode "none": block; allowlist/denylist: USER_NOTIF
+//	__NR_sendto(44)   → mode "none": block; allowlist/denylist: allow
+//	__NR_sendmsg(46)  → mode "none": block; allowlist/denylist: allow
+//	__NR_sendmmsg(307)→ mode "none": block; allowlist/denylist: allow
 //	__NR_bpf(321)     → always block (privilege escalation)
 //	__NR_init_module(175)   → always block
 //	__NR_kexec_load(246)    → always block
@@ -56,10 +56,8 @@ func buildBPF(mode string) []unix.SockFilter {
 	b.retAllow()          // all other socket types allowed
 
 	if useNotif {
-		for _, nr := range []uint32{sysConnect, sysSendto, sysSendmsg, sysSendmmsg} {
-			b.loadNr()
-			b.jeqNotif(nr)
-		}
+		b.loadNr()
+		b.jeqNotif(sysConnect)
 	} else {
 		for _, nr := range []uint32{sysConnect, sysSendto, sysSendmsg, sysSendmmsg} {
 			b.loadNr()

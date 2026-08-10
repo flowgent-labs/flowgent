@@ -5,9 +5,9 @@ package seccomp
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -21,6 +21,27 @@ const seccompNotifSize = 80
 //
 //	id(8) + val(8) + error(4) + flags(4) = 24 bytes
 const seccompRespSize = 24
+
+type seccompData struct {
+	Nr                 int32
+	Arch               uint32
+	InstructionPointer uint64
+	Args               [6]uint64
+}
+
+type seccompNotif struct {
+	ID    uint64
+	Pid   uint32
+	Flags uint32
+	Data  seccompData
+}
+
+type seccompNotifResp struct {
+	ID    uint64
+	Val   int64
+	Error int32
+	Flags uint32
+}
 
 // Notifier handles SECCOMP_RET_USER_NOTIF events from a seccomp filter.
 // Reads connection requests from the kernel, inspects the target sockaddr
@@ -48,8 +69,6 @@ func newNotifier(fd *os.File, allowlist, denylist []ipPort) *Notifier {
 // Returns when Close() is called or the fd is closed.
 func (n *Notifier) Start() {
 	defer n.fd.Close()
-	buf := make([]byte, seccompNotifSize)
-	resp := make([]byte, seccompRespSize)
 
 	for {
 		select {
@@ -58,42 +77,43 @@ func (n *Notifier) Start() {
 		default:
 		}
 
-		// Read a seccomp_notif from the kernel.
-		_, err := io.ReadFull(n.fd, buf)
-		if err != nil {
-			return // fd closed or kernel stopped sending
+		var req seccompNotif
+		if err := ioctlNotifRecv(int(n.fd.Fd()), &req); err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return
 		}
 
-		id := binary.LittleEndian.Uint64(buf[0:8])
-		pid := binary.LittleEndian.Uint32(buf[8:12])
-		_ = buf[12:16] // flags (unused)
+		allow, errno := n.checkTarget(req.Pid, req.Data.Args[1])
 
-		// seccomp_data starts at offset 16 in the notification.
-		data := buf[16:seccompNotifSize]
-
-		// Syscall number is first 4 bytes of seccomp_data.
-		// Arguments are at offset 16 within seccomp_data (data[16:64]).
-		args := data[16:64]
-
-		// args[1] is the sockaddr pointer for connect/sendto/sendmsg.
-		sockaddrPtr := binary.LittleEndian.Uint64(args[8:16])
-
-		allow, errno := n.checkTarget(pid, sockaddrPtr)
-
-		// Build response.
-		binary.LittleEndian.PutUint64(resp[0:8], id)
+		resp := seccompNotifResp{ID: req.ID}
 		if allow {
-			binary.LittleEndian.PutUint64(resp[8:16], 0)
-			binary.LittleEndian.PutUint32(resp[16:20], 0)
-			binary.LittleEndian.PutUint32(resp[20:24], unix.SECCOMP_USER_NOTIF_FLAG_CONTINUE)
+			resp.Flags = unix.SECCOMP_USER_NOTIF_FLAG_CONTINUE
 		} else {
-			binary.LittleEndian.PutUint64(resp[8:16], 0)
-			binary.LittleEndian.PutUint32(resp[16:20], uint32(errno))
-			binary.LittleEndian.PutUint32(resp[20:24], 0)
+			resp.Error = -errno
 		}
 
-		n.fd.Write(resp)
+		if err := ioctlNotifSend(int(n.fd.Fd()), &resp); err != nil && err != unix.ENOENT {
+			return
+		}
 	}
+}
+
+func ioctlNotifRecv(fd int, req *seccompNotif) error {
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.SECCOMP_IOCTL_NOTIF_RECV), uintptr(unsafe.Pointer(req)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func ioctlNotifSend(fd int, resp *seccompNotifResp) error {
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.SECCOMP_IOCTL_NOTIF_SEND), uintptr(unsafe.Pointer(resp)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 // checkTarget reads the sockaddr from the child's memory and checks

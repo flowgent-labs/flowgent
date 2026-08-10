@@ -26,7 +26,7 @@ Steps with Expected I/O:
     Step 2.2 Import summary
       Action:  Count OK lines from console stdout
       Input:   Import completed
-      Output:  ≥10 resources imported (7 agents + 2 flows + 1 llm + 2 mcps + 2 notifiers + 1 skill = 15 YAMLs)
+      Output:  ≥10 resources imported (7 agents + 1 flow + 1 llm + 2 mcps + 2 notifiers + 2 skills = 15 YAMLs)
 
   L3 — Database Verification
     Step 3.1 Agents in llm_agent
@@ -37,7 +37,7 @@ Steps with Expected I/O:
     Step 3.2 Flows in orh_agentflow
       Action:  psql -c "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='flow'"
       Input:   Flow YAMLs imported
-      Output:  ≥2 flow records
+      Output:  ≥1 flow record
 
     Step 3.3 MCPs in llm_mcp
       Action:  psql -c "SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='default'"
@@ -57,7 +57,12 @@ Steps with Expected I/O:
     Step 3.6 Skills in orh_agentflow
       Action:  psql -c "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='skill'"
       Input:   Skill YAMLs imported
-      Output:  ≥1 skill record
+      Output:  ≥2 skill records
+
+    Step 3.8 No idle application runtime
+      Action:  kubectl get deployments/pods -A for application JM and JM-owned TM labels
+      Input:   Config import completed, no FlowRun triggered yet
+      Output:  No application-mode JM/TM runtime resources exist
 """
 
 import subprocess
@@ -66,7 +71,7 @@ import os
 import json
 from common import config
 
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
 
 # Paths relative to project root (e2e/verifier -> .. -> project root = ../../../../)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -79,23 +84,26 @@ CONFIG_PATHS = [
     os.path.join(PROJECT_ROOT, "etc", "flowgent.yaml"),
     os.path.join(os.path.dirname(__file__), "..", "config", "flowgent.yaml"),
 ]
-CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "config")
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "config")
 
 # Resource counts expected after import
 MIN_AGENTS = 5
-MIN_FLOWS = 2
+MIN_FLOWS = 1
 MIN_MCPS = 2
 MIN_LLM_PROVIDERS = 1
 MIN_NOTIFIERS = 2
-MIN_SKILLS = 1
+MIN_SKILLS = 2
+PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
+os.environ.setdefault(PROXY_ALLOWLIST_ENV, "github.com")
 
 
 def _pg_query(query):
-    """Run a SQL query via psql and return stdout."""
-    dsn = config.pg_dsn()
-    env = {**os.environ, "PGPASSWORD": config.PG_PASSWORD}
+    """Run a SQL query via psql in docker PG container and return stdout."""
+    env = {**os.environ, "PGPASSWORD": "test"}
+    escaped = query.replace("'", "'\"'\"'")
     result = subprocess.run(
-        ["psql", dsn, "-XAt", "-c", query],
+        ["sudo", "docker", "exec", "sigbot_e2e_164364_postgres", "sh", "-c",
+         f"PGPASSWORD=test psql -U test -d flowgent -XAt -c '{escaped}'"],
         capture_output=True, text=True, timeout=15,
         env=env,
     )
@@ -120,7 +128,103 @@ def _find_config():
     return None
 
 
+def _kubectl_json(args):
+    result = subprocess.run(["kubectl", *args, "-o", "json"], capture_output=True, text=True, timeout=15)
+    if result.returncode != 0:
+        return None, result.stderr.strip()[:200]
+    try:
+        return json.loads(result.stdout or "{}"), ""
+    except json.JSONDecodeError as exc:
+        return None, str(exc)
+
+
+def _names(items):
+    return [
+        f"{item.get('metadata', {}).get('namespace', '?')}/{item.get('metadata', {}).get('name', '?')}"
+        for item in items
+    ]
+
+
+def _verify_no_idle_application_runtime(failures):
+    checks = [
+        (
+            "JM deployments",
+            ["get", "deployments", "-A", "-l", "app=flowgent-jobmanager"],
+        ),
+        (
+            "JM pods",
+            ["get", "pods", "-A", "-l", "app=flowgent-jobmanager"],
+        ),
+        (
+            "JM-owned runtime deployments",
+            ["get", "deployments", "-A", "-l", "flowgent.io/managed-by=jobmanager"],
+        ),
+        (
+            "JM-owned runtime pods",
+            ["get", "pods", "-A", "-l", "flowgent.io/managed-by=jobmanager"],
+        ),
+    ]
+    for label, args in checks:
+        data, err = _kubectl_json(args)
+        if data is None:
+            print(f"  [3.8] WARN: Could not query {label}: {err}")
+            failures.append(f"could not query idle application {label}: {err}")
+            continue
+        items = data.get("items", [])
+        if items:
+            found = _names(items)
+            print(f"  [3.8] WARN: Idle application {label} exist after import: {found}")
+            failures.append(f"idle application {label} exist after import: {found}")
+        else:
+            print(f"  [3.8] {label}: none after metadata import")
+
+
+def _verify_security_flow_network_policy(failures):
+    result = _pg_query(
+        "SELECT definition::text FROM orh_agentflow "
+        "WHERE namespace_id='default' AND agentflow_id='security-autonomy-fixer' "
+        "AND del_flag=false ORDER BY version DESC LIMIT 1;"
+    )
+    if result.returncode != 0:
+        stderr_short = result.stderr[:200].strip()
+        print(f"  [3.7] WARN: Could not query security-autonomy-fixer definition: {stderr_short}")
+        failures.append(f"could not query security-autonomy-fixer definition: {stderr_short}")
+        return
+    raw = result.stdout.strip()
+    if not raw:
+        print("  [3.7] WARN: security-autonomy-fixer definition not found")
+        failures.append("security-autonomy-fixer definition not found")
+        return
+    proxy_placeholder = "${" + PROXY_ALLOWLIST_ENV + "}"
+    if proxy_placeholder in raw:
+        print("  [3.7] WARN: unresolved proxy allowlist placeholder found in security-autonomy-fixer definition")
+        failures.append("unresolved proxy allowlist placeholder found in security-autonomy-fixer definition")
+        return
+    try:
+        definition = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"  [3.7] WARN: security-autonomy-fixer definition is not JSON: {exc}")
+        failures.append(f"security-autonomy-fixer definition is not JSON: {exc}")
+        return
+    git_node = next((n for n in definition.get("nodes", []) if n.get("id") == "git-clone"), None)
+    if not git_node:
+        print("  [3.7] WARN: git-clone node missing from security-autonomy-fixer")
+        failures.append("git-clone node missing from security-autonomy-fixer")
+        return
+    policy = git_node.get("network_policy") or {}
+    allowed = policy.get("allowed") or []
+    expected_proxy = os.environ.get(PROXY_ALLOWLIST_ENV, "github.com")
+    missing = [entry for entry in ("github.com", expected_proxy) if entry not in allowed]
+    if missing:
+        print(f"  [3.7] WARN: git-clone network allowlist missing: {missing}")
+        failures.append(f"git-clone network allowlist missing: {missing}")
+        return
+    print(f"  [3.7] git-clone network allowlist OK ({', '.join(allowed)})")
+
+
 def run():
+    failures = []
+
     # ── L1.1: Binary exists ─────────────────────────────────
     print("\n── L1: Binary Check ──")
     binary = _find_binary()
@@ -139,6 +243,7 @@ def run():
             print(f"          {bp}")
         print("  [1.1] INFO: Build with 'make build:core' first, then re-run this scenario.")
         binary = None
+        failures.append("flowgent-core binary not found")
 
     # ── L1.2: Console import subcommand ─────────────────────
     if binary:
@@ -176,6 +281,8 @@ def run():
             stderr = result.stderr[:500]
             rc = result.returncode
             print(f"  [2.1] rc={rc}")
+            if rc != 0:
+                failures.append(f"console import failed with rc={rc}")
             if stdout:
                 for line in stdout.splitlines():
                     if line.strip():
@@ -194,11 +301,14 @@ def run():
                     print("  [2.2] Import count meets minimum (≥10)")
                 else:
                     print("  [2.2] WARN: Fewer resources than expected (≥10)")
+                    failures.append(f"console import reported only {imported_count} resources")
             else:
                 print("  [2.2] NOTE: No 'OK' markers in output — may use bulk ImportAll format")
                 # Check for bulk import summary line
                 if "Imported from" in stdout:
                     print("  [2.2] Bulk import summary detected")
+                else:
+                    failures.append("console import produced no OK markers or bulk summary")
     else:
         print("  [2.1] SKIP: Binary not available, skipping import execution.")
         print("  [2.2] SKIP: No import output to analyze.")
@@ -215,6 +325,7 @@ def run():
             print(f"  [3.1] Agents OK")
         else:
             print(f"  [3.1] WARN: Expected ≥{MIN_AGENTS} agents, found {count}")
+            failures.append(f"expected >={MIN_AGENTS} agents, found {count}")
             # List agent names for diagnosis
             result2 = _pg_query("SELECT name FROM llm_agent WHERE namespace_id='default' AND del_flag=false ORDER BY name;")
             if result2.returncode == 0 and result2.stdout.strip():
@@ -223,10 +334,12 @@ def run():
     else:
         stderr_short = result.stderr[:200].strip()
         print(f"  [3.1] WARN: Could not query llm_agent: {stderr_short}")
+        failures.append(f"could not query llm_agent: {stderr_short}")
 
     # ── L3.2: Flows ──────────────────────────────────────────
     result = _pg_query(
-        "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='flow' AND del_flag=false;"
+        "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND del_flag=false "
+        "AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow';"
     )
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
@@ -235,8 +348,10 @@ def run():
             print(f"  [3.2] Flows OK")
         else:
             print(f"  [3.2] WARN: Expected ≥{MIN_FLOWS} flows, found {count}")
+            failures.append(f"expected >={MIN_FLOWS} flows, found {count}")
             result2 = _pg_query(
-                "SELECT id FROM orh_agentflow WHERE namespace_id='default' AND kind='flow' AND del_flag=false ORDER BY id;"
+                "SELECT agentflow_id FROM orh_agentflow WHERE namespace_id='default' AND del_flag=false "
+                "AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow' ORDER BY agentflow_id;"
             )
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
@@ -244,6 +359,7 @@ def run():
     else:
         stderr_short = result.stderr[:200].strip()
         print(f"  [3.2] WARN: Could not query orh_agentflow: {stderr_short}")
+        failures.append(f"could not query orh_agentflow: {stderr_short}")
 
     # ── L3.3: MCPs ───────────────────────────────────────────
     result = _pg_query("SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='default' AND del_flag=false;")
@@ -254,6 +370,7 @@ def run():
             print(f"  [3.3] MCPs OK")
         else:
             print(f"  [3.3] WARN: Expected ≥{MIN_MCPS} MCPs, found {count}")
+            failures.append(f"expected >={MIN_MCPS} MCPs, found {count}")
             result2 = _pg_query("SELECT name FROM llm_mcp WHERE namespace_id='default' AND del_flag=false ORDER BY name;")
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
@@ -261,6 +378,7 @@ def run():
     else:
         stderr_short = result.stderr[:200].strip()
         print(f"  [3.3] WARN: Could not query llm_mcp: {stderr_short}")
+        failures.append(f"could not query llm_mcp: {stderr_short}")
 
     # ── L3.4: LLM Providers ──────────────────────────────────
     result = _pg_query("SELECT COUNT(*) FROM llm_providers WHERE namespace_id='default' AND del_flag=false;")
@@ -271,9 +389,11 @@ def run():
             print(f"  [3.4] LLM Providers OK")
         else:
             print(f"  [3.4] WARN: Expected ≥{MIN_LLM_PROVIDERS} LLM providers, found {count}")
+            failures.append(f"expected >={MIN_LLM_PROVIDERS} LLM providers, found {count}")
     else:
         stderr_short = result.stderr[:200].strip()
         print(f"  [3.4] WARN: Could not query llm_providers: {stderr_short}")
+        failures.append(f"could not query llm_providers: {stderr_short}")
 
     # ── L3.5: Notify Channels ────────────────────────────────
     result = _pg_query("SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='default' AND del_flag=false;")
@@ -284,6 +404,7 @@ def run():
             print("  [3.5] Notify Channels OK")
         else:
             print(f"  [3.5] WARN: Expected ≥{MIN_NOTIFIERS} channels, found {count}")
+            failures.append(f"expected >={MIN_NOTIFIERS} notify channels, found {count}")
             result2 = _pg_query("SELECT name FROM nfy_channel WHERE namespace_id='default' AND del_flag=false ORDER BY name;")
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
@@ -291,10 +412,12 @@ def run():
     else:
         stderr_short = result.stderr[:200].strip()
         print(f"  [3.5] WARN: Could not query nfy_channel: {stderr_short}")
+        failures.append(f"could not query nfy_channel: {stderr_short}")
 
     # ── L3.6: Skills ─────────────────────────────────────────
     result = _pg_query(
-        "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='skill' AND del_flag=false;"
+        "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND del_flag=false "
+        "AND lower(definition::jsonb->>'kind')='skill';"
     )
     if result.returncode == 0:
         count = int(result.stdout.strip() or "0")
@@ -303,8 +426,10 @@ def run():
             print("  [3.6] Skills OK")
         else:
             print(f"  [3.6] WARN: Expected ≥{MIN_SKILLS} skills, found {count}")
+            failures.append(f"expected >={MIN_SKILLS} skills, found {count}")
             result2 = _pg_query(
-                "SELECT id FROM orh_agentflow WHERE namespace_id='default' AND kind='skill' AND del_flag=false ORDER BY id;"
+                "SELECT agentflow_id FROM orh_agentflow WHERE namespace_id='default' AND del_flag=false "
+                "AND lower(definition::jsonb->>'kind')='skill' ORDER BY agentflow_id;"
             )
             if result2.returncode == 0 and result2.stdout.strip():
                 for line in result2.stdout.strip().splitlines():
@@ -312,16 +437,23 @@ def run():
     else:
         stderr_short = result.stderr[:200].strip()
         print(f"  [3.6] WARN: Could not query orh_agentflow for skills: {stderr_short}")
+        failures.append(f"could not query orh_agentflow for skills: {stderr_short}")
 
-    # ── L3.7: Cross-table summary ────────────────────────────
+    # ── L3.7: Flow spec network policy ───────────────────────
+    _verify_security_flow_network_policy(failures)
+
+    # ── L3.8: Metadata import must not allocate runtime pods ──
+    _verify_no_idle_application_runtime(failures)
+
+    # ── L3.9: Cross-table summary ────────────────────────────
     print("\n  ── Resource Inventory ──")
     inventory_queries = {
         "Agents":      "SELECT COUNT(*) FROM llm_agent WHERE namespace_id='default' AND del_flag=false",
-        "Flows":       "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='flow' AND del_flag=false",
+        "Flows":       "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND del_flag=false AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow'",
         "MCPs":        "SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='default' AND del_flag=false",
         "LLM Providers": "SELECT COUNT(*) FROM llm_providers WHERE namespace_id='default' AND del_flag=false",
         "Channels":    "SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='default' AND del_flag=false",
-        "Skills":      "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND kind='skill' AND del_flag=false",
+        "Skills":      "SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='default' AND del_flag=false AND lower(definition::jsonb->>'kind')='skill'",
     }
     all_ok = True
     for label, query in inventory_queries.items():
@@ -332,6 +464,7 @@ def run():
         else:
             print(f"  {label:16s}: ERROR ({result.stderr[:100].strip()})")
             all_ok = False
+            failures.append(f"inventory query failed for {label}")
 
     # ── Summary ────────────────────────────────────────────────
     print(f"\n  Console import & DB verification complete.")
@@ -343,3 +476,5 @@ def run():
         print("  DB: All tables reachable.")
     else:
         print("  DB: Some tables unreachable — check PG connectivity.")
+    if failures:
+        raise AssertionError(f"Console import verification failed: {failures}")

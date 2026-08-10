@@ -8,7 +8,7 @@ metadata:
   description: Strict security reviewer that validates patches for OWASP compliance, injection prevention, and cryptographic correctness
 
 data:
-  model: deepseek-pro
+  model: OPENAI/deepseek-chat
   max_tokens: 16384
   soul: |-
     You are a strict security reviewer.

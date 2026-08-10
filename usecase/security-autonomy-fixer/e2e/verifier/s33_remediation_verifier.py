@@ -5,43 +5,50 @@ import sys
 import os
 import json
 
-import _common as c
+from verifier import _common as c
+
+COMPLETED_SET = c.COMPLETED_STATUSES
 
 # ── Phase: FIX ──
 
 def verify_fix(tasks_by_node):
     print(f"\n-- [33 Fix] Patch generation verification --")
     passed = 0
-    total = 0
+    total = 4
 
     task = c.node_task(tasks_by_node, "generate-fixes")
-    if task and task.get("status") == "COMPLETED":
-        total = 3
+    if c.task_completed(task):
         output = c.parse_output(task)
+        files = output.get("files") or []
+        if isinstance(files, list) and len(files) > 0:
+            print(f"  OK generate-fixes: files array with {len(files)} entries")
+            passed += 1
+            first_file = files[0]
+            if first_file.get("path") and first_file.get("content"):
+                print(f"  OK generate-fixes: file entry has path+content ({len(str(first_file.get('content')))} chars)")
+                passed += 1
+            else:
+                print(f"  WARN generate-fixes: file entry missing path/content")
+        elif isinstance(files, list):
+            print(f"  WARN generate-fixes: files array present but empty")
+        else:
+            print(f"  WARN generate-fixes: output missing 'files' array")
+
         patches = output.get("patches") or output.get("fixes") or []
         if isinstance(patches, list) and len(patches) > 0:
             print(f"  OK generate-fixes: patches array with {len(patches)} entries")
             passed += 1
             entry = patches[0]
-            if "file" in entry and entry["file"]:
-                print(f"  OK generate-fixes: patch entry has 'file': {entry['file']}")
+            if entry.get("file") and entry.get("rule") and entry.get("description"):
+                print(f"  OK generate-fixes: patch metadata has file/rule/description")
                 passed += 1
             else:
-                print(f"  WARN generate-fixes: patch entry missing 'file' field")
-            if "patch" in entry and entry["patch"]:
-                print(f"  OK generate-fixes: patch entry has 'patch' ({len(str(entry['patch']))} chars)")
-                passed += 1
-            elif "diff" in entry and entry["diff"]:
-                print(f"  OK generate-fixes: patch entry has 'diff' ({len(str(entry['diff']))} chars)")
-                passed += 1
-            else:
-                print(f"  WARN generate-fixes: patch entry missing 'patch'/'diff' field")
+                print(f"  WARN generate-fixes: patch metadata incomplete: {list(entry.keys())}")
         elif isinstance(patches, list):
-            print(f"  OK generate-fixes: patches array present (empty)")
-            passed += 3
+            print(f"  WARN generate-fixes: patches array present but empty")
         elif output:
             keys = list(output.keys())
-            print(f"  WARN generate-fixes: output keys {keys} (expected 'patches' array)")
+            print(f"  WARN generate-fixes: output keys {keys} (expected files+patches arrays)")
         else:
             print(f"  WARN generate-fixes: empty output")
     else:
@@ -57,13 +64,12 @@ def verify_fix(tasks_by_node):
 def verify_review(tasks_by_node):
     print(f"\n-- [33 Review] Multi-agent review board verification --")
     passed = 0
-    total = 0
     review_nodes = ["review-security", "review-quality", "review-arch"]
+    total = len(review_nodes) * 2
 
     for node_id in review_nodes:
         task = c.node_task(tasks_by_node, node_id)
-        if task and task.get("status") == "COMPLETED":
-            total += 2
+        if c.task_completed(task):
             output = c.parse_output(task)
             decision = output.get("decision")
             if decision is not None:
@@ -93,14 +99,21 @@ def verify_review(tasks_by_node):
 def verify_vote(tasks_by_node):
     print(f"\n-- [33 Vote] Committee majority vote verification --")
     passed = 0
-    total = 0
+    total = 1
 
     task = c.node_task(tasks_by_node, "committee")
-    if task and task.get("status") == "COMPLETED":
-        total = 1
+    if c.task_completed(task):
         output = c.parse_output(task)
-        decision = output.get("decision") or output.get("result") or output.get("vote")
-        if decision is not None:
+        if "decision" in output:
+            decision = output["decision"]
+            print(f"  OK committee: decision='{decision}'")
+            passed += 1
+        elif "result" in output:
+            decision = output["result"]
+            print(f"  OK committee: result='{decision}'")
+            passed += 1
+        elif "vote" in output:
+            decision = output["vote"]
             print(f"  OK committee: decision='{decision}'")
             passed += 1
         else:
@@ -119,11 +132,10 @@ def verify_vote(tasks_by_node):
 def verify_supervisor(tasks_by_node):
     print(f"\n-- [33 Supervisor] Safety gate verification --")
     passed = 0
-    total = 0
+    total = 1
 
     task = c.node_task(tasks_by_node, "supervisor-check")
-    if task and task.get("status") == "COMPLETED":
-        total = 1
+    if c.task_completed(task):
         output = c.parse_output(task)
         action = output.get("action") or output.get("decision") or output.get("result")
         if action is not None:
@@ -145,14 +157,13 @@ def verify_supervisor(tasks_by_node):
 def verify_condition_human(tasks_by_node):
     print(f"\n-- [33 Gate] Routing + human gate verification --")
     passed = 0
-    total = 0
+    total = 2
 
     task = c.node_task(tasks_by_node, "is-approved")
     if task:
-        total += 1
         status = task.get("status")
-        if status == "COMPLETED":
-            print(f"  OK is-approved: condition evaluated true (COMPLETED)")
+        if status in COMPLETED_SET:
+            print(f"  OK is-approved: condition evaluated true ({status})")
             passed += 1
         elif status == "SKIPPED":
             print(f"  OK is-approved: condition evaluated false (SKIPPED)")
@@ -164,10 +175,9 @@ def verify_condition_human(tasks_by_node):
 
     task = c.node_task(tasks_by_node, "human-approval")
     if task:
-        total += 1
         status = task.get("status")
-        if status == "COMPLETED":
-            print(f"  OK human-approval: gate auto-approved (COMPLETED)")
+        if status in COMPLETED_SET:
+            print(f"  OK human-approval: gate auto-approved ({status})")
             passed += 1
         elif status == "SKIPPED":
             print(f"  OK human-approval: gate skipped (condition routed)")
@@ -177,7 +187,8 @@ def verify_condition_human(tasks_by_node):
         else:
             print(f"  WARN human-approval: status={status}")
     else:
-        print(f"  -- human-approval: not_reached")
+        print(f"  OK human-approval: not reached on this conditional path")
+        passed += 1
 
     print(f"  Result: {passed}/{total} checks passed")
     return passed, total
@@ -211,6 +222,26 @@ def run():
     results.append(("Vote", *verify_vote(tbn)))
     results.append(("Supervisor", *verify_supervisor(tbn)))
     results.append(("Gate", *verify_condition_human(tbn)))
+
+    print("\n-- [33 MQTT Audit] Slot-worker status and dependency wave order --")
+    audit_messages = c.assert_mqtt_suffixes(run_id, ["exec/plans", "exec/results"])
+    plan_nodes = [
+        c.message_node_id(m)
+        for m in audit_messages
+        if m.get("topic", "").endswith("exec/plans")
+    ]
+    result_nodes = [
+        c.message_node_id(m)
+        for m in audit_messages
+        if m.get("topic", "").endswith("exec/results")
+    ]
+    expected_nodes = ["generate-fixes", "review-security", "review-quality", "review-arch", "committee"]
+    missing_plan = [n for n in expected_nodes if n not in plan_nodes]
+    missing_result = [n for n in expected_nodes if n not in result_nodes]
+    print(f"  exec/plans nodes observed: {len(set(plan_nodes))}")
+    print(f"  exec/results nodes observed: {len(set(result_nodes))}")
+    if missing_plan or missing_result:
+        raise AssertionError(f"Missing remediation MQTT nodes: plans={missing_plan}, results={missing_result}")
 
     total_checks = sum(r[2] for r in results)
     passed_checks = sum(r[1] for r in results)

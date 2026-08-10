@@ -23,22 +23,22 @@ import (
 // All resource definitions (agents, agentflows, MCPs, skills, LLM providers, channels)
 // are now DB-backed and managed via the management console or REST API.
 type FlowgentConfig struct {
-	ServiceName         string                `json:"service_name" yaml:"service_name"`
-	Server              ServerConfig          `json:"server" yaml:"server"`
-	A2A                 A2AConfig             `json:"a2a" yaml:"a2a"`
-	Mgmt                MgmtConfig            `json:"mgmt" yaml:"mgmt"`
-	Logging             LoggingConfig         `json:"logging" yaml:"logging"`
-	Auth                AuthConfig            `json:"auth" yaml:"auth"`
-	Cache               CacheConfig           `json:"cache" yaml:"cache"`
-	Storage             StorageConfig         `json:"storage" yaml:"storage"`
-	Orchestration       OrchestrationConfig   `json:"orchestration" yaml:"orchestration"`
-	Messager            MessagerConfig        `json:"messager" yaml:"messager"`
-	Lock                LockConfig            `json:"lock" yaml:"lock"`
-	Sandbox             SandboxConfig         `json:"sandbox" yaml:"sandbox"`
-	Wallet              *WalletConfig         `json:"wallet" yaml:"wallet"`
-	Notifier            NotifierConfig        `json:"notifier" yaml:"notifier"`
-	Runtime             RuntimeConfig         `json:"runtime" yaml:"runtime"`
-	ResolvedCredentials map[string]string     `json:"-" yaml:"-"`
+	ServiceName         string              `json:"service_name" yaml:"service_name"`
+	Server              ServerConfig        `json:"server" yaml:"server"`
+	A2A                 A2AConfig           `json:"a2a" yaml:"a2a"`
+	Mgmt                MgmtConfig          `json:"mgmt" yaml:"mgmt"`
+	Logging             LoggingConfig       `json:"logging" yaml:"logging"`
+	Auth                AuthConfig          `json:"auth" yaml:"auth"`
+	Cache               CacheConfig         `json:"cache" yaml:"cache"`
+	Storage             StorageConfig       `json:"storage" yaml:"storage"`
+	Orchestration       OrchestrationConfig `json:"orchestration" yaml:"orchestration"`
+	Messager            MessagerConfig      `json:"messager" yaml:"messager"`
+	Lock                LockConfig          `json:"lock" yaml:"lock"`
+	Sandbox             SandboxConfig       `json:"sandbox" yaml:"sandbox"`
+	Wallet              *WalletConfig       `json:"wallet" yaml:"wallet"`
+	Notifier            NotifierConfig      `json:"notifier" yaml:"notifier"`
+	Runtime             RuntimeConfig       `json:"runtime" yaml:"runtime"`
+	ResolvedCredentials map[string]string   `json:"-" yaml:"-"`
 }
 
 // ─── Server ──────────────────────────────────────────────────
@@ -259,9 +259,10 @@ type OrchestrationConfig struct {
 // In distributed mode (Deployment.Enabled=true), sandbox runs as independent K8s pods
 // managed by the JM's K8sRM with its own Deployment, scaling, and resource limits.
 type SandboxConfig struct {
-	Workspace  string                        `json:"workspace" yaml:"workspace"`
-	Policy     *model.SandboxPolicy          `json:"policy" yaml:"policy"`
-	Deployment model.SandboxDeploymentConfig `json:"deployment" yaml:"deployment"`
+	Workspace     string                        `json:"workspace" yaml:"workspace"`
+	HostWorkspace string                        `json:"host_workspace" yaml:"host_workspace"`
+	Policy        *model.SandboxPolicy          `json:"policy" yaml:"policy"`
+	Deployment    model.SandboxDeploymentConfig `json:"deployment" yaml:"deployment"`
 }
 
 // MessagerConfig configures the message queue for inter-component communication.
@@ -339,20 +340,23 @@ type NamespaceConfig struct {
 // RuntimeConfig holds operational parameters set at deploy time (env vars, not YAML).
 // These are populated by viper from FLOWGENT__RUNTIME__* env vars.
 type RuntimeConfig struct {
-	APIServerURL    string              `json:"api_server_url" yaml:"api_server_url"`
-	K8sNamespace    string                `json:"k8s_namespace" yaml:"k8s_namespace"`
-	AgentFlowID     string              `json:"agent_flow_id" yaml:"agent_flow_id"`
-	TMID            string              `json:"tm_id" yaml:"tm_id"`
-	TMDeploy        string              `json:"tm_deploy" yaml:"tm_deploy"`
-	TMSlots         int                 `json:"tm_slots" yaml:"tm_slots"`
-	ControllerLabel string              `json:"controller_label" yaml:"controller_label"`
-	JMImage         string              `json:"jm_image" yaml:"jm_image"`
-	TMImage         string              `json:"tm_image" yaml:"tm_image"`
-	JMConfigMap     string              `json:"jm_config_map" yaml:"jm_config_map"`
-	PodIndex        int                 `json:"pod_index" yaml:"pod_index"`
-	PodTotal        int                 `json:"pod_total" yaml:"pod_total"`
-	Namespace       NamespaceConfig        `json:"namespace" yaml:"namespace"`
-	CredentialPaths CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
+	APIServerURL        string                `json:"api_server_url" yaml:"api_server_url"`
+	K8sNamespace        string                `json:"k8s_namespace" yaml:"k8s_namespace"`
+	SystemNamespace     string                `json:"system_namespace" yaml:"system_namespace"`
+	AgentFlowID         string                `json:"agent_flow_id" yaml:"agent_flow_id"`
+	TMID                string                `json:"tm_id" yaml:"tm_id"`
+	TMDeploy            string                `json:"tm_deploy" yaml:"tm_deploy"`
+	TMSlots             int                   `json:"tm_slots" yaml:"tm_slots"`
+	TMOrphanTimeout     string                `json:"tm_orphan_timeout" yaml:"tm_orphan_timeout"`
+	CredentialEnvSecret string                `json:"credential_env_secret" yaml:"credential_env_secret"`
+	ControllerLabel     string                `json:"controller_label" yaml:"controller_label"`
+	JMImage             string                `json:"jm_image" yaml:"jm_image"`
+	TMImage             string                `json:"tm_image" yaml:"tm_image"`
+	JMConfigMap         string                `json:"jm_config_map" yaml:"jm_config_map"`
+	PodIndex            int                   `json:"pod_index" yaml:"pod_index"`
+	PodTotal            int                   `json:"pod_total" yaml:"pod_total"`
+	Namespace           NamespaceConfig       `json:"namespace" yaml:"namespace"`
+	CredentialPaths     CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.

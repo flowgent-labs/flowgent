@@ -46,9 +46,12 @@ func newOpenAIProvider(p *entities.LlmProviderInfo) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error) {
+func (p *OpenAIProvider) Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64, maxTokens int) (string, error) {
 	if err := p.limiter.Wait(ctx); err != nil {
 		return "", err
+	}
+	if maxTokens <= 0 {
+		maxTokens = 8192
 	}
 
 	params := openai.ChatCompletionNewParams{
@@ -58,7 +61,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, systemPrompt, userPrompt,
 			openai.UserMessage(userPrompt),
 		},
 		Temperature: openai.Float(temperature),
-		MaxTokens:   openai.Int(8192),
+		MaxTokens:   openai.Int(int64(maxTokens)),
 	}
 
 	completion, err := p.client.Chat.Completions.New(ctx, params)

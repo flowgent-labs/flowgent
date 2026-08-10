@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
-	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 )
 
 func StartTaskManager(cfgPath, pidFile string) error {
@@ -63,15 +63,16 @@ func startTaskManager(cfgPath string) error {
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Messager: q,
-		State:         &client.TaskStateClient{Client: apiClient, Namespace: namespace},
-		ApprovalInfo:  &client.HumanApprovalClient{Client: apiClient},
-		APIServerURL:  svcCfg.Runtime.APIServerURL,
-		Namespace:        namespace,
-		Logger:        logger,
-		SandboxMessager:             q,
-		SandboxPolicy:               svcCfg.Sandbox.Policy,
-		SandboxWorkspace:            svcCfg.Sandbox.Workspace,
-		HttpClient:                  client.NewHttpClient(svcCfg, q),
+		State:                    &client.TaskStateClient{Client: apiClient, Namespace: namespace},
+		ApprovalInfo:             &client.HumanApprovalClient{Client: apiClient},
+		APIServerURL:             svcCfg.Runtime.APIServerURL,
+		Namespace:                namespace,
+		Logger:                   logger,
+		SandboxMessager:          q,
+		SandboxPolicy:            svcCfg.Sandbox.Policy,
+		SandboxWorkspace:         svcCfg.Sandbox.Workspace,
+		SandboxDeploymentEnabled: svcCfg.Sandbox.Deployment.Enabled,
+		HttpClient:               client.NewHttpClient(svcCfg, q),
 	})
 	if err != nil {
 		return fmt.Errorf("create taskmanager: %w", err)

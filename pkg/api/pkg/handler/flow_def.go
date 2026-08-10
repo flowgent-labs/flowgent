@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,17 +27,17 @@ var flowDefTracer = tracing.Tracer("flowgent/api/flowdef")
 
 // FlowDefHandler manages flow definition CRUD, watch API, and in-memory cache.
 type FlowDefHandler struct {
-	store           store.IStore
-	afStore         flow.IFlowInfoStore
-	frStore         flowrun.IFlowRunStore
-	mqtt            MQTTPublisher
-	logger          *utils.Logger
-	agentFlows      map[string]*entities.FlowInfo
-	namespacePrefix string
-	defaultNamespace   string
-	mu              sync.RWMutex
-	watchVersion    int64
-	watchChs        []chan struct{}
+	store            store.IStore
+	afStore          flow.IFlowInfoStore
+	frStore          flowrun.IFlowRunStore
+	mqtt             MQTTPublisher
+	logger           *utils.Logger
+	agentFlows       map[string]*entities.FlowInfo
+	namespacePrefix  string
+	defaultNamespace string
+	mu               sync.RWMutex
+	watchVersion     int64
+	watchChs         []chan struct{}
 }
 
 // NewFlowDefHandler creates a FlowDefHandler. namespacePrefix is used to
@@ -128,9 +129,9 @@ func (h *FlowDefHandler) publishFlowEvent(ctx context.Context, eventType, flowID
 		topic = fmt.Sprintf("flowgent/v1/%s/flows/%s/ctrl/flow/deleted", namespaceID, flowID)
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
-		"event_type": eventType,
-		"flow_id":    flowID,
-		"namespace_id":  namespaceID,
+		"event_type":   eventType,
+		"flow_id":      flowID,
+		"namespace_id": namespaceID,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
 		slog.Warn("mqtt flow event publish failed", "topic", topic, "error", err)
@@ -194,8 +195,19 @@ func (h *FlowDefHandler) List(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []*entities.FlowVersionInfo{}
 	}
+	filtered := make([]*entities.FlowVersionInfo, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		var spec entities.FlowInfo
+		if len(item.Definition) > 0 && json.Unmarshal(item.Definition, &spec) == nil && strings.EqualFold(spec.Kind, "skill") {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(filtered)
 }
 
 func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -389,7 +401,11 @@ func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, 
 	if err := h.frStore.Create(ctx, run); err != nil {
 		return "", err
 	}
-	h.publishRunCreatedEvent(ctx, agentFlowID, run)
+	namespaceID := spec.Namespace
+	if namespaceID == "" {
+		namespaceID = h.defaultNamespace
+	}
+	h.publishRunCreatedEvent(ctx, namespaceID, agentFlowID, run)
 	return run.ID, nil
 }
 
@@ -397,11 +413,10 @@ func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, 
 // (docs §2.4 / VERIFICATION.md §4.2.4). Only the apiserver publishes ctrl/*
 // events. Best-effort: a broker outage never fails run creation (the run is
 // already persisted and the JM poller will still pick it up).
-func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, flowID string, run *entities.FlowRunInfo) {
+func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, namespaceID, flowID string, run *entities.FlowRunInfo) {
 	if h.mqtt == nil {
 		return
 	}
-	namespaceID := run.Namespace
 	if namespaceID == "" {
 		namespaceID = h.defaultNamespace
 	}
@@ -410,8 +425,8 @@ func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, flowID stri
 		"action":       "created",
 		"run_id":       run.ID,
 		"agentflow_id": flowID,
-		"namespace_id":    namespaceID,
-		"namespace": run.K8sNamespace,
+		"namespace_id": namespaceID,
+		"namespace":    run.K8sNamespace,
 		"trigger_type": run.TriggerType,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
@@ -439,8 +454,8 @@ func (h *FlowDefHandler) applicationNamespace(spec *entities.FlowInfo) string {
 
 func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AgentFlowID string            `json:"agentflow_id"`
-		Vars        map[string]any    `json:"vars"`
+		AgentFlowID string               `json:"agentflow_id"`
+		Vars        map[string]any       `json:"vars"`
 		Trigger     entities.TriggerInfo `json:"trigger"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -452,7 +467,7 @@ func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 func (h *FlowDefHandler) TriggerByID(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Vars    map[string]any    `json:"vars"`
+		Vars    map[string]any       `json:"vars"`
 		Trigger entities.TriggerInfo `json:"trigger"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
@@ -15,6 +16,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
+	"github.com/flowgent-labs/flowgent/core/pkg/lock"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
@@ -76,50 +78,86 @@ func startJobManager(cfgPath string) error {
 	humanClient := &client.HumanApprovalClient{Client: apiClient}
 
 	var rm resourcemanager.ResourceManager
-	jmNamespace := svcCfg.Runtime.K8sNamespace
-
-	k8sNamespace := svcCfg.Runtime.K8sNamespace
-	if k8sNamespace == "" {
-		k8sNamespace = "default"
+	runtimeNamespace := os.Getenv("POD_NAMESPACE")
+	if runtimeNamespace == "" {
+		runtimeNamespace = svcCfg.Runtime.K8sNamespace
 	}
+	if runtimeNamespace == "" {
+		runtimeNamespace = "default"
+	}
+	jmNamespace := runtimeNamespace
+
 	tmDeploy := svcCfg.Runtime.TMDeploy
 	if tmDeploy == "" {
 		tmDeploy = "flowgent-taskmanager"
+	}
+	if agentFlowID := svcCfg.Runtime.AgentFlowID; agentFlowID != "" && tmDeploy == "flowgent-taskmanager" {
+		tmDeploy = fmt.Sprintf("flowgent-taskmanager-%s-%s", namespace, agentFlowID)
+	}
+	sandboxDeploy := sandboxDeploymentName(namespace, svcCfg.Runtime.AgentFlowID)
+	slotsPerTM := svcCfg.Runtime.TMSlots
+	if slotsPerTM <= 0 {
+		slotsPerTM = 4
 	}
 	tmImage := svcCfg.Runtime.TMImage
 	if tmImage == "" {
 		tmImage = svcCfg.Runtime.JMImage
 	}
+	postgresDSN := postgresDSNFromConfig(svcCfg)
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-			Provider: engine.ProviderKubernetes, SlotsPerTM: 4, MinTMs: 2, MaxTMs: 10,
-			K8sNamespace:      k8sNamespace,
+			Provider: engine.ProviderKubernetes, SlotsPerTM: slotsPerTM, MinTMs: 0, MaxTMs: 10,
+			K8sNamespace:      runtimeNamespace,
 			K8sDeploymentName: tmDeploy,
 			TMImage:           tmImage,
 			TaskState:         taskClient,
-			ApprovalInfo:     humanClient,
+			ApprovalInfo:      humanClient,
 			Logger:            logger, Messager: q,
-			MQTTBroker:        svcCfg.Messager.MQTT.Broker,
-			PostgresDSN:       svcCfg.Storage.Postgres.Dsn,
-			APIServerURL:      svcCfg.Runtime.APIServerURL,
-			Namespace:            namespace,
+			MQTTBroker:               svcCfg.Messager.MQTT.Broker,
+			PostgresDSN:              postgresDSN,
+			APIServerURL:             svcCfg.Runtime.APIServerURL,
+			Namespace:                namespace,
+			CredentialEnvSecret:      svcCfg.Runtime.CredentialEnvSecret,
+			OwnerNamespaceID:         namespace,
+			OwnerFlowID:              svcCfg.Runtime.AgentFlowID,
+			OwnerJobManagerName:      jobManagerDeploymentName(namespace, svcCfg.Runtime.AgentFlowID),
+			OwnerJobManagerNamespace: runtimeNamespace,
+			SandboxWorkspace:         svcCfg.Sandbox.Workspace,
+			SandboxHostWorkspace:     svcCfg.Sandbox.HostWorkspace,
+			SandboxEnabled:           svcCfg.Sandbox.Deployment.Enabled,
+			SandboxImage:             svcCfg.Sandbox.Deployment.Image,
+			SandboxDeploymentName:    sandboxDeploy,
+			SandboxMinReplicas:       svcCfg.Sandbox.Deployment.MinReplicas,
+			SandboxMaxReplicas:       svcCfg.Sandbox.Deployment.MaxReplicas,
+			SandboxSlotsPerPod:       svcCfg.Sandbox.Deployment.SlotsPerPod,
+			SandboxPolicy:            svcCfg.Sandbox.Policy,
 		})
 	}
 	if rm == nil {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-			Provider:      engine.ProviderStandalone, PoolSize: 10,
-			TaskState:     taskClient,
+			Provider: engine.ProviderStandalone, PoolSize: 10,
+			TaskState:    taskClient,
 			ApprovalInfo: humanClient,
-			Logger:        logger, Messager: q,
-			APIServerURL:  svcCfg.Runtime.APIServerURL,
-			Namespace:        namespace,
+			Logger:       logger, Messager: q,
+			APIServerURL: svcCfg.Runtime.APIServerURL,
+			Namespace:    namespace,
 		})
 	}
+	defer func() {
+		if err := rm.Shutdown(context.Background()); err != nil {
+			slog.Warn("resource manager shutdown failed", "err", err)
+		}
+	}()
 
 	jm, err := jobmanager.NewJobManager(stateClient, rm, logger, newJobManagerConfig(svcCfg))
 	if err != nil {
 		return fmt.Errorf("create jobmanager: %w", err)
 	}
+	runLock, err := newRunLock(svcCfg, postgresDSN)
+	if err != nil {
+		return fmt.Errorf("create jobmanager run lock: %w", err)
+	}
+	jm.SetRunLock(runLock)
 
 	agentFlowID := svcCfg.Runtime.AgentFlowID
 
@@ -158,6 +196,60 @@ func startJobManager(cfgPath string) error {
 	cancel()
 	time.Sleep(2 * time.Second)
 	return nil
+}
+
+func jobManagerDeploymentName(namespaceID, flowID string) string {
+	if flowID == "" {
+		return ""
+	}
+	if namespaceID == "" {
+		namespaceID = "default"
+	}
+	return fmt.Sprintf("flowgent-jobmanager-%s-%s", namespaceID, flowID)
+}
+
+func sandboxDeploymentName(namespaceID, flowID string) string {
+	if flowID == "" {
+		return "flowgent-sandbox"
+	}
+	if namespaceID == "" {
+		namespaceID = "default"
+	}
+	return fmt.Sprintf("flowgent-sandbox-%s-%s", namespaceID, flowID)
+}
+
+func postgresDSNFromConfig(cfg *config.FlowgentConfig) string {
+	pg := cfg.Storage.Postgres
+	if pg.Dsn != "" {
+		return pg.Dsn
+	}
+	if pg.Host == "" {
+		return ""
+	}
+	ssl := "disable"
+	if pg.UseSSL {
+		ssl = "require"
+	}
+	if pg.Port == 0 {
+		pg.Port = 5432
+	}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, ssl)
+}
+
+func newRunLock(cfg *config.FlowgentConfig, postgresDSN string) (lock.DistributedLock, error) {
+	provider := strings.ToLower(cfg.Lock.Provider)
+	switch provider {
+	case "", "memory":
+		return lock.New(lock.Config{Type: "memory"})
+	case "postgres", "postgresql", "postgre":
+		if postgresDSN == "" {
+			return nil, fmt.Errorf("postgres lock requires storage.postgres.dsn or postgres host config")
+		}
+		return lock.New(lock.Config{Type: "postgres", PGConn: postgresDSN})
+	default:
+		return lock.New(lock.Config{Type: provider, PGConn: postgresDSN})
+	}
 }
 
 func newJobManagerConfig(cfg *config.FlowgentConfig) *jobmanager.JobManagerConfig {

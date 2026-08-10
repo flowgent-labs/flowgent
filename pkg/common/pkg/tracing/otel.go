@@ -62,6 +62,14 @@ func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *OTELC
 		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(sampleRate)),
 		sdktrace.WithBatcher(exp),
 	)
+	_, startupSpan := tracerProvider.Tracer("flowgent/otel").Start(ctx, "otel.startup")
+	startupSpan.End()
+	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := tracerProvider.ForceFlush(flushCtx); err != nil {
+		_ = tracerProvider.Shutdown(context.Background())
+		return nil, err
+	}
 
 	meterProvider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),

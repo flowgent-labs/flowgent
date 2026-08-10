@@ -70,7 +70,15 @@ func startSandboxService() error {
 		workspace = os.TempDir()
 	}
 
+	namespaceID := svcCfg.Runtime.Namespace.DefaultNamespace
+	if namespaceID == "" {
+		namespaceID = "default"
+	}
+	flowID := svcCfg.Runtime.AgentFlowID
+
 	runner := sandboxpkg.NewFlowgentSandboxManager(podName, queue, "", workspace, svcCfg.Sandbox.Policy)
+	runner.SetSlots(svcCfg.Sandbox.Deployment.SlotsPerPod)
+	runner.SetScope(namespaceID, flowID)
 	if svcCfg.Sandbox.Deployment.Enabled {
 		runner.SetDistributed(true)
 	}
@@ -85,6 +93,10 @@ func startSandboxService() error {
 		cancel()
 	}()
 
-	slog.Info("Sandbox worker starting", "pid", os.Getpid(), "pod", podName, "workspace", workspace)
+	slog.Info("Sandbox worker starting",
+		"pid", os.Getpid(), "pod", podName, "workspace", workspace,
+		"slots", svcCfg.Sandbox.Deployment.SlotsPerPod,
+		"namespace", namespaceID,
+		"flow", flowID)
 	return runner.Start(ctx)
 }

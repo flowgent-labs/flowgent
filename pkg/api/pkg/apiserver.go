@@ -32,8 +32,8 @@ type FlowgentApiServer struct {
 	cfg   *config.FlowgentConfig
 	store storepkg.IStore
 
-	restServer  *http.Server
-	ppServer    *http.Server
+	restServer   *http.Server
+	ppServer     *http.Server
 	otelProvider *tracing.Provider
 
 	// Handlers (set during construction)
@@ -86,7 +86,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	var mqttPub handler.MQTTPublisher
 	if cfg.Messager.Type == "mqtt" && cfg.Messager.MQTT.Broker != "" {
 		mqttPub = newMQTTPublisher(cfg.Messager.MQTT.Broker,
-			cfg.Messager.MQTT.ClientID,
+			uniqueRawMQTTClientID(cfg.Messager.MQTT.ClientID),
 			cfg.Messager.MQTT.Username,
 			cfg.Messager.MQTT.Password)
 	}
@@ -248,11 +248,14 @@ func newMQTTPublisher(broker, clientID, username, password string) handler.MQTTP
 		opts.SetPassword(password)
 	}
 	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
+	if token := client.Connect(); !token.WaitTimeout(15 * time.Second) {
+		slog.Warn("mqtt broker connect timeout, lifecycle events disabled")
+		return nil
+	} else if token.Error() != nil {
 		slog.Warn("mqtt broker not available, lifecycle events disabled", "error", token.Error())
 		return nil
 	}
-	slog.Info("MQTT lifecycle event publishing enabled", "broker", broker)
+	slog.Info("MQTT lifecycle event publishing enabled", "broker", broker, "client_id", clientID)
 	return &rawMQTTPublisher{client: client}
 }
 
@@ -262,8 +265,22 @@ type rawMQTTPublisher struct {
 
 func (p *rawMQTTPublisher) Publish(ctx context.Context, topic string, payload []byte) error {
 	token := p.client.Publish(topic, 1, false, payload)
-	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
+	if !token.WaitTimeout(5 * time.Second) {
+		return fmt.Errorf("mqtt publish timeout")
+	}
+	if token.Error() != nil {
 		return token.Error()
 	}
 	return nil
+}
+
+func uniqueRawMQTTClientID(base string) string {
+	if base == "" {
+		base = "flowgent-apiserver"
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return base
+	}
+	return fmt.Sprintf("%s-%s", base, host)
 }

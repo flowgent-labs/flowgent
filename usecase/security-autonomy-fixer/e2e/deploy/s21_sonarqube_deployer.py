@@ -57,7 +57,7 @@ import requests
 from common import SONAR_COMPOSE, run_cmd
 
 DEFAULT_TIMEOUT = 240
-SONARQUBE_URL = "http://localhost:9000"
+SONARQUBE_URL = os.getenv("SONARQUBE_URL", "http://localhost:9000").rstrip("/")
 API_HEALTH = f"{SONARQUBE_URL}/api/system/health"
 API_STATUS = f"{SONARQUBE_URL}/api/system/status"
 
@@ -71,6 +71,9 @@ def compose_up(compose_file=None):
     Abcd1234@sonar once SonarQube becomes healthy.
     """
     compose_file = compose_file or SONAR_COMPOSE
+    if SONARQUBE_URL != "http://localhost:9000":
+        print(f"  Using externally managed SonarQube: {SONARQUBE_URL}")
+        return True
     print(f"\n-- Starting SonarQube middleware --")
     print(f"  Compose file: {compose_file}")
 
@@ -108,6 +111,11 @@ def wait_for_sonarqube(timeout=DEFAULT_TIMEOUT):
                         health = resp2.json()
                         print(f"  SonarQube health: {health.get('health', 'UNKNOWN')}")
                         print(f"  SonarQube ready at {SONARQUBE_URL}")
+                        return True
+                    if SONARQUBE_URL != "http://localhost:9000" and resp2.status_code == 403:
+                        # The public status endpoint already proved the service is UP;
+                        # external deployments may restrict the diagnostic health API.
+                        print(f"  SonarQube ready at {SONARQUBE_URL} (health API access restricted)")
                         return True
             else:
                 print(f"  API returned {resp.status_code}, retrying...")

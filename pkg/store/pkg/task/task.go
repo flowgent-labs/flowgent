@@ -1,4 +1,4 @@
-package taskplan
+package task
 
 import (
 	"context"
@@ -38,8 +38,8 @@ func PlanToTaskRun(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 	}
 }
 
-// ITaskPlanStore is the task run entity store interface.
-type ITaskPlanStore interface {
+// ITaskStore is the task run entity store interface.
+type ITaskStore interface {
 	Get(ctx context.Context, id string) (*entities.TaskRunInfo, error)
 	Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.TaskRunInfo], error)
 	Save(ctx context.Context, entity *entities.TaskRunInfo) error

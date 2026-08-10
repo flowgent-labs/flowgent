@@ -43,7 +43,7 @@ func (s *SQLiteGenericStore[T]) Get(ctx context.Context, id string) (*T, error) 
 	}
 	cols := utils.Columns[T]()
 	row := s.Conn.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT %s FROM %s WHERE %s=?1 LIMIT 1", cols, s.Table, s.IDCol), id)
+		fmt.Sprintf("SELECT %s FROM %s WHERE %s=?1 AND del_flag=0 LIMIT 1", cols, s.Table, s.IDCol), id)
 	var entity T
 	if err := utils.ScanStruct(row, &entity); err != nil {
 		return nil, fmt.Errorf("%s: %w", s.Table, err)
@@ -65,13 +65,13 @@ func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req entities.PageReq
 
 	var total int64
 	if err := s.Conn.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT COUNT(1) FROM %s", s.Table)).Scan(&total); err != nil {
+		fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE del_flag=0", s.Table)).Scan(&total); err != nil {
 		return nil, err
 	}
 	offset := (req.Page - 1) * req.Size
 
 	rows, err := s.Conn.QueryContext(ctx,
-		fmt.Sprintf("SELECT %s FROM %s ORDER BY created_at DESC LIMIT ?1 OFFSET ?2", cols, s.Table), req.Size, offset)
+		fmt.Sprintf("SELECT %s FROM %s WHERE del_flag=0 ORDER BY created_at DESC LIMIT ?1 OFFSET ?2", cols, s.Table), req.Size, offset)
 	if err != nil {
 		return nil, err
 	}

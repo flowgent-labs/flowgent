@@ -41,7 +41,7 @@ spec:
               mountPath: /etc/flowgent
             {{- if false }}
             - name: workspace
-              mountPath: /var/flowgent/workspace
+              mountPath: {{ .Values.sandbox.workspace | default "/var/flowgent" | quote }}
             {{- end }}
 {{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
             {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
@@ -58,7 +58,7 @@ spec:
         {{- if false }}
         - name: workspace
           hostPath:
-            path: {{ .Values.sandbox.workspace | default "/var/flowgent/workspace" }}
+            path: {{ .Values.sandbox.hostWorkspace | default "/mnt/disk1/flowgent/e2e" }}
             type: DirectoryOrCreate
         {{- end }}
 {{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}

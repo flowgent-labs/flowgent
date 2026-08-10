@@ -24,10 +24,11 @@ import json
 import requests
 
 from common import config
+from verifier import _common as c
 
-GITHUB_API = "https://api.github.com"
-REPO = "wl4g/rengine"
-PR_NUMBER = 4
+GITHUB_API = c.GITHUB_API
+REPO = c.PR_REPO
+PR_NUMBER = c.PR_NUMBER
 BRANCH = "fix/flowgent_sec_auto_fix"
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or ""
@@ -39,6 +40,8 @@ if GITHUB_TOKEN:
     HEADERS["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
 FLOWGENT_SECURITY_FIX_PATTERNS = [
+    "[security fix]",
+    "auto-generated security",
     "fix: resolve sonarqube",
     "fix: sonarqube",
     "fix: security",
@@ -60,12 +63,11 @@ FLOWGENT_CI_PATTERNS = [
 
 
 def _gh_get(path: str) -> dict:
-    url = f"{GITHUB_API}{path}"
-    r = requests.get(url, headers=HEADERS, timeout=15)
-    if r.status_code != 200:
-        print(f"  FAIL: GitHub API returned {r.status_code} for {path}: {r.text[:200]}")
+    try:
+        return c.gh_get_json(path)
+    except AssertionError as exc:
+        print(f"  FAIL: {exc}")
         return None
-    return r.json()
 
 
 def run():
@@ -98,43 +100,59 @@ def run():
     print(f"  Updated: {updated_at}")
     print(f"  Files changed: {files_changed}  +{additions}/-{deletions}")
 
+    baseline = c.load_pr_baseline()
+    baseline_shas = set(baseline.get("shas") or [])
+    baseline_count = int(baseline.get("commit_count") or 0)
+    baseline_head = (baseline.get("head_sha") or "")[:8] or "none"
+    print(f"  Baseline from s31: commits={baseline_count} head={baseline_head}")
+
     # 2. Get commits on the PR (only those unique to the head branch vs base)
     print(f"\n  -> Fetching commits on PR #{PR_NUMBER}...")
-    commits_data = _gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}/commits?per_page=100")
-    if commits_data is None:
+    try:
+        commits = c.fetch_pr_commits(REPO, PR_NUMBER)
+    except AssertionError as exc:
+        print(f"  FAIL: {exc}")
         raise AssertionError(f"Cannot fetch commits for branch '{BRANCH}' — GitHub API unreachable")
-    if not isinstance(commits_data, list):
-        raise AssertionError(f"Unexpected commits response type: {type(commits_data).__name__}")
-    commits = commits_data
 
     print(f"  Total commits on PR: {len(commits)}")
 
     # 3. Classify commits: security fixes vs CI/workflow vs other
     flowgent_security_fixes = []
+    new_flowgent_security_fixes = []
     flowgent_ci_commits = []
     other_commits = []
+    new_commits = []
 
-    for c in commits:
-        commit_data = c.get("commit", {})
+    for commit in commits:
+        commit_data = commit.get("commit", {})
         msg_full = commit_data.get("message", "")
         msg = msg_full.lower()
         author = commit_data.get("author", {}).get("name", "")
         committer = commit_data.get("committer", {}).get("name", "")
-        sha = c.get("sha", "")[:8]
+        full_sha = commit.get("sha", "")
+        sha = full_sha[:8]
 
         is_security_fix = any(pattern in msg for pattern in FLOWGENT_SECURITY_FIX_PATTERNS)
         is_ci = any(pattern in msg for pattern in FLOWGENT_CI_PATTERNS)
         is_flowgent_author = "flowgent" in author.lower() or "flowgent" in committer.lower()
+        is_flowgent_message = "flowgent" in msg or "auto-generated security" in msg or "[security fix]" in msg
 
         entry = {
             "sha": sha,
+            "full_sha": full_sha,
             "message": msg_full.split("\n")[0],
             "author": author,
             "committer": committer,
         }
 
-        if is_security_fix and is_flowgent_author:
+        is_new = bool(full_sha) and full_sha not in baseline_shas
+        if is_new:
+            new_commits.append(entry)
+
+        if is_security_fix and (is_flowgent_author or is_flowgent_message):
             flowgent_security_fixes.append(entry)
+            if is_new:
+                new_flowgent_security_fixes.append(entry)
         elif is_ci and is_flowgent_author:
             flowgent_ci_commits.append(entry)
         else:
@@ -145,6 +163,12 @@ def run():
         print(f"    {fc['sha']} {fc['message'][:80]} (author: {fc['author']})")
     if flowgent_security_fixes:
         print(f"  ✓ These are commits produced by the security-autonomy-fixer pipeline")
+    print(f"  New commits since s31 baseline: {len(new_commits)}")
+    for nc in new_commits:
+        print(f"    {nc['sha']} {nc['message'][:80]} (author: {nc['author']})")
+    print(f"  New Flowgent security-fix commits this run: {len(new_flowgent_security_fixes)}")
+    for nc in new_flowgent_security_fixes:
+        print(f"    {nc['sha']} {nc['message'][:80]} (author: {nc['author']})")
 
     print(f"  Flowgent CI/workflow commits (NOT security fixes): {len(flowgent_ci_commits)}")
     for fc in flowgent_ci_commits:
@@ -192,6 +216,12 @@ def run():
     has_security_fixes = len(flowgent_security_fixes) > 0
     checks.append(("Flowgent security-fix commits on PR", has_security_fixes, True))
 
+    has_new_commits = len(new_commits) > 0 and len(commits) > baseline_count
+    checks.append(("New commits since Scenario 31 baseline", has_new_commits, True))
+
+    has_new_security_fixes = len(new_flowgent_security_fixes) > 0
+    checks.append(("New Flowgent security-fix commits in this run", has_new_security_fixes, True))
+
     # Critical: Fix commits must touch source code, not just CI configs
     source_files_changed = [fn for fn in src_files if not fn.startswith(".github/")]
     checks.append(("Source code changes (not just CI)", len(source_files_changed) > 0, True))
@@ -207,6 +237,8 @@ def run():
     if flowgent_ci_commits and not flowgent_security_fixes:
         print(f"\n  ⚠  Found {len(flowgent_ci_commits)} Flowgent CI/workflow commit(s) but ZERO security-fix commits.")
         print(f"  ⚠  The security-autonomy-fixer pipeline has NOT produced any code fixes.")
+    if flowgent_security_fixes and not new_flowgent_security_fixes:
+        print(f"\n  ⚠  PR has historical Flowgent security-fix commits, but this run produced none.")
 
     critical_failures = [label for label, ok, critical in checks if not ok and critical]
     if critical_failures:
@@ -218,8 +250,8 @@ def run():
             f"(3) MCP tool names in flow definition match the real GitHub MCP server tools."
         )
 
-    if has_security_fixes:
-        print(f"\n  ✓ Flowgent security-autonomy-fixer produced {len(flowgent_security_fixes)} commit(s)")
+    if has_new_security_fixes:
+        print(f"\n  ✓ Flowgent security-autonomy-fixer produced {len(new_flowgent_security_fixes)} new commit(s)")
     if test_files:
         print(f"  ✓ Test coverage changes detected in {len(test_files)} file(s)")
     else:

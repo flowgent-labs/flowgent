@@ -16,7 +16,7 @@ import (
 type SupervisorExecutor struct {
 	llmClient engine.LLMClient
 	client    *client.FlowgentClient
-	namespace    string
+	namespace string
 }
 
 func NewSupervisorExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, namespace string) *SupervisorExecutor {
@@ -51,7 +51,7 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.Executi
 		userPrompt += "\n\nYou MUST output a valid JSON object matching this schema:\n```json\n" + string(schemaJSON) + "\n```\nOutput ONLY the JSON, no other text."
 	}
 
-	resp, err := e.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, 0.2)
+	resp, err := e.llmClient.Generate(ctx, agent.Soul, userPrompt, agent.Model, 0.2, agent.MaxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor LLM call failed: %w", err)
 	}
@@ -63,7 +63,7 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.Executi
 		return nil, fmt.Errorf("supervisor output invalid JSON: %w (raw: %s)", err, resp[:min(len(resp), 200)])
 	}
 
-action, _ := decision["action"].(string)
+	action, _ := decision["action"].(string)
 	// Default to "continue" if action is missing or empty (defensive)
 	if action == "" {
 		action = "continue"

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -44,7 +45,7 @@ func (f *Filter) ScriptCmd(scriptPath, runtimeName, workspace string) (*exec.Cmd
 	}
 
 	cmd := exec.Command(exe, args...)
-	cmd.Dir = workspace
+	cmd.Dir = scriptPath
 
 	var notifCh chan *Notifier
 
@@ -56,6 +57,7 @@ func (f *Filter) ScriptCmd(scriptPath, runtimeName, workspace string) (*exec.Cmd
 		}
 		parentFD := fds[0]
 		childFD := fds[1]
+		unix.CloseOnExec(parentFD)
 
 		cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(childFD), "seccomp-sock")}
 		cmd.Env = append(os.Environ(),
@@ -92,7 +94,7 @@ func (f *Filter) directCmd(scriptPath, runtimeName, workspace string) *exec.Cmd 
 	default:
 		cmd = exec.Command("bash", scriptFile)
 	}
-	cmd.Dir = workspace
+	cmd.Dir = scriptPath
 	return cmd
 }
 
@@ -136,11 +138,15 @@ func ChildMain() error {
 	flags := uintptr(seccompFilterTSync)
 	notifierNeeded := mode == "allowlist" || mode == "denylist"
 	if notifierNeeded {
-		flags |= seccompFilterNotif
+		flags = uintptr(seccompFilterNotif)
 	}
 
 	runtime.LockOSThread()
-	r1, _, e1 := syscallSeccomp(seccompSetModeFilter, flags, uintptr(unsafeAddr(&insns[0])))
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		return fmt.Errorf("seccomp-child: no_new_privs: %w", err)
+	}
+	fprog := unix.SockFprog{Len: uint16(len(insns)), Filter: &insns[0]}
+	r1, _, e1 := syscallSeccomp(seccompSetModeFilter, flags, uintptr(unsafe.Pointer(&fprog)))
 	if e1 != 0 {
 		return fmt.Errorf("seccomp-child: install filter: %w", e1)
 	}

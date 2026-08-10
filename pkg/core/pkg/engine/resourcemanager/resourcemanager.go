@@ -11,9 +11,9 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/taskmanager"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 )
 
 // ─── ResourceManager interface ─────────────────────────────────
@@ -42,17 +42,21 @@ type ResourceManagerConfig struct {
 	ScaleInterval time.Duration
 	PoolSize      int
 
-	Messager      messager.IMessager
-	Cache         cache.ICache
-	TaskState     taskmanager.TaskStateStore
+	Messager     messager.IMessager
+	Cache        cache.ICache
+	TaskState    taskmanager.TaskStateStore
 	ApprovalInfo executor.HumanApprovalStore
-	Logger        *utils.Logger
+	Logger       *utils.Logger
 
-	K8sNamespace      string
-	K8sDeploymentName string
-	K8sKubeConfigPath string
-	TMImage           string
-	PlanTimeout       time.Duration
+	K8sNamespace             string
+	K8sDeploymentName        string
+	K8sKubeConfigPath        string
+	TMImage                  string
+	PlanTimeout              time.Duration
+	OwnerNamespaceID         string
+	OwnerFlowID              string
+	OwnerJobManagerName      string
+	OwnerJobManagerNamespace string
 
 	// Sandbox deployment settings (for K8sRM in distributed mode)
 	SandboxEnabled        bool
@@ -63,11 +67,13 @@ type ResourceManagerConfig struct {
 	SandboxSlotsPerPod    int
 	SandboxResources      *model.SandboxResources
 	SandboxWorkspace      string
+	SandboxHostWorkspace  string
 	SandboxPolicy         *model.SandboxPolicy
 	MQTTBroker            string
 	PostgresDSN           string
 	APIServerURL          string // API server URL for TM pod env var (K8s mode)
-	Namespace                string // default namespace for TM runtime resolution
+	Namespace             string // default namespace for TM runtime resolution
+	CredentialEnvSecret   string // optional K8s Secret mounted via envFrom into TM/Sandbox pods
 }
 
 // ─── Factory ──────────────────────────────────────────────────

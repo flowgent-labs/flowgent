@@ -66,6 +66,36 @@ func TestLocalMessager_MultipleSubscribers(t *testing.T) {
 	}
 }
 
+func TestLocalMessager_SharedSubscribersRoundRobin(t *testing.T) {
+	q := NewLocalMessager(10)
+	defer q.Close()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	counts := map[string]int{"a": 0, "b": 0}
+
+	q.Subscribe(ctx, "$share/workers/topic/a", func(topic string, payload []byte) {
+		mu.Lock()
+		counts["a"]++
+		mu.Unlock()
+	})
+	q.Subscribe(ctx, "$share/workers/topic/a", func(topic string, payload []byte) {
+		mu.Lock()
+		counts["b"]++
+		mu.Unlock()
+	})
+
+	q.Publish(ctx, "topic/a", &InterMessage{ID: "shared-1", Payload: []byte("x")})
+	q.Publish(ctx, "topic/a", &InterMessage{ID: "shared-2", Payload: []byte("x")})
+
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if counts["a"] != 1 || counts["b"] != 1 {
+		t.Fatalf("expected shared handlers to receive one message each, got %v", counts)
+	}
+}
+
 func TestLocalMessager_TopicIsolation(t *testing.T) {
 	q := NewLocalMessager(10)
 	defer q.Close()

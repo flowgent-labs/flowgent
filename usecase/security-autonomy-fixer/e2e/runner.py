@@ -4,10 +4,11 @@ Flowgent E2E Runner — pipeline orchestration + scenario verification.
 
 Orchestrates:
   1. SonarQube PG reset (docker compose)
-  2. Build flowgent-core binary (make build:core)
-  3. Import config YAMLs into Flowgent DB (console import)
-  4. Flowgent Helm deploy (helm install/upgrade + wait for pods)
-  5. Verification suite (scenario-based checks)
+  2. Flowgent PG public schema reset
+  3. Build flowgent-core binary and image, then import the image into k3s
+  4. Full Flowgent Helm redeploy (uninstall/install + wait for pods)
+  5. Import config YAMLs into Flowgent DB (console import)
+  6. Verification suite (scenario-based checks)
 
 Usage:
   python3 runner.py                             # full pipeline + verify all
@@ -33,17 +34,207 @@ import argparse
 import importlib
 import io
 import json
+import glob
 import shutil
 import traceback
 import contextlib
 import subprocess as _sp
+import socket
+import urllib.request
 from datetime import datetime
+
+_SHELL_ENV_FILES = (
+    "~/.bashrc",
+    "~/.bash_profile",
+    "~/.wl4gshrc.sec",
+)
+
+
+def _load_shell_env_files():
+    """Merge exported variables from standard shell env files into this runner.
+
+    The runner is often launched from a non-interactive shell where bash does
+    not load the same files an SSH session loads. Keep this silent so secret
+    values never appear in E2E logs.
+    """
+    files = " ".join(f'"{path}"' for path in _SHELL_ENV_FILES)
+    script = f"""
+set -a
+for f in {files}; do
+  f="${{f/#\\~/$HOME}}"
+  [ -f "$f" ] && . "$f" >/dev/null 2>&1 || true
+done
+set +a
+python3 - <<'PY'
+import json
+import os
+print(json.dumps(dict(os.environ), separators=(",", ":")))
+PY
+"""
+    try:
+        result = _sp.run(
+            ["bash", "-lc", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception:
+        return
+    if result.returncode != 0 or not result.stdout:
+        return
+    try:
+        env = json.loads(result.stdout.strip().splitlines()[-1])
+    except Exception:
+        return
+    for key, value in env.items():
+        if isinstance(key, str) and isinstance(value, str):
+            os.environ[key] = value
+
+
+_load_shell_env_files()
+
+
+def _usable_kubeconfig(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
+
+
+def _select_kubeconfig() -> str:
+    candidates = (
+        os.environ.get("KUBECONFIG", ""),
+        os.path.expanduser("~/.kube/config"),
+        "/etc/rancher/k3s/k3s.yaml",
+    )
+    for path in candidates:
+        if _usable_kubeconfig(path):
+            return path
+    return ""
+
+
+selected_kubeconfig = _select_kubeconfig()
+if selected_kubeconfig:
+    os.environ["KUBECONFIG"] = selected_kubeconfig
+os.environ.setdefault("FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY", "github.com")
 
 from common import config
 
 E2E_DIR = os.path.dirname(os.path.abspath(__file__))
 
 REPORTS_DIR = os.path.join(E2E_DIR, "reports")
+
+
+class _PortForwards:
+    """Own the localhost tunnels required by black-box E2E verifiers."""
+
+    _SPECS = (
+        ("flowgent-apiserver", ("9999:9999",)),
+        ("flowgent-emqx", ("1883:1883", "18083:18083")),
+        ("flowgent-jaeger", ("16687:16686",)),
+    )
+
+    def __init__(self, namespace):
+        self.namespace = namespace
+        self.processes = {}
+
+    @staticmethod
+    def _local_port(spec):
+        return int(spec.split(":", 1)[0])
+
+    @staticmethod
+    def _reachable(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as conn:
+            conn.settimeout(0.2)
+            return conn.connect_ex(("127.0.0.1", port)) == 0
+
+    def _cleanup_stale_forwards(self):
+        pattern = f"kubectl port-forward -n {self.namespace} service/flowgent-"
+        _sp.run(["pkill", "-f", pattern], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        time.sleep(0.5)
+
+    def _ports_reachable(self, ports):
+        return all(self._reachable(self._local_port(port)) for port in ports)
+
+    def _service_probe_ok(self):
+        if not self._reachable(1883):
+            return False
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:9999/_/healthz", timeout=1) as resp:
+                if resp.status != 200:
+                    return False
+        except Exception:
+            return False
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:16687/api/services", timeout=1) as resp:
+                if resp.status != 200:
+                    return False
+        except Exception:
+            return False
+        return True
+
+    def _wait_service_probes(self, timeout=30, stable_checks=3):
+        deadline = time.time() + timeout
+        ok_count = 0
+        while time.time() < deadline:
+            if self._service_probe_ok():
+                ok_count += 1
+                if ok_count >= stable_checks:
+                    return
+            else:
+                ok_count = 0
+            time.sleep(0.5)
+        raise RuntimeError("local verification tunnels did not stay healthy")
+
+    def _start_one(self, service, ports):
+        if self._ports_reachable(ports):
+            print(f"  Reusing existing local port(s) for {service}: {', '.join(ports)}")
+            return
+        old = self.processes.pop(service, None)
+        if old and old.poll() is None:
+            old.terminate()
+            try:
+                old.wait(timeout=3)
+            except _sp.TimeoutExpired:
+                old.kill()
+        command = ["kubectl", "port-forward", "-n", self.namespace,
+                   f"service/{service}", *ports]
+        process = _sp.Popen(command, stdout=_sp.DEVNULL, stderr=_sp.PIPE, text=True)
+        self.processes[service] = process
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if self._ports_reachable(ports):
+                time.sleep(0.5)
+                if process.poll() is None:
+                    return
+                error = process.stderr.read().strip()
+                raise RuntimeError(f"port-forward {service} exited after binding: {error}")
+            if process.poll() is not None:
+                error = process.stderr.read().strip()
+                raise RuntimeError(f"port-forward {service} failed: {error}")
+            time.sleep(0.2)
+        raise RuntimeError(f"port-forward {service} did not become ready")
+
+    def start(self):
+        self._cleanup_stale_forwards()
+        self.ensure()
+        self._wait_service_probes()
+        print("  Local verification tunnels ready: apiserver, EMQX, Jaeger")
+        return self
+
+    def ensure(self):
+        for service, ports in self._SPECS:
+            process = self.processes.get(service)
+            if self._ports_reachable(ports) and (process is None or process.poll() is None):
+                continue
+            self._start_one(service, ports)
+        self._wait_service_probes()
+
+    def stop(self):
+        for process in reversed(list(self.processes.values())):
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except _sp.TimeoutExpired:
+                    process.kill()
 
 SCENARIOS = {
     # L0 — Infra Readiness
@@ -64,7 +255,7 @@ SCENARIOS = {
     "34": ("E2E Fixer — Delivery & Report",                               "verifier.s34_delivery_report_verifier"),
     "35": ("PR Commits — Verify Fix Commits on Target PR",                "verifier.s35_pr_commit_verifier"),
     "36": ("Knowledge — RAG Retrieval & Injection",                       "verifier.s36_knowledge_verifier"),
-    "37": ("Volume Workspace — PVC, Mount, Git Clone & File RW",          "verifier.s37_volume_workspace_verifier"),
+    "37": ("Volume Workspace — Pod-Container Mount, Git Clone Evidence (kubectl exec only)", "verifier.s37_volume_workspace_verifier"),
 }
 
 
@@ -82,19 +273,99 @@ def _step_sonarqube():
     return True
 
 
+def _step_reset_flowgent_db():
+    from common import run_cmd
+    print("\n-- Step: Reset Flowgent PostgreSQL schema --")
+    container = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "sigbot_e2e_164364_postgres")
+    pg_user = os.getenv("FLOWGENT_PG_USER", "test")
+    pg_password = os.getenv("FLOWGENT_PG_PASSWORD", "test")
+    pg_database = os.getenv("FLOWGENT_PG_DATABASE", "flowgent")
+    sql = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+    rc, _ = run_cmd([
+        "docker", "exec", container, "sh", "-c",
+        f"PGPASSWORD={pg_password} psql -U {pg_user} -d {pg_database} -c '{sql}'",
+    ], timeout=60)
+    if rc != 0:
+        print("  ERROR: Flowgent PG schema reset failed")
+        return False
+    print("  Flowgent PG schema reset complete.")
+    return True
+
+
 def _step_build():
     from common import PROJECT_ROOT, CONSOLE_BIN
     from common import run_cmd
     print("\n-- Step: Build flowgent-core --")
-    rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:core"], timeout=120)
+    build_env = {"GOFLAGS": "-p=1", "GOMAXPROCS": "1", "GOGC": "50"}
+    # A cold Go build can exceed two minutes while compiling uncached modules.
+    rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:core"], timeout=600, env=build_env)
     if rc != 0:
         print("  ERROR: Build failed")
         return False
     if os.path.isfile(CONSOLE_BIN):
         print(f"  Binary: {CONSOLE_BIN}")
-        return True
-    print(f"  ERROR: Binary not found after build: {CONSOLE_BIN}")
-    return False
+    else:
+        print(f"  ERROR: Binary not found after build: {CONSOLE_BIN}")
+        return False
+
+    print("\n-- Step: Build and import flowgent-core image --")
+    _ensure_disk_headroom("before image build")
+    # The Makefile enables its proxy-aware image recipe only when both flags
+    # are present.  Keep this scoped to image builds so ordinary local commands
+    # do not acquire network policy implicitly.
+    env = {
+        **build_env,
+        "HTTPS_PROXY": "http://127.0.0.1:8800",
+        "IN_CN_GFW": "true",
+    }
+    rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:image:core"], timeout=600, env=env)
+    if rc != 0:
+        print("  WARN: image build failed, retrying with HTTPS_PROXY=http://127.0.0.1:8800")
+        rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:image:core"], timeout=600, env=env)
+    if rc != 0:
+        print("  ERROR: Docker image build failed")
+        return False
+
+    rc, _ = run_cmd(["docker", "tag", "flowgent-core:latest", "localhost/flowgent-core:latest"], timeout=60)
+    if rc != 0:
+        print("  ERROR: docker tag failed")
+        return False
+    rc, _ = run_cmd(["sh", "-c", "docker save localhost/flowgent-core:latest | sudo k3s ctr images import -"], timeout=300)
+    if rc != 0:
+        print("  ERROR: importing image into k3s containerd failed")
+        return False
+    _ensure_disk_headroom("after image import")
+    return True
+
+
+def _ensure_disk_headroom(label: str, min_free_gib: int = 12, max_used_percent: int = 88):
+    """Clean transient build cache only when root disk is near kubelet eviction."""
+    usage = shutil.disk_usage("/")
+    free_gib = usage.free / (1024 ** 3)
+    used_percent = int((usage.used / usage.total) * 100)
+    if free_gib >= min_free_gib and used_percent <= max_used_percent:
+        return
+
+    from common import run_cmd
+
+    print(
+        f"  WARN: low disk headroom {label}: free={free_gib:.1f}GiB used={used_percent}% "
+        f"(target free>={min_free_gib}GiB used<={max_used_percent}%)"
+    )
+    rc, _ = run_cmd(["docker", "builder", "prune", "-af"], timeout=120)
+    if rc != 0:
+        run_cmd(["podman", "builder", "prune", "-af"], timeout=120)
+
+    removed = 0
+    for path in glob.glob("/tmp/go-build*"):
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    if removed:
+        print(f"  Removed {removed} /tmp/go-build* temporary directorie(s)")
+
+    usage = shutil.disk_usage("/")
+    print(f"  Disk after cleanup: free={usage.free / (1024 ** 3):.1f}GiB used={int((usage.used / usage.total) * 100)}%")
 
 
 def _step_import():
@@ -130,31 +401,32 @@ def _step_deploy(namespace, release):
         return False
     if not wait_for_pods(namespace, release, 300):
         return False
-    flowgent_health(namespace, release)
-    return True
+    return flowgent_health(namespace, release)
 
 
 def run_pipeline(args):
     """Execute pipeline steps. Returns True if all requested steps succeeded."""
-    ok = True
-
     if not args.skip_sonarqube:
         if not _step_sonarqube():
-            ok = False
+            return False
+
+    if not all([args.skip_deploy, args.skip_import]):
+        if not _step_reset_flowgent_db():
+            return False
 
     if not args.skip_build:
         if not _step_build():
-            ok = False
-
-    if not args.skip_import:
-        if not _step_import():
-            ok = False
+            return False
 
     if not args.skip_deploy:
         if not _step_deploy(args.namespace, args.release):
-            ok = False
+            return False
 
-    return ok
+    if not args.skip_import:
+        if not _step_import():
+            return False
+
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -283,6 +555,16 @@ def run_verification(args):
     """Run the verification suite. Returns True if all scenarios passed."""
     _archive_old_reports()
 
+    forwards = _PortForwards(args.namespace).start()
+    try:
+        return _run_verification_suite(args, forwards)
+    finally:
+        forwards.stop()
+
+
+def _run_verification_suite(args, forwards):
+    """Run the suite after its required localhost service tunnels are ready."""
+
     suite_start = time.time()
     results = {}
 
@@ -292,11 +574,13 @@ def run_verification(args):
             print(f"Unknown scenario: {num}")
             return False
         name, mod = SCENARIOS[num]
+        forwards.ensure()
         r = _run_scenario(num, name, mod)
         results[num] = r
         _write_report(num, name, r["passed"], r["elapsed"], r["output"], r["error"])
     else:
         for num, (name, mod) in SCENARIOS.items():
+            forwards.ensure()
             r = _run_scenario(num, name, mod)
             results[num] = r
             _write_report(num, name, r["passed"], r["elapsed"], r["output"], r["error"])
@@ -326,7 +610,7 @@ def main():
     parser.add_argument("--skip-import", action="store_true", help="Skip config YAML import")
     parser.add_argument("--skip-deploy", action="store_true", help="Skip Helm deploy")
     parser.add_argument("--no-verify", action="store_true", help="Skip verification suite")
-    parser.add_argument("--namespace", "-n", default="default")
+    parser.add_argument("--namespace", "-n", default=config.K8S_NAMESPACE)
     parser.add_argument("--release", "-r", default="flowgent")
     # Verification flags
     parser.add_argument("--scenario", "-s", help="Run specific scenario (e.g. 11, 31)")

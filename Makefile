@@ -68,12 +68,12 @@ build-image: build-image-core build-image-wallet
 build-image-core:
 ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
-	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
 else
-	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
 endif
 else
-	DOCKER_BUILDKIT=1 docker build --build-arg BUILD_TAGS="$(TAGS_X402)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
 endif
 
 build-image-wallet:

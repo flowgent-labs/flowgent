@@ -6,7 +6,7 @@ import sys
 import os
 import json
 
-import _common as c
+from verifier import _common as c
 
 # ── Phase 0: Seed verification ──
 
@@ -106,6 +106,8 @@ def run():
 
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
+    if os.path.exists(c.MQTT_AUDIT_PATH):
+        os.remove(c.MQTT_AUDIT_PATH)
 
     # Phase 0: Seed
     c.seed_agents_and_mcps(s)
@@ -125,8 +127,20 @@ def run():
         raise AssertionError(f"create flow returned {r.status_code}: {r.text[:200]}")
     print(f"  OK Flow definition created (status={r.status_code})")
 
+    baseline = c.capture_pr_baseline()
+    head = baseline.get("head_sha", "")[:8] or "none"
+    print(f"  OK PR #{c.PR_NUMBER} baseline captured: commits={baseline.get('commit_count')} head={head}")
+
     # Phase 1: Trigger
+    print("\n-- [31 MQTT Audit] Non-$share subscription before trigger --")
+    audit = c.start_global_mqtt_audit()
     run_id = verify_trigger(s, conn)
+    audit.set_run_id(run_id)
+    c.wait_for_application_components(c.FLOW_ID, timeout=240)
+    audit.wait_for("ctrl/run/created", timeout=20)
+    audit.wait_for("exec/plans", timeout=45)
+    c.save_mqtt_audit(run_id, c.snapshot_global_mqtt_audit(run_id))
+    c.assert_mqtt_suffixes(run_id, ["ctrl/run/created"])
 
     if conn:
         conn.close()

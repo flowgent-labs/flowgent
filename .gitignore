@@ -37,4 +37,4 @@ ca-certificates.crt
 __pycache__/
 
 # E2E verification reports (archived directories are gitignored)
-examples/security-autonomy-fixer/reports/archived-*
+usecase/*/e2e/reports/*

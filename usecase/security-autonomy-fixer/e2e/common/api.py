@@ -50,15 +50,45 @@ def get_or_post(s, api_base, get_path, post_path, payload, kind):
     return True
 
 
+def _get_tasks_from_pg(run_id):
+    """Query task_runs directly from PG as fallback when API endpoint fails."""
+    try:
+        from . import db
+        conn = db.pg_connect()
+        if not conn:
+            return []
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, agentflow_run_id, node_id, status, input, output, error, "
+            "retry_count, max_retries, exec_id, sequence, started_at, finished_at "
+            "FROM task_runs WHERE agentflow_run_id=%s ORDER BY sequence ASC",
+            (run_id,),
+        )
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description]
+        tasks = []
+        for row in rows:
+            t = dict(zip(cols, row))
+            for ts_col in ("started_at", "finished_at"):
+                if t.get(ts_col):
+                    t[ts_col] = t[ts_col].isoformat()
+            tasks.append(t)
+        conn.close()
+        return tasks
+    except Exception as e:
+        print(f"  PG task fallback failed: {e}")
+        return []
+
+
 def get_tasks(s, api_base, namespace, run_id):
-    """Fetch all tasks for a given flow run."""
+    """Fetch all tasks for a given flow run. Falls back to PG on API failure."""
     r = s.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/tasks")
-    if r.status_code != 200:
-        return []
-    tasks = r.json()
-    if not isinstance(tasks, list):
-        return []
-    return tasks
+    if r.status_code == 200:
+        tasks = r.json()
+        if isinstance(tasks, list):
+            return tasks
+    # Fallback: query PG directly
+    return _get_tasks_from_pg(run_id)
 
 
 def tasks_by_node(tasks):
@@ -71,10 +101,23 @@ def parse_output(task):
     output = task.get("output") or {}
     if isinstance(output, str):
         try:
-            return json.loads(output)
+            output = json.loads(output)
         except (json.JSONDecodeError, TypeError):
             return {"_raw": output}
-    return output if isinstance(output, dict) else {}
+    if not isinstance(output, dict):
+        return {}
+    parsed = output.get("parsed")
+    if isinstance(parsed, dict):
+        return parsed
+    text = output.get("text")
+    if isinstance(text, str):
+        try:
+            decoded = json.loads(text)
+            if isinstance(decoded, dict):
+                return decoded
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return output
 
 
 def node_task(tasks_by_node, node_id):

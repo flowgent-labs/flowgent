@@ -1,62 +1,42 @@
 """
-Scenario 37 — Volume Workspace & Git Clone: PVC, Mount, Clone, File RW.
+Scenario 37 — Volume Workspace & Git Clone: Pod-Container Mount Verification.
 
-Verifies the workspace PVC is provisioned, mountable, writable, and can
-serve as the git working directory for target repo source files during
-flow execution.
+CRITICAL constraints:
+  - Host path /mnt/disk1/flowgent/e2e/ maps to container path /var/flowgent
+    (hostPath mount source -> container mount point, per sandbox.workspace config).
+  - TM and Sandbox pods share the same workspace volume mounted at /var/flowgent.
+  - The workspace directory tree MUST be created by flowgent DAG tasks
+    (e.g. git-clone sandbox node) at execution time — this verifier MUST NOT
+    create, write to, or delete anything on the host path.
+  - ALL verification MUST run via kubectl exec inside TM/Sandbox pod containers.
+    The host path /mnt/disk1/flowgent/e2e/ is only checked read-only for existence.
 
-Steps with Expected I/O:
-  L1 — PVC Status
-    Step 1.1 PVC Exists
-      Action:  kubectl get pvc -A -o json
-      Input:   KUBECONFIG set, K8S cluster running, Helm deployed
-      Output:  Workspace PVC found with status "Bound"
-
-    Step 1.2 PVC Capacity
-      Action:  kubectl get pvc <name> -o json
-      Input:   PVC name from config
-      Output:  Capacity non-zero, access mode ReadWriteMany or ReadWriteOnce
-
-  L2 — Sandbox Workspace
-    Step 2.1 Workspace dir exists
-      Action:  ls -la /workspace or check mount
-      Input:   PVC mounted on controller node
-      Output:  /workspace directory exists
-
-    Step 2.2 Workspace is writable
-      Action:  touch /workspace/.write_test && rm /workspace/.write_test
-      Input:   Workspace mounted rw
-      Output:  Write test succeeds
-
-  L3 — Git Clone
-    Step 3.1 Git available
-      Action:  git --version
-      Input:   git installed on node
-      Output:  Git version string
-
-    Step 3.2 Clone target repo
-      Action:  git clone --depth 1 --branch master <repo_url> /workspace/rengine
-      Input:   Network access to github.com
-      Output:  Clone succeeds (or WARN if GitHub unreachable)
-
-    Step 3.3 Repo on workspace
-      Action:  ls /workspace/rengine
-      Input:   Clone succeeded
-      Output:  Source files present (≥1 file found)
-
-    Step 3.4 File read/write on workspace
-      Action:  Read sample file from cloned repo, write test file
-      Input:   Workspace mounted rw
-      Output:  Read succeeds, write succeeds
+Steps:
+  L1 — State path contract: no host filesystem access
+  L2 — TM Pod container: verify /var/flowgent volume is mounted inside container
+  L3 — TM Pod container: verify /var/flowgent is writable without writing
+  L4 — TM Pod container: verify current run workspace hierarchy:
+        /var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}
+  L5 — TM Pod container: verify rengine .git under the git-clone task dir
 """
 
+import os
 import subprocess
 import sys
-import os
 import json
+import requests
+from common import api as common_api
 from common import config
 
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
+APP_NAMESPACE = config.K8S_APP_NAMESPACE
+FLOW_ID = "security-autonomy-fixer"
+SANDBOX_NODE_IDS = ("git-clone", "read-source-files", "wait-rescan")
+
+# Container path is where TM/Sandbox pods mount the workspace volume.
+# Per Helm values sandbox.workspace and ConfigMap, this is /var/flowgent.
+# All verifier checks run via kubectl exec at this path inside the container.
+CONTAINER_WORKSPACE = "/var/flowgent"
 
 
 def kubectl(args, check=True):
@@ -64,8 +44,6 @@ def kubectl(args, check=True):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if check and result.returncode != 0:
         print(f"  WARN: {' '.join(cmd)} -> rc={result.returncode}")
-        if result.stderr:
-            print(f"  stderr: {result.stderr[:300]}")
     return result
 
 
@@ -79,198 +57,265 @@ def kubectl_json(args):
         return None
 
 
+def exec_in_pod(namespace: str, pod_name: str, container: str, cmd: str) -> tuple:
+    """Execute a command inside a pod container. Returns (rc, stdout, stderr)."""
+    result = subprocess.run(
+        ["kubectl", "exec", "-n", namespace, pod_name, "-c", container,
+         "--", "sh", "-c", cmd],
+        capture_output=True, text=True, timeout=15,
+    )
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def find_tm_pod() -> tuple:
+    """Find a running flow-owned TaskManager pod. Returns (namespace, pod_name, container) or (None,None,None)."""
+    pods = kubectl_json([
+        "get", "pods", "-n", APP_NAMESPACE, "-l",
+        f"flowgent/role=worker,flowgent.io/flow={FLOW_ID}",
+    ])
+    if pods:
+        for p in pods.get("items", []):
+            phase = p.get("status", {}).get("phase", "")
+            containers = [c["name"] for c in p.get("spec", {}).get("containers", [])]
+            if phase == "Running" and containers:
+                return APP_NAMESPACE, p["metadata"]["name"], containers[0]
+
+    pods = kubectl_json(["get", "pods", "-n", APP_NAMESPACE])
+    if pods:
+        for p in pods.get("items", []):
+            name = p["metadata"]["name"]
+            phase = p.get("status", {}).get("phase", "")
+            containers = [c["name"] for c in p.get("spec", {}).get("containers", [])]
+            if phase == "Running" and "taskmanager" in name.lower() and containers:
+                return APP_NAMESPACE, name, containers[0]
+
+    return None, None, None
+
+
+def deployment_for_pod(namespace: str, pod_name: str) -> tuple:
+    pod = kubectl_json(["get", "pod", "-n", namespace, pod_name])
+    if not pod:
+        return None, None
+    for owner in pod.get("metadata", {}).get("ownerReferences", []) or []:
+        if owner.get("kind") != "ReplicaSet":
+            continue
+        rs_name = owner.get("name")
+        if not rs_name:
+            continue
+        rs = kubectl_json(["get", "rs", "-n", namespace, rs_name])
+        if not rs:
+            continue
+        for rs_owner in rs.get("metadata", {}).get("ownerReferences", []) or []:
+            if rs_owner.get("kind") == "Deployment" and rs_owner.get("name"):
+                return namespace, rs_owner["name"]
+    return None, None
+
+
+def load_tasks(run_id: str) -> list:
+    session = requests.Session()
+    session.headers["Content-Type"] = "application/json"
+    try:
+        return common_api.get_tasks(session, config.K8S_APISERVER_URL, NAMESPACE, run_id)
+    except Exception as exc:
+        print(f"  WARN: failed to load tasks for run {run_id}: {exc}")
+        return []
+
+
+def task_id(tasks_by_node: dict, run_id: str, node_id: str) -> str:
+    task = tasks_by_node.get(node_id) or {}
+    return task.get("exec_id") or f"plan-{run_id}-{node_id}"
+
+
 def run():
-    print("  Scenario 37: Volume Workspace — PVC, Mount, Clone & File RW")
-    # ── L1.1: PVC exists and is bound ─────────────────────
-    print("\n── L1: PVC Status ──")
-    pvcs = kubectl_json(["get", "pvc", "-A"])
-    workspace_pvc = None
-    if pvcs:
-        for pvc in pvcs.get("items", []):
-            name = pvc["metadata"]["name"]
-            namespace = pvc["metadata"]["namespace"]
-            phase = pvc.get("status", {}).get("phase", "Unknown")
-            storage = pvc.get("spec", {}).get("resources", {}).get("requests", {}).get("storage", "?")
-            access_modes = pvc.get("spec", {}).get("accessModes", [])
-            print(f"  [1.1] PVC: {namespace}/{name} phase={phase} storage={storage} access={access_modes}")
-            if "workspace" in name.lower() or "flowgent" in name.lower():
-                if not workspace_pvc or phase == "Bound":
-                    workspace_pvc = pvc
+    print("  Scenario 37: Volume Workspace — Pod-Internal Verification")
+    run_id_file = os.path.join(os.path.dirname(__file__), "..", ".last_run_id")
+    if not os.path.isfile(run_id_file):
+        raise AssertionError("No .last_run_id found — run scenarios 31-34 first")
+    with open(run_id_file) as f:
+        run_id = f.read().strip()
+    if not run_id:
+        raise AssertionError(".last_run_id is empty")
+
+    # ═══════════════════════════════════════════════════════════════
+    # L1: State path contract.
+    #     MUST NOT create, read, write to, or delete anything on the host.
+    # ═══════════════════════════════════════════════════════════════
+    print("\n── L1: State path contract ──")
+    print(f"  [L1] Container mount    : {CONTAINER_WORKSPACE}")
+    print(f"  [L1] NOTE: This verifier does not access the host workspace path directly.")
+    print(f"  [L1] NOTE: The workspace tree is created at runtime by flowgent DAG tasks (git-clone sandbox node).")
+
+    # ═══════════════════════════════════════════════════════════════
+    # L2: Find a running TM or Sandbox pod and verify /var/flowgent
+    #     volume mount inside the container.
+    # ═══════════════════════════════════════════════════════════════
+    print("\n── L2: Pod container — /var/flowgent volume mount ──")
+    ns, pod_name, container = find_tm_pod()
+    if not pod_name:
+        print("  [L2] No TM pod found, trying sandbox pod...")
+        pods = kubectl_json(["get", "pods", "-n", APP_NAMESPACE, "-l", f"flowgent/role=sandbox-worker,flowgent.io/flow={FLOW_ID}"])
+        if pods:
+            for p in pods.get("items", []):
+                if p.get("status", {}).get("phase") == "Running":
+                    ns, pod_name = APP_NAMESPACE, p["metadata"]["name"]
+                    container = p.get("spec", {}).get("containers", [{}])[0].get("name", "sandbox")
+                    break
+
+    if not pod_name:
+        raise AssertionError("No running TM or sandbox pod found. Run scenarios 31-34 first.")
+
+    print(f"  [L2] Using pod: {ns}/{pod_name} (container={container})")
+
+    # L2.1 — directory existence inside container
+    rc, out, err = exec_in_pod(ns, pod_name, container,
+        f"test -d '{CONTAINER_WORKSPACE}' && echo 'EXISTS' || echo 'MISSING'")
+    if "EXISTS" in out:
+        print(f"  [L2.1] OK: {CONTAINER_WORKSPACE} exists inside container")
     else:
-        print("  [1.1] WARN: Could not list PVCs")
-
-    if workspace_pvc:
-        name = workspace_pvc["metadata"]["name"]
-        phase = workspace_pvc.get("status", {}).get("phase", "Unknown")
-        if phase == "Bound":
-            print(f"  [1.1] Workspace PVC {name} is Bound")
+        rc, out, err = exec_in_pod(ns, pod_name, container,
+            "mount | grep -E '/var/flowgent' || echo 'NO_MOUNT'")
+        if "NO_MOUNT" in out:
+            raise AssertionError("No /var/flowgent mount found in container mount table")
         else:
-            print(f"  [1.1] WARN: Workspace PVC {name} phase={phase} (expected Bound)")
-    else:
-        print("  [1.1] WARN: No workspace PVC found. Check Helm values for workspace.persistence.enabled")
+            raise AssertionError(f"{CONTAINER_WORKSPACE} missing despite mount entry: {out[:300]}")
 
-    # ── L1.2: PVC capacity ────────────────────────────────
-    if workspace_pvc:
-        storage = workspace_pvc.get("spec", {}).get("resources", {}).get("requests", {}).get("storage", "0")
-        access_modes = workspace_pvc.get("spec", {}).get("accessModes", [])
-        volume_name = workspace_pvc.get("spec", {}).get("volumeName", "N/A")
-        storage_class = workspace_pvc.get("spec", {}).get("storageClassName", "N/A")
-        print(f"  [1.2] Capacity: {storage}, AccessModes: {access_modes}, Volume: {volume_name}, StorageClass: {storage_class}")
-        if storage == "0" or not storage:
-            print("  [1.2] WARN: PVC has zero or unknown capacity")
-        if "ReadWriteMany" not in access_modes and "ReadWriteOnce" not in access_modes:
-            print("  [1.2] WARN: PVC lacks ReadWriteMany/ReadWriteOnce access mode")
-
-    # ── L2: Sandbox Workspace ─────────────────────────────
-    print("\n── L2: Sandbox Workspace ──")
-
-    # Workspace path — try common locations
-    workspace_paths = [
-        "/workspace",
-        "/home/agent/workspace",
-        "/var/flowgent/workspace",
-    ]
-    found_path = None
-    for wp in workspace_paths:
-        if os.path.isdir(wp):
-            found_path = wp
-            print(f"  [2.1] Workspace directory found: {wp}")
-            break
-
-    if not found_path:
-        # Check if workspace is a PV that's mounted elsewhere
-        print("  [2.1] Workspace dir not at common paths — checking mount points...")
-        try:
-            result = subprocess.run(["mount"], capture_output=True, text=True)
-            for line in result.stdout.splitlines():
-                if "workspace" in line.lower() or "flowgent" in line.lower():
-                    print(f"  [2.1] Mount found: {line.strip()}")
-                    found_path = line.split()[2]
-        except Exception:
-            pass
-        if not found_path:
-            print("  [2.1] WARN: No workspace mount found. PVC may not be mounted on this node.")
-            # Non-blocking — workspace is used inside sandbox pods, not on control node
-            found_path = "/tmp/flowgent-workspace-test"
-
-    if found_path and os.path.exists(found_path):
-        # ── L2.2: Workspace writable ──────────────────────
-        test_file = os.path.join(found_path, ".write_test")
-        try:
-            with open(test_file, "w") as f:
-                f.write("test")
-            os.remove(test_file)
-            print(f"  [2.2] Workspace write test OK ({found_path})")
-        except PermissionError:
-            print(f"  [2.2] WARN: Workspace {found_path} is not writable — check mount options")
-        except FileNotFoundError:
-            print(f"  [2.2] WARN: Cannot write to {found_path} — parent may not exist")
-
-    # ── L3: Git Clone on Workspace ────────────────────────
-    print("\n── L3: Git Clone on Workspace ──")
-
-    # ── L3.1: Git available ───────────────────────────────
-    try:
-        result = subprocess.run(["git", "--version"], capture_output=True, text=True)
-        git_version = result.stdout.strip()
-        print(f"  [3.1] Git available: {git_version}")
-    except FileNotFoundError:
-        print("  [3.1] FAIL: git not found — required for source checkout")
-        return
-
-    # ── L3.2: Clone target repo ───────────────────────────
-    clone_dir = os.path.join(found_path, "rengine")
-    clone_ok = False
-
-    # Clean up any stale clone
-    if os.path.exists(clone_dir):
-        subprocess.run(["rm", "-rf", clone_dir], capture_output=True)
-
-    try:
-        # Try minimal clone — shallow, single branch
-        print(f"  [3.2] Cloning wl4g/rengine into {clone_dir} ...")
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", "master",
-             "https://github.com/wl4g/rengine.git", clone_dir],
-            capture_output=True, text=True,
-            timeout=120,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-        )
-        if result.returncode == 0:
-            print(f"  [3.2] Clone succeeded")
-            clone_ok = True
-        else:
-            stderr_short = result.stderr[:300].replace("\n", " ")
-            print(f"  [3.2] WARN: Clone failed (rc={result.returncode}): {stderr_short}")
-            # Try with HTTPS_PROXY if available
-            proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-            if proxy:
-                print(f"  [3.2] Retrying with HTTPS_PROXY={proxy} ...")
-                result = subprocess.run(
-                    ["git", "clone", "--depth", "1", "--branch", "master",
-                     "https://github.com/wl4g/rengine.git", clone_dir],
-                    capture_output=True, text=True,
-                    timeout=120,
-                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "HTTPS_PROXY": proxy},
-                )
-                if result.returncode == 0:
-                    print(f"  [3.2] Clone succeeded (via proxy)")
-                    clone_ok = True
-                else:
-                    stderr_short = result.stderr[:300].replace("\n", " ")
-                    print(f"  [3.2] Clone with proxy also failed: {stderr_short}")
-                    print(f"  [3.2] INFO: Clone is non-critical — sandbox pods will clone within the cluster")
-    except subprocess.TimeoutExpired:
-        print("  [3.2] WARN: Clone timed out after 120s — GitHub may be unreachable")
-        print("  [3.2] INFO: Git clone runs inside sandbox pods, not on control node")
-
-    # ── L3.3: Source files present ───────────────────────
-    if clone_ok and os.path.isdir(clone_dir):
-        file_count = 0
-        for root, dirs, files in os.walk(clone_dir):
-            # Skip .git directory
-            if ".git" in root.split(os.sep):
-                continue
-            file_count += len(files)
-        dir_count = sum(1 for _ in os.walk(clone_dir))
-        print(f"  [3.3] Cloned repo: {file_count} files in {dir_count} dirs at {clone_dir}")
-        if file_count == 0:
-            print("  [3.3] WARN: Repo appears empty — check branch name or repo structure")
-
-        # ── L3.4: File read/write on workspace ───────────
-        try:
-            # Read first non-binary file found
-            for root, dirs, files in os.walk(clone_dir):
-                if ".git" in root.split(os.sep):
-                    continue
-                for f in sorted(files):
-                    fpath = os.path.join(root, f)
-                    try:
-                        with open(fpath, "r") as fh:
-                            content = fh.read(200)
-                            print(f"  [3.4] Read OK: {os.path.relpath(fpath, clone_dir)} ({len(content)} chars preview)")
-                            break
-                    except (UnicodeDecodeError, IsADirectoryError):
-                        continue
-                else:
-                    continue
+    # L2.2 — workspace volumeMount in the selected shared runtime deployment.
+    deploy_ns, deploy_name = deployment_for_pod(ns, pod_name)
+    if not deploy_name:
+        deploy_name = "flowgent-taskmanager" if "task" in container.lower() or "taskmanager" in pod_name.lower() else "flowgent-sandbox"
+        deploy_ns = APP_NAMESPACE
+    runtime_deploy = kubectl_json(["get", "deploy", "-n", deploy_ns, deploy_name])
+    if runtime_deploy:
+        mount_found = False
+        volume_found = False
+        for c in runtime_deploy.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
+            if c.get("name") == container:
+                for vm in c.get("volumeMounts", []):
+                    if "workspace" in vm.get("name", "").lower():
+                        mount_found = True
+                        print(f"  [L2.2] OK: {deploy_ns}/{deploy_name} has workspace volumeMount: "
+                              f"name={vm['name']} mountPath={vm.get('mountPath','?')}")
+                        break
+        for v in runtime_deploy.get("spec", {}).get("template", {}).get("spec", {}).get("volumes", []):
+            if "workspace" in v.get("name", "").lower():
+                volume_found = True
+                host_path = v.get("hostPath", {}).get("path", "?")
+                print(f"  [L2.2] OK: {deploy_ns}/{deploy_name} has workspace volume: name={v['name']} "
+                      f"hostPath={host_path}")
                 break
-
-            # Write test
-            test_write = os.path.join(clone_dir, ".flowgent_test")
-            with open(test_write, "w") as f:
-                f.write("flowgent workspace test")
-            os.remove(test_write)
-            print(f"  [3.4] Write test OK on workspace")
-        except Exception as e:
-            print(f"  [3.4] WARN: File rw test failed: {e}")
-    elif not clone_ok:
-        print("  [3.3] SKIP: Clone did not succeed, cannot verify source files")
-        print("  [3.4] SKIP: No files to test read/write")
-
-    # ── Summary ────────────────────────────────────────────
-    print(f"\n  Volume workspace & git clone verification complete.")
-    if workspace_pvc and workspace_pvc.get("status", {}).get("phase") == "Bound":
-        print("  PVC: Ready for sandbox git operations.")
+        if not mount_found or not volume_found:
+            raise AssertionError(f"{deploy_ns}/{deploy_name} missing workspace volume or mount")
     else:
-        print("  PVC: Needs attention — check Helm values.yaml workspace settings.")
+        raise AssertionError(f"{deploy_ns}/{deploy_name} deployment not found")
+
+    # ═══════════════════════════════════════════════════════════════
+    # L3: Verify /var/flowgent is writable inside the container.
+    # ═══════════════════════════════════════════════════════════════
+    print("\n── L3: Workspace writable flag (inside container, no write) ──")
+    rc, out, err = exec_in_pod(ns, pod_name, container,
+        f"test -w '{CONTAINER_WORKSPACE}' && echo 'WRITABLE' || echo 'NOT_WRITABLE'")
+    if "WRITABLE" in out:
+        print(f"  [L3] OK: {CONTAINER_WORKSPACE} is writable inside container")
+    else:
+        raise AssertionError(f"{CONTAINER_WORKSPACE} is not writable inside container: {err}")
+
+    # ═══════════════════════════════════════════════════════════════
+    # L4: Find DAG run workspace subdirectories inside container.
+    #     Created by sandbox executor at path:
+    #       /var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}/
+    # ═══════════════════════════════════════════════════════════════
+    print("\n── L4: DAG run workspace subdirectories (inside container) ──")
+    tasks = load_tasks(run_id)
+    tasks_by_node = common_api.tasks_by_node(tasks)
+    run_workspace = f"{CONTAINER_WORKSPACE}/{NAMESPACE}/{FLOW_ID}/{run_id}"
+    legacy_workspace = f"{CONTAINER_WORKSPACE}/{NAMESPACE}/{FLOW_ID}/runs/{run_id}"
+    rc, out, err = exec_in_pod(ns, pod_name, container,
+        f"test -d '{run_workspace}' && echo 'RUN_WORKSPACE_EXISTS' || echo 'RUN_WORKSPACE_MISSING'")
+    if "RUN_WORKSPACE_EXISTS" not in out:
+        raise AssertionError(f"Current run workspace missing inside container: {run_workspace}")
+    print(f"  [L4] OK: current run workspace exists: {run_workspace}")
+
+    rc, out, err = exec_in_pod(ns, pod_name, container,
+        f"test ! -d '{legacy_workspace}' && echo 'LEGACY_ABSENT' || echo 'LEGACY_PRESENT'")
+    if "LEGACY_ABSENT" not in out:
+        raise AssertionError(f"Legacy run/plans workspace still exists for current run: {legacy_workspace}")
+    print(f"  [L4] OK: legacy runs/plans path absent for current run")
+
+    expected_plan_paths = {}
+    for node_id in SANDBOX_NODE_IDS:
+        plan_id = task_id(tasks_by_node, run_id, node_id)
+        plan_path = f"{run_workspace}/{plan_id}"
+        expected_plan_paths[node_id] = plan_path
+        rc, out, err = exec_in_pod(ns, pod_name, container,
+            f"test -d '{plan_path}' && "
+            f"test -f '{plan_path}/input.json' && "
+            f"test -f '{plan_path}/result.json' && "
+            f"test -f '{plan_path}/status' && "
+            f"find '{plan_path}' -maxdepth 1 -name 'script.*' -type f | grep -q . && "
+            f"echo 'TASK_READY' || echo 'TASK_MISSING'")
+        if "TASK_READY" not in out:
+            raise AssertionError(f"task workspace incomplete for node {node_id}: {plan_path}")
+        print(f"  [L4] OK: {node_id} task workspace exists: {plan_path}")
+
+    rc, out, err = exec_in_pod(ns, pod_name, container,
+        f"find '{run_workspace}' -maxdepth 3 -type d 2>/dev/null | sort")
+    subdirs = [d for d in out.split("\n") if d.strip() and d != CONTAINER_WORKSPACE]
+    if subdirs:
+        print(f"  [L4] Found {len(subdirs)} subdirectories inside current run workspace:")
+        for d in subdirs[:20]:
+            print(f"    {d}")
+    else:
+        raise AssertionError("No DAG run subdirectories found under /var/flowgent")
+
+    # ═══════════════════════════════════════════════════════════════
+    # L5: Search for rengine repo clone evidence inside container.
+    #     The git-clone sandbox node clones wl4g/rengine under its task
+    #     workspace. Look for .git exactly there as proof of clone.
+    # ═══════════════════════════════════════════════════════════════
+    print("\n── L5: Rengine repo clone evidence (inside container) ──")
+    expected_repo = f"{expected_plan_paths['git-clone']}/repos/rengine"
+    rc, out, err = exec_in_pod(ns, pod_name, container,
+        f"test -d '{expected_repo}/.git' && echo '{expected_repo}/.git' || true")
+    git_dirs = [d for d in out.split("\n") if d.strip()]
+    if not git_dirs:
+        print(f"  [L5] Expected repo not found at {expected_repo}; scanning /var/flowgent as diagnostic...")
+        rc, out, err = exec_in_pod(ns, pod_name, container,
+            f"find '{CONTAINER_WORKSPACE}' -name '.git' -type d 2>/dev/null | head -5")
+        git_dirs = [d for d in out.split("\n") if d.strip()]
+        if git_dirs:
+            raise AssertionError(f"Git repositories found outside expected repo path {expected_repo}: {git_dirs}")
+        raise AssertionError(f"No rengine .git directory found at expected path inside container: {expected_repo}/.git")
+
+    if git_dirs:
+        for gd in git_dirs:
+            repo_dir = gd.rsplit("/.git", 1)[0] if "/.git" in gd else gd.rsplit("/", 1)[0]
+            print(f"  [L5] FOUND: Git repository inside container at {repo_dir}")
+            if "rengine" not in repo_dir.lower():
+                continue
+
+            rc, out2, _ = exec_in_pod(ns, pod_name, container,
+                f"cd '{repo_dir}' && echo '--- files ---' && ls | head -15 && "
+                f"echo '--- git log ---' && git log --oneline -3 2>/dev/null")
+            print(f"  [L5] Content preview: {out2[:500]}")
+
+            rc, out3, _ = exec_in_pod(ns, pod_name, container,
+                f"find '{repo_dir}' -type f -not -path '*/.git/*' | wc -l")
+            print(f"  [L5] Total source files: {out3.strip()}")
+
+            rc, out4, _ = exec_in_pod(ns, pod_name, container,
+                f"test -f '{repo_dir}/pom.xml' && echo 'pom.xml: EXISTS' || echo 'pom.xml: MISSING'; "
+                f"find '{repo_dir}' -name 'pom.xml' -maxdepth 1 2>/dev/null | head -1")
+            print(f"  [L5] Build file: {out4.strip()}")
+            if "pom.xml: EXISTS" not in out4:
+                raise AssertionError(f"rengine repo found but pom.xml missing at {repo_dir}")
+            break
+        else:
+            raise AssertionError(f"Git repositories found, but none look like rengine: {git_dirs}")
+    else:
+        raise AssertionError("No .git directory found inside /var/flowgent; git-clone node did not produce workspace evidence")
+
+    # ── Summary ──
+    print(f"\n  Volume workspace verification complete.")
+    print(f"  Container mount   : {CONTAINER_WORKSPACE} (inside TM/sandbox pods)")
+    print(f"  All verifier checks ran via kubectl exec INSIDE the container.")
+    print(f"  Host filesystem was NOT modified by this verifier script.")

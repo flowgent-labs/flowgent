@@ -8,13 +8,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -29,20 +33,21 @@ import (
 
 // FlowgentController is the distributed flow driver.
 type FlowgentController struct {
-	api     *client.FlowgentClient
-	namespace  string
-	rm      resourcemanager.ResourceManager
-	logger  *utils.Logger
-	cfg     *config.FlowgentConfig
-	cfgPath string
+	api       *client.FlowgentClient
+	namespace string
+	rm        resourcemanager.ResourceManager
+	logger    *utils.Logger
+	cfg       *config.FlowgentConfig
+	cfgPath   string
 
 	discovery    discovery.IDiscoveryClient
 	pollInterval time.Duration
 	cronTrigger  *trigger.ScheduleTrigger
 
-	mu                sync.Mutex
-	running           map[string]context.CancelFunc
-	dispatchedVersion map[string]int64
+	mu                      sync.Mutex
+	running                 map[string]context.CancelFunc
+	runtimeCleanupFirstSeen map[string]time.Time
+	tmOrphanTimeout         time.Duration
 }
 
 // NewFlowgentController creates a FlowgentController instance.
@@ -50,17 +55,18 @@ func NewFlowgentController(api *client.FlowgentClient, namespace string, rm reso
 	logger *utils.Logger, cfg *config.FlowgentConfig, cfgPath string,
 	disc discovery.IDiscoveryClient) *FlowgentController {
 	return &FlowgentController{
-		api:               api,
-		namespace:            namespace,
-		rm:                rm,
-		logger:            logger,
-		cfg:               cfg,
-		cfgPath:           cfgPath,
-		discovery:         disc,
-		pollInterval:      10 * time.Second,
-		cronTrigger:       trigger.NewScheduleTrigger(),
-		running:           make(map[string]context.CancelFunc),
-		dispatchedVersion: make(map[string]int64),
+		api:                     api,
+		namespace:               namespace,
+		rm:                      rm,
+		logger:                  logger,
+		cfg:                     cfg,
+		cfgPath:                 cfgPath,
+		discovery:               disc,
+		pollInterval:            10 * time.Second,
+		cronTrigger:             trigger.NewScheduleTrigger(),
+		running:                 make(map[string]context.CancelFunc),
+		runtimeCleanupFirstSeen: make(map[string]time.Time),
+		tmOrphanTimeout:         parseTMOrphanTimeout(cfg.Runtime.TMOrphanTimeout),
 	}
 }
 
@@ -163,7 +169,6 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 	}
 
 	seen := make(map[string]*entities.FlowInfo)
-	versionOf := make(map[string]int64)
 	for _, v := range versions {
 		if _, exists := seen[v.FlowID]; exists {
 			continue
@@ -176,9 +181,13 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 		if spec.ID == "" {
 			continue
 		}
+		if strings.EqualFold(spec.Kind, "skill") {
+			continue
+		}
 		seen[v.FlowID] = &spec
-		versionOf[v.FlowID] = v.Version
 	}
+
+	activeRunFlows, activeRunSnapshotOK := c.collectActiveRunFlows(ctx, seen, peers)
 
 	var ownedFlows []entities.FlowInfo
 	for flowID, spec := range seen {
@@ -187,28 +196,14 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 		}
 		ownedFlows = append(ownedFlows, *spec)
 
-		// Every flow runs in Application mode (dedicated per-flow JM
-		// Deployment) — Session mode is currently disabled, see
-		// entities.Priority doc comment. Idempotent
-		// (apierrors.IsAlreadyExists is ignored) — safe to call on every
-		// tick, independent of run dispatch below.
-		c.ensureApplicationInfra(ctx, spec)
-
-		// Only actually dispatch (create a new run) when the flow's
-		// definition is new or has changed — the "on-new-definition" trigger
-		// condition (docs/01-L1-Engine-Architecture.md §4.2). Without this
-		// guard the Controller would create a brand-new FlowRun for every
-		// known flow on every pollInterval tick, forever. Explicit runs
-		// otherwise come from Path A (POST /flows/trigger) or the cron
-		// triggers registered below.
-		if !c.shouldDispatch(flowID, versionOf[flowID]) {
-			continue
+		// Importing or updating a flow definition is metadata registration only.
+		// Application-mode runtime infrastructure is created lazily when a real
+		// FlowRun is PENDING/RUNNING/PAUSED. This mirrors Flink's application
+		// cluster behavior: Controller owns JM lifecycle, but it does not keep
+		// idle JMs/TMs around merely because a definition exists.
+		if activeRunSnapshotOK && activeRunFlows[flowID] {
+			c.ensureApplicationInfra(ctx, spec)
 		}
-
-		c.logger.Info("Controller dispatching flow (new/updated definition)",
-			"flow_id", flowID, "priority", spec.Priority, "version", versionOf[flowID])
-
-		go c.dispatchFlow(ctx, spec)
 	}
 
 	// Re-register cron/schedule triggers (docs §4.2 "cron / interval") for
@@ -219,21 +214,42 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 	c.cronTrigger.RegisterAgentFlows(ownedFlows, c.triggerScheduledRun)
 	c.cronTrigger.Start()
 
-	// Garbage-collect dedicated JM Deployments for flows that were deleted.
-	c.gcOrphanedJMDeployments(ctx, seen, peers)
+	// Garbage-collect dedicated JM/TM Deployments for deleted flows and for
+	// flows that no longer have active runs. If the active-run snapshot failed,
+	// do not treat missing activity as authoritative; only deleted-flow cleanup
+	// remains safe.
+	c.gcOrphanedJMDeployments(ctx, seen, activeRunFlows, activeRunSnapshotOK, peers)
+	c.gcOrphanedRuntimeDeployments(ctx, seen, activeRunFlows, activeRunSnapshotOK, peers)
 }
 
-// shouldDispatch implements the "on-new-definition" trigger condition: a
-// flow is only auto-dispatched once per definition version, not on every
-// reconcile tick.
-func (c *FlowgentController) shouldDispatch(flowID string, version int64) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if last, ok := c.dispatchedVersion[flowID]; ok && last == version {
-		return false
+// collectActiveRunFlows returns the set of flow IDs owned by this controller
+// shard that currently have at least one non-terminal run. A failed snapshot is
+// not equivalent to "no active runs"; callers use the boolean to avoid deleting
+// live application infrastructure during a transient apiserver problem.
+func (c *FlowgentController) collectActiveRunFlows(ctx context.Context, seen map[string]*entities.FlowInfo, peers []discovery.Peer) (map[string]bool, bool) {
+	active := make(map[string]bool)
+	statuses := []entities.RunStatus{
+		entities.RunPending,
+		entities.RunRunning,
+		entities.RunPaused,
 	}
-	c.dispatchedVersion[flowID] = version
-	return true
+	for flowID := range seen {
+		if !c.ownsFlow(peers, flowID) {
+			continue
+		}
+		for _, status := range statuses {
+			page, err := c.api.ListRuns(ctx, c.namespace, string(status), "", flowID, 1, 100)
+			if err != nil {
+				c.logger.Warn("active-run snapshot failed", "flow_id", flowID, "status", status, "error", err)
+				return active, false
+			}
+			if len(page.Items) > 0 {
+				active[flowID] = true
+				break
+			}
+		}
+	}
+	return active, true
 }
 
 // triggerScheduledRun is the ScheduleTrigger callback for a cron-triggered
@@ -246,32 +262,12 @@ func (c *FlowgentController) triggerScheduledRun(ctx context.Context, flowID str
 		return
 	}
 	c.createApplicationRun(ctx, spec)
-}
-
-func (c *FlowgentController) dispatchFlow(ctx context.Context, spec *entities.FlowInfo) {
-	flowCtx, cancel := context.WithCancel(ctx)
-	c.mu.Lock()
-	c.running[spec.ID] = cancel
-	c.mu.Unlock()
-
-	defer func() {
-		c.mu.Lock()
-		delete(c.running, spec.ID)
-		c.mu.Unlock()
-		cancel()
-	}()
-
-	// Every flow gets a dedicated per-flow JM Deployment (Application mode).
-	// Session mode (a shared, Helm-deployed JM/TM pool picking up
-	// namespace="" runs) is currently disabled to simplify troubleshooting —
-	// see entities.Priority doc comment.
-	c.createApplicationRun(flowCtx, spec)
+	c.ensureApplicationInfra(ctx, spec)
 }
 
 // ensureApplicationInfra makes sure the dedicated per-flow JM Deployment
-// exists for this flow, in its namespace's shared namespace. Idempotent — safe
-// to call on every reconcile tick, independent of whether a run is
-// dispatched.
+// exists for this flow, in its namespace's shared namespace. It is called only
+// for active runs, not for metadata-only flow definition imports.
 func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *entities.FlowInfo) {
 	ns := c.applicationNamespace(spec)
 	namespaceID := c.dispatchNamespace(spec)
@@ -314,7 +310,7 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 		// dedicated JM pod in the namespace namespace would fail with
 		// "MountVolume.SetUp failed for volume \"config\": configmap not found".
 		cmName := c.jmConfigMapName()
-		if srcCM, srcErr := clientset.CoreV1().ConfigMaps(c.cfg.Runtime.K8sNamespace).Get(ctx, cmName, metav1.GetOptions{}); srcErr == nil {
+		if srcCM, srcErr := clientset.CoreV1().ConfigMaps(c.systemNamespace()).Get(ctx, cmName, metav1.GetOptions{}); srcErr == nil {
 			dstCM := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   cmName,
@@ -328,7 +324,33 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 				c.logger.Info("ConfigMap copied to namespace namespace", "flow_id", spec.ID, "namespace", ns, "configmap", cmName)
 			}
 		}
+
+		// Ensure the shared ConfigMap exists in the app namespace on every
+		// reconcile tick. When the namespace is recycled (deleted+re-created),
+		// the ConfigMap is lost, so do a Get-or-Create here.
+		{
+			cmName := c.jmConfigMapName()
+			if _, cmErr := clientset.CoreV1().ConfigMaps(ns).Get(ctx, cmName, metav1.GetOptions{}); cmErr != nil {
+				srcCM, srcErr := clientset.CoreV1().ConfigMaps(c.systemNamespace()).Get(ctx, cmName, metav1.GetOptions{})
+				if srcErr == nil {
+					dstCM := &corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:   cmName,
+							Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID},
+						},
+						Data: srcCM.Data,
+					}
+					if _, err := clientset.CoreV1().ConfigMaps(ns).Create(ctx, dstCM, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+						c.logger.Warn("Failed to copy ConfigMap", "namespace", ns, "configmap", cmName, "error", err)
+					} else {
+						c.logger.Info("ConfigMap ensured", "namespace", ns, "configmap", cmName)
+					}
+				}
+			}
+		}
 	}
+	c.ensureApplicationConfigMap(ctx, clientset, ns, namespaceID, spec.ID)
+	c.ensureRuntimeRBAC(ctx, clientset, ns, namespaceID, spec.ID)
 
 	jmName := fmt.Sprintf("flowgent-jobmanager-%s-%s", namespaceID, spec.ID)
 	jmDeployment := c.buildJMDeployment(jmName, ns, namespaceID, spec)
@@ -344,6 +366,96 @@ func (c *FlowgentController) ensureApplicationInfra(ctx context.Context, spec *e
 	}
 }
 
+func (c *FlowgentController) ensureRuntimeRBAC(ctx context.Context, clientset kubernetes.Interface, namespace, namespaceID, flowID string) {
+	name := "flowgent-runtime"
+	if _, err := clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		_, err = clientset.CoreV1().ServiceAccounts(namespace).Create(ctx, &corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID}},
+		}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			c.logger.Warn("Failed to create runtime ServiceAccount", "flow_id", flowID, "namespace", namespace, "error", err)
+			return
+		}
+	} else if err != nil {
+		c.logger.Warn("Failed to check runtime ServiceAccount", "flow_id", flowID, "namespace", namespace, "error", err)
+		return
+	}
+
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID}},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"pods", "configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"get", "list", "create", "delete"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments/scale"}, Verbs: []string{"get", "update"}},
+		},
+	}
+	if _, err := clientset.RbacV1().Roles(namespace).Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		if _, err := clientset.RbacV1().Roles(namespace).Create(ctx, role, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			c.logger.Warn("Failed to create runtime Role", "flow_id", flowID, "namespace", namespace, "error", err)
+			return
+		}
+	} else if err == nil {
+		if _, err := clientset.RbacV1().Roles(namespace).Update(ctx, role, metav1.UpdateOptions{}); err != nil {
+			c.logger.Warn("Failed to update runtime Role", "flow_id", flowID, "namespace", namespace, "error", err)
+			return
+		}
+	} else if err != nil {
+		c.logger.Warn("Failed to check runtime Role", "flow_id", flowID, "namespace", namespace, "error", err)
+		return
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: name},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      name,
+			Namespace: namespace,
+		}},
+	}
+	if _, err := clientset.RbacV1().RoleBindings(namespace).Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		if _, err := clientset.RbacV1().RoleBindings(namespace).Create(ctx, binding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			c.logger.Warn("Failed to create runtime RoleBinding", "flow_id", flowID, "namespace", namespace, "error", err)
+		}
+	} else if err == nil {
+		if _, err := clientset.RbacV1().RoleBindings(namespace).Update(ctx, binding, metav1.UpdateOptions{}); err != nil {
+			c.logger.Warn("Failed to update runtime RoleBinding", "flow_id", flowID, "namespace", namespace, "error", err)
+		}
+	} else if err != nil {
+		c.logger.Warn("Failed to check runtime RoleBinding", "flow_id", flowID, "namespace", namespace, "error", err)
+	}
+}
+
+func (c *FlowgentController) ensureApplicationConfigMap(ctx context.Context, clientset kubernetes.Interface, namespace, namespaceID, flowID string) {
+	cmName := c.jmConfigMapName()
+	if _, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, cmName, metav1.GetOptions{}); err == nil {
+		return
+	} else if !apierrors.IsNotFound(err) {
+		c.logger.Warn("Failed to check ConfigMap in application namespace",
+			"flow_id", flowID, "namespace", namespace, "configmap", cmName, "error", err)
+		return
+	}
+	srcCM, err := clientset.CoreV1().ConfigMaps(c.systemNamespace()).Get(ctx, cmName, metav1.GetOptions{})
+	if err != nil {
+		c.logger.Warn("Failed to load system ConfigMap for application namespace",
+			"flow_id", flowID, "system_namespace", c.systemNamespace(), "configmap", cmName, "error", err)
+		return
+	}
+	dstCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   cmName,
+			Labels: map[string]string{"flowgent.io/mode": "application", "flowgent.io/namespace": namespaceID},
+		},
+		Data: srcCM.Data,
+	}
+	if _, err := clientset.CoreV1().ConfigMaps(namespace).Create(ctx, dstCM, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		c.logger.Warn("Failed to copy ConfigMap to application namespace",
+			"flow_id", flowID, "namespace", namespace, "configmap", cmName, "error", err)
+		return
+	}
+	c.logger.Info("ConfigMap ensured in application namespace", "flow_id", flowID, "namespace", namespace, "configmap", cmName)
+}
+
 // createApplicationRun creates a PENDING run scoped to the flow's namespace
 // namespace, so only its dedicated JM (which polls that namespace) picks it
 // up.
@@ -351,13 +463,13 @@ func (c *FlowgentController) createApplicationRun(ctx context.Context, spec *ent
 	ns := c.applicationNamespace(spec)
 	namespaceID := c.dispatchNamespace(spec)
 	run := &entities.FlowRunInfo{
-		BaseEntity:  entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), Namespace: namespaceID},
-		AgentFlowID: spec.ID,
-		Version:     1,
-		Status:      entities.RunPending,
-		Priority:      entities.PriorityHigh,
-		K8sNamespace:  ns,
-		Vars:        spec.Vars,
+		BaseEntity:   entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), Namespace: namespaceID},
+		AgentFlowID:  spec.ID,
+		Version:      1,
+		Status:       entities.RunPending,
+		Priority:     entities.PriorityHigh,
+		K8sNamespace: ns,
+		Vars:         spec.Vars,
 	}
 	run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "controller"})
 	if _, err := c.api.CreateRun(ctx, namespaceID, run); err != nil {
@@ -419,10 +531,11 @@ func defaultNamespacePrefix(prefix string) string {
 func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID string, spec *entities.FlowInfo) *appsv1.Deployment {
 	replicas := int32(1)
 	labels := map[string]string{
-		"app":                "flowgent-jobmanager",
-		"flowgent.io/namespace": namespaceID,
-		"flowgent.io/flow":   spec.ID,
-		"flowgent.io/mode":   "application",
+		"app":                         "flowgent-jobmanager",
+		"app.kubernetes.io/component": "jobmanager",
+		"flowgent.io/namespace":       namespaceID,
+		"flowgent.io/flow":            spec.ID,
+		"flowgent.io/mode":            "application",
 	}
 	image := c.cfg.Runtime.JMImage
 	return &appsv1.Deployment{
@@ -437,15 +550,27 @@ func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID stri
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: "flowgent-runtime",
 					Containers: []corev1.Container{{
-						Name:  "jobmanager",
-						Image: image,
-						Args:  []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--flow-id", spec.ID},
+						Name:            "jobmanager",
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Image:           image,
+						Args:            []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--flow-id", spec.ID},
+						EnvFrom:         credentialEnvFrom(c.cfg.Runtime.CredentialEnvSecret),
 						Env: []corev1.EnvVar{
 							{Name: "FLOWGENT__RUNTIME__AGENT_FLOW_ID", Value: spec.ID},
-							{Name: "FLOWGENT__RUNTIME__NAMESPACE", Value: namespace},
+							{Name: "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE", Value: namespaceID},
+							{Name: "FLOWGENT__RUNTIME__SYSTEM_NAMESPACE", Value: c.systemNamespace()},
+							{Name: "FLOWGENT__RUNTIME__K8S_NAMESPACE", Value: namespace},
+							{Name: "FLOWGENT__RUNTIME__TM_DEPLOY", Value: tmDeploymentName(namespaceID, spec.ID)},
 							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: c.cfg.Messager.MQTT.Broker},
 							{Name: "FLOWGENT__RUNTIME__API_SERVER_URL", Value: c.cfg.Runtime.APIServerURL},
+							{
+								Name: "POD_NAMESPACE",
+								ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+									FieldPath: "metadata.namespace",
+								}},
+							},
 						},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "config", MountPath: "/etc/flowgent"},
@@ -464,6 +589,33 @@ func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID stri
 	}
 }
 
+func credentialEnvFrom(secretName string) []corev1.EnvFromSource {
+	if secretName == "" {
+		return nil
+	}
+	optional := true
+	return []corev1.EnvFromSource{{
+		SecretRef: &corev1.SecretEnvSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+			Optional:             &optional,
+		},
+	}}
+}
+
+func tmDeploymentName(namespaceID, flowID string) string {
+	if namespaceID == "" {
+		namespaceID = "default"
+	}
+	return fmt.Sprintf("flowgent-taskmanager-%s-%s", namespaceID, flowID)
+}
+
+func sandboxDeploymentName(namespaceID, flowID string) string {
+	if namespaceID == "" {
+		namespaceID = "default"
+	}
+	return fmt.Sprintf("flowgent-sandbox-%s-%s", namespaceID, flowID)
+}
+
 // jmConfigMapName returns the name of the ConfigMap holding flowgent.yaml,
 // which dedicated per-flow JM pods mount at /etc/flowgent. Helm sets this via
 // FLOWGENT__RUNTIME__JM_CONFIG_MAP (see deploy/helm/flowgent/templates/controller.yaml);
@@ -475,13 +627,25 @@ func (c *FlowgentController) jmConfigMapName() string {
 	return "flowgent-config"
 }
 
+func (c *FlowgentController) systemNamespace() string {
+	if c.cfg.Runtime.SystemNamespace != "" {
+		return c.cfg.Runtime.SystemNamespace
+	}
+	if podNS := os.Getenv("POD_NAMESPACE"); podNS != "" {
+		return podNS
+	}
+	if c.cfg.Runtime.K8sNamespace != "" {
+		return c.cfg.Runtime.K8sNamespace
+	}
+	return "flowgen-system"
+}
+
 // gcOrphanedJMDeployments deletes dedicated JM Deployments (labeled
-// flowgent.io/mode=application) whose flow no longer exists. This is the
-// Controller-side half of "Flow completes → Controller cleans up Deployment"
-// (docs/01-L1-Engine-Architecture.md §9.3). peers is the same reconcile-tick
-// peer snapshot used for dispatch ownership above, so GC and dispatch agree
-// on which pod owns which flow within a tick.
-func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen map[string]*entities.FlowInfo, peers []discovery.Peer) {
+// flowgent.io/mode=application) whose flow definition no longer exists or whose
+// flow has no active runs. peers is the same reconcile-tick peer snapshot used
+// for dispatch ownership above, so GC and dispatch agree on which pod owns
+// which flow within a tick.
+func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen map[string]*entities.FlowInfo, activeRunFlows map[string]bool, activeRunSnapshotOK bool, peers []discovery.Peer) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return // not running in K8s — nothing to garbage-collect
@@ -493,7 +657,10 @@ func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen m
 	}
 
 	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{
-		LabelSelector: "flowgent.io/mode=application",
+		LabelSelector: labels.SelectorFromSet(labels.Set{
+			resourcemanager.LabelMode: resourcemanager.LabelValueApplication,
+			"app":                     "flowgent-jobmanager",
+		}).String(),
 	})
 	if err != nil {
 		c.logger.Error("gc: failed to list dedicated JM deployments", "error", err)
@@ -508,17 +675,179 @@ func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen m
 		if !c.ownsFlow(peers, flowID) {
 			continue
 		}
-		if _, stillExists := seen[flowID]; stillExists {
-			continue // flow still active — still requires its dedicated JM
+		reason := ""
+		if _, stillExists := seen[flowID]; !stillExists {
+			reason = "flow deleted"
+		} else if activeRunSnapshotOK && !activeRunFlows[flowID] {
+			reason = "no active runs"
+		}
+		if reason == "" {
+			c.clearRuntimeCleanup(d.Namespace, d.Name)
+			continue
+		}
+		if reason == "no active runs" {
+			firstSeen, age := c.markRuntimeCleanup(d.Namespace, d.Name)
+			timeout := c.effectiveTMOrphanTimeout()
+			if age < timeout {
+				c.logger.Debug("gc: no-active JM deployment is inside observation window",
+					"flow_id", flowID, "deployment", d.Name, "namespace", d.Namespace,
+					"first_seen", firstSeen, "age", age.Round(time.Second), "timeout", timeout)
+				continue
+			}
+			reason = "no active runs beyond observation window"
 		}
 		if err := clientset.AppsV1().Deployments(d.Namespace).Delete(ctx, d.Name, metav1.DeleteOptions{}); err != nil {
 			c.logger.Error("gc: failed to delete orphaned JM deployment",
 				"flow_id", flowID, "deployment", d.Name, "namespace", d.Namespace, "error", err)
 			continue
 		}
+		c.clearRuntimeCleanup(d.Namespace, d.Name)
+		c.deleteRuntimeDeploymentsForFlow(ctx, clientset, d.Labels[resourcemanager.LabelNamespaceID], flowID, d.Name, d.Namespace, reason)
 		c.logger.Info("gc: deleted orphaned JM deployment",
-			"flow_id", flowID, "deployment", d.Name, "namespace", d.Namespace, "reason", "flow deleted")
+			"flow_id", flowID, "deployment", d.Name, "namespace", d.Namespace, "reason", reason)
 	}
+}
+
+// gcOrphanedRuntimeDeployments removes JM-owned runtime Deployments whose owning JM disappeared.
+// If the flow itself was deleted or has no active run, cleanup is immediate.
+// If an active flow run still exists, deletion waits for tmOrphanTimeout so a
+// crashed/restarted JM has time to be re-created and resume ownership.
+func (c *FlowgentController) gcOrphanedRuntimeDeployments(ctx context.Context, seen map[string]*entities.FlowInfo, activeRunFlows map[string]bool, activeRunSnapshotOK bool, peers []discovery.Peer) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return
+	}
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		c.logger.Error("runtime gc: failed to create K8s client", "error", err)
+		return
+	}
+
+	selector := labels.SelectorFromSet(labels.Set{
+		resourcemanager.LabelManagedBy: resourcemanager.LabelValueJobManager,
+	}).String()
+	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		c.logger.Error("runtime gc: failed to list JM-owned deployments", "error", err)
+		return
+	}
+
+	for _, d := range deployments.Items {
+		flowID := d.Labels[resourcemanager.LabelFlowID]
+		if flowID == "" || !c.ownsFlow(peers, flowID) {
+			continue
+		}
+		parentName := d.Labels[resourcemanager.LabelParentJobManager]
+		parentNamespace := d.Labels[resourcemanager.LabelParentJobManagerNamespace]
+		if parentName != "" && parentNamespace != "" {
+			if _, err := clientset.AppsV1().Deployments(parentNamespace).Get(ctx, parentName, metav1.GetOptions{}); err == nil {
+				c.clearRuntimeCleanup(d.Namespace, d.Name)
+				continue
+			} else if !apierrors.IsNotFound(err) {
+				c.logger.Warn("runtime gc: failed to check parent JM deployment",
+					"deployment", d.Name, "namespace", d.Namespace,
+					"parent_jm", parentName, "parent_namespace", parentNamespace, "error", err)
+				continue
+			}
+		}
+
+		if _, flowStillExists := seen[flowID]; !flowStillExists {
+			c.deleteDeployment(ctx, clientset, &d, "flow deleted")
+			continue
+		}
+		if activeRunSnapshotOK && !activeRunFlows[flowID] {
+			c.deleteDeployment(ctx, clientset, &d, "no active runs")
+			continue
+		}
+
+		firstSeen, age := c.markRuntimeCleanup(d.Namespace, d.Name)
+		timeout := c.effectiveTMOrphanTimeout()
+		if age < timeout {
+			c.logger.Debug("runtime gc: parent JM missing, observing before cleanup",
+				"deployment", d.Name, "namespace", d.Namespace, "flow_id", flowID,
+				"first_seen", firstSeen, "age", age.Round(time.Second), "timeout", timeout)
+			continue
+		}
+		c.deleteDeployment(ctx, clientset, &d, "parent JM missing beyond timeout")
+	}
+}
+
+func (c *FlowgentController) deleteRuntimeDeploymentsForFlow(ctx context.Context, clientset kubernetes.Interface, namespaceID, flowID, parentName, parentNamespace, reason string) {
+	selector := labels.SelectorFromSet(labels.Set{
+		resourcemanager.LabelManagedBy: resourcemanager.LabelValueJobManager,
+		resourcemanager.LabelFlowID:    flowID,
+	}).String()
+	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		c.logger.Error("runtime gc: failed to list runtime deployments for flow", "flow_id", flowID, "error", err)
+		return
+	}
+	for _, d := range deployments.Items {
+		if namespaceID != "" && d.Labels[resourcemanager.LabelNamespaceID] != namespaceID {
+			continue
+		}
+		if parentName != "" && d.Labels[resourcemanager.LabelParentJobManager] != parentName {
+			continue
+		}
+		if parentNamespace != "" && d.Labels[resourcemanager.LabelParentJobManagerNamespace] != parentNamespace {
+			continue
+		}
+		c.deleteDeployment(ctx, clientset, &d, reason)
+	}
+}
+
+func (c *FlowgentController) deleteDeployment(ctx context.Context, clientset kubernetes.Interface, d *appsv1.Deployment, reason string) {
+	if err := clientset.AppsV1().Deployments(d.Namespace).Delete(ctx, d.Name, metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			c.clearRuntimeCleanup(d.Namespace, d.Name)
+			return
+		}
+		c.logger.Error("runtime gc: failed to delete deployment",
+			"deployment", d.Name, "namespace", d.Namespace, "reason", reason, "error", err)
+		return
+	}
+	c.clearRuntimeCleanup(d.Namespace, d.Name)
+	c.logger.Info("runtime gc: deleted deployment",
+		"deployment", d.Name, "namespace", d.Namespace, "reason", reason)
+}
+
+func (c *FlowgentController) markRuntimeCleanup(namespace, name string) (time.Time, time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.runtimeCleanupFirstSeen == nil {
+		c.runtimeCleanupFirstSeen = make(map[string]time.Time)
+	}
+	key := namespace + "/" + name
+	firstSeen, ok := c.runtimeCleanupFirstSeen[key]
+	if !ok {
+		firstSeen = time.Now()
+		c.runtimeCleanupFirstSeen[key] = firstSeen
+	}
+	return firstSeen, time.Since(firstSeen)
+}
+
+func (c *FlowgentController) clearRuntimeCleanup(namespace, name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.runtimeCleanupFirstSeen, namespace+"/"+name)
+}
+
+func (c *FlowgentController) effectiveTMOrphanTimeout() time.Duration {
+	if c.tmOrphanTimeout > 0 {
+		return c.tmOrphanTimeout
+	}
+	return 3 * time.Minute
+}
+
+func parseTMOrphanTimeout(raw string) time.Duration {
+	if raw == "" {
+		return 3 * time.Minute
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 3 * time.Minute
+	}
+	return d
 }
 
 func (c *FlowgentController) stopAllFlows() {

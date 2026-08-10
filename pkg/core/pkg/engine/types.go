@@ -8,7 +8,7 @@ import (
 type Provider string
 
 const (
-	ProviderStandalone   Provider = "standalone"
+	ProviderStandalone Provider = "standalone"
 	ProviderKubernetes Provider = "kubernetes"
 )
 
@@ -19,7 +19,7 @@ type MCPClient interface {
 
 // LLMClient abstracts an LLM provider.
 type LLMClient interface {
-	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64) (string, error)
+	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64, maxTokens int) (string, error)
 }
 
 // Note: pkg/core does not import pkg/store directly — only the apiserver connects

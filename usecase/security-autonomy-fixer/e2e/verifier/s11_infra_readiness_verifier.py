@@ -95,6 +95,8 @@ def kubectl_json(args):
 
 
 def run():
+    failures = []
+
     # ── L1.1: K8S cluster health ───────────────────────────
     print("\n── L1: Pre-Deployment ──")
     result = kubectl(["get", "nodes"])
@@ -102,6 +104,7 @@ def run():
         print("  [1.1] K8S nodes OK (Ready found)")
     else:
         print("  [1.1] WARN: no Ready nodes in output")
+        failures.append("no Ready K8S node found")
 
     # ── L1.2: System pods healthy ──────────────────────────
     result = kubectl(["get", "pods", "-n", "kube-system"])
@@ -132,6 +135,7 @@ def run():
             print(f"  [1.5] EMQX reachable: {config.EMQX_HOST}:{config.EMQX_PORT}")
         else:
             print(f"  [1.5] EMQX not reachable at {config.EMQX_HOST}:{config.EMQX_PORT} — check EMQX pod")
+            failures.append("EMQX MQTT port is not reachable")
     except Exception as e:
         print(f"  [1.5] EMQX check failed: {e}")
 
@@ -161,10 +165,14 @@ def run():
                 rel = flowgent_releases[0]
                 print(f"  [2.5] Helm release: {rel.get('name')} status={rel.get('status')} "
                       f"chart={rel.get('chart')} app_version={rel.get('app_version')}")
+                if rel.get("status") != "deployed":
+                    failures.append(f"Helm release status is {rel.get('status')}")
             else:
                 print("  [2.5] WARN: no 'flowgent' Helm release found")
+                failures.append("Helm release flowgent not found")
         else:
             print(f"  [2.5] helm list failed: {result.stderr[:200]}")
+            failures.append("helm list failed")
     except FileNotFoundError:
         print("  [2.5] SKIP: helm not installed")
 
@@ -217,8 +225,18 @@ def run():
             not_running = [p["metadata"]["name"] for p in items
                            if p.get("status", {}).get("phase") != "Running"]
             print(f"  [3.1] WARN: {running_count}/{len(items)} Running. Not running: {not_running}")
+            failures.append(f"not all Helm pods Running: {not_running}")
+
+        not_ready = []
+        for pod in items:
+            statuses = pod.get("status", {}).get("containerStatuses", [])
+            if not statuses or not all(c.get("ready") for c in statuses):
+                not_ready.append(pod["metadata"]["name"])
+        if not_ready:
+            failures.append(f"not all Helm pod containers Ready: {not_ready}")
     else:
         print("  [3.1] WARN: Could not get pod list")
+        failures.append("could not list Helm pods")
 
     # ── L3.3: Apiserver healthz ────────────────────────────
     try:
@@ -230,8 +248,10 @@ def run():
             print(f"  [3.3] Apiserver healthz: HTTP 200 — {body}")
         else:
             print(f"  [3.3] Apiserver healthz: HTTP {r.status_code}")
+            failures.append(f"apiserver healthz HTTP {r.status_code}")
     except Exception as e:
         print(f"  [3.3] Apiserver healthz: not reachable — {e}")
+        failures.append(f"apiserver healthz not reachable: {e}")
 
     # ── L3.9: Check logs for errors ────────────────────────
     # jobmanager/taskmanager are NOT Helm-deployed — Session mode (a shared,
@@ -254,15 +274,44 @@ def run():
                      if any(kw in line.lower() for kw in ("error", "fatal", "panic")))
         label = "WARN" if errors > 0 else "OK"
         print(f"  [3.9] {component} logs (last 20 lines): {errors} error/fatal/panic — {label}")
+        if errors > 0:
+            failures.append(f"{component} recent logs contain {errors} error/fatal/panic line(s)")
 
-    # ── L3.10: Dedicated per-flow JM pods (Application mode) ───────
-    jm_pods = kubectl_json(["get", "pods", "-n", NAMESPACE, "-A",
-                            "-l", "flowgent.io/mode=application"])
-    if jm_pods and jm_pods.get("items"):
-        print(f"  [3.10] {len(jm_pods['items'])} dedicated per-flow JM pod(s) found "
-              f"(leftover from a previous run? see Environment Reset in VERIFICATION.md)")
+    # ── L3.10: Dedicated application-mode pods/deployments ───────
+    # Flow imports are metadata only. Application-mode JM/TM resources should
+    # exist only while real runs are active; test-flow-* leftovers are always
+    # leaks after a full redeploy/import cycle.
+    app_pods = kubectl_json(["get", "pods", "-A", "-l", "flowgent.io/mode=application"])
+    leaked_pods = []
+    if app_pods and app_pods.get("items"):
+        for pod in app_pods["items"]:
+            labels = pod.get("metadata", {}).get("labels", {})
+            flow_id = labels.get("flowgent.io/flow", "")
+            if flow_id.startswith("test-flow-"):
+                leaked_pods.append(f"{pod['metadata'].get('namespace')}/{pod['metadata'].get('name')}")
+        print(f"  [3.10] {len(app_pods['items'])} application-mode pod(s) found")
     else:
-        print(f"  [3.10] No dedicated per-flow JM pods (expected — none created yet)")
+        print(f"  [3.10] No application-mode pods found")
+    if leaked_pods:
+        failures.append(f"leaked test-flow application pods: {leaked_pods}")
+
+    app_deployments = kubectl_json(["get", "deployments", "-A", "-l", "flowgent.io/mode=application"])
+    leaked_deployments = []
+    if app_deployments and app_deployments.get("items"):
+        for deployment in app_deployments["items"]:
+            labels = deployment.get("metadata", {}).get("labels", {})
+            flow_id = labels.get("flowgent.io/flow", "")
+            if flow_id.startswith("test-flow-"):
+                leaked_deployments.append(
+                    f"{deployment['metadata'].get('namespace')}/{deployment['metadata'].get('name')}"
+                )
+        print(f"  [3.11] {len(app_deployments['items'])} application-mode deployment(s) found")
+    else:
+        print(f"  [3.11] No application-mode deployments found")
+    if leaked_deployments:
+        failures.append(f"leaked test-flow application deployments: {leaked_deployments}")
 
     # ── Summary ────────────────────────────────────────────
-    print(f"\n  Preflight check complete — verify items flagged WARN above.")
+    print(f"\n  Preflight check complete.")
+    if failures:
+        raise AssertionError(f"Infrastructure readiness failed: {failures}")

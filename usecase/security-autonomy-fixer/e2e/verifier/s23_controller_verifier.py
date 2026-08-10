@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Scenario 23 — Controller Module: Application Mode Lifecycle.
+Scenario 23 — Controller Module: Active-Run Application Lifecycle.
 
-Validates Controller's flow lifecycle management in Application mode.
+Validates Controller's run-driven lifecycle management in Application mode.
 
 Prerequisites: K8s/K8S cluster, Helm release, Controller pod running.
 
-Steps with Expected I/O — Flow CREATE Lifecycle:
+Steps with Expected I/O — Flow CREATE + TRIGGER Lifecycle:
   Step 1. Create AgentFlow via API
     Action:  POST /api/v1/{namespace}/flows
-    Input:   {id: "test-flow-{uuid}", nodes: [noop], edges: [], priority: "high"}
+    Input:   {id: "test-flow-{uuid}", nodes: [short sandbox], edges: [], priority: "high"}
     Output:  HTTP 200/201, flow ID returned
 
   Step 1b. Verify MQTT ctrl/flow/updated event (best-effort)
@@ -17,42 +17,51 @@ Steps with Expected I/O — Flow CREATE Lifecycle:
     Input:   MQTT broker reachable
     Output:  Event with matching agentflow_id (WARN if not received — Controller may poll)
 
-  Step 2. Wait for JM Deployment
-    Action:  kubectl get deployment {name} -n {namespace_ns}
-    Input:   Deployment name: flowgent-jobmanager-{namespace}-{flow_id}
-    Output:  Deployment exists in namespace namespace within 30s
+  Step 2. Verify metadata-only import does not create JM/TM
+    Action:  kubectl get deployment {jm_name}; kubectl get deployment {tm_name}
+    Output:  Both absent before a run is triggered
 
-  Step 3. Verify Deployment Spec
+  Step 3. Trigger flow run
+    Action:  POST /api/v1/{namespace}/flows/{id}/trigger
+    Output:  run_id returned
+
+  Step 4. Wait for JM Deployment and flow-owned TM Deployment
+    Action:  kubectl get deployment {jm_name}; kubectl get deployment {tm_name}
+    Output:  JM exists; TM exists with replicas=1 (ceil(1 pending / tm_slots=4))
+
+  Step 5. Verify Deployment Spec
     Action:  kubectl get deployment {name} -n {namespace_ns} -o json
     Input:   Deployment name
     Output:  Container env includes FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}
 
-  Step 4. Wait for JM Pod Running
+  Step 6. Wait for JM/TM Pods Running
     Action:  kubectl get pods -l app=flowgent-jobmanager,flowgent.io/flow={flow_id}
     Input:   Label selector
-    Output:  Pod reaches Running within 60s
+    Output:  JM pod and flow-owned TM pod reach Running
 
-  Step 5. Delete Flow
+  Step 7. Delete Flow
     Action:  DELETE /api/v1/{namespace}/flows/{id}
     Input:   Flow ID
     Output:  HTTP 200/204
 
-  Step 6. Verify Deployment Cleanup
+  Step 8. Verify Deployment Cleanup
     Action:  Wait for Deployment deletion
-    Input:   Deployment name, 60s timeout
-    Output:  Deployment deleted (Controller GC)
+    Input:   JM and TM Deployment names
+    Output:  Both Deployments deleted (Controller GC)
 
 Steps with Expected I/O — Flow UPDATE Lifecycle:
-  Step 7. Create flow + wait for Deployment (as Steps 1-4)
-  Step 8. PUT /api/v1/{namespace}/flows/{id}  {description, version}
+  Step 9. Create metadata-only flow
+  Step 10. PUT /api/v1/{namespace}/flows/{id}  {description, version}
     Input:   Updated description, new version
-    Output:  HTTP 200, Deployment generation incremented
+    Output:  HTTP 200, still no idle JM/TM without active run
 """
 
 import sys
+import os
 import time
 import json
 import uuid
+import base64
 import requests
 import subprocess
 from typing import Dict, Any, Optional, List
@@ -66,8 +75,12 @@ except ImportError:
     MQTT_AVAILABLE = False
 
 API_BASE = config.K8S_APISERVER_URL
-NAMESPACE = config.K8S_NAMESPACE
-NAMESPACE = config.K8S_NAMESPACE
+NAMESPACE = config.NAMESPACE_ID
+SYSTEM_NAMESPACE = config.SYSTEM_NAMESPACE
+APP_NAMESPACE = config.K8S_APP_NAMESPACE
+RUNTIME_CREDENTIAL_SECRET = os.getenv("FLOWGENT_E2E_RUNTIME_SECRET", "flowgent-e2e-runtime-env")
+PROXY_SOURCE_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")
+PROXY_SECRET_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
 
 
 def rand_id() -> str:
@@ -79,12 +92,12 @@ def application_namespace(namespace_id: str = NAMESPACE) -> str:
     dedicated JM Deployment lives in its NAMESPACE's shared namespace
     "{namespace_prefix}{namespace_id}" (see docs/01-L1-Engine-Architecture.md
     §1.3/§4.3 — namespace isolation is per-namespace, not per-flow), NOT in
-    NAMESPACE (config.K8S_NAMESPACE, typically "default") — that's only
-    where the Controller/apiserver pods themselves run."""
+    NAMESPACE (tenant namespace ID, typically "default") — system pods run in
+    config.SYSTEM_NAMESPACE."""
     return f"{config.K8S_APP_NAMESPACE_PREFIX}{namespace_id}"
 
 
-def kubectl_get(resource: str, name: str = None, namespace: str = NAMESPACE, 
+def kubectl_get(resource: str, name: str = None, namespace: str = APP_NAMESPACE,
                 json_path: str = None) -> Optional[Dict]:
     """Execute kubectl get command"""
     cmd = ["kubectl", "get", resource]
@@ -114,7 +127,7 @@ def kubectl_get(resource: str, name: str = None, namespace: str = NAMESPACE,
         return None
 
 
-def kubectl_delete(resource: str, name: str, namespace: str = NAMESPACE) -> bool:
+def kubectl_delete(resource: str, name: str, namespace: str = APP_NAMESPACE) -> bool:
     """Execute kubectl delete command"""
     cmd = ["kubectl", "delete", resource, name, "-n", namespace, "--grace-period=0", "--force"]
     
@@ -126,7 +139,25 @@ def kubectl_delete(resource: str, name: str, namespace: str = NAMESPACE) -> bool
         return False
 
 
-def wait_for_deployment(name: str, namespace: str = NAMESPACE, timeout: int = 60) -> bool:
+def runtime_proxy_required() -> bool:
+    return any(os.environ.get(key) for key in PROXY_SOURCE_KEYS)
+
+
+def validate_runtime_secret(secret: Dict, namespace: str) -> None:
+    data = secret.get("data", {}) if secret else {}
+    if runtime_proxy_required():
+        missing = [key for key in PROXY_SECRET_KEYS if key not in data]
+        if missing:
+            raise AssertionError(f"Runtime Secret {namespace}/{RUNTIME_CREDENTIAL_SECRET} missing proxy keys: {missing}")
+        for key in ("HTTP_PROXY", "HTTPS_PROXY"):
+            raw = base64.b64decode(data[key]).decode(errors="replace")
+            if "127.0.0.1" in raw or "localhost" in raw:
+                raise AssertionError(
+                    f"Runtime Secret {namespace}/{RUNTIME_CREDENTIAL_SECRET} has pod-unreachable {key}"
+                )
+
+
+def wait_for_deployment(name: str, namespace: str = APP_NAMESPACE, timeout: int = 60) -> bool:
     """Wait for Deployment to exist"""
     print(f"    • Waiting for Deployment {name}...")
     
@@ -142,7 +173,27 @@ def wait_for_deployment(name: str, namespace: str = NAMESPACE, timeout: int = 60
     return False
 
 
-def wait_for_pod_running(label_selector: str, namespace: str = NAMESPACE, timeout: int = 60) -> bool:
+def wait_for_deployment_replicas(name: str, namespace: str, replicas: int, timeout: int = 60) -> bool:
+    """Wait for Deployment spec replicas to match."""
+    print(f"    • Waiting for Deployment {name} replicas={replicas}...")
+
+    start = time.time()
+    while time.time() - start < timeout:
+        deployment = kubectl_get("deployment", name, namespace)
+        if deployment:
+            actual = deployment.get("spec", {}).get("replicas", 0)
+            if actual == replicas:
+                print(f"      ✓ Deployment {name} replicas={actual}")
+                return True
+        time.sleep(2)
+
+    deployment = kubectl_get("deployment", name, namespace)
+    actual = deployment.get("spec", {}).get("replicas", "?") if deployment else "missing"
+    print(f"      ✗ Deployment {name} replicas={actual}, expected={replicas}")
+    return False
+
+
+def wait_for_pod_running(label_selector: str, namespace: str = APP_NAMESPACE, timeout: int = 60) -> bool:
     """Wait for Pod with label to reach Running state"""
     print(f"    • Waiting for Pod (selector={label_selector})...")
     
@@ -174,7 +225,7 @@ def wait_for_pod_running(label_selector: str, namespace: str = NAMESPACE, timeou
     return False
 
 
-def wait_for_deployment_deleted(name: str, namespace: str = NAMESPACE, timeout: int = 60) -> bool:
+def wait_for_deployment_deleted(name: str, namespace: str = APP_NAMESPACE, timeout: int = 60) -> bool:
     """Wait for Deployment to be deleted"""
     print(f"    • Waiting for Deployment {name} to be deleted...")
     
@@ -191,16 +242,16 @@ def wait_for_deployment_deleted(name: str, namespace: str = NAMESPACE, timeout: 
 
 
 def test_flow_create_lifecycle() -> bool:
-    """Test Flow creation triggers JM Deployment creation + MQTT event"""
-    print(f"\n  → Testing Flow CREATE → JM Deployment + MQTT event...")
+    """Test metadata-only flow import, trigger-driven JM/TM creation, and cleanup."""
+    print(f"\n  → Testing Flow CREATE → trigger-driven JM/TM lifecycle...")
 
     flow_id = "test-flow-" + rand_id()
-    # Deterministic from flow_id — see controller.go buildJMDeployment /
-    # applicationNamespace — computed upfront so the except-block cleanup
-    # below can always target the right namespace, even if an assertion
-    # fails before Step 2 (re-)computes it.
-    deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
+    jm_deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
+    tm_deployment_name = f"flowgent-taskmanager-{NAMESPACE}-{flow_id}"
+    sandbox_deployment_name = f"flowgent-sandbox-{NAMESPACE}-{flow_id}"
     jm_namespace = application_namespace()
+    created_id = None
+    run_id = None
 
     # Set up MQTT listener for ctrl events (best-effort)
     mqtt_client = None
@@ -225,18 +276,18 @@ def test_flow_create_lifecycle() -> bool:
         # Step 1: Create AgentFlow via API
         print(f"    • Step 1: Creating AgentFlow ({flow_id})...")
 
-        # priority=high is currently the only value the API accepts — Session
-        # mode (a shared Helm-deployed JM/TM pool) is temporarily disabled,
-        # so the Controller creates a dedicated K8s JM Deployment for every
-        # flow (see controller.go dispatchFlow / entities.Priority doc
-        # comment) regardless of priority; it is set explicitly here anyway
-        # for clarity and to guard against the default ever changing.
         # POST /flows decodes the body directly into entities.FlowInfo —
         # a flat shape ("id"/"nodes"/"edges"/"priority" at top level), not a
         # nested "definition" object (see pkg/api/pkg/handler/flow_def.go Create).
         payload = {
             "id": flow_id,
-            "nodes": [{"id": "n1", "type": "noop"}],
+            "nodes": [{
+                "id": "hold",
+                "kind": "sandbox",
+                "runtime": "bash",
+                "timeout": "45s",
+                "script": "#!/bin/bash\nset -euo pipefail\nsleep 20\nprintf '{\"ok\":true}\\n'\n",
+            }],
             "edges": [],
             "priority": "high",
         }
@@ -271,19 +322,43 @@ def test_flow_create_lifecycle() -> bool:
             else:
                 print(f"      ⚠ No ctrl/flow/updated MQTT event (Controller may use polling)")
 
-        # Step 2: Wait for Controller to create JM Deployment
-        print(f"    • Step 2: Waiting for Controller to create JM Deployment...")
-        
-        # Deployment lands in the flow's namespace namespace (NOT NAMESPACE /
-        # config.K8S_NAMESPACE — see applicationNamespace, and
-        # ensureApplicationInfra, which now also auto-creates this namespace).
-        if not wait_for_deployment(deployment_name, namespace=jm_namespace, timeout=30):
-            raise AssertionError(f"JM Deployment not created: {deployment_name} (namespace={jm_namespace})")
-        
-        # Step 3: Verify Deployment spec
-        print(f"    • Step 3: Verifying Deployment spec...")
-        
-        deployment = kubectl_get("deployment", deployment_name, namespace=jm_namespace)
+        # Step 2: Metadata import must not allocate Application resources.
+        print(f"    • Step 2: Verifying metadata-only import creates no JM/TM/Sandbox...")
+        time.sleep(15)
+        if kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"JM Deployment created before trigger: {jm_namespace}/{jm_deployment_name}")
+        if kubectl_get("deployment", tm_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"TM Deployment created before trigger: {jm_namespace}/{tm_deployment_name}")
+        if kubectl_get("deployment", sandbox_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"Sandbox Deployment created before trigger: {jm_namespace}/{sandbox_deployment_name}")
+        print(f"      ✓ No idle JM/TM/Sandbox created before trigger")
+
+        # Step 3: Trigger a real run. Controller should create JM for the active run.
+        print(f"    • Step 3: Triggering FlowRun...")
+        resp = requests.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/trigger", json={}, timeout=10)
+        if resp.status_code not in [200, 201]:
+            raise AssertionError(f"Flow trigger failed: {resp.status_code} {resp.text}")
+        run_id = resp.json().get("run_id") or resp.json().get("id")
+        if not run_id:
+            raise AssertionError(f"Trigger response missing run_id: {resp.text}")
+        print(f"      ✓ FlowRun triggered: run_id={run_id}")
+
+        # Step 4: Wait for Controller/JM/RM to allocate just enough runtime.
+        print(f"    • Step 4: Waiting for active-run JM/TM/Sandbox Deployments...")
+        if not wait_for_deployment(jm_deployment_name, namespace=jm_namespace, timeout=120):
+            raise AssertionError(f"JM Deployment not created after trigger: {jm_namespace}/{jm_deployment_name}")
+        if not wait_for_deployment(tm_deployment_name, namespace=jm_namespace, timeout=180):
+            raise AssertionError(f"TM Deployment not created after trigger: {jm_namespace}/{tm_deployment_name}")
+        if not wait_for_deployment_replicas(tm_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
+            raise AssertionError(f"TM Deployment did not scale to exactly one replica for one pending plan")
+        if not wait_for_deployment(sandbox_deployment_name, namespace=jm_namespace, timeout=180):
+            raise AssertionError(f"Sandbox Deployment not created after sandbox task: {jm_namespace}/{sandbox_deployment_name}")
+        if not wait_for_deployment_replicas(sandbox_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
+            raise AssertionError("Sandbox Deployment did not scale to exactly one replica for one pending sandbox task")
+
+        # Step 5: Verify JM Deployment spec
+        print(f"    • Step 5: Verifying JM Deployment spec...")
+        deployment = kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace)
         if not deployment:
             raise AssertionError("Deployment disappeared")
         
@@ -308,30 +383,57 @@ def test_flow_create_lifecycle() -> bool:
         for key, expected_value in expected_env.items():
             actual_value = env_vars.get(key, "")
             if expected_value not in actual_value:
-                print(f"      ⚠ Expected {key}={expected_value}, got {actual_value}")
+                raise AssertionError(f"Expected {key}={expected_value}, got {actual_value}")
+
+        secret_refs = [
+            src.get("secretRef", {}).get("name")
+            for src in container.get("envFrom", [])
+            if src.get("secretRef")
+        ]
+        if RUNTIME_CREDENTIAL_SECRET not in secret_refs:
+            raise AssertionError(
+                f"JM Deployment missing envFrom secretRef {RUNTIME_CREDENTIAL_SECRET}; refs={secret_refs}"
+            )
+        for ns in (SYSTEM_NAMESPACE, jm_namespace):
+            secret = kubectl_get("secret", RUNTIME_CREDENTIAL_SECRET, namespace=ns)
+            if not secret:
+                raise AssertionError(f"Runtime credential Secret missing: {ns}/{RUNTIME_CREDENTIAL_SECRET}")
+            validate_runtime_secret(secret, ns)
         
         print(f"      ✓ Deployment spec verified")
         
-        # Step 4: Wait for JM Pod to reach Running
-        print(f"    • Step 4: Waiting for JM Pod to reach Running...")
+        # Step 6: Wait for JM, flow-owned TM, and flow-owned Sandbox Pod to reach Running.
+        print(f"    • Step 6: Waiting for JM/TM/Sandbox Pods to reach Running...")
         
         label_selector = f"app=flowgent-jobmanager,flowgent.io/flow={flow_id}"
-        if not wait_for_pod_running(label_selector, namespace=jm_namespace, timeout=60):
-            print(f"      ⚠ JM Pod not Running (may still be initializing)")
+        if not wait_for_pod_running(label_selector, namespace=jm_namespace, timeout=120):
+            raise AssertionError("JM Pod did not reach Running")
+        tm_selector = f"flowgent/role=worker,flowgent.io/flow={flow_id}"
+        if not wait_for_pod_running(tm_selector, namespace=jm_namespace, timeout=180):
+            raise AssertionError("flow-owned TM Pod did not reach Running")
+        sandbox_selector = f"flowgent/role=sandbox-worker,flowgent.io/flow={flow_id}"
+        if not wait_for_pod_running(sandbox_selector, namespace=jm_namespace, timeout=180):
+            raise AssertionError("flow-owned Sandbox Pod did not reach Running")
         
-        # Step 5: Cleanup - delete flow
-        print(f"    • Step 5: Deleting AgentFlow...")
+        # Step 7: Cleanup - delete flow
+        print(f"    • Step 7: Deleting AgentFlow...")
         
         resp = requests.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
         if resp.status_code not in [200, 204]:
-            print(f"      ⚠ Flow deletion returned {resp.status_code}")
+            raise AssertionError(f"Flow deletion failed: {resp.status_code} {resp.text}")
+        resp = requests.get(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
+        if resp.status_code != 404:
+            raise AssertionError(f"Deleted flow still readable from API: HTTP {resp.status_code}")
         
-        # Step 6: Verify Controller garbage-collects Deployment
-        print(f"    • Step 6: Verifying Deployment cleanup...")
+        # Step 8: Verify Controller garbage-collects JM, TM, and Sandbox Deployments.
+        print(f"    • Step 8: Verifying Deployment cleanup...")
         
-        if not wait_for_deployment_deleted(deployment_name, namespace=jm_namespace, timeout=60):
-            print(f"      ⚠ Deployment not auto-deleted, manual cleanup...")
-            kubectl_delete("deployment", deployment_name, namespace=jm_namespace)
+        if not wait_for_deployment_deleted(jm_deployment_name, namespace=jm_namespace, timeout=90):
+            raise AssertionError(f"Controller did not delete JM Deployment: {jm_namespace}/{jm_deployment_name}")
+        if not wait_for_deployment_deleted(tm_deployment_name, namespace=jm_namespace, timeout=90):
+            raise AssertionError(f"Controller did not delete TM Deployment: {jm_namespace}/{tm_deployment_name}")
+        if not wait_for_deployment_deleted(sandbox_deployment_name, namespace=jm_namespace, timeout=90):
+            raise AssertionError(f"Controller did not delete Sandbox Deployment: {jm_namespace}/{sandbox_deployment_name}")
         
         if mqtt_client:
             mqtt_client.loop_stop()
@@ -345,9 +447,17 @@ def test_flow_create_lifecycle() -> bool:
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
 
+        if created_id:
+            try:
+                requests.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
+            except Exception:
+                pass
+
         # Cleanup on failure
         try:
-            kubectl_delete("deployment", deployment_name, namespace=jm_namespace)
+            kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
+            kubectl_delete("deployment", tm_deployment_name, namespace=jm_namespace)
+            kubectl_delete("deployment", sandbox_deployment_name, namespace=jm_namespace)
         except:
             pass
         
@@ -359,7 +469,7 @@ def test_controller_pod_running() -> bool:
     print(f"\n  → Verifying Controller pod...")
     
     try:
-        pods = kubectl_get("pods", namespace=NAMESPACE)
+        pods = kubectl_get("pods", namespace=SYSTEM_NAMESPACE)
         if not pods:
             raise AssertionError("Failed to get pods")
         
@@ -370,8 +480,7 @@ def test_controller_pod_running() -> bool:
         ]
 
         if not controller_pods:
-            print(f"      ⚠ No Running Controller pod found (may not be deployed in this environment)")
-            return True  # Not a failure, Controller may not be deployed
+            raise AssertionError("No Running Controller pod found")
 
         controller_pod = controller_pods[0]
 
@@ -384,18 +493,17 @@ def test_controller_pod_running() -> bool:
 
 
 def test_flow_update_lifecycle() -> bool:
-    """Test Flow UPDATE triggers Controller rolling update of JM Deployment."""
-    print(f"\n  → Testing Flow UPDATE → JM rolling update...")
+    """Test Flow UPDATE remains metadata-only without active runs."""
+    print(f"\n  → Testing Flow UPDATE → no idle JM/TM allocation...")
 
     flow_id = "test-flow-" + rand_id()
-    deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
+    jm_deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
+    tm_deployment_name = f"flowgent-taskmanager-{NAMESPACE}-{flow_id}"
+    sandbox_deployment_name = f"flowgent-sandbox-{NAMESPACE}-{flow_id}"
     jm_namespace = application_namespace()
     created_id = None
 
     try:
-        # priority=high is currently the only value the API accepts (see
-        # entities.Priority doc comment); every flow gets a dedicated JM
-        # Deployment regardless.
         payload = {
             "id": flow_id,
             "nodes": [{"id": "n1", "type": "noop"}],
@@ -407,11 +515,13 @@ def test_flow_update_lifecycle() -> bool:
             raise AssertionError(f"Flow creation failed: {resp.status_code}")
         created_id = resp.json().get("id")
 
-        if not wait_for_deployment(deployment_name, namespace=jm_namespace, timeout=60):
-            raise AssertionError(f"JM Deployment not created for UPDATE test: {deployment_name} (namespace={jm_namespace})")
-
-        before = kubectl_get("deployment", deployment_name, namespace=jm_namespace)
-        before_gen = before.get("metadata", {}).get("generation", 0) if before else 0
+        time.sleep(15)
+        if kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"JM Deployment created before trigger: {jm_namespace}/{jm_deployment_name}")
+        if kubectl_get("deployment", tm_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"TM Deployment created before trigger: {jm_namespace}/{tm_deployment_name}")
+        if kubectl_get("deployment", sandbox_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"Sandbox Deployment created before trigger: {jm_namespace}/{sandbox_deployment_name}")
 
         resp = requests.put(
             f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}",
@@ -421,33 +531,41 @@ def test_flow_update_lifecycle() -> bool:
         if resp.status_code != 200:
             raise AssertionError(f"Flow update failed: {resp.status_code} {resp.text}")
 
-        # Allow Controller reconciliation time
-        time.sleep(5)
-        after = kubectl_get("deployment", deployment_name, namespace=jm_namespace)
-        after_gen = after.get("metadata", {}).get("generation", 0) if after else 0
-        if after_gen >= before_gen:
-            print(f"      ✓ Deployment generation {before_gen} → {after_gen}")
-        else:
-            print(f"      ⚠ Deployment generation unchanged (Controller may reconcile async)")
+        time.sleep(15)
+        if kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"JM Deployment created by metadata-only update: {jm_namespace}/{jm_deployment_name}")
+        if kubectl_get("deployment", tm_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"TM Deployment created by metadata-only update: {jm_namespace}/{tm_deployment_name}")
+        if kubectl_get("deployment", sandbox_deployment_name, namespace=jm_namespace):
+            raise AssertionError(f"Sandbox Deployment created by metadata-only update: {jm_namespace}/{sandbox_deployment_name}")
+        print(f"      ✓ Flow update did not allocate idle JM/TM/Sandbox")
 
         resp = requests.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
         if resp.status_code not in [200, 204]:
-            print(f"      ⚠ Flow deletion returned {resp.status_code}")
-        wait_for_deployment_deleted(deployment_name, namespace=jm_namespace, timeout=60)
+            raise AssertionError(f"Flow deletion failed: {resp.status_code} {resp.text}")
+        resp = requests.get(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
+        if resp.status_code != 404:
+            raise AssertionError(f"Deleted flow still readable from API: HTTP {resp.status_code}")
 
         print(f"    ✓ Flow UPDATE lifecycle verified")
         return True
     except Exception as e:
         print(f"    ✗ Flow UPDATE lifecycle failed: {e}")
-        if deployment_name:
-            kubectl_delete("deployment", deployment_name, namespace=jm_namespace)
+        if created_id:
+            try:
+                requests.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
+            except Exception:
+                pass
+        kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
+        kubectl_delete("deployment", tm_deployment_name, namespace=jm_namespace)
+        kubectl_delete("deployment", sandbox_deployment_name, namespace=jm_namespace)
         return False
 
 
 def run():
     """Main test runner"""
     print("\n" + "="*60)
-    print("  Scenario 23: Controller — Application Mode Lifecycle")
+    print("  Scenario 23: Controller — Active-Run Application Lifecycle")
     print("="*60)
     
     results = {}
@@ -456,8 +574,8 @@ def run():
     results["Controller Pod"] = test_controller_pod_running()
     
     # Test flow lifecycle
-    results["Flow CREATE Lifecycle"] = test_flow_create_lifecycle()
-    results["Flow UPDATE Lifecycle"] = test_flow_update_lifecycle()
+    results["Flow CREATE+TRIGGER Lifecycle"] = test_flow_create_lifecycle()
+    results["Flow UPDATE Metadata Lifecycle"] = test_flow_update_lifecycle()
     
     # Summary
     passed = sum(1 for v in results.values() if v)

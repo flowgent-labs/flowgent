@@ -43,9 +43,12 @@ func newAnthropicProvider(p *entities.LlmProviderInfo) *AnthropicProvider {
 	}
 }
 
-func (p *AnthropicProvider) Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64) (string, error) {
+func (p *AnthropicProvider) Generate(ctx context.Context, systemPrompt, userPrompt, modelName string, temperature float64, maxTokens int) (string, error) {
 	if err := p.limiter.Wait(ctx); err != nil {
 		return "", err
+	}
+	if maxTokens <= 0 {
+		maxTokens = 8192
 	}
 
 	params := anthropic.MessageNewParams{
@@ -56,7 +59,7 @@ func (p *AnthropicProvider) Generate(ctx context.Context, systemPrompt, userProm
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(userPrompt)),
 		},
-		MaxTokens:   8192,
+		MaxTokens:   int64(maxTokens),
 		Temperature: anthropic.Float(temperature),
 	}
 

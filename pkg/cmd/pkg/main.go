@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/flowgent-labs/flowgent/sandbox/pkg/seccomp"
 	"github.com/spf13/cobra"
 )
 
@@ -377,9 +378,20 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+var sandboxChildCmd = &cobra.Command{
+	Use:                "sandbox-child",
+	Hidden:             true,
+	DisableFlagParsing: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return seccomp.ChildMain()
+	},
+}
+
 // ─── main ─────────────────────────────────────────────────────
 
 func main() {
+	rootCmd.AddCommand(sandboxChildCmd)
+
 	// 1. all-in-one
 	rootCmd.AddCommand(allInOneCmd)
 	allInOneCmd.AddCommand(allInOneStartCmd)

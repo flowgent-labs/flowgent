@@ -96,6 +96,10 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *LlmProviderHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, err := h.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
+		if isNotFoundError(err) {
+			http.Error(w, "not found", 404)
+			return
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}

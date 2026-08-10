@@ -45,4 +45,6 @@ spec:
               value: "emqx@{{ include "flowgent.fullname" . }}-emqx"
             - name: EMQX_NODE__COOKIE
               value: "flowgent-emqx-cookie"
+            - name: EMQX_MQTT__MAX_PACKET_SIZE
+              value: {{ .Values.emqx.maxPacketSize | quote }}
 {{- end }}

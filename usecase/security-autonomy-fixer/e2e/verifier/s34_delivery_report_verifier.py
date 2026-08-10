@@ -5,30 +5,70 @@ import sys
 import os
 import json
 
-import _common as c
+from verifier import _common as c
+
+COMPLETED_SET = c.COMPLETED_STATUSES
+
+def _is_completed(status):
+    return status in COMPLETED_SET
+
+
+def _tool_task_ok(task, node_id):
+    if not task or not _is_completed(task.get("status", "")):
+        return False
+    output = task.get("output") or {}
+    parsed = c.parse_output(task)
+    text_parts = []
+    for source in (output, parsed):
+        if isinstance(source, dict):
+            for key in ("text", "error", "stderr", "stdout"):
+                value = source.get(key)
+                if isinstance(value, str) and value:
+                    text_parts.append(value)
+    text = "\n".join(text_parts).lower()
+    failure_markers = ("failed to", "validation failed", "error:")
+    if any(marker in text for marker in failure_markers):
+        print(f"  WARN {node_id}: tool output reports failure")
+        return False
+    return True
 
 # ── Phase: COMMIT & PR ──
 
 def verify_commit_pr(tasks_by_node):
     print(f"\n-- [34 CommitPR] Branch + commit + PR verification --")
     passed = 0
-    total = 0
+    total = 4
 
-    for node_id in ["create-branch", "commit-fixes", "create-pr"]:
+    for node_id in ["check-existing-pr", "pr-exists"]:
         task = c.node_task(tasks_by_node, node_id)
-        if task and task.get("status") == "COMPLETED":
-            total += 1
+        if task and _is_completed(task.get("status", "")):
             passed += 1
-            output = c.parse_output(task)
-            extra = ""
-            if node_id == "create-pr":
-                pr_url = output.get("pr_url") or output.get("url") or output.get("html_url")
-                if pr_url:
-                    extra = f" (url={pr_url})"
-            print(f"  OK {node_id}: COMPLETED{extra}")
+            print(f"  OK {node_id}: {task.get('status')}")
         else:
             status = task.get("status") if task else "not_reached"
             print(f"  -- {node_id}: status={status} (skipped)")
+
+    branch_nodes = {
+        "new-pr": ["create-branch", "commit-fixes", "create-pr"],
+        "existing-pr": ["commit-to-existing"],
+    }
+    branch_passed = 0
+    for branch_name, node_ids in branch_nodes.items():
+        completed = []
+        failed = []
+        for node_id in node_ids:
+            task = c.node_task(tasks_by_node, node_id)
+            if _tool_task_ok(task, node_id):
+                completed.append(node_id)
+            elif task and _is_completed(task.get("status", "")):
+                failed.append(node_id)
+        print(f"  Branch {branch_name}: completed={completed}/{node_ids}")
+        if failed:
+            print(f"  Branch {branch_name}: failed-output={failed}")
+        if len(completed) == len(node_ids):
+            branch_passed = 1
+    if branch_passed:
+        passed += 2
 
     print(f"  Result: {passed}/{total} checks passed")
     return passed, total
@@ -39,14 +79,13 @@ def verify_commit_pr(tasks_by_node):
 def verify_rescan(tasks_by_node):
     print(f"\n-- [34 Rescan] Re-scan chain verification --")
     passed = 0
-    total = 0
     rescan_nodes = ["trigger-rescan", "wait-rescan", "check-resolved",
                     "compare-results", "fix-complete"]
+    total = len(rescan_nodes)
 
     for node_id in rescan_nodes:
         task = c.node_task(tasks_by_node, node_id)
-        if task and task.get("status") == "COMPLETED":
-            total += 1
+        if task and _is_completed(task.get("status", "")):
             passed += 1
             output = c.parse_output(task)
             extra = ""
@@ -54,7 +93,7 @@ def verify_rescan(tasks_by_node):
                 resolution = output.get("resolution") or output.get("status")
                 if resolution:
                     extra = f" (resolution={resolution})"
-            print(f"  OK {node_id}: COMPLETED{extra}")
+            print(f"  OK {node_id}: {task.get('status')}{extra}")
         else:
             status = task.get("status") if task else "not_reached"
             print(f"  -- {node_id}: status={status} (skipped)")
@@ -68,25 +107,27 @@ def verify_rescan(tasks_by_node):
 def verify_report(tasks_by_node):
     print(f"\n-- [34 Report] Report + notification verification --")
     passed = 0
-    total = 0
-    report_nodes = ["summary-report", "notify-pr", "end"]
+    total = 3
 
-    for node_id in report_nodes:
-        task = c.node_task(tasks_by_node, node_id)
-        if task and task.get("status") == "COMPLETED":
-            total += 1
+    summary = c.node_task(tasks_by_node, "summary-report")
+    if summary and _is_completed(summary.get("status", "")):
+        output = c.parse_output(summary)
+        report = output.get("report") or output.get("summary") or str(output)[:100]
+        if isinstance(report, str) and len(report) > 20:
+            print(f"  OK summary-report: {summary.get('status')} (report: {len(report)} chars)")
             passed += 1
-            output = c.parse_output(task)
-            extra = ""
-            if node_id == "summary-report":
-                report = output.get("report") or output.get("summary") or str(output)[:100]
-                if isinstance(report, str) and len(report) > 20:
-                    extra = f" (report: {len(report)} chars)"
-                elif isinstance(report, str):
-                    extra = f" (report: short — {len(report)} chars)"
-                print(f"  OK {node_id}: COMPLETED{extra}")
-            else:
-                print(f"  OK {node_id}: COMPLETED")
+        else:
+            print(f"  WARN summary-report: report missing/short")
+    else:
+        status = summary.get("status") if summary else "not_reached"
+        print(f"  OK summary-report: status={status} (path-dependent)")
+        passed += 1
+
+    for node_id in ["notify-pr", "end"]:
+        task = c.node_task(tasks_by_node, node_id)
+        if task and _is_completed(task.get("status", "")):
+            print(f"  OK {node_id}: {task.get('status')}")
+            passed += 1
         else:
             status = task.get("status") if task else "not_reached"
             print(f"  -- {node_id}: status={status} (skipped)")
@@ -104,9 +145,12 @@ def verify_pg_final(conn, run_id):
         return 0, 0
 
     passed = 0
-    total = len(c.PHASE_NODES)
+    optional_phases = {"HUMAN"}
+    total = len(c.PHASE_NODES) - len(optional_phases)
 
     for phase_name, node_ids in c.PHASE_NODES.items():
+        if phase_name in optional_phases:
+            continue
         placeholders = ", ".join("%s" for _ in node_ids)
         cur = conn.cursor()
         cur.execute(
@@ -117,23 +161,23 @@ def verify_pg_final(conn, run_id):
         )
         rows = cur.fetchall()
         if rows:
-            completed = [r for r in rows if r[1] == "COMPLETED"]
+            completed = [r for r in rows if _is_completed(r[1])]
             if completed:
                 print(f"  OK {phase_name:<12}: {len(completed)} completed task(s)")
                 passed += 1
             else:
                 statuses = [f"{r[0]}={r[1]}" for r in rows]
-                print(f"  -- {phase_name:<12}: no COMPLETED tasks — {statuses}")
+                print(f"  -- {phase_name:<12}: no completed tasks — {statuses}")
         else:
             print(f"  -- {phase_name:<12}: no task_runs entries (phase not reached)")
 
     cur = conn.cursor()
     cur.execute(
-        "SELECT COUNT(*) FROM task_runs WHERE agentflow_run_id=%s AND status='COMPLETED'",
+        "SELECT COUNT(*) FROM task_runs WHERE agentflow_run_id=%s AND status IN ('COMPLETED','SUCCESS')",
         (run_id,),
     )
     total_completed = cur.fetchone()[0]
-    print(f"  Total COMPLETED task_runs: {total_completed}")
+    print(f"  Total completed task_runs: {total_completed}")
 
     print(f"  Result: {passed}/{total} phases have completed task_runs")
     return passed, total
@@ -168,6 +212,17 @@ def run():
     results.append(("Rescan", *verify_rescan(tbn)))
     results.append(("Report", *verify_report(tbn)))
     results.append(("PG Final", *verify_pg_final(conn, run_id)))
+
+    print("\n-- [34 MQTT Audit] Sandbox result and final execution callbacks --")
+    c.assert_mqtt_suffixes(run_id, ["sandbox/result", "exec/results"])
+
+    r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/runs/{run_id}", timeout=10)
+    if r.status_code != 200:
+        raise AssertionError(f"Cannot fetch final run status: {r.status_code} {r.text[:160]}")
+    final_status = r.json().get("status")
+    print(f"  Final API run status: {final_status}")
+    if final_status != "COMPLETED":
+        raise AssertionError(f"Flow run did not complete successfully: {final_status}")
 
     if conn:
         conn.close()

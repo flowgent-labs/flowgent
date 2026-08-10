@@ -42,11 +42,11 @@ type EdgeCondition struct {
 // from an FlowInfo and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
-	state   RunStateStore
-	rm      resourcemanager.ResourceManager
-	logger  *utils.Logger
-	tracer  trace.Tracer
-	timeout time.Duration
+	state     RunStateStore
+	rm        resourcemanager.ResourceManager
+	logger    *utils.Logger
+	tracer    trace.Tracer
+	timeout   time.Duration
 	nodeLimit int
 	maxNodes  int
 
@@ -317,9 +317,9 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
 			AgentFlowRunID:        runID,
 			AgentFlowDefinitionID: spec.ID,
-			Namespace:              spec.Namespace,
+			Namespace:             spec.Namespace,
 			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
-			TaskType:              NodeToTaskType(n.Type), NodeID: n.ID,
+			TaskType:              NodeToTaskType(n.Kind), NodeID: n.ID,
 			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
 			NodeSpec: entities.NodeSpecFromNode(n), CreatedAt: time.Now(),
 		}
@@ -414,15 +414,42 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 				slog.Debug("jobmaster execute plan not found", "node", nodeID)
 				continue
 			}
+
+			nodeCtx, nodeSpan := jm.tracer.Start(ctx, "jobmaster.node",
+				trace.WithAttributes(
+					attribute.String("agentflow.id", spec.ID),
+					attribute.String("run.id", run.ID),
+					attribute.String("flowgent.node_id", nodeID),
+					attribute.String("flowgent.task_type", string(plan.TaskType)),
+					attribute.String("flowgent.plan_id", plan.PlanID),
+					attribute.String("flowgent.task_id", plan.TaskID),
+				),
+			)
+
+			// Merge Args into RawInput first so ${vars.x} / ${node.field} references
+			// are resolved together with the node's own input map.
+			if plan.NodeSpec.Args != nil {
+				if plan.NodeSpec.RawInput == nil {
+					plan.NodeSpec.RawInput = make(map[string]any)
+				}
+				for k, v := range plan.NodeSpec.Args {
+					if _, ok := plan.NodeSpec.RawInput[k]; !ok {
+						plan.NodeSpec.RawInput[k] = v
+					}
+				}
+			}
 			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
-			_ = jm.state.SaveTask(ctx, taskRunFromPlan(plan))
+			_ = jm.state.SaveTask(nodeCtx, taskRunFromPlan(plan))
 
 			slog.Debug("jobmaster execute scheduling node", "node", nodeID, "type", plan.TaskType, "planID", plan.PlanID)
-			result, err := jm.rm.Schedule(ctx, plan)
+			result, err := jm.rm.Schedule(nodeCtx, plan)
 			if err != nil {
 				slog.Warn("jobmaster execute schedule failed", "node", nodeID, "err", err)
 				jm.logger.Error("submit failed", "node", nodeID, "err", err)
 				jm.nodeErrors[nodeID] = err.Error()
+				nodeSpan.RecordError(err)
+				nodeSpan.SetStatus(codes.Error, "schedule failed")
+				nodeSpan.End()
 				jm.Fail(nodeID)
 				continue
 			}
@@ -430,6 +457,8 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 				slog.Warn("jobmaster execute execution failed", "node", nodeID, "err", result.Error)
 				jm.logger.Error("node execution failed", "node", nodeID, "err", result.Error)
 				jm.nodeErrors[nodeID] = result.Error
+				nodeSpan.SetStatus(codes.Error, result.Error)
+				nodeSpan.End()
 				jm.Fail(nodeID)
 				continue
 			}
@@ -437,8 +466,11 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 			slog.Debug("jobmaster execute node done", "node", nodeID, "hasOutput", result.Output != nil)
 			if result.Output != nil {
 				jm.nodeOutputs[nodeID] = result.Output
+				nodeSpan.SetAttributes(attribute.Bool("flowgent.has_output", true))
 			}
 			jm.Done(nodeID)
+			nodeSpan.SetStatus(codes.Ok, "done")
+			nodeSpan.End()
 
 			if plan.TaskType == entities.TaskCondition {
 				if r, ok := result.Output["result"].(bool); ok {
@@ -468,10 +500,45 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 	for k, v := range yamlInput {
 		in[k] = resolveDeep(v, scope)
 	}
-	for nid, output := range jm.nodeOutputs {
-		in[nid] = output
+	// Only inject node outputs that are actually referenced via ${node} or ${node.field}
+	// in this node's yamlInput; avoid copying ALL prior outputs into every DB task row,
+	// which can overflow PostgreSQL's 256 MiB JSONB limit for large payloads like
+	// SonarQube scan results.
+	refs := collectRefs(yamlInput)
+	for nid := range refs {
+		if output, ok := jm.nodeOutputs[nid]; ok {
+			in[nid] = output
+		}
 	}
 	return in
+}
+
+// collectRefs walks yamlInput values recursively and returns the set of
+// node-ids referenced via ${node} or ${node.field} patterns (not ${vars.x}).
+func collectRefs(input map[string]any) map[string]struct{} {
+	refs := make(map[string]struct{})
+	var walk func(v any)
+	walk = func(v any) {
+		switch val := v.(type) {
+		case string:
+			if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") {
+				inner := val[2 : len(val)-1]
+				if parts := strings.SplitN(inner, ".", 2); len(parts) > 0 && parts[0] != "vars" {
+					refs[parts[0]] = struct{}{}
+				}
+			}
+		case map[string]any:
+			for _, vv := range val {
+				walk(vv)
+			}
+		case []any:
+			for _, vv := range val {
+				walk(vv)
+			}
+		}
+	}
+	walk(input)
+	return refs
 }
 
 func resolveDeep(v any, scope map[string]map[string]any) any {
@@ -584,6 +651,8 @@ func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 		NodeID:         plan.NodeID,
 		Status:         plan.State,
 		Input:          plan.Input,
+		ExecID:         plan.PlanID,
+		MaxRetries:     plan.MaxRetries,
 	}
 }
 

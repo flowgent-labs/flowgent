@@ -1,10 +1,11 @@
-package taskplan
+package task
 
 import (
 	"context"
 	"encoding/json"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
@@ -12,42 +13,49 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TaskPlanPostgresStore wraps store.PostgresGenericStore[entities.TaskRunInfo].
-type TaskPlanPostgresStore struct {
+// TaskPostgresStore wraps store.PostgresGenericStore[entities.TaskRunInfo].
+type TaskPostgresStore struct {
 	inner *store.PostgresGenericStore[entities.TaskRunInfo]
 }
 
-func NewTaskPlanPostgresStore(pool *pgxpool.Pool) *TaskPlanPostgresStore {
-	return &TaskPlanPostgresStore{
+func NewTaskPostgresStore(pool *pgxpool.Pool) *TaskPostgresStore {
+	return &TaskPostgresStore{
 		inner: &store.PostgresGenericStore[entities.TaskRunInfo]{
 			Pool: pool, Table: "task_runs", IDCol: "id",
 		},
 	}
 }
 
-func (s *TaskPlanPostgresStore) Get(ctx context.Context, id string) (*entities.TaskRunInfo, error) {
+func (s *TaskPostgresStore) Get(ctx context.Context, id string) (*entities.TaskRunInfo, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *TaskPlanPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.TaskRunInfo], error) {
+func (s *TaskPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.TaskRunInfo], error) {
 	return s.inner.Select(ctx, req)
 }
-func (s *TaskPlanPostgresStore) Save(ctx context.Context, e *entities.TaskRunInfo) error {
+func (s *TaskPostgresStore) Save(ctx context.Context, e *entities.TaskRunInfo) error {
 	return s.inner.Save(ctx, e)
 }
-func (s *TaskPlanPostgresStore) Delete(ctx context.Context, id string) error {
+func (s *TaskPostgresStore) Delete(ctx context.Context, id string) error {
 	return s.inner.Delete(ctx, id)
 }
 
-func (s *TaskPlanPostgresStore) GetByExecID(ctx context.Context, execID string) (*entities.TaskRunInfo, error) {
-	rows, err := s.inner.Pool.Query(ctx, "SELECT * FROM task_runs WHERE exec_id=$1", execID)
+func (s *TaskPostgresStore) GetByExecID(ctx context.Context, execID string) (*entities.TaskRunInfo, error) {
+	rows, err := s.inner.Pool.Query(ctx, "SELECT "+utils.Columns[entities.TaskRunInfo]()+" FROM task_runs WHERE exec_id=$1", execID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[entities.TaskRunInfo])
+	if !rows.Next() {
+		return nil, pgx.ErrNoRows
+	}
+	var out entities.TaskRunInfo
+	if err := utils.ScanStruct(rows, &out); err != nil {
+		return nil, err
+	}
+	return &out, rows.Err()
 }
 
-func (s *TaskPlanPostgresStore) CreateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
+func (s *TaskPostgresStore) CreateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
 	e.ID = uuid.New().String()
 	now := time.Now().UTC()
 	e.CreatedAt = now
@@ -55,7 +63,7 @@ func (s *TaskPlanPostgresStore) CreateTaskRun(ctx context.Context, e *entities.T
 	return s.inner.Save(ctx, e)
 }
 
-func (s *TaskPlanPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
+func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
 	output, err := json.Marshal(e.Output)
 	if err != nil {
 		return err
@@ -83,11 +91,19 @@ func (s *TaskPlanPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.T
 	return err
 }
 
-func (s *TaskPlanPostgresStore) ListByFlowRun(ctx context.Context, flowRunID string) ([]*entities.TaskRunInfo, error) {
-	rows, err := s.inner.Pool.Query(ctx, "SELECT * FROM task_runs WHERE agentflow_run_id=$1 ORDER BY sequence ASC", flowRunID)
+func (s *TaskPostgresStore) ListByFlowRun(ctx context.Context, flowRunID string) ([]*entities.TaskRunInfo, error) {
+	rows, err := s.inner.Pool.Query(ctx, "SELECT "+utils.Columns[entities.TaskRunInfo]()+" FROM task_runs WHERE agentflow_run_id=$1 ORDER BY sequence ASC", flowRunID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[entities.TaskRunInfo])
+	var out []*entities.TaskRunInfo
+	for rows.Next() {
+		task := &entities.TaskRunInfo{}
+		if err := utils.ScanStruct(rows, task); err != nil {
+			return nil, err
+		}
+		out = append(out, task)
+	}
+	return out, rows.Err()
 }

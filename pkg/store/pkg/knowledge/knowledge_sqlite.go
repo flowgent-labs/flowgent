@@ -69,10 +69,20 @@ func (s *KnowledgeSQLiteStore) Search(ctx context.Context, req entities.Knowledg
 	if topK <= 0 {
 		topK = 20
 	}
+	terms := searchTerms(req.Query)
+	if len(terms) == 0 {
+		return []*entities.KnowledgeEntry{}, nil
+	}
 
 	// Build parameterized query
-	query := fmt.Sprintf(`SELECT %s FROM knowledge_entries WHERE del_flag = 0 AND (title LIKE '%%' || ?1 || '%%' OR content LIKE '%%' || ?1 || '%%')`, cols)
-	args := []any{req.Query}
+	termClauses := make([]string, len(terms))
+	args := make([]any, 0, len(terms)+len(req.Tags)+1)
+	for i, term := range terms {
+		paramIdx := len(args) + 1
+		termClauses[i] = fmt.Sprintf(`(LOWER(title) LIKE '%%' || ?%d || '%%' OR LOWER(content) LIKE '%%' || ?%d || '%%')`, paramIdx, paramIdx)
+		args = append(args, term)
+	}
+	query := fmt.Sprintf(`SELECT %s FROM knowledge_entries WHERE del_flag = 0 AND (%s)`, cols, strings.Join(termClauses, " OR "))
 
 	if len(req.Tags) > 0 {
 		tagConditions := make([]string, len(req.Tags))

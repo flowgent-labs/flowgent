@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -18,7 +20,7 @@ import (
 const (
 	seccompSetModeFilter = 1
 	seccompFilterTSync   = 1 << 0
-	seccompFilterNotif   = 1 << 2
+	seccompFilterNotif   = 1 << 3
 )
 
 type Filter struct {
@@ -75,7 +77,7 @@ func (f *Filter) Install() (notifyFD int, err error) {
 	}
 	flags := uintptr(seccompFilterTSync)
 	if f.NeedsNotifier() {
-		flags |= seccompFilterNotif
+		flags = uintptr(seccompFilterNotif)
 	}
 	r1, _, e1 := syscall.Syscall(
 		unix.SYS_SECCOMP, uintptr(seccompSetModeFilter), flags,
@@ -141,9 +143,9 @@ func resolveEntries(entries []string) ([]ipPort, error) {
 	}
 	var result []ipPort
 	for _, entry := range entries {
-		host, ps, err := net.SplitHostPort(entry)
+		host, ps, err := splitPolicyEntry(entry)
 		if err != nil {
-			return nil, fmt.Errorf("seccomp: invalid %q: %w", entry, err)
+			return nil, err
 		}
 		port, err := strconv.Atoi(ps)
 		if err != nil || port < 1 || port > 65535 {
@@ -160,6 +162,39 @@ func resolveEntries(entries []string) ([]ipPort, error) {
 		}
 	}
 	return result, nil
+}
+
+func splitPolicyEntry(entry string) (string, string, error) {
+	raw := strings.TrimSpace(entry)
+	if raw == "" {
+		return "", "", fmt.Errorf("seccomp: empty network policy entry")
+	}
+
+	defaultPort := "443"
+	hostPort := raw
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", "", fmt.Errorf("seccomp: invalid %q: %w", entry, err)
+		}
+		hostPort = u.Host
+		switch u.Scheme {
+		case "http":
+			defaultPort = "80"
+		case "https":
+			defaultPort = "443"
+		}
+	}
+
+	host, ps, err := net.SplitHostPort(hostPort)
+	if err == nil {
+		return host, ps, nil
+	}
+	if strings.Contains(err.Error(), "missing port in address") {
+		host := strings.Trim(hostPort, "[]")
+		return host, defaultPort, nil
+	}
+	return "", "", fmt.Errorf("seccomp: invalid %q: %w", entry, err)
 }
 
 func syscallSeccomp(op, flags, args uintptr) (uintptr, uintptr, syscall.Errno) {
