@@ -9,25 +9,20 @@ import (
 type FlowInfo struct {
 	BaseEntity
 
-	Kind          string                 `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Summary       string                 `json:"summary,omitempty" yaml:"summary,omitempty"`
-	InputSchema   map[string]any         `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
-	OutputSchema  map[string]any         `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
-	Vars          map[string]any         `json:"vars,omitempty" yaml:"vars,omitempty"`
-	Nodes         []Node                 `json:"nodes" yaml:"nodes"`
-	Edges         []Edge                 `json:"edges" yaml:"edges"`
-	Triggers      []TriggerDef           `json:"triggers,omitempty" yaml:"triggers,omitempty"`
+	Kind          string                       `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Summary       string                       `json:"summary,omitempty" yaml:"summary,omitempty"`
+	InputSchema   map[string]any               `json:"input_schema,omitempty" yaml:"input_schema,omitempty"`
+	OutputSchema  map[string]any               `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+	Vars          map[string]any               `json:"vars,omitempty" yaml:"vars,omitempty"`
+	Nodes         []Node                       `json:"nodes" yaml:"nodes"`
+	Edges         []Edge                       `json:"edges" yaml:"edges"`
+	Triggers      []TriggerDef                 `json:"triggers,omitempty" yaml:"triggers,omitempty"`
 	SandboxPolicy *model.SandboxPolicyOverride `json:"sandbox_policy,omitempty" yaml:"sandbox_policy,omitempty"`
 
-	Priority    Priority          `json:"priority,omitempty" yaml:"priority,omitempty"`
+	ResourcePoolID string            `json:"resource_pool_id" yaml:"resource_pool_id"`
 	K8sNamespace   string            `json:"k8s_namespace,omitempty" yaml:"namespace,omitempty"`
-	Mode        ExecutionMode     `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Credentials map[string]string `json:"credentials,omitempty" yaml:"credentials,omitempty"`
-}
-
-func (s *FlowInfo) EffectiveMode() ExecutionMode {
-	return ModeApplication
+	Labels         map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Credentials    map[string]string `json:"credentials,omitempty" yaml:"credentials,omitempty"`
 }
 
 // TriggerDef defines a trigger for a flow (schedule or webhook).

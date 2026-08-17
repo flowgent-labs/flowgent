@@ -2,6 +2,7 @@ package resourcemanager
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -62,6 +63,32 @@ func TestKubernetesResourceManager_Validate_WithQueue(t *testing.T) {
 	}
 }
 
+func TestKubernetesResourceManagerWaitsForScopedRuntimeReady(t *testing.T) {
+	q := messager.NewLocalMessager(10)
+	rm := &KubernetesResourceManager{
+		q: q, ownerNamespaceID: "default", resourcePoolID: "default",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := rm.ensureRuntimeReadySubscription(ctx, "taskmanager"); err != nil {
+		t.Fatalf("subscribe readiness: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- rm.waitForRuntimeReady(ctx, "taskmanager") }()
+
+	ready := messager.RuntimeReady{
+		WorkerID: "tm-1", Role: "taskmanager", Namespace: "default",
+		PoolID: "default", Timestamp: time.Now(),
+	}
+	payload, _ := json.Marshal(ready)
+	if err := q.Publish(ctx, messager.RuntimeReadyTopic("default", "default", "taskmanager", "tm-1"), &messager.InterMessage{Payload: payload}); err != nil {
+		t.Fatalf("publish readiness: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("wait readiness: %v", err)
+	}
+}
+
 func TestKubernetesResourceManager_ScaleDeployment(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	// Pre-create a Deployment to scale
@@ -117,7 +144,7 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	rm := &KubernetesResourceManager{
 		kubeClient:               fakeClient,
 		namespace:                "default",
-		deployName:               "flowgent-taskmanager-default-sec-fix",
+		deployName:               "flowgent-taskmanager-default-critical",
 		tmImage:                  "flowgent:test",
 		slotsPerTM:               4,
 		minTMs:                   2,
@@ -126,10 +153,13 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 		idleTimeout:              5 * time.Minute,
 		planTimeout:              5 * time.Minute,
 		ownerNamespaceID:         "default",
+		resourcePoolID:           "critical",
 		ownerFlowID:              "sec-fix",
 		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix",
 		ownerJobManagerNamespace: "flowgent-default",
 		credentialEnvSecret:      "flowgent-runtime-env",
+		internalAuthSecret:       "flowgent-runtime-auth",
+		taskManagerAuthKey:       "tm-token",
 	}
 
 	if err := rm.ensureDeployment(context.Background()); err != nil {
@@ -137,31 +167,78 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	}
 
 	dep, err := fakeClient.AppsV1().Deployments("default").
-		Get(context.Background(), "flowgent-taskmanager-default-sec-fix", metav1.GetOptions{})
+		Get(context.Background(), "flowgent-taskmanager-default-critical", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get deployment: %v", err)
 	}
-	if got := dep.Labels[LabelManagedBy]; got != LabelValueJobManager {
-		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueJobManager)
+	if got := dep.Labels[LabelManagedBy]; got != LabelValueResourcePool {
+		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueResourcePool)
 	}
-	if got := dep.Labels[LabelParentJobManager]; got != "flowgent-jobmanager-default-sec-fix" {
-		t.Fatalf("LabelParentJobManager = %q", got)
-	}
-	if got := dep.Labels[LabelParentJobManagerNamespace]; got != "flowgent-default" {
-		t.Fatalf("LabelParentJobManagerNamespace = %q", got)
-	}
-	if got := dep.Spec.Selector.MatchLabels[LabelFlowID]; got != "sec-fix" {
-		t.Fatalf("selector flow label = %q, want sec-fix", got)
+	if got := dep.Spec.Selector.MatchLabels[LabelResourcePoolID]; got != "critical" {
+		t.Fatalf("selector resource pool label = %q, want critical", got)
 	}
 	container := dep.Spec.Template.Spec.Containers[0]
 	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef == nil {
-		t.Fatalf("expected TM credential envFrom secret ref, got %#v", container.EnvFrom)
+		t.Fatalf("expected only namespace worker credential ref, got %#v", container.EnvFrom)
 	}
 	if got := container.EnvFrom[0].SecretRef.Name; got != "flowgent-runtime-env" {
 		t.Fatalf("TM credential secret = %q, want flowgent-runtime-env", got)
 	}
 	if container.EnvFrom[0].SecretRef.Optional == nil || !*container.EnvFrom[0].SecretRef.Optional {
 		t.Fatal("TM credential secret ref should be optional")
+	}
+	var workloadToken *corev1.EnvVar
+	for i := range container.Env {
+		if container.Env[i].Name == "FLOWGENT_INTERNAL_TOKEN" {
+			workloadToken = &container.Env[i]
+		}
+	}
+	if workloadToken == nil || workloadToken.ValueFrom == nil || workloadToken.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("TM workload token secret ref missing: %#v", workloadToken)
+	}
+	if got := workloadToken.ValueFrom.SecretKeyRef.Name; got != "flowgent-runtime-auth" {
+		t.Fatalf("TM workload Secret = %q", got)
+	}
+	if got := workloadToken.ValueFrom.SecretKeyRef.Key; got != "tm-token" {
+		t.Fatalf("TM workload Secret key = %q", got)
+	}
+	var slots string
+	for i := range container.Env {
+		if container.Env[i].Name == "FLOWGENT__RUNTIME__TM_SLOTS" {
+			slots = container.Env[i].Value
+		}
+	}
+	if slots != "4" {
+		t.Fatalf("TM slots env = %q, want 4", slots)
+	}
+
+}
+
+func TestKubernetesResourceManager_ReconcilesPoolDeploymentTemplate(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	rm := &KubernetesResourceManager{
+		kubeClient: fakeClient, namespace: "runtime", deployName: "pool-critical",
+		tmImage: "flowgent:v1", slotsPerTM: 2, minTMs: 1, maxTMs: 1,
+		ownerNamespaceID: "team-a", resourcePoolID: "critical",
+	}
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("initial ensureDeployment: %v", err)
+	}
+	rm.tmImage = "flowgent:v2"
+	rm.slotsPerTM = 8
+	rm.nodeSelector = map[string]string{"workload": "critical"}
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("reconcile ensureDeployment: %v", err)
+	}
+	dep, err := fakeClient.AppsV1().Deployments("runtime").Get(context.Background(), "pool-critical", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep.Spec.Template.Spec.Containers[0].Image != "flowgent:v2" {
+		t.Fatalf("image was not reconciled: %q", dep.Spec.Template.Spec.Containers[0].Image)
+	}
+	if dep.Spec.Template.Spec.NodeSelector["workload"] != "critical" {
+		t.Fatalf("node selector was not reconciled: %#v", dep.Spec.Template.Spec.NodeSelector)
 	}
 }
 

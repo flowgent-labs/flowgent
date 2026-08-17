@@ -12,13 +12,14 @@ import requests
 from common import config
 from common import unwrap_k8s, resolve_env_vars, get_or_post, tasks_by_node
 from common import parse_output, node_task, pg_connect
+from common.api import flowgent_session
 from common.api import get_tasks as _get_tasks_raw
 from common.api import try_approve_pending_human as _try_approve_raw
 
 API = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
 SYSTEM_NAMESPACE = config.SYSTEM_NAMESPACE
-APP_NAMESPACE = config.K8S_APP_NAMESPACE
+WORKLOAD_NAMESPACE = config.K8S_WORKLOAD_NAMESPACE
 FLOW_ID = "security-autonomy-fixer"
 FLOW_TIMEOUT_S = config.FLOW_TIMEOUT_S
 POLL_INTERVAL_S = config.POLL_INTERVAL_S
@@ -173,8 +174,8 @@ def load_flow_from_yaml():
     return data
 
 
-def app_namespace(namespace_id=NAMESPACE):
-    return f"{config.K8S_APP_NAMESPACE_PREFIX}{namespace_id}"
+def workload_namespace(namespace_id=NAMESPACE):
+    return f"{config.K8S_WORKLOAD_NAMESPACE_PREFIX}{namespace_id}"
 
 
 def _kubectl_json(args):
@@ -214,11 +215,22 @@ def wait_for_pods(namespace, selector, label, min_count=1, timeout=180):
     raise AssertionError(f"{label} pods not ready within {timeout}s; last={last}")
 
 
-def wait_for_application_components(flow_id=FLOW_ID, timeout=240):
-    ns = app_namespace()
+def resource_pool_for_flow(flow_id=FLOW_ID):
+    response = flowgent_session().get(f"{API}/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=10)
+    if response.status_code != 200:
+        raise AssertionError(f"cannot resolve Resource Pool for {flow_id}: HTTP {response.status_code}")
+    pool_id = response.json().get("resource_pool_id")
+    if not pool_id:
+        raise AssertionError(f"Flow {flow_id} has no resource_pool_id")
+    return pool_id
+
+
+def wait_for_workload_components(flow_id=FLOW_ID, timeout=240):
+    ns = workload_namespace()
+    pool_id = resource_pool_for_flow(flow_id)
     wait_for_pods(ns, f"app=flowgent-jobmanager,flowgent.io/flow={flow_id}", "JobManager", 1, timeout)
-    wait_for_pods(ns, f"flowgent/role=worker,flowgent.io/flow={flow_id}", "TaskManager", 1, timeout)
-    wait_for_pods(ns, f"flowgent/role=sandbox-worker,flowgent.io/flow={flow_id}", "Sandbox", 1, timeout)
+    wait_for_pods(ns, f"flowgent/role=worker,flowgent.io/resource-pool={pool_id}", "TaskManager", 1, timeout)
+    wait_for_pods(ns, f"flowgent/role=sandbox-worker,flowgent.io/resource-pool={pool_id}", "Sandbox", 1, timeout)
 
 
 def decode_mqtt_payload(raw_payload):
@@ -280,9 +292,9 @@ class MQTTAudit:
         topics = [
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/ctrl/run/created",
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/ctrl/run/status",
-            f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/exec/plans",
+            f"flowgent/v1/{NAMESPACE}/pools/+/flows/{FLOW_ID}/runs/+/exec/plans",
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/exec/results",
-            f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/sandbox/trigger",
+            f"flowgent/v1/{NAMESPACE}/pools/+/flows/{FLOW_ID}/runs/+/sandbox/trigger",
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/sandbox/result",
             "flowgent/v1/heartbeat/+",
         ]
@@ -367,11 +379,45 @@ def _mqtt_message_key(message):
     return (message.get("run_id"), message.get("topic"), payload_key)
 
 
+_SENSITIVE_EVIDENCE_KEY_PARTS = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "authorization",
+    "credential",
+    "cookie",
+    "api_key",
+    "apikey",
+    "private_key",
+)
+
+
+def redact_mqtt_evidence(value, parent_key=""):
+    """Preserve MQTT structure for assertions without persisting credentials."""
+    normalized_parent = parent_key.lower().replace("-", "_")
+    if isinstance(value, dict):
+        if normalized_parent in ("env", "environment"):
+            return {str(key): "<redacted>" for key in value}
+        redacted = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower().replace("-", "_")
+            if any(part in normalized_key for part in _SENSITIVE_EVIDENCE_KEY_PARTS):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = redact_mqtt_evidence(item, normalized_key)
+        return redacted
+    if isinstance(value, list):
+        return [redact_mqtt_evidence(item, normalized_parent) for item in value]
+    return value
+
+
 def save_mqtt_audit(run_id, messages):
     existing = load_mqtt_audit(run_id, strict=False)
     merged = []
     seen = set()
     for message in existing + [m for m in messages if not run_id or m.get("run_id") in (None, run_id)]:
+        message = redact_mqtt_evidence(message)
         key = _mqtt_message_key(message)
         if key in seen:
             continue

@@ -7,33 +7,43 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // SlotWorker runs a persistent consume-execute loop within a TaskManager.
 // Each SlotWorker subscribes to TopicExec and executes ExecutionPlans via a
 // TaskExecutorRouter, then publishes downstream-ready plans back to the queue.
 type SlotWorker struct {
-	id      string
-	tmID    string
-	q       messager.IMessager
-	router  *executor.TaskExecutorRouter
-	state   TaskStateStore
-	metrics *TaskManagerMetrics
+	id        string
+	tmID      string
+	namespace string
+	poolID    string
+	q         messager.IMessager
+	router    *executor.TaskExecutorRouter
+	state     TaskStateStore
+	metrics   *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID, namespace, poolID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
-		id:      id,
-		tmID:    tmID,
-		q:       q,
-		router:  router,
-		state:   state,
-		metrics: metrics,
+		id:        id,
+		tmID:      tmID,
+		namespace: namespace,
+		poolID:    poolID,
+		q:         q,
+		router:    router,
+		state:     state,
+		metrics:   metrics,
 	}
 }
 
@@ -41,23 +51,60 @@ func NewSlotWorker(id, tmID string, q messager.IMessager, router *executor.TaskE
 func (sw *SlotWorker) Loop(ctx context.Context) {
 	slog.Info("slot worker started", "tm_id", sw.tmID, "slot_id", sw.id)
 	defer slog.Info("slot worker stopped", "tm_id", sw.tmID, "slot_id", sw.id)
+	if err := sw.Subscribe(ctx); err != nil {
+		slog.Error("slot worker subscription failed", "tm_id", sw.tmID, "slot_id", sw.id, "error", err)
+		return
+	}
+	<-ctx.Done()
+}
 
-	sw.q.Subscribe(ctx, messager.SharedExecPlans(), func(topic string, payload []byte) {
+// Subscribe registers this slot's execution handler synchronously. TaskManager
+// uses it as a startup barrier before advertising runtime readiness.
+func (sw *SlotWorker) Subscribe(ctx context.Context) error {
+	if sw.namespace == "" || sw.poolID == "" {
+		return fmt.Errorf("slot worker requires namespace and resource pool scope")
+	}
+	return sw.q.Subscribe(ctx, messager.SharedExecPlans(sw.namespace, sw.poolID), func(topic string, payload []byte) {
 		slog.Debug("slot worker received execution plan", "slot", sw.id, "len", len(payload))
 		var plan entities.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
 			slog.Error("slot worker cannot unmarshal execution plan", "error", err)
 			return
 		}
+		if plan.Namespace != sw.namespace || plan.ResourcePoolID != sw.poolID {
+			slog.Error("slot worker rejected out-of-pool plan", "plan", plan.PlanID,
+				"plan_namespace", plan.Namespace, "plan_pool", plan.ResourcePoolID,
+				"worker_namespace", sw.namespace, "worker_pool", sw.poolID)
+			return
+		}
 		slog.Debug("slot worker executing plan", "slot", sw.id, "plan", plan.PlanID, "node", plan.NodeID, "type", string(plan.TaskType))
+		execCtx := otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(plan.TraceContext))
+		execCtx, span := tracing.Tracer("flowgent/taskmanager").Start(execCtx, "taskmanager.execute",
+			trace.WithAttributes(
+				attribute.String("run.id", plan.AgentFlowRunID),
+				attribute.String("agentflow.id", plan.AgentFlowDefinitionID),
+				attribute.String("flowgent.node_id", plan.NodeID),
+				attribute.String("flowgent.task_id", plan.TaskID),
+				attribute.String("flowgent.plan_id", plan.PlanID),
+				attribute.String("flowgent.task_type", string(plan.TaskType)),
+				attribute.Int("flowgent.attempt", plan.RetryCount+1),
+				attribute.String("flowgent.tm_id", sw.tmID),
+				attribute.String("flowgent.slot_id", sw.id),
+			),
+		)
+		span.SetAttributes(tracing.PayloadAttributes("input", plan.Input)...)
 
 		if sw.metrics != nil {
 			sw.metrics.SlotsBusy.Add(ctx, 1)
 		}
 
 		execStart := time.Now()
+		if plan.StartedAt == nil {
+			startedAt := execStart.UTC()
+			plan.StartedAt = &startedAt
+		}
 		scope := map[string]map[string]any{"input": plan.Input}
-		result, err := sw.router.Execute(ctx, &plan, scope)
+		result, err := sw.router.Execute(execCtx, &plan, scope)
 		execDur := time.Since(execStart)
 
 		if err != nil {
@@ -68,6 +115,8 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			)
 			plan.State = entities.Failed
 			plan.Result = &entities.TaskResult{Error: err.Error()}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "executor failed")
 		} else if result != nil && result.Error != "" {
 			slog.Error("slot worker task failed",
 				"plan_id", plan.PlanID,
@@ -76,12 +125,15 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 			)
 			plan.State = entities.Failed
 			plan.Result = result
+			span.SetStatus(codes.Error, result.Error)
 		} else {
 			slog.Info("slot worker task succeeded", "slot_id", sw.id, "plan_id", plan.PlanID, "node_id", plan.NodeID)
 			plan.State = entities.Success
 			plan.Result = result
-			plan.FinishedAt = timePtr()
+			span.SetAttributes(tracing.PayloadAttributes("output", result.Output)...)
+			span.SetStatus(codes.Ok, "done")
 		}
+		plan.FinishedAt = timePtr()
 
 		if sw.metrics != nil {
 			sw.metrics.TaskDuration.Record(ctx, float64(execDur.Milliseconds()))
@@ -90,22 +142,31 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 		}
 
 		if sw.state != nil {
-			_ = sw.state.SaveTask(ctx, &entities.TaskRunInfo{
-				BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
-				AgentFlowRunID: plan.AgentFlowRunID,
-				NodeID:         plan.NodeID,
-				Status:         plan.State,
-				Output:         planResultOutput(plan.Result),
-				Error:          planResultError(plan.Result),
-				ExecID:         plan.PlanID,
-				Input:          plan.Input,
-			})
+			_ = sw.state.SaveTask(execCtx, taskRunFromPlan(&plan))
 		}
 
-		sw.emitDownstream(ctx, &plan)
+		span.End()
+		sw.emitDownstream(execCtx, &plan)
 	})
+}
 
-	<-ctx.Done()
+func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
+	return &entities.TaskRunInfo{
+		BaseEntity:      entities.BaseEntity{ID: plan.TaskID},
+		AgentFlowRunID:  plan.AgentFlowRunID,
+		NodeID:          plan.NodeID,
+		Status:          plan.State,
+		Input:           plan.Input,
+		Output:          planResultOutput(plan.Result),
+		Error:           planResultError(plan.Result),
+		RetryCount:      plan.RetryCount,
+		MaxRetries:      plan.MaxRetries,
+		ExecID:          fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1),
+		ParentTaskRunID: plan.ParentTaskRunID,
+		Sequence:        plan.RetryCount + 1,
+		StartedAt:       plan.StartedAt,
+		FinishedAt:      plan.FinishedAt,
+	}
 }
 
 func planResultOutput(r *entities.TaskResult) map[string]any {

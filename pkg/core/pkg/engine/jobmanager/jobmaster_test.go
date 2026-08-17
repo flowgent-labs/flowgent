@@ -5,6 +5,11 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 func TestJobManager_BasicTopology(t *testing.T) {
@@ -34,6 +39,20 @@ func TestJobManager_BasicTopology(t *testing.T) {
 	}
 }
 
+func TestBuildExecutionGraphSupportsLegacyNodeType(t *testing.T) {
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: time.Minute})
+	flow := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "legacy-node-type", Namespace: "test"},
+		Nodes:      []entities.Node{{ID: "condition", Type: entities.ConditionNode}},
+	}
+
+	jm.buildExecutionGraph(flow, "run-1")
+	plan := jm.planMap["condition"]
+	if plan == nil || plan.TaskType != entities.TaskCondition || plan.NodeSpec.Kind != entities.ConditionNode {
+		t.Fatalf("legacy node type was not normalized: %#v", plan)
+	}
+}
+
 func TestJobManager_ParallelReady(t *testing.T) {
 	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"A", "C"}})
@@ -56,14 +75,68 @@ func TestJobManager_Skip(t *testing.T) {
 	jm.Skip("B")
 
 	ready := jm.Ready()
-	if len(ready) != 2 {
-		t.Fatalf("expected A and C ready (B skipped), got %v", ready)
+	if len(ready) != 1 || ready[0] != "A" {
+		t.Fatalf("expected only A ready and skipped branch to propagate, got %v", ready)
 	}
 
 	jm.Done("A")
 	ready = jm.Ready()
-	if len(ready) != 1 || ready[0] != "C" {
-		t.Fatalf("expected C ready, got %v", ready)
+	if len(ready) != 0 || !jm.skipped["C"] {
+		t.Fatalf("expected C to remain skipped, ready=%v skipped=%v", ready, jm.skipped["C"])
+	}
+}
+
+func TestJobManager_ConditionalBranchSkipsDescendantsButKeepsMerge(t *testing.T) {
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm.BuildGraphNodes(
+		[]string{"cond", "selected", "not-selected", "not-selected-child", "merge"},
+		[][2]string{
+			{"cond", "selected"},
+			{"cond", "not-selected"},
+			{"not-selected", "not-selected-child"},
+			{"selected", "merge"},
+			{"not-selected-child", "merge"},
+		},
+	)
+	conditionTrue := true
+	conditionFalse := false
+	jm.SetEdgeConditions([]EdgeCondition{
+		{From: "cond", To: "selected", Condition: &conditionTrue},
+		{From: "cond", To: "not-selected", Condition: &conditionFalse},
+	})
+	jm.Done("cond")
+	jm.SetConditionResult("cond", true)
+
+	ready := jm.Ready()
+	if len(ready) != 1 || ready[0] != "selected" {
+		t.Fatalf("expected selected branch only, got %v", ready)
+	}
+	if !jm.skipped["not-selected"] || !jm.skipped["not-selected-child"] {
+		t.Fatalf("inactive branch did not propagate: skipped=%v", jm.skipped)
+	}
+
+	jm.Done("selected")
+	ready = jm.Ready()
+	if len(ready) != 1 || ready[0] != "merge" {
+		t.Fatalf("expected merge through active branch, got %v", ready)
+	}
+}
+
+func TestJobManager_DormantConditionalFeedbackDoesNotBlockInitialPath(t *testing.T) {
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm.BuildGraphNodes(
+		[]string{"start", "work", "feedback-condition"},
+		[][2]string{{"start", "work"}, {"work", "feedback-condition"}, {"feedback-condition", "work"}},
+	)
+	conditionFalse := false
+	jm.SetEdgeConditions([]EdgeCondition{
+		{From: "feedback-condition", To: "work", Condition: &conditionFalse},
+	})
+
+	jm.Done("start")
+	ready := jm.Ready()
+	if len(ready) != 1 || ready[0] != "work" {
+		t.Fatalf("dormant feedback edge blocked initial path: ready=%v", ready)
 	}
 }
 
@@ -201,5 +274,99 @@ func TestModelRetry_Nil(t *testing.T) {
 	}
 	if rp.Initial != time.Second {
 		t.Errorf("default initial should be 1s, got %v", rp.Initial)
+	}
+}
+
+type retryRecordingState struct {
+	tasks map[string]entities.TaskRunInfo
+}
+
+func (s *retryRecordingState) UpdateRun(context.Context, *entities.FlowRunInfo) error { return nil }
+
+func (s *retryRecordingState) SaveTask(_ context.Context, task *entities.TaskRunInfo) error {
+	if s.tasks == nil {
+		s.tasks = make(map[string]entities.TaskRunInfo)
+	}
+	s.tasks[task.ID] = *task
+	return nil
+}
+
+type retryResourceManager struct {
+	failures int
+	calls    int
+}
+
+func (r *retryResourceManager) Provider() engine.Provider      { return engine.ProviderStandalone }
+func (r *retryResourceManager) Validate(context.Context) error { return nil }
+func (r *retryResourceManager) Shutdown(context.Context) error { return nil }
+func (r *retryResourceManager) Schedule(_ context.Context, _ *entities.ExecutionPlan) (*entities.TaskResult, error) {
+	r.calls++
+	if r.calls <= r.failures {
+		return &entities.TaskResult{Error: "transient failure"}, nil
+	}
+	return &entities.TaskResult{Output: map[string]any{"ok": true}}, nil
+}
+
+func TestScheduleNodeWithRetryPersistsEachAttempt(t *testing.T) {
+	state := &retryRecordingState{}
+	rm := &retryResourceManager{failures: 2}
+	jm := NewJobMaster(state, rm, utils.NewLogger("TEXT", "ERROR"), &JobManagerConfig{MaxNodeRetries: 3})
+	jm.tracer = tracing.Tracer("test/jobmaster")
+	plan := &entities.ExecutionPlan{
+		PlanID: "plan-1", TaskID: "task-base", AgentFlowRunID: "run-1",
+		AgentFlowDefinitionID: "flow-1", NodeID: "review", TaskType: entities.TaskAgent,
+		NodeSpec: &entities.NodeSpec{Retry: &entities.RetryPolicy{
+			Max: 2, Initial: utils.UnitDuration{Duration: time.Millisecond},
+			MaxDelay: utils.UnitDuration{Duration: time.Millisecond}, Factor: 1,
+		}},
+	}
+
+	result, err := jm.scheduleNodeWithRetry(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("scheduleNodeWithRetry: %v", err)
+	}
+	if result.Output["ok"] != true || rm.calls != 3 {
+		t.Fatalf("result = %+v, calls = %d", result, rm.calls)
+	}
+	if len(state.tasks) != 3 {
+		t.Fatalf("persisted attempts = %d", len(state.tasks))
+	}
+	var attempts [3]entities.TaskRunInfo
+	for _, task := range state.tasks {
+		attempts[task.RetryCount] = task
+	}
+	for index, task := range attempts {
+		if task.Sequence != index+1 || task.MaxRetries != 2 || task.StartedAt == nil || task.FinishedAt == nil {
+			t.Fatalf("attempt %d = %+v", index+1, task)
+		}
+		expectedStatus := entities.Failed
+		if index == 2 {
+			expectedStatus = entities.Success
+		}
+		if task.Status != expectedStatus {
+			t.Fatalf("attempt %d status = %s", index+1, task.Status)
+		}
+		if index > 0 && task.ParentTaskRunID != attempts[index-1].ID {
+			t.Fatalf("attempt %d parent = %q", index+1, task.ParentTaskRunID)
+		}
+	}
+}
+
+func TestScheduleNodeWithoutRetryRunsOnce(t *testing.T) {
+	state := &retryRecordingState{}
+	rm := &retryResourceManager{failures: 1}
+	jm := NewJobMaster(state, rm, utils.NewLogger("TEXT", "ERROR"), &JobManagerConfig{MaxNodeRetries: 3})
+	jm.tracer = tracing.Tracer("test/jobmaster")
+	plan := &entities.ExecutionPlan{
+		PlanID: "plan-1", TaskID: "task-base", AgentFlowRunID: "run-1",
+		AgentFlowDefinitionID: "flow-1", NodeID: "review", TaskType: entities.TaskAgent,
+		NodeSpec: &entities.NodeSpec{},
+	}
+
+	if _, err := jm.scheduleNodeWithRetry(context.Background(), plan); err == nil {
+		t.Fatal("expected failure")
+	}
+	if rm.calls != 1 || len(state.tasks) != 1 {
+		t.Fatalf("calls = %d, attempts = %d", rm.calls, len(state.tasks))
 	}
 }

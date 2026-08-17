@@ -1,3 +1,6 @@
 [submodule "flowgent-ui"]
 	path = flowgent-ui
 	url = git@github.com:flowgent-labs/flowgent-ui.git
+[submodule "wallet"]
+	path = wallet
+	url = git@github.com:flowgent-labs/flowgent-wallet

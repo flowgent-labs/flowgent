@@ -7,7 +7,7 @@ import "time"
 type BaseEntity struct {
 	ID          string    `json:"id" yaml:"id"`
 	Description string    `json:"description,omitempty" yaml:"description,omitempty"`
-	Namespace    string    `json:"namespace_id,omitempty" yaml:"namespace_id,omitempty"`
+	Namespace   string    `json:"namespace_id,omitempty" yaml:"namespace_id,omitempty"`
 	Status      string    `json:"status" yaml:"status"`
 	CreatedAt   time.Time `json:"created_at" yaml:"created_at"`
 	CreatedBy   string    `json:"created_by,omitempty" yaml:"created_by,omitempty"`

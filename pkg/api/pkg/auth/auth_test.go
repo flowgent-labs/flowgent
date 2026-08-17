@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -78,6 +79,29 @@ func TestAuthService_Middleware_DisabledProvider(t *testing.T) {
 
 	if stub.called {
 		t.Error("disabled provider should not have been called")
+	}
+}
+
+func TestAuthService_Middleware_AuthenticatedIdentityEndpoint(t *testing.T) {
+	svc, _ := NewService(testAuthConfig())
+	token, err := svc.TokenService().IssueAccessToken(&UserInfo{UserID: "u42", Username: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextCalled := false
+	handler := svc.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || nextCalled {
+		t.Fatalf("status = %d, nextCalled = %v", w.Code, nextCalled)
+	}
+	if body := w.Body.String(); !strings.Contains(body, `"id":"u42"`) || !strings.Contains(body, `"username":"alice"`) {
+		t.Fatalf("identity response = %s", body)
 	}
 }
 

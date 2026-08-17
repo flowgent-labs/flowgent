@@ -55,8 +55,12 @@ Steps with Expected I/O:
       Input:   API server pod Running on :9999
       Output:  HTTP 200
 
-    Step 3.3 Log Sanity
-      Action:  kubectl logs -l app.kubernetes.io/component={c} --tail=20 (apiserver/controller/notifier)
+    Step 3.3 A2A Health and Replicas
+      Action:  GET {A2A_URL}/_/healthz + inspect flowgent-a2a Deployment
+      Output:  HTTP 200 and 2/2 available replicas
+
+    Step 3.4 Log Sanity
+      Action:  kubectl logs -l app.kubernetes.io/component={c} --tail=20 (apiserver/controller/notifier/a2a)
       Input:   Pods running, logs accessible
       Output:  0 ERROR/FATAL/PANIC in recent log lines
 """
@@ -253,15 +257,35 @@ def run():
         print(f"  [3.3] Apiserver healthz: not reachable — {e}")
         failures.append(f"apiserver healthz not reachable: {e}")
 
+    # ── L3.4: A2A is required for this suite, including replica safety ──
+    try:
+        import requests
+        a2a_url = config.K8S_A2A_URL
+        r = requests.get(f"{a2a_url}/_/healthz", timeout=5)
+        if r.status_code == 200:
+            print(f"  [3.4] A2A healthz: HTTP 200 — {r.text[:120]}")
+        else:
+            failures.append(f"A2A healthz HTTP {r.status_code}")
+    except Exception as e:
+        failures.append(f"A2A healthz not reachable: {e}")
+    a2a_deployment = kubectl_json([
+        "get", "deployment", "flowgent-a2a", "-n", NAMESPACE,
+    ])
+    if a2a_deployment:
+        desired = a2a_deployment.get("spec", {}).get("replicas", 0)
+        available = a2a_deployment.get("status", {}).get("availableReplicas", 0)
+        print(f"  [3.4] A2A replicas: {available}/{desired} available")
+        if desired != 2 or available != 2:
+            failures.append(f"A2A replicas are {available}/{desired}, want 2/2")
+    else:
+        failures.append("A2A deployment flowgent-a2a not found")
+
     # ── L3.9: Check logs for errors ────────────────────────
-    # jobmanager/taskmanager are NOT Helm-deployed — Session mode (a shared,
-    # Helm-managed JM/TM pool) is temporarily disabled (see VERIFICATION.md).
-    # They only exist as dedicated, Controller-created per-flow Deployments
-    # once any flow is created (label flowgent.io/mode=application, not
-    # app.kubernetes.io/name=jobmanager). Only check components that are
+    # JobManagers and resource-pool workers are Controller/runtime-created and
+    # exist only after actual workload demand. Only check components that are
     # actually always-on Helm Deployments here; scenario 23 checks dedicated
     # JM pod logs separately once a test flow exists.
-    for component in ["apiserver", "controller", "notifier"]:
+    for component in ["apiserver", "controller", "notifier", "a2a"]:
         # Deployments are labeled app.kubernetes.io/component={component}, not
         # app.kubernetes.io/name (which is always the chart name "flowgent" —
         # see deploy/helm/flowgent/templates/apiserver.yaml etc).
@@ -277,11 +301,11 @@ def run():
         if errors > 0:
             failures.append(f"{component} recent logs contain {errors} error/fatal/panic line(s)")
 
-    # ── L3.10: Dedicated application-mode pods/deployments ───────
-    # Flow imports are metadata only. Application-mode JM/TM resources should
+    # ── L3.10: Dedicated Flow JobManager pods/deployments ───────
+    # Flow imports are metadata only. Flow JobManager resources should
     # exist only while real runs are active; test-flow-* leftovers are always
     # leaks after a full redeploy/import cycle.
-    app_pods = kubectl_json(["get", "pods", "-A", "-l", "flowgent.io/mode=application"])
+    app_pods = kubectl_json(["get", "pods", "-A", "-l", "flowgent.io/runtime-boundary=flow-jobmanager"])
     leaked_pods = []
     if app_pods and app_pods.get("items"):
         for pod in app_pods["items"]:
@@ -289,13 +313,13 @@ def run():
             flow_id = labels.get("flowgent.io/flow", "")
             if flow_id.startswith("test-flow-"):
                 leaked_pods.append(f"{pod['metadata'].get('namespace')}/{pod['metadata'].get('name')}")
-        print(f"  [3.10] {len(app_pods['items'])} application-mode pod(s) found")
+        print(f"  [3.10] {len(app_pods['items'])} Flow JobManager pod(s) found")
     else:
-        print(f"  [3.10] No application-mode pods found")
+        print(f"  [3.10] No Flow JobManager pods found")
     if leaked_pods:
-        failures.append(f"leaked test-flow application pods: {leaked_pods}")
+        failures.append(f"leaked test-flow JobManager pods: {leaked_pods}")
 
-    app_deployments = kubectl_json(["get", "deployments", "-A", "-l", "flowgent.io/mode=application"])
+    app_deployments = kubectl_json(["get", "deployments", "-A", "-l", "flowgent.io/runtime-boundary=flow-jobmanager"])
     leaked_deployments = []
     if app_deployments and app_deployments.get("items"):
         for deployment in app_deployments["items"]:
@@ -305,11 +329,11 @@ def run():
                 leaked_deployments.append(
                     f"{deployment['metadata'].get('namespace')}/{deployment['metadata'].get('name')}"
                 )
-        print(f"  [3.11] {len(app_deployments['items'])} application-mode deployment(s) found")
+        print(f"  [3.11] {len(app_deployments['items'])} Flow JobManager deployment(s) found")
     else:
-        print(f"  [3.11] No application-mode deployments found")
+        print(f"  [3.11] No Flow JobManager deployments found")
     if leaked_deployments:
-        failures.append(f"leaked test-flow application deployments: {leaked_deployments}")
+        failures.append(f"leaked test-flow JobManager deployments: {leaked_deployments}")
 
     # ── Summary ────────────────────────────────────────────
     print(f"\n  Preflight check complete.")

@@ -33,6 +33,7 @@ spec:
               containerPort: {{ .Values.a2a.service.port }}
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
+            {{- include "flowgent.workloadTokenEnv" (dict "root" . "component" "a2a") | nindent 12 }}
             - name: FLOWGENT__CONFIG__FILE
               value: /etc/flowgent/flowgent.yaml
             - name: POD_NAME

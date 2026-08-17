@@ -17,15 +17,17 @@ func TestSlotWorker_Execute(t *testing.T) {
 	router := executor.NewTaskExecutorRouter()
 	router.Register(&executor.NoopExecutor{})
 
-	worker := NewSlotWorker("slot-1", "tm-test", q, router, nil, nil)
+	worker := NewSlotWorker("slot-1", "tm-test", "test-namespace", "default", q, router, nil, nil)
 
 	plan := &entities.ExecutionPlan{
-		PlanID:   "plan-test-1",
-		NodeID:   "node-1",
-		TaskType: entities.TaskNoop,
-		State:    entities.TaskPending,
-		Input:    map[string]any{"key": "val"},
-		NodeSpec: &entities.NodeSpec{Type: entities.NoopNode},
+		PlanID:         "plan-test-1",
+		Namespace:      "test-namespace",
+		ResourcePoolID: "default",
+		NodeID:         "node-1",
+		TaskType:       entities.TaskNoop,
+		State:          entities.TaskPending,
+		Input:          map[string]any{"key": "val"},
+		NodeSpec:       &entities.NodeSpec{Type: entities.NoopNode},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -35,7 +37,7 @@ func TestSlotWorker_Execute(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond) // let subscription register
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-flow", "test-run"), &messager.InterMessage{
 		ID:      "msg-1",
 		Payload: payload,
 	})
@@ -46,7 +48,7 @@ func TestSlotWorker_Execute(t *testing.T) {
 func TestSlotWorker_InvalidPayload(t *testing.T) {
 	q := messager.NewLocalMessager(10)
 	router := executor.NewTaskExecutorRouter()
-	worker := NewSlotWorker("slot-2", "tm-test", q, router, nil, nil)
+	worker := NewSlotWorker("slot-2", "tm-test", "test-namespace", "default", q, router, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -54,7 +56,7 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-flow", "test-run"), &messager.InterMessage{
 		ID:      "msg-bad",
 		Payload: []byte("not-valid-json"),
 	})
@@ -67,14 +69,16 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 	router := executor.NewTaskExecutorRouter()
 	router.Register(&failingExecutor{})
 
-	worker := NewSlotWorker("slot-3", "tm-test", q, router, nil, nil)
+	worker := NewSlotWorker("slot-3", "tm-test", "test-namespace", "default", q, router, nil, nil)
 
 	plan := &entities.ExecutionPlan{
-		PlanID:   "plan-fail-1",
-		NodeID:   "node-fail",
-		TaskType: entities.TaskType("failing"),
-		State:    entities.TaskPending,
-		NodeSpec: &entities.NodeSpec{Type: entities.NodeType("failing")},
+		PlanID:         "plan-fail-1",
+		Namespace:      "test-namespace",
+		ResourcePoolID: "default",
+		NodeID:         "node-fail",
+		TaskType:       entities.TaskType("failing"),
+		State:          entities.TaskPending,
+		NodeSpec:       &entities.NodeSpec{Type: entities.NodeType("failing")},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -84,7 +88,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-flow", "test-run"), &messager.InterMessage{
 		ID:      "msg-fail",
 		Payload: payload,
 	})
@@ -94,7 +98,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 
 func TestSlotWorker_EmitDownstreamRetriesPublish(t *testing.T) {
 	q := &flakyMessager{failures: 1}
-	worker := NewSlotWorker("slot-retry", "tm-test", q, nil, nil, nil)
+	worker := NewSlotWorker("slot-retry", "tm-test", "test-namespace", "default", q, nil, nil, nil)
 	plan := &entities.ExecutionPlan{
 		PlanID:                "plan-retry",
 		NodeID:                "node-retry",

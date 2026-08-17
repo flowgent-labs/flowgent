@@ -41,6 +41,77 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{/* Notification DB encryption key; mounted only into API server + Notifier. */}}
+{{- define "flowgent.notificationSecretName" -}}
+{{- if .Values.notifier.secretEncryption.existingSecret }}
+{{- .Values.notifier.secretEncryption.existingSecret }}
+{{- else }}
+{{- printf "%s-notification-encryption" (include "flowgent.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "flowgent.notificationSecretEnv" -}}
+- name: FLOWGENT_NOTIFICATION_KEY_V1
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "flowgent.notificationSecretName" . | quote }}
+      key: {{ .Values.notifier.secretEncryption.keyName | quote }}
+{{- end }}
+
+{{/* API authorization credentials and runtime-only workload credentials. */}}
+{{- define "flowgent.authorizationSecretName" -}}
+{{- if .Values.authorization.existingSecret }}
+{{- .Values.authorization.existingSecret }}
+{{- else }}
+{{- printf "%s-authorization" (include "flowgent.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "flowgent.runtimeAuthorizationSecretName" -}}
+{{- if .Values.authorization.runtimeExistingSecret }}
+{{- .Values.authorization.runtimeExistingSecret }}
+{{- else }}
+{{- printf "%s-runtime-auth" (include "flowgent.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "flowgent.workloadTokenEnv" -}}
+{{- $root := .root -}}
+{{- $component := .component -}}
+- name: FLOWGENT_INTERNAL_TOKEN
+  valueFrom:
+    secretKeyRef:
+      {{- if or (eq $component "jobmanager") (eq $component "taskmanager") }}
+      name: {{ include "flowgent.runtimeAuthorizationSecretName" $root | quote }}
+      key: {{ index $root.Values.authorization (printf "%sKey" $component) | quote }}
+      {{- else }}
+      name: {{ include "flowgent.authorizationSecretName" $root | quote }}
+      key: {{ index $root.Values.authorization (printf "%sKey" $component) | quote }}
+      {{- end }}
+{{- end }}
+
+{{- define "flowgent.authorizationServerEnv" -}}
+- name: FLOWGENT_AUTH_BOOTSTRAP_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "flowgent.authorizationSecretName" . | quote }}
+      key: {{ .Values.authorization.bootstrapKey | quote }}
+{{- range $component := list "controller" "notifier" "a2a" }}
+- name: {{ printf "FLOWGENT_AUTH_%s_TOKEN" (upper $component) }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "flowgent.authorizationSecretName" $ | quote }}
+      key: {{ index $.Values.authorization (printf "%sKey" $component) | quote }}
+{{- end }}
+{{- range $component := list "jobmanager" "taskmanager" }}
+- name: {{ printf "FLOWGENT_AUTH_%s_TOKEN" (upper $component) }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "flowgent.runtimeAuthorizationSecretName" $ | quote }}
+      key: {{ index $.Values.authorization (printf "%sKey" $component) | quote }}
+{{- end }}
+{{- end }}
+
 {{/*
 extraSecretEnv iterates over .Values.secrets.extraSecrets and emits env: entries.
 Each entry maps a K8s Secret key to an optional env var name.
@@ -84,6 +155,7 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 - name: FLOWGENT__MESSAGER__MQTT__BROKER
   value: {{ include "flowgent.mqttBroker" . | quote }}
 {{- end }}
+{{- include "flowgent.extraSecretEnv" . }}
 {{- end }}
 
 {{/* Database URL — only used when postgresql.enabled=true (internal) */}}
@@ -149,11 +221,4 @@ vault.hashicorp.com/agent-inject-template-{{ .fileName }}: |
 {{- range $k, $v := .Values.credentialProviders.serviceAccount.annotations }}
 {{ $k }}: {{ $v | quote }}
 {{- end }}
-{{- end }}
-
-{{/* Wallet master key generation (Ed25519) */}}
-{{- define "flowgent.generateWalletKey" -}}
-{{- $key := genPrivateKey "ed25519" }}
-{{- $_ := set .Values.wallet "generatedMasterKey" ($key | b64enc) }}
-{{- $key | b64enc }}
 {{- end }}

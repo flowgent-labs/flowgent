@@ -12,8 +12,6 @@ Topic Coverage (14 topics, all prefixed flowgent/v1/):
 4.  sandbox/result       - Sandbox → TM
 5.  notify/event         - Publisher → Notifier ($share/notify-pool)
 6.  notify/result        - Notifier → Publisher
-7.  sign/request         - TM → Wallet ($share/wallet-pool)
-8.  sign/response        - Wallet → TM
 9.  heartbeat/{tmId}     - TM → JM
 10. ctrl/flow/updated    - API Server → Controller
 11. ctrl/flow/deleted    - API Server → Controller
@@ -206,16 +204,17 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
     run_id = "run-" + rand_id()
     plan_id = "plan-" + rand_id()
     task_id = "task-" + rand_id()
+    pool_id = "test-pool"
     
     try:
         # Step 1: Subscribe to all relevant topics
         print(f"    • Step 1: Setting up subscriptions...")
         
         # Shared subscription for TM (simulating TM pool, unique group to avoid real TM)
-        tester.subscribe("flowgent/v1/+/flows/+/runs/+/exec/plans")
+        tester.subscribe("flowgent/v1/+/pools/+/flows/+/runs/+/exec/plans")
 
         # Shared subscription for Sandbox (simulating sandbox pool, unique group)
-        tester.subscribe("flowgent/v1/+/flows/+/runs/+/sandbox/trigger")
+        tester.subscribe("flowgent/v1/+/pools/+/flows/+/runs/+/sandbox/trigger")
         
         # Point-to-point for sandbox result (TM receives)
         tester.subscribe(f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result")
@@ -247,13 +246,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/plans",
+            f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
             {"id": plan_id, "payload": json.dumps(exec_plan)}
         )
         
         # Step 3: TM receives ExecutionPlan
         print(f"    • Step 3: TM receives exec/plans...")
-        exec_plans_topic = f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/plans"
+        exec_plans_topic = f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/exec/plans"
         msg = tester.wait_for_message(exec_plans_topic, timeout=3)
         if not msg:
             raise AssertionError("TM did not receive ExecutionPlan")
@@ -272,13 +271,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
+            f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
             {"id": plan_id, "payload": json.dumps(sandbox_req)}
         )
         
         # Step 5: Sandbox receives trigger
         print(f"    • Step 5: Sandbox receives trigger...")
-        sb_trigger_topic = f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
+        sb_trigger_topic = f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
         msg = tester.wait_for_message(sb_trigger_topic, timeout=3)
         if not msg:
             raise AssertionError("Sandbox did not receive trigger")
@@ -370,13 +369,14 @@ def run():
     flow_id = "test-flow-" + rand_id()
     run_id = "run-" + rand_id()
     tm_id = "tm-" + rand_id()
+    pool_id = "test-pool"
 
     # Test topic pairs
     topic_tests = [
         {
             "name": "exec/plans (JM → TM)",
-            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/plans",
-            "subscribe": "flowgent/v1/+/flows/+/runs/+/exec/plans",
+            "publish": f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
+            "subscribe": "flowgent/v1/+/pools/+/flows/+/runs/+/exec/plans",
             "payload": {"plan_id": rand_id(), "task_type": "agent"},
         },
         {
@@ -396,32 +396,6 @@ def run():
             "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/notify/result",
             "subscribe": f"flowgent/v1/+/flows/+/runs/+/notify/result",
             "payload": {"status": "delivered", "channel": "webhook"},
-        },
-        {
-            "name": "sign/request (TM → Wallet)",
-            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sign/request",
-            "subscribe": "flowgent/v1/+/flows/+/runs/+/sign/request",
-            "payload": {
-                "namespace_id": namespace,
-                "flow_id": flow_id,
-                "run_id": run_id,
-                "request_id": rand_id(),
-                "wallet": "default",
-                "payload": "unsigned",
-            },
-        },
-        {
-            "name": "sign/response (Wallet → TM)",
-            "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sign/response",
-            "subscribe": f"flowgent/v1/+/flows/+/runs/+/sign/response",
-            "payload": {
-                "namespace_id": namespace,
-                "flow_id": flow_id,
-                "run_id": run_id,
-                "request_id": rand_id(),
-                "wallet": "default",
-                "signature": "a" * 128,
-            },
         },
         {
             "name": "heartbeat/{tmId} (TM → JM)",

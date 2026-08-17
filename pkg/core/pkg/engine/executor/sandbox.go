@@ -37,13 +37,25 @@ import (
 //
 //	flowgent/v1/sandbox/result/{flowId}/{runId}   (point-to-point)
 type SandboxExecutor struct {
-	queue     messager.IMessager
-	policy    *model.SandboxPolicy
-	workspace string
+	queue                 messager.IMessager
+	policy                *model.SandboxPolicy
+	workspace             string
+	runtimeConfigResolver RuntimeConfigResolver
+}
+
+// RuntimeConfigResolver provides the effective namespace→Flow configuration.
+// Resolving per attempt keeps shared resource-pool workers stateless and
+// prevents one Flow's environment or secrets from leaking into another Flow.
+type RuntimeConfigResolver interface {
+	ResolveFlowRuntimeConfig(ctx context.Context, namespace, flowID string) (*entities.ResolvedRuntimeConfig, error)
 }
 
 func NewSandboxExecutor(q messager.IMessager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
 	return &SandboxExecutor{queue: q, policy: policy, workspace: workspace}
+}
+
+func (e *SandboxExecutor) SetRuntimeConfigResolver(resolver RuntimeConfigResolver) {
+	e.runtimeConfigResolver = resolver
 }
 
 func (e *SandboxExecutor) TaskType() entities.TaskType { return entities.TaskSandbox }
@@ -73,25 +85,30 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 	}
 
 	trigger := &model.SandboxTrigger{
-		Namespace:     plan.Namespace,
-		FlowID:        plan.AgentFlowDefinitionID,
-		RunID:         plan.AgentFlowRunID,
-		PlanID:        plan.PlanID,
-		ScriptPath:    scriptPath,
-		Runtime:       plan.NodeSpec.Runtime,
-		Timeout:       plan.NodeSpec.Timeout,
-		Resources:     plan.NodeSpec.Resources,
-		NetworkPolicy: plan.NodeSpec.NetworkPolicy,
-		Workspace:     plan.NodeSpec.Workspace,
-		SpanID:        spanID,
+		Namespace:      plan.Namespace,
+		ResourcePoolID: plan.ResourcePoolID,
+		FlowID:         plan.AgentFlowDefinitionID,
+		RunID:          plan.AgentFlowRunID,
+		PlanID:         plan.PlanID,
+		ScriptPath:     scriptPath,
+		Runtime:        plan.NodeSpec.Runtime,
+		Timeout:        plan.NodeSpec.Timeout,
+		Resources:      plan.NodeSpec.Resources,
+		NetworkPolicy:  plan.NodeSpec.NetworkPolicy,
+		Workspace:      plan.NodeSpec.Workspace,
+		SpanID:         spanID,
 	}
-	trigger.Env = config.LoadCredentials("/var/flowgent", plan.Namespace, plan.AgentFlowDefinitionID, nil)
+	resolvedEnv, err := e.resolveEnvironment(ctx, plan)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox resolve runtime configuration: %w", err)
+	}
+	trigger.Env = resolvedEnv
 	payload, err := json.Marshal(trigger)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox marshal trigger: %w", err)
 	}
 
-	triggerTopic := messager.SandboxTriggerTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
+	triggerTopic := messager.SandboxTriggerTopic(plan.Namespace, plan.ResourcePoolID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 	resultTopic := messager.SandboxResultTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 
 	resultCh := make(chan *entities.TaskResult, 1)
@@ -136,6 +153,31 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 			return &entities.TaskResult{Error: "sandbox execution timeout"}, nil
 		}
 	}
+}
+
+func (e *SandboxExecutor) resolveEnvironment(ctx context.Context, plan *entities.ExecutionPlan) (map[string]string, error) {
+	env := config.LoadCredentials("/var/flowgent", plan.Namespace, plan.AgentFlowDefinitionID, nil)
+	if env == nil {
+		env = make(map[string]string)
+	}
+	if e.runtimeConfigResolver == nil {
+		return env, nil
+	}
+	resolved, err := e.runtimeConfigResolver.ResolveFlowRuntimeConfig(ctx, plan.Namespace, plan.AgentFlowDefinitionID)
+	if err != nil {
+		return nil, err
+	}
+	if resolved == nil {
+		return env, nil
+	}
+	for key, value := range resolved.Environment {
+		env[key] = value
+	}
+	// A secret intentionally wins over an environment entry with the same key.
+	for key, value := range resolved.Secrets {
+		env[key] = value
+	}
+	return env, nil
 }
 
 func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan) string {

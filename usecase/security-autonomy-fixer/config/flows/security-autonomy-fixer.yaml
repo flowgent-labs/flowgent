@@ -8,16 +8,16 @@ metadata:
   description: End-to-end SonarQube SAST security remediation pipeline — discovery, analyze, fix, review, vote, approve, commit
 data:
   id: security-autonomy-fixer
-  priority: high
+  resource_pool_id: default
   description: "SonarQube-only developer remediation agentflow for security vulnerabilities:\n\n1. DISCOVERY — Fetch latest\
     \ commit; query SonarQube SAST issues via MCP.\n2. ANALYZE — issue-detector agent parses, normalizes, deduplicates, and\n\
     \   assigns severity to all SonarQube findings.\n3. FIX — fixer-agent analyzes root cause and generates minimal secure\
     \ patches.\n4. REVIEW — Three agents (security, quality, architecture) review in parallel.\n5. VOTE — Deterministic majority\
     \ vote decides whether to proceed.\n6. SUPERVISOR — Safety gate with bounded retries, injection limits, abort.\n7. CONDITIONAL\
-    \ — Based on vote: proceed to human approval or loop back to fix.\n8. HUMAN APPROVAL — Async approval gate (24h timeout)\
+    \ — Record the vote and always proceed to the human safety gate.\n8. HUMAN APPROVAL — Async approval gate (24h timeout)\
     \ before code push.\n9. COMMIT & PR — Check for existing open PR first (idempotent); reuse if found, else create branch,\
     \ push, open new PR.\n10. RE-SCAN — Trigger SonarQube re-analysis, poll for completion, compare\n    pre/post results.\
-    \ If unresolved issues remain → loop back to fix\n    (max 3 iterations).\n11. REPORT — Compile final summary, notify\
+    \ Incomplete results are recorded for a bounded follow-up run.\n11. REPORT — Compile final summary, notify\
     \ via PR comment + email + webhook.\n"
   vars:
     repo: rengine
@@ -455,6 +455,8 @@ data:
   - id: is-approved
     kind: condition
     expression: ${committee.decision} == true
+  - id: review-needs-human
+    kind: noop
   - id: human-approval
     kind: human
     approval:
@@ -661,6 +663,8 @@ data:
   - id: fix-complete
     kind: condition
     expression: ${compare-results.resolution} == 'complete' || ${compare-results.resolution} == 'max_iterations_reached'
+  - id: remediation-incomplete
+    kind: noop
   - id: summary-report
     kind: agent
     instruction: 'Generate a final summary report in markdown format.
@@ -748,6 +752,11 @@ data:
   - from: is-approved
     to: human-approval
     condition: true
+  - from: is-approved
+    to: review-needs-human
+    condition: false
+  - from: review-needs-human
+    to: human-approval
   - from: human-approval
     to: check-existing-pr
   - from: check-existing-pr
@@ -762,9 +771,6 @@ data:
     to: commit-fixes
   - from: commit-fixes
     to: create-pr
-  - from: is-approved
-    to: generate-fixes
-    condition: false
   - from: create-pr
     to: trigger-rescan
   - from: commit-to-existing
@@ -780,10 +786,12 @@ data:
   - from: fix-complete
     to: summary-report
     condition: true
+  - from: fix-complete
+    to: remediation-incomplete
+    condition: false
+  - from: remediation-incomplete
+    to: summary-report
   - from: summary-report
     to: notify-pr
   - from: notify-pr
     to: end
-  - from: fix-complete
-    to: generate-fixes
-    condition: false

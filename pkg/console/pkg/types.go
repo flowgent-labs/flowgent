@@ -15,19 +15,12 @@ type ExportData struct {
 	AgentDefs  []entities.AgentInfo         `json:"agentDefs" yaml:"agentDefs"`
 	AgentFlows []entities.FlowInfo          `json:"agentFlows" yaml:"agentFlows"`
 	FlowRuns   []entities.FlowRunInfo       `json:"flowRuns" yaml:"flowRuns"`
-	Wallets    []WalletExport               `json:"wallets" yaml:"wallets"`
-}
-
-// WalletExport is the exported form of a wallet key.
-type WalletExport struct {
-	Name       string `json:"name" yaml:"name"`
-	PrivateKey string `json:"private_key" yaml:"private_key"`
 }
 
 // ResourceMetadata holds the metadata block common to all K8s-style resources.
 type ResourceMetadata struct {
 	Name        string            `json:"name" yaml:"name"`
-	Namespace      string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Status      string            `json:"status,omitempty" yaml:"status,omitempty"`
 	Description string            `json:"description,omitempty" yaml:"description,omitempty"`

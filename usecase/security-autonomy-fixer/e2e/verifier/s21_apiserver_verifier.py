@@ -19,12 +19,12 @@ Entity → Table → REST Path:
 Steps with Expected I/O:
   Step 1. Flow CRUD
     Action:  POST → GET → PUT → DELETE /api/v1/{namespace}/flows
-    Input:   {id, nodes, edges, priority}
+    Input:   {id, nodes, edges, resource_pool_id}
     Output:  Create→201, Read→flow object, Update→version++, Delete→200/204
 
   Step 2. Run Lifecycle
     Action:  POST /api/v1/{namespace}/runs → GET → trigger
-    Input:   {agentflow_id, priority}
+    Input:   {agentflow_id, resource_pool_id}
     Output:  Create→201 (status=PENDING), Trigger→200 (run_id)
 
   Step 3. Task Query
@@ -71,6 +71,7 @@ import requests
 from typing import Dict, Any, Optional
 
 from common import config
+from common import api as common_api
 
 # Try importing MQTT client
 try:
@@ -100,16 +101,17 @@ def rand_id() -> str:
 def http_request(method: str, path: str, payload: Optional[Dict] = None, timeout: int = 10) -> Dict[str, Any]:
     """Make HTTP request to API server"""
     url = f"{API_BASE}{path}"
+    headers = common_api.flowgent_headers()
     
     try:
         if method == "GET":
-            resp = requests.get(url, timeout=timeout)
+            resp = requests.get(url, headers=headers, timeout=timeout)
         elif method == "POST":
-            resp = requests.post(url, json=payload, timeout=timeout)
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
         elif method == "PUT":
-            resp = requests.put(url, json=payload, timeout=timeout)
+            resp = requests.put(url, json=payload, headers=headers, timeout=timeout)
         elif method == "DELETE":
-            resp = requests.delete(url, timeout=timeout)
+            resp = requests.delete(url, headers=headers, timeout=timeout)
         else:
             raise ValueError(f"Unsupported method: {method}")
         
@@ -266,7 +268,7 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         if resp["status_code"] != 200:
             raise AssertionError(f"LIST failed: {resp['status_code']}")
 
-        items = resp["data"] if isinstance(resp["data"], list) else resp["data"].get("items", [])
+        items = resp["data"] if isinstance(resp["data"], list) else (resp["data"].get("items") or [])
         if not isinstance(items, list):
             raise AssertionError(f"LIST did not return array")
 
@@ -320,7 +322,7 @@ def test_crud_entity(entity_name: str, table_name: str, base_path: str,
         resp = http_request("GET", f"{base_path}?limit=10")
         if resp["status_code"] != 200:
             raise AssertionError(f"LIST after DELETE failed: {resp['status_code']}")
-        items = resp["data"] if isinstance(resp["data"], list) else resp["data"].get("items", [])
+        items = resp["data"] if isinstance(resp["data"], list) else (resp["data"].get("items") or [])
         still_listed = any(item.get(list_search_field) == created_id or item.get(id_field) == created_id for item in items)
         if still_listed:
             raise AssertionError("DELETE did not hide item from LIST")
@@ -674,8 +676,8 @@ def run():
             "id_field": "name",
             "create": {
                 "name": f"test-mcp-{rand_id()}",
-                "type": "stdio",
-                "command": ["node", "server.js"],
+                "type": "streamable-http",
+                "url": "https://example.com/mcp",
                 "enabled": True,
             },
             "update": {"enabled": False},
@@ -688,10 +690,17 @@ def run():
             "create": {
                 "provider": "openai",
                 "endpoint": "https://api.openai.com/v1",
-                "apikey": "sk-test",
+                "api_key_env": "FLOWGENT_E2E_TEST_LLM_KEY",
                 "defaultModel": "gpt-4",
+                "enabled": True,
             },
-            "update": {"timeout_ms": 60000},
+            "update": {
+                "provider": "openai",
+                "endpoint": "https://api.openai.com/v1",
+                "defaultModel": "gpt-4",
+                "enabled": True,
+                "timeout_ms": 60000,
+            },
         },
         {
             "name": "Channel",

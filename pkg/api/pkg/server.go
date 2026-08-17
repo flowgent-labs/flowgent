@@ -21,6 +21,11 @@ func RegisterRESTRoutes(
 	mcpH *handler.McpHandler,
 	webhook *handler.WebhookHandler,
 	knowledgeHandler *handler.KnowledgeHandler,
+	traceHandler *handler.TraceHandler,
+	iamHandler *handler.IAMHandler,
+	flowRelease *handler.FlowReleaseHandler,
+	runtimeConfig *handler.RuntimeConfigHandler,
+	resourcePools *handler.ResourcePoolHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -46,6 +51,50 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/trigger", flowDef.Trigger)
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/{id}/trigger", flowDef.TriggerByID)
 
+	// Flow-scoped run aliases make exact-Flow grants cover its complete run,
+	// task, approval, and trace surface without trusting query parameters.
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs", flowRun.List)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Get)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/cancel", flowRun.Cancel)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/tasks", flowRun.ListTasks)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/tasks/{task_id}", flowRun.GetTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.ListRunApprovals)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/approve", human.ApproveRun)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/reject", human.RejectRun)
+	if traceHandler != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/trace", traceHandler.GetRunTrace)
+	}
+	if iamHandler != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/iam/options", iamHandler.FlowAccessOptions)
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/iam/bindings", iamHandler.ListFlowBindings)
+		mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/iam/bindings", iamHandler.CreateFlowBinding)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{flow_id}/iam/bindings/{binding_id}", iamHandler.DeleteFlowBinding)
+	}
+	if runtimeConfig != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/runtime-config", runtimeConfig.GetNamespace)
+		mux.HandleFunc("PUT /api/v1/{namespace}/runtime-config/environment", runtimeConfig.UpdateNamespaceEnvironment)
+		mux.HandleFunc("PUT /api/v1/{namespace}/runtime-config/secrets", runtimeConfig.UpdateNamespaceSecrets)
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config", runtimeConfig.GetFlow)
+		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/environment", runtimeConfig.UpdateFlowEnvironment)
+		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/secrets", runtimeConfig.UpdateFlowSecrets)
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config/resolved", runtimeConfig.ResolveFlow)
+	}
+	if resourcePools != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/resource-pools", resourcePools.List)
+		mux.HandleFunc("POST /api/v1/{namespace}/resource-pools", resourcePools.Create)
+		mux.HandleFunc("GET /api/v1/{namespace}/resource-pools/{name}", resourcePools.Get)
+		mux.HandleFunc("PUT /api/v1/{namespace}/resource-pools/{name}", resourcePools.Update)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/resource-pools/{name}", resourcePools.Delete)
+	}
+
+	// ── Runtime Skills (kind=skill Flow definitions) ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/skills", flowDef.ListSkills)
+	mux.HandleFunc("POST /api/v1/{namespace}/skills", flowDef.CreateSkill)
+	mux.HandleFunc("GET /api/v1/{namespace}/skills/{id}", flowDef.GetSkill)
+	mux.HandleFunc("PUT /api/v1/{namespace}/skills/{id}", flowDef.UpdateSkill)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/skills/{id}", flowDef.DeleteSkill)
+
 	// ── Runs (namespace-scoped) ───────────────────────────────
 	mux.HandleFunc("POST /api/v1/{namespace}/runs", flowRun.Create)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs", flowRun.List)
@@ -57,6 +106,12 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks", flowRun.ListTasks)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.GetTask)
 	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.UpdateTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/approvals", human.ListRunApprovals)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/approve", human.ApproveRun)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/reject", human.RejectRun)
+	if traceHandler != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/trace", traceHandler.GetRunTrace)
+	}
 
 	// ── Human Approvals ────────────────────────────────────
 	mux.HandleFunc("POST /api/v1/human/approvals", human.CreateApproval)
@@ -94,6 +149,54 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("PUT /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Update)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Delete)
 	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/search", knowledgeHandler.Search)
+
+	// ── Identity and namespace-scoped authorization ──────────
+	if iamHandler != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/me", iamHandler.CurrentPrincipal)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/namespaces", iamHandler.Namespace)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/namespaces", iamHandler.CreateNamespace)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/namespaces/{id}", iamHandler.GetNamespace)
+		mux.HandleFunc("PUT /api/v1/{namespace}/iam/namespaces/{id}", iamHandler.UpdateNamespace)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/namespaces/{id}", iamHandler.DeleteNamespace)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/permissions", iamHandler.ListPermissions)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/principals", iamHandler.ListPrincipals)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/principals", iamHandler.CreatePrincipal)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/principals/{id}", iamHandler.GetPrincipal)
+		mux.HandleFunc("PUT /api/v1/{namespace}/iam/principals/{id}", iamHandler.UpdatePrincipal)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/principals/{id}", iamHandler.DeletePrincipal)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/groups", iamHandler.ListGroups)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/groups", iamHandler.CreateGroup)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/groups/{id}", iamHandler.GetGroup)
+		mux.HandleFunc("PUT /api/v1/{namespace}/iam/groups/{id}", iamHandler.UpdateGroup)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/groups/{id}", iamHandler.DeleteGroup)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/groups/{id}/members", iamHandler.ListGroupMembers)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/groups/{id}/members", iamHandler.AddGroupMember)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/groups/{id}/members/{member_id}", iamHandler.DeleteGroupMember)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/roles", iamHandler.ListRoles)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/roles", iamHandler.CreateRole)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/roles/{id}", iamHandler.GetRole)
+		mux.HandleFunc("PUT /api/v1/{namespace}/iam/roles/{id}", iamHandler.UpdateRole)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/roles/{id}", iamHandler.DeleteRole)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/bindings", iamHandler.ListBindings)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/bindings", iamHandler.CreateBinding)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/bindings/{id}", iamHandler.DeleteBinding)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/api-keys", iamHandler.ListAPIKeys)
+		mux.HandleFunc("POST /api/v1/{namespace}/iam/api-keys", iamHandler.CreateAPIKey)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/api-keys/{id}", iamHandler.RevokeAPIKey)
+		mux.HandleFunc("GET /api/v1/{namespace}/iam/audit", iamHandler.ListAudit)
+	}
+	// ── Immutable Flow releases and consumer installations ───
+	if flowRelease != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases", flowRelease.List)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases", flowRelease.Publish)
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases/{id}", flowRelease.Get)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/revoke", flowRelease.Revoke)
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases/{id}/grants", flowRelease.ListGrants)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/grants", flowRelease.CreateGrant)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/flow-releases/{id}/grants/{grant_id}", flowRelease.DeleteGrant)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/install", flowRelease.Install)
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-installations", flowRelease.ListInstallations)
+	}
 	// ── WebSocket (namespace-scoped) ──────────────────────────
 	if ws != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/ws/human-approvals", ws.HandleHumanApprovals)

@@ -34,13 +34,14 @@ NAMESPACE_ID      = os.getenv("FLOWGENT_NAMESPACE_ID", "default")
 K8S_NAMESPACE     = SYSTEM_NAMESPACE
 # Must match namespace.namespace_prefix (etc/flowgent.yaml / helm values.yaml
 # namespace.namespacePrefix, both default "flowgent-") — this is the PREFIX of
-# where the Controller places each flow's dedicated JM Deployment (Application
-# mode): namespace = "{prefix}{namespace_id}" (per-NAMESPACE, not per-flow — every
-# flow of the same namespace shares one namespace), NOT SYSTEM_NAMESPACE. See
-# pkg/controller/pkg/controller.go applicationNamespace / pkg/api/pkg/handler/
-# flow_def.go applicationNamespace.
-K8S_APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K8S_APP_NAMESPACE_PREFIX", "flowgent-")
-K8S_APP_NAMESPACE = f"{K8S_APP_NAMESPACE_PREFIX}{NAMESPACE_ID}"
+# where the Controller places each Flow's dedicated JM and namespace-scoped Pool
+# workers: namespace = "{prefix}{namespace_id}" (per-Namespace, not per-Flow),
+# NOT SYSTEM_NAMESPACE. The old environment name remains a compatibility input.
+K8S_WORKLOAD_NAMESPACE_PREFIX = os.getenv(
+    "FLOWGENT_K8S_WORKLOAD_NAMESPACE_PREFIX",
+    "flowgent-",
+)
+K8S_WORKLOAD_NAMESPACE = f"{K8S_WORKLOAD_NAMESPACE_PREFIX}{NAMESPACE_ID}"
 
 # ── PostgreSQL ───────────────────────────────────────────────────
 PG_HOST     = os.getenv("FLOWGENT_PG_HOST",     "localhost")
@@ -62,11 +63,6 @@ JAEGER_OTLP    = os.getenv("FLOWGENT_JAEGER_OTLP", "http://localhost:4318")
 # ── SonarQube ────────────────────────────────────────────────────
 SONARQUBE_URL   = os.getenv("FLOWGENT_SONARQUBE_URL",   "http://localhost:9000")
 SONARQUBE_TOKEN = os.getenv("FLOWGENT_SONARQUBE_TOKEN", "")
-
-# ── Wallet (x402 signing daemon) ─────────────────────────────────
-#    HTTP key-management API + async MQTT signing (sign/request→sign/response).
-WALLET_URL    = os.getenv("FLOWGENT_WALLET_URL",    "http://localhost:9901")
-WALLET_NAME   = os.getenv("FLOWGENT_WALLET_NAME",   "default")
 
 # ── K8S / kubectl paths ──────────────────────────────────────────
 KUBECTL_BIN = os.getenv("KUBECTL_BIN", "kubectl")

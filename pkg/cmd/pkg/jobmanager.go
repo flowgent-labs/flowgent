@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -72,6 +73,23 @@ func startJobManager(cfgPath string) error {
 	if namespace == "" {
 		namespace = "default"
 	}
+	agentFlowID := svcCfg.Runtime.AgentFlowID
+	poolID := svcCfg.Runtime.ResourcePoolID
+	if poolID == "" && agentFlowID != "" {
+		if flow, loadErr := apiClient.GetFlow(context.Background(), namespace, agentFlowID); loadErr == nil && flow != nil {
+			poolID = flow.ResourcePoolID
+		}
+	}
+	if poolID == "" {
+		poolID = "default"
+	}
+	pool, err := apiClient.GetResourcePool(context.Background(), namespace, poolID)
+	if err != nil {
+		return fmt.Errorf("load resource pool %s: %w", poolID, err)
+	}
+	if pool == nil {
+		return fmt.Errorf("resource pool %s/%s not found", namespace, poolID)
+	}
 
 	stateClient := &client.RunStateClient{Client: apiClient, Namespace: namespace}
 	taskClient := &client.TaskStateClient{Client: apiClient, Namespace: namespace}
@@ -89,16 +107,10 @@ func startJobManager(cfgPath string) error {
 
 	tmDeploy := svcCfg.Runtime.TMDeploy
 	if tmDeploy == "" {
-		tmDeploy = "flowgent-taskmanager"
+		tmDeploy = resourceid.KubernetesName("flowgent-taskmanager", namespace, poolID)
 	}
-	if agentFlowID := svcCfg.Runtime.AgentFlowID; agentFlowID != "" && tmDeploy == "flowgent-taskmanager" {
-		tmDeploy = fmt.Sprintf("flowgent-taskmanager-%s-%s", namespace, agentFlowID)
-	}
-	sandboxDeploy := sandboxDeploymentName(namespace, svcCfg.Runtime.AgentFlowID)
-	slotsPerTM := svcCfg.Runtime.TMSlots
-	if slotsPerTM <= 0 {
-		slotsPerTM = 4
-	}
+	sandboxDeploy := resourceid.KubernetesName("flowgent-sandbox", namespace, poolID)
+	slotsPerTM := pool.SlotsPerPod
 	tmImage := svcCfg.Runtime.TMImage
 	if tmImage == "" {
 		tmImage = svcCfg.Runtime.JMImage
@@ -106,10 +118,13 @@ func startJobManager(cfgPath string) error {
 	postgresDSN := postgresDSNFromConfig(svcCfg)
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		rm, _ = resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-			Provider: engine.ProviderKubernetes, SlotsPerTM: slotsPerTM, MinTMs: 0, MaxTMs: 10,
+			Provider: engine.ProviderKubernetes, SlotsPerTM: slotsPerTM, MinTMs: pool.Replicas, MaxTMs: pool.Replicas,
 			K8sNamespace:      runtimeNamespace,
 			K8sDeploymentName: tmDeploy,
 			TMImage:           tmImage,
+			TMResources:       pool.Resources,
+			PriorityClassName: pool.PriorityClassName,
+			NodeSelector:      pool.NodeSelector,
 			TaskState:         taskClient,
 			ApprovalInfo:      humanClient,
 			Logger:            logger, Messager: q,
@@ -118,18 +133,22 @@ func startJobManager(cfgPath string) error {
 			APIServerURL:             svcCfg.Runtime.APIServerURL,
 			Namespace:                namespace,
 			CredentialEnvSecret:      svcCfg.Runtime.CredentialEnvSecret,
+			InternalAuthSecret:       svcCfg.Runtime.InternalAuthSecret,
+			TaskManagerAuthKey:       svcCfg.Runtime.TaskManagerAuthKey,
 			OwnerNamespaceID:         namespace,
-			OwnerFlowID:              svcCfg.Runtime.AgentFlowID,
-			OwnerJobManagerName:      jobManagerDeploymentName(namespace, svcCfg.Runtime.AgentFlowID),
+			ResourcePoolID:           poolID,
+			OwnerFlowID:              agentFlowID,
+			OwnerJobManagerName:      jobManagerDeploymentName(namespace, agentFlowID),
 			OwnerJobManagerNamespace: runtimeNamespace,
 			SandboxWorkspace:         svcCfg.Sandbox.Workspace,
 			SandboxHostWorkspace:     svcCfg.Sandbox.HostWorkspace,
 			SandboxEnabled:           svcCfg.Sandbox.Deployment.Enabled,
 			SandboxImage:             svcCfg.Sandbox.Deployment.Image,
 			SandboxDeploymentName:    sandboxDeploy,
-			SandboxMinReplicas:       svcCfg.Sandbox.Deployment.MinReplicas,
-			SandboxMaxReplicas:       svcCfg.Sandbox.Deployment.MaxReplicas,
-			SandboxSlotsPerPod:       svcCfg.Sandbox.Deployment.SlotsPerPod,
+			SandboxMinReplicas:       pool.SandboxReplicas,
+			SandboxMaxReplicas:       pool.SandboxReplicas,
+			SandboxSlotsPerPod:       pool.SandboxSlotsPerPod,
+			SandboxResources:         pool.SandboxResources,
 			SandboxPolicy:            svcCfg.Sandbox.Policy,
 		})
 	}
@@ -139,8 +158,9 @@ func startJobManager(cfgPath string) error {
 			TaskState:    taskClient,
 			ApprovalInfo: humanClient,
 			Logger:       logger, Messager: q,
-			APIServerURL: svcCfg.Runtime.APIServerURL,
-			Namespace:    namespace,
+			APIServerURL:   svcCfg.Runtime.APIServerURL,
+			Namespace:      namespace,
+			ResourcePoolID: poolID,
 		})
 	}
 	defer func() {
@@ -158,8 +178,6 @@ func startJobManager(cfgPath string) error {
 		return fmt.Errorf("create jobmanager run lock: %w", err)
 	}
 	jm.SetRunLock(runLock)
-
-	agentFlowID := svcCfg.Runtime.AgentFlowID
 
 	flows := make(map[string]*entities.FlowInfo)
 	if agentFlowID != "" {
@@ -205,7 +223,7 @@ func jobManagerDeploymentName(namespaceID, flowID string) string {
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
-	return fmt.Sprintf("flowgent-jobmanager-%s-%s", namespaceID, flowID)
+	return resourceid.KubernetesName("flowgent-jobmanager", namespaceID, flowID)
 }
 
 func sandboxDeploymentName(namespaceID, flowID string) string {
@@ -215,7 +233,7 @@ func sandboxDeploymentName(namespaceID, flowID string) string {
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
-	return fmt.Sprintf("flowgent-sandbox-%s-%s", namespaceID, flowID)
+	return resourceid.KubernetesName("flowgent-sandbox", namespaceID, flowID)
 }
 
 func postgresDSNFromConfig(cfg *config.FlowgentConfig) string {

@@ -35,10 +35,14 @@ mgmt:
     server_bind: "0.0.0.0:6669"
   otel:
     enabled: true
-    endpoint: "localhost:4317"
-    protocol: grpc                # http/protobuf | http/json | grpc
+    endpoint: "http://localhost:4318"
+    protocol: http/protobuf
     timeout: 10000
     sample_rate: 1.0
+    query_endpoint: "http://localhost:16686"
+    query_timeout: 10000
+    query_lookback: "24h"
+    query_limit: 20
   metrics:
     enabled: false                # prometheus metrics (otel SDK)
     prometheus: true
@@ -68,9 +72,20 @@ auth:
     - "/_/healthz/**"
     - "/swagger-ui/**"
     - "/.well-known/**"
-    - "/a2a/**"
-    - "/api/v1/**"
-    - "/api/v1/human/**"
+  authorization:
+    enabled: true
+    enforcement: "enforce"       # enforce | audit | disabled
+    bootstrap_token: "${FLOWGENT_AUTH_BOOTSTRAP_TOKEN}"
+    internal_tokens:
+      controller: "${FLOWGENT_AUTH_CONTROLLER_TOKEN}"
+      jobmanager: "${FLOWGENT_AUTH_JOBMANAGER_TOKEN}"
+      taskmanager: "${FLOWGENT_AUTH_TASKMANAGER_TOKEN}"
+      notifier: "${FLOWGENT_AUTH_NOTIFIER_TOKEN}"
+      a2a: "${FLOWGENT_AUTH_A2A_TOKEN}"
+      allinone: "${FLOWGENT_AUTH_ALLINONE_TOKEN}"
+    audit_allow: true
+    audit_deny: true
+    trusted_proxy_cidrs: []
   oidc:
     enabled: false
     client_id: "<YOUR_OIDC_CLIENT_ID>"
@@ -153,6 +168,31 @@ storage:
     min_connections: 2
     max_connections: 20
     use_ssl: false
+  # Complete TaskRun input/output remains part of the REST resource. The
+  # default provider stores JSON inline in the DB; S3/GCS keep only a versioned,
+  # checksummed reference in JSONB and the API Server transparently hydrates it.
+  artifacts:
+    provider: default             # default | s3 | gcs
+    inline_max_bytes: 262144      # S3/GCS: keep values up to 256 KiB inline
+    max_payload_bytes: 67108864   # reject a single JSON payload above 64 MiB
+    compression: gzip             # none | gzip (external objects only)
+    prefix: flowgent/task-runs
+    put_timeout: 30s
+    get_timeout: 30s
+    verify_checksum: true
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""               # optional S3-compatible endpoint
+      force_path_style: false
+      access_key_id: ""          # empty = AWS SDK default credential chain
+      secret_access_key: ""
+      session_token: ""
+    gcs:
+      bucket: ""
+      endpoint: ""               # optional emulator/compatible endpoint
+      credentials_file: ""       # empty = Application Default Credentials
+      anonymous: false
 
 # ── Messager ─────────────────────────────────────────────────────────────────
 #    Inter-component message queue. All non-apiserver components (controller,
@@ -245,6 +285,14 @@ notifier:
   cleanup_interval: 30s
   # Max age for subscription routes before they are considered orphaned.
   route_timeout: 5m
+  # Dynamic notification credentials are UI-managed and stored in DB only as
+  # authenticated ciphertext. Inject the 32-byte base64 master key through a
+  # Kubernetes Secret/environment variable; keep old keys during rotation.
+  secret_encryption:
+    provider: "aesgcm"
+    active_key_id: "v1"
+    keys:
+      v1: "${FLOWGENT_NOTIFICATION_KEY_V1}"
   # WebSocket push notification settings.
   websocket:
     ping_interval: 30s
@@ -276,6 +324,9 @@ runtime:
   k8s_namespace: "flowgen-system"
   tm_orphan_timeout: "3m"
   credential_env_secret: ""
+  internal_auth_secret: "flowgent-runtime-auth"
+  jobmanager_auth_key: "jobmanager-token"
+  taskmanager_auth_key: "taskmanager-token"
   # agentFlowId: ""              # set by JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
   # tmId: ""                     # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
   tm_deploy: "flowgent-taskmanager"
@@ -286,38 +337,26 @@ runtime:
   # podIndex: 0                  # set by K8s downward API (FLOWGENT__RUNTIME__POD_INDEX)
   # podTotal: 1                  # set by K8s downward API (FLOWGENT__RUNTIME__POD_TOTAL)
 
-# ── Wallet (x402) ────────────────────────────────────────────────────────────
-#    Optional economic layer. Disabled by default — flowgent runs as a pure
-#    orchestration engine without payment features.
-#
-#    Architecture: The wallet manager subscribes to unsigned x402 payment
-#    messages via the messager (MQTT or local queue), signs them using the
-#    EOA private key from the secret store, and publishes the signed messages
-#    back. No HTTP endpoint is needed — all communication is through the
-#    messager message bus.
+# ── External Wallet client (optional x402) ──────────────────────────────────
+#    Flowgent owns payment policy and x402 orchestration. The independently
+#    deployed Wallet owns its listener, master key, encrypted store, and EOA
+#    private keys; none of those server settings belong in this file.
 wallet:
   enabled: false
+  transport: mqtt                       # mqtt | local
+  client_id_prefix: flowgent-           # must match a Wallet client policy
+  key_id: ""                            # Wallet key alias, for example payer
+  public_address: ""                    # Expected 0x-prefixed EOA address
+  sign_timeout: 30s
+  local_socket: /run/wallet/wallet.sock # used only when transport=local
   policies:
     max_single_payment_usd: 1
     max_daily_budget_usd: 50
     allowed_domains: ["*.googleapis.com", "*.openai.com"]
     blocked_domains: ["*.unknown.xyz"]
     require_human_approval_above_usd: 5
-    allowed_assets: [USDC]
-    allowed_chains: [base, solana]
-  secret_store:
-    provider: default                  # default | vault | csi
-    master_key: ""
-    master_key_file: /var/secrets/master.key
-    # Vault backend (provider: vault)
-    vault:
-      address: ""                      # https://vault.example.com:8200
-      token: ""                        # Vault token (or use tokenFile)
-      token_file: ""                    # path to file containing Vault token
-      mount_path: "secret"              # KV v2 mount path
-      secret_path: "wallet"             # path under mount for wallet keys
-      role: "flowgent"                 # Vault role for AppRole auth
+    # x402 v2 uses token contract addresses; this is USDC on Base.
+    allowed_assets: ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"]
+    allowed_chains: ["eip155:8453"]
   x402:
-    default_facilitator: "http://localhost:8085"
     timeout: 30s
-    max_retries: 3

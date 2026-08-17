@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -23,15 +24,24 @@ import (
 // access is embedded here.
 
 type FlowgentClient struct {
-	BaseURL string
+	BaseURL     string
+	BearerToken string
 }
 
 func NewFlowgentClient(baseURL string) *FlowgentClient {
+	return NewFlowgentClientWithToken(baseURL, os.Getenv("FLOWGENT_INTERNAL_TOKEN"))
+}
+
+// NewFlowgentClientWithToken creates an authenticated API client without
+// mutating process-global environment. Workload entrypoints normally use
+// NewFlowgentClient and receive FLOWGENT_INTERNAL_TOKEN from a Kubernetes
+// Secret; this constructor is useful for all-in-one mode and focused tests.
+func NewFlowgentClientWithToken(baseURL, token string) *FlowgentClient {
 	if baseURL == "" {
 		baseURL = "http://flowgent-apiserver:9999"
 	}
 	slog.Info("api client using apiserver", "url", baseURL)
-	return &FlowgentClient{BaseURL: baseURL}
+	return &FlowgentClient{BaseURL: baseURL, BearerToken: token}
 }
 
 // ─── helpers ─────────────────────────────────────────────────────
@@ -43,6 +53,9 @@ func (c *FlowgentClient) do(ctx context.Context, method, path string, body io.Re
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.BearerToken)
 	}
 	return http.DefaultClient.Do(req)
 }
@@ -126,6 +139,28 @@ func (c *FlowgentClient) GetFlow(ctx context.Context, namespace, flowID string) 
 	return &spec, nil
 }
 
+// ResolveFlowRuntimeConfig returns the effective namespace→Flow runtime
+// configuration for the controller. This endpoint is intentionally unavailable
+// to human/API-key roles because it contains plaintext secret values.
+func (c *FlowgentClient) ResolveFlowRuntimeConfig(ctx context.Context, namespace, flowID string) (*entities.ResolvedRuntimeConfig, error) {
+	path := "/api/v1/" + url.PathEscape(namespace) + "/flows/" + url.PathEscape(flowID) + "/runtime-config/resolved"
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ResolveFlowRuntimeConfig: %w", err)
+	}
+	var resolved entities.ResolvedRuntimeConfig
+	if err := readJSON(resp, &resolved); err != nil {
+		return nil, fmt.Errorf("ResolveFlowRuntimeConfig: %w", err)
+	}
+	if resolved.Environment == nil {
+		resolved.Environment = map[string]string{}
+	}
+	if resolved.Secrets == nil {
+		resolved.Secrets = map[string]string{}
+	}
+	return &resolved, nil
+}
+
 func (c *FlowgentClient) CreateFlow(ctx context.Context, namespace string, spec *entities.FlowInfo) error {
 	b, _ := json.Marshal(spec)
 	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows", bytes.NewReader(b))
@@ -167,6 +202,41 @@ func (c *FlowgentClient) DeleteFlow(ctx context.Context, namespace, flowID strin
 	return nil
 }
 
+// ListResourcePools returns the capacity boundaries available in a namespace.
+func (c *FlowgentClient) ListResourcePools(ctx context.Context, namespace string) ([]*entities.ResourcePoolInfo, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/api/v1/"+url.PathEscape(namespace)+"/resource-pools", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListResourcePools: %w", err)
+	}
+	var items []*entities.ResourcePoolInfo
+	if err := readJSON(resp, &items); err != nil {
+		return nil, fmt.Errorf("ListResourcePools: %w", err)
+	}
+	return items, nil
+}
+
+func (c *FlowgentClient) GetResourcePool(ctx context.Context, namespace, name string) (*entities.ResourcePoolInfo, error) {
+	path := "/api/v1/" + url.PathEscape(namespace) + "/resource-pools/" + url.PathEscape(name)
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GetResourcePool: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetResourcePool %d: %s", resp.StatusCode, string(body))
+	}
+	var item entities.ResourcePoolInfo
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return nil, err
+	}
+	entities.NormalizeResourcePool(&item)
+	return &item, nil
+}
+
 // ─── FlowRun ─────────────────────────────────────────────────────
 
 // CreateRun creates a run directly with explicit namespace, namespace, and trigger info.
@@ -183,15 +253,26 @@ func (c *FlowgentClient) CreateRun(ctx context.Context, namespace string, run *e
 	return &created, nil
 }
 
+// TriggerRunResult is the narrow response contract of POST /flows/trigger.
+// The trigger endpoint intentionally returns an acknowledgement rather than a
+// full FlowRunInfo; callers that need the run body can subsequently call
+// GetRun with RunID.
+type TriggerRunResult struct {
+	RunID       string             `json:"run_id"`
+	Status      entities.RunStatus `json:"status"`
+	Namespace   string             `json:"namespace"`
+	AgentFlowID string             `json:"agentflow_id"`
+}
+
 // TriggerRun creates a PENDING run via the trigger endpoint.
-func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) (*entities.FlowRunInfo, error) {
+func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) (*TriggerRunResult, error) {
 	payload := map[string]any{"agentflow_id": agentFlowID, "vars": vars, "trigger": trigger}
 	b, _ := json.Marshal(payload)
 	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows/trigger", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	var out entities.FlowRunInfo
+	var out TriggerRunResult
 	if err := readJSON(resp, &out); err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
@@ -250,17 +331,17 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, k8sNam
 	return &pageResp, nil
 }
 
-// UpdateRunStatus updates the status of a run.
-func (c *FlowgentClient) UpdateRunStatus(ctx context.Context, namespace, runID, status string, errStr string) error {
-	b, _ := json.Marshal(map[string]string{"status": status, "error": errStr})
+// UpdateRunLifecycle persists the lifecycle values produced by JobMaster.
+func (c *FlowgentClient) UpdateRunLifecycle(ctx context.Context, namespace, runID string, update entities.RunLifecycleUpdate) error {
+	b, _ := json.Marshal(update)
 	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID, bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("UpdateRunStatus: %w", err)
+		return fmt.Errorf("UpdateRunLifecycle: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("UpdateRunStatus %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("UpdateRunLifecycle %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
@@ -397,11 +478,11 @@ func (c *FlowgentClient) ListChannels(ctx context.Context, namespace string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("ListChannels: %w", err)
 	}
-	var items []entities.NotifyChannelInfo
-	if err := readJSON(resp, &items); err != nil {
+	var page entities.Page[entities.NotifyChannelInfo]
+	if err := readJSON(resp, &page); err != nil {
 		return nil, fmt.Errorf("ListChannels: %w", err)
 	}
-	return items, nil
+	return dereferenceItems(page.Items), nil
 }
 
 // CreateChannel creates a notification channel.
@@ -565,12 +646,17 @@ func (c *FlowgentClient) WatchFlows(ctx context.Context, namespace string, since
 // RunStateClient adapts FlowgentClient for JobMaster run/task persistence.
 // Implements the narrow interface expected by the jobmanager engine package.
 type RunStateClient struct {
-	Client *FlowgentClient
+	Client    *FlowgentClient
 	Namespace string
 }
 
 func (a *RunStateClient) UpdateRun(ctx context.Context, run *entities.FlowRunInfo) error {
-	return a.Client.UpdateRunStatus(ctx, a.Namespace, run.ID, string(run.Status), run.Error)
+	return a.Client.UpdateRunLifecycle(ctx, a.Namespace, run.ID, entities.RunLifecycleUpdate{
+		Status:     run.Status,
+		Error:      run.Error,
+		StartedAt:  run.StartedAt,
+		FinishedAt: run.FinishedAt,
+	})
 }
 
 func (a *RunStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
@@ -579,7 +665,7 @@ func (a *RunStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInf
 
 // TaskStateClient adapts FlowgentClient for TM/SlotWorker task persistence.
 type TaskStateClient struct {
-	Client *FlowgentClient
+	Client    *FlowgentClient
 	Namespace string
 }
 
@@ -598,17 +684,17 @@ func (a *HumanApprovalClient) CreateApproval(ctx context.Context, approval *enti
 
 // NotifierClient is the client-side adapter for the notifier server's API calls.
 type NotifierClient struct {
-	Client   *FlowgentClient
-	Namespace   string
-	routes   map[string]*model.SubscriptionRoute
-	routesMu sync.Mutex
+	Client    *FlowgentClient
+	Namespace string
+	routes    map[string]*model.SubscriptionRoute
+	routesMu  sync.Mutex
 }
 
 func NewNotifierClient(c *FlowgentClient, namespace string) *NotifierClient {
 	return &NotifierClient{
-		Client: c,
+		Client:    c,
 		Namespace: namespace,
-		routes: make(map[string]*model.SubscriptionRoute),
+		routes:    make(map[string]*model.SubscriptionRoute),
 	}
 }
 
@@ -617,7 +703,20 @@ func (a *NotifierClient) ListPendingApprovals(ctx context.Context) ([]entities.A
 }
 
 func (a *NotifierClient) ListChannels(ctx context.Context, namespaceID string) ([]entities.NotifyChannelInfo, error) {
+	if namespaceID == "" {
+		namespaceID = a.Namespace
+	}
 	return a.Client.ListChannels(ctx, namespaceID)
+}
+
+func dereferenceItems[T any](items []*T) []T {
+	result := make([]T, 0, len(items))
+	for _, item := range items {
+		if item != nil {
+			result = append(result, *item)
+		}
+	}
+	return result
 }
 
 func (a *NotifierClient) SaveRoute(ctx context.Context, route *model.SubscriptionRoute) error {
@@ -661,7 +760,7 @@ func (a *NotifierClient) CleanupOrphanedRoutes(ctx context.Context, podID string
 
 // LlmProviderClient adapts FlowgentClient for LLM provider loading.
 type LlmProviderClient struct {
-	Client *FlowgentClient
+	Client    *FlowgentClient
 	Namespace string
 }
 
@@ -671,7 +770,7 @@ func (a *LlmProviderClient) ListProviders(ctx context.Context) ([]*entities.LlmP
 
 // McpProviderClient adapts FlowgentClient for MCP server definition loading.
 type McpProviderClient struct {
-	Client *FlowgentClient
+	Client    *FlowgentClient
 	Namespace string
 }
 

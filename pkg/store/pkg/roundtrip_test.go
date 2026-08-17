@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
-	
+
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	_ "modernc.org/sqlite"
@@ -12,7 +12,9 @@ import (
 
 func TestSQLiteRoundTrip(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 
 	_, err = db.Exec(`CREATE TABLE orh_agentflow (
@@ -36,11 +38,15 @@ func TestSQLiteRoundTrip(t *testing.T) {
 		del_flag     INTEGER NOT NULL DEFAULT 0,
 		UNIQUE(agentflow_id, version)
 	)`)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	_, err = db.Exec(`INSERT INTO orh_agentflow (id, agentflow_id, version, definition, comment) 
 		VALUES ('test1', 'flow1', 1, '{"id":"flow1","nodes":[]}', 'test')`)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cols := utils.Columns[entities.FlowVersionInfo]()
 	query := fmt.Sprintf("SELECT %s FROM orh_agentflow ORDER BY created_at DESC LIMIT 1", cols)

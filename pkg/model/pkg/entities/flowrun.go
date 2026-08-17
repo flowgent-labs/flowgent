@@ -34,9 +34,20 @@ type FlowRunInfo struct {
 	SharedMemory map[string]any            `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty" db:"-"`
 	ExecPlans    map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty" db:"-"`
 
-	K8sNamespace string            `json:"namespace,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Priority  Priority          `json:"priority,omitempty"`
+	K8sNamespace   string            `json:"namespace,omitempty"`
+	ResourcePoolID string            `json:"resource_pool_id" yaml:"resource_pool_id"`
+	Labels         map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+}
+
+// RunLifecycleUpdate is the narrow JobMaster-owned persistence contract for a
+// run lifecycle transition. Keeping this separate from FlowRunInfo prevents a
+// lifecycle write from accidentally replacing definition, trigger, variables,
+// output, or scheduling metadata.
+type RunLifecycleUpdate struct {
+	Status     RunStatus  `json:"status"`
+	Error      string     `json:"error,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // SetTrigger populates the flat trigger columns from a TriggerInfo value.

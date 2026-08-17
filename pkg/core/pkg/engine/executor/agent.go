@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ─── Agent Executor ────────────────────────────────────
@@ -95,10 +99,24 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 
 	var lastErr error
 	for attempt := 0; attempt <= e.maxRetries; attempt++ {
-		resp, err := e.llmClient.Generate(ctx, soul, userPrompt, agent.Model, temperature, agent.MaxTokens)
+		attemptCtx, attemptSpan := tracing.Tracer("flowgent/executor/agent").Start(ctx, "agent.generate",
+			trace.WithAttributes(
+				attribute.String("run.id", plan.AgentFlowRunID),
+				attribute.String("agentflow.id", plan.AgentFlowDefinitionID),
+				attribute.String("flowgent.node_id", plan.NodeID),
+				attribute.String("flowgent.task_id", plan.TaskID),
+				attribute.Int("flowgent.generation_attempt", attempt+1),
+				attribute.Int("flowgent.generation_max_retries", e.maxRetries),
+				attribute.String("gen_ai.request.model", agent.Model),
+			),
+		)
+		resp, err := e.llmClient.Generate(attemptCtx, soul, userPrompt, agent.Model, temperature, agent.MaxTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call failed: %w", err)
 			e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, "", attempt, lastErr.Error())
+			attemptSpan.RecordError(err)
+			attemptSpan.SetStatus(codes.Error, "LLM call failed")
+			attemptSpan.End()
 			continue
 		}
 
@@ -107,6 +125,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
 			lastErr = fmt.Errorf("agent output JSON: %w", err)
 			e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, lastErr.Error())
+			attemptSpan.RecordError(err)
+			attemptSpan.SetStatus(codes.Error, "invalid JSON output")
+			attemptSpan.End()
 			if attempt < e.maxRetries {
 				userPrompt = fmt.Sprintf("%s\n\nYour previous output was not valid JSON. Output ONLY a valid JSON object. Error: %v", userPrompt, err)
 			}
@@ -117,6 +138,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 			if err := utils.ValidateJSONSchema(outputSchema, out); err != nil {
 				lastErr = fmt.Errorf("schema validation failed: %w", err)
 				e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, lastErr.Error())
+				attemptSpan.RecordError(err)
+				attemptSpan.SetStatus(codes.Error, "schema validation failed")
+				attemptSpan.End()
 				if attempt < e.maxRetries {
 					userPrompt = fmt.Sprintf("%s\n\nOutput did not match schema. Fix it. Schema: %v\nError: %v", userPrompt, outputSchema, err)
 				}
@@ -125,6 +149,8 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		}
 
 		e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, "")
+		attemptSpan.SetStatus(codes.Ok, "done")
+		attemptSpan.End()
 		return &entities.TaskResult{Output: out}, nil
 	}
 

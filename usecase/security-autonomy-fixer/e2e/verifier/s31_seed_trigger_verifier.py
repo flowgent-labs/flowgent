@@ -1,12 +1,17 @@
 """Scenario 31 — Seed & Trigger: agent/MCP registration, flow creation, trigger, run_id verification."""
 
 import requests
+from common import api as common_api
 import time
 import sys
 import os
 import json
 
 from verifier import _common as c
+
+UI_PROVISION_MODE = os.getenv("FLOWGENT_E2E_PROVISION_MODE", "console").lower() == "ui"
+RUN_ID_PATH = os.path.join(os.path.dirname(__file__), "..", ".last_run_id")
+UI_EVIDENCE_PATH = os.path.join(os.path.dirname(__file__), "..", ".last_ui_provision.json")
 
 # ── Phase 0: Seed verification ──
 
@@ -84,12 +89,12 @@ def verify_trigger(s, conn):
     if conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, status, agentflow_id, priority FROM orh_flowrun WHERE id=%s",
+            "SELECT id, status, agentflow_id, resource_pool_id FROM orh_flowrun WHERE id=%s",
             (run_id,),
         )
         row = cur.fetchone()
         if row:
-            print(f"  OK PG orh_flowrun: status={row[1]} flow={row[2]} priority={row[3]}")
+            print(f"  OK PG orh_flowrun: status={row[1]} flow={row[2]} resource_pool={row[3]}")
         else:
             print("  WARN: run_id not yet visible in PG (may need persistence delay)")
 
@@ -104,14 +109,16 @@ def run():
     print("  Scenario 31: Seed & Trigger")
     print("=" * 60)
 
-    s = requests.Session()
-    s.headers["Content-Type"] = "application/json"
-    if os.path.exists(c.MQTT_AUDIT_PATH):
+    s = common_api.flowgent_session()
+    if not UI_PROVISION_MODE and os.path.exists(c.MQTT_AUDIT_PATH):
         os.remove(c.MQTT_AUDIT_PATH)
 
     # Phase 0: Seed
-    c.seed_agents_and_mcps(s)
     conn = c.pg_connect()
+    if UI_PROVISION_MODE:
+        print("  UI provisioning mode: verifying browser-created resources without API writes")
+    else:
+        c.seed_agents_and_mcps(s)
     p0_passed, p0_total = verify_seed(s, conn)
 
     # Create flow definition
@@ -120,35 +127,57 @@ def run():
     edge_count = len(flow_def.get("edges", []))
     print(f"\n-- Flow definition: {c.FLOW_ID} ({node_count} nodes, {edge_count} edges) --")
 
-    s.delete(f"{c.API}/api/v1/{c.NAMESPACE}/flows/{c.FLOW_ID}")
-    time.sleep(0.5)
-    r = s.post(f"{c.API}/api/v1/{c.NAMESPACE}/flows", json=flow_def)
-    if r.status_code not in (200, 201):
-        raise AssertionError(f"create flow returned {r.status_code}: {r.text[:200]}")
-    print(f"  OK Flow definition created (status={r.status_code})")
+    if UI_PROVISION_MODE:
+        r = s.get(f"{c.API}/api/v1/{c.NAMESPACE}/flows/{c.FLOW_ID}")
+        if r.status_code != 200:
+            raise AssertionError(f"UI-created flow GET returned {r.status_code}: {r.text[:200]}")
+        if not os.path.isfile(RUN_ID_PATH) or not os.path.isfile(UI_EVIDENCE_PATH):
+            raise AssertionError("UI run/evidence files are missing")
+        with open(RUN_ID_PATH) as run_file:
+            run_id = run_file.read().strip()
+        with open(UI_EVIDENCE_PATH) as evidence_file:
+            evidence = json.load(evidence_file)
+        if evidence.get("provisioning_mode") != "ui" or evidence.get("run_id") != run_id:
+            raise AssertionError("UI provisioning evidence does not match .last_run_id")
+        if conn:
+            cur = conn.cursor()
+            cur.execute("SELECT status, agentflow_id FROM orh_flowrun WHERE id=%s", (run_id,))
+            row = cur.fetchone()
+            if not row or row[1] != c.FLOW_ID:
+                raise AssertionError(f"UI-triggered run is missing from PG: {run_id}")
+            print(f"  OK UI-triggered PG run: status={row[0]} flow={row[1]}")
+        c.assert_mqtt_suffixes(run_id, ["ctrl/run/created"])
+        print(f"  OK UI evidence: {evidence.get('configured')}")
+    else:
+        s.delete(f"{c.API}/api/v1/{c.NAMESPACE}/flows/{c.FLOW_ID}")
+        time.sleep(0.5)
+        r = s.post(f"{c.API}/api/v1/{c.NAMESPACE}/flows", json=flow_def)
+        if r.status_code not in (200, 201):
+            raise AssertionError(f"create flow returned {r.status_code}: {r.text[:200]}")
+        print(f"  OK Flow definition created (status={r.status_code})")
 
-    baseline = c.capture_pr_baseline()
-    head = baseline.get("head_sha", "")[:8] or "none"
-    print(f"  OK PR #{c.PR_NUMBER} baseline captured: commits={baseline.get('commit_count')} head={head}")
+        baseline = c.capture_pr_baseline()
+        head = baseline.get("head_sha", "")[:8] or "none"
+        print(f"  OK PR #{c.PR_NUMBER} baseline captured: commits={baseline.get('commit_count')} head={head}")
 
-    # Phase 1: Trigger
-    print("\n-- [31 MQTT Audit] Non-$share subscription before trigger --")
-    audit = c.start_global_mqtt_audit()
-    run_id = verify_trigger(s, conn)
-    audit.set_run_id(run_id)
-    c.wait_for_application_components(c.FLOW_ID, timeout=240)
-    audit.wait_for("ctrl/run/created", timeout=20)
-    audit.wait_for("exec/plans", timeout=45)
-    c.save_mqtt_audit(run_id, c.snapshot_global_mqtt_audit(run_id))
-    c.assert_mqtt_suffixes(run_id, ["ctrl/run/created"])
+        # Phase 1: Trigger
+        print("\n-- [31 MQTT Audit] Non-$share subscription before trigger --")
+        audit = c.start_global_mqtt_audit()
+        run_id = verify_trigger(s, conn)
+        audit.set_run_id(run_id)
+        c.wait_for_workload_components(c.FLOW_ID, timeout=240)
+        audit.wait_for("ctrl/run/created", timeout=20)
+        audit.wait_for("exec/plans", timeout=45)
+        c.save_mqtt_audit(run_id, c.snapshot_global_mqtt_audit(run_id))
+        c.assert_mqtt_suffixes(run_id, ["ctrl/run/created"])
 
     if conn:
         conn.close()
 
     # Store run_id for downstream scenarios
-    run_id_file = os.path.join(os.path.dirname(__file__), "..", ".last_run_id")
-    with open(run_id_file, "w") as f:
-        f.write(run_id)
+    if not UI_PROVISION_MODE:
+        with open(RUN_ID_PATH, "w") as f:
+            f.write(run_id)
 
     # Print summary
     print(f"\n{'=' * 60}")

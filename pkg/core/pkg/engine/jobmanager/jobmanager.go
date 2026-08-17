@@ -23,8 +23,7 @@ type JobManagerConfig struct {
 	MaxConcurrentFlows   int
 }
 
-// JobManager is the singleton JobManager (like Flink's Dispatcher in session mode).
-// It receives agentflow run submissions and spawns a JobMaster per run.
+// JobManager receives one flow's run submissions and spawns a JobMaster per run.
 type JobManager struct {
 	state           RunStateStore
 	rm              resourcemanager.ResourceManager
@@ -53,23 +52,41 @@ func (m *JobManager) SetRunLock(l lock.DistributedLock) { m.runLock = l }
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
 func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
+	poolID := run.ResourcePoolID
+	if poolID == "" {
+		poolID = spec.ResourcePoolID
+	}
+	if poolID == "" {
+		poolID = "default"
+	}
+	run.ResourcePoolID = poolID
+	if run.K8sNamespace == "" {
+		run.K8sNamespace = spec.K8sNamespace
+	}
+	if run.Namespace == "" {
+		run.Namespace = spec.Namespace
+	}
+
 	m.logger.Info("jobmanager submit",
 		"run_id", run.ID,
 		"agentflow_id", spec.ID,
-		"priority", spec.Priority,
-		"namespace_id", spec.Namespace,
-		"k8s_namespace", spec.K8sNamespace,
+		"resource_pool", poolID,
+		"namespace_id", run.Namespace,
+		"k8s_namespace", run.K8sNamespace,
 	)
 
-	run.Priority = spec.Priority
-	run.K8sNamespace = spec.K8sNamespace
-	run.Namespace = spec.Namespace
+	// Scheduling metadata is immutable for a run. Work from a shallow copy so
+	// a later Flow update cannot retarget already-created execution plans.
+	runSpec := *spec
+	runSpec.ResourcePoolID = poolID
+	runSpec.Namespace = run.Namespace
+	runSpec.K8sNamespace = run.K8sNamespace
 
 	master := NewJobMaster(m.state, m.rm, m.logger, m.cfg)
 	if m.knowledgeClient != nil {
 		master.SetKnowledgeWriter(m.knowledgeClient)
 	}
-	return master.Execute(ctx, run, spec)
+	return master.Execute(ctx, run, &runSpec)
 }
 
 // StartRunPoller polls for pending AgentFlowRuns via the apiserver API
@@ -107,7 +124,7 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 				if spec == nil {
 					continue
 				}
-				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "priority", run.Priority)
+				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "resource_pool", run.ResourcePoolID)
 				runCtx, release, claimed, err := jm.claimRun(ctx, run.ID)
 				if err != nil {
 					slog.Warn("poller run lock failed", "run", run.ID, "err", err)

@@ -15,6 +15,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -112,14 +113,15 @@ func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
 	}
 
 	task := &entities.TaskRunInfo{
+		BaseEntity:     entities.BaseEntity{ID: "task-run-stable-id"},
 		AgentFlowRunID: run.ID, NodeID: "node-1", Status: entities.TaskPending,
-		ExecID: "exec-001", MaxRetries: 3,
+		ExecID: "exec-001", MaxRetries: 3, StartedAt: ptrTime(time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC)),
 	}
 	if err := tpStore.CreateTaskRun(ctx, task); err != nil {
 		t.Fatalf("CreateTaskRun: %v", err)
 	}
-	if task.ID == "" {
-		t.Fatal("ID should be set")
+	if task.ID != "task-run-stable-id" {
+		t.Fatalf("caller-provided TaskRun ID was replaced: %q", task.ID)
 	}
 
 	got, err := tpStore.Get(ctx, task.ID)
@@ -128,6 +130,9 @@ func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
 	}
 	if got.NodeID != "node-1" {
 		t.Errorf("expected node-1, got %s", got.NodeID)
+	}
+	if got.StartedAt == nil || got.StartedAt.Year() != 2026 {
+		t.Fatalf("SQLite TaskRun started_at was not decoded: %v", got.StartedAt)
 	}
 
 	task.Status = entities.Success
@@ -152,6 +157,8 @@ func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
 		t.Errorf("expected exec-001, got %s", gotByExec.ExecID)
 	}
 }
+
+func ptrTime(value time.Time) *time.Time { return &value }
 
 func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 	conn := store.NewSQLiteConn(context.Background(), t.TempDir())
@@ -214,16 +221,14 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := flow.NewFlowSQLiteStore(conn)
 
-	def := &entities.FlowVersionInfo{
-		BaseEntity: entities.BaseEntity{CreatedBy: "test"},
-		FlowID:     "flow-1", Version: 1, Definition: []byte(`{"id":"flow-1"}`),
-		Comment: "initial",
-	}
-	if err := s.Save(ctx, def); err != nil {
-		t.Fatalf("Save: %v", err)
+	const namespace = "team-a"
+	if err := s.SaveSpec(ctx, &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "flow-1", Namespace: namespace},
+	}, "test", "initial"); err != nil {
+		t.Fatalf("SaveSpec: %v", err)
 	}
 
-	got, err := s.Get(ctx, "flow-1")
+	got, err := s.Get(ctx, namespace, "flow-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -231,7 +236,7 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 		t.Errorf("expected v1, got %d", got.Version)
 	}
 
-	gotVer, err := s.GetVersion(ctx, "flow-1", 1)
+	gotVer, err := s.GetVersion(ctx, namespace, "flow-1", 1)
 	if err != nil {
 		t.Fatalf("GetVersion: %v", err)
 	}
@@ -239,7 +244,7 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 		t.Errorf("expected flow-1, got %s", gotVer.FlowID)
 	}
 
-	page, err := s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	page, err := s.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 100})
 	if err != nil {
 		t.Fatalf("Select: %v", err)
 	}
@@ -247,19 +252,28 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 		t.Errorf("expected at least 1 def, got %d", page.TotalCount)
 	}
 
-	if err := s.Delete(ctx, "flow-1"); err != nil {
+	if err := s.SaveSpec(ctx, &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "flow-1", Namespace: "team-b"},
+	}, "test", "same ID in another namespace"); err != nil {
+		t.Fatalf("SaveSpec cross namespace: %v", err)
+	}
+	if _, err := s.GetSpec(ctx, "team-b", "flow-1"); err != nil {
+		t.Fatalf("GetSpec cross namespace: %v", err)
+	}
+
+	if err := s.Delete(ctx, namespace, "flow-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := s.Get(ctx, "flow-1"); err == nil {
+	if _, err := s.Get(ctx, namespace, "flow-1"); err == nil {
 		t.Fatalf("Get returned soft-deleted flow")
 	}
-	if _, err := s.GetVersion(ctx, "flow-1", 1); err == nil {
+	if _, err := s.GetVersion(ctx, namespace, "flow-1", 1); err == nil {
 		t.Fatalf("GetVersion returned soft-deleted flow")
 	}
-	if _, err := s.GetSpec(ctx, "flow-1"); err == nil {
+	if _, err := s.GetSpec(ctx, namespace, "flow-1"); err == nil {
 		t.Fatalf("GetSpec returned soft-deleted flow")
 	}
-	page, err = s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	page, err = s.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 100})
 	if err != nil {
 		t.Fatalf("Select after delete: %v", err)
 	}
@@ -268,11 +282,48 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	}
 
 	if err := s.SaveSpec(ctx, &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "flow-1"},
+		BaseEntity: entities.BaseEntity{ID: "flow-1", Namespace: namespace},
 	}, "test", "restore"); err != nil {
 		t.Fatalf("SaveSpec restore: %v", err)
 	}
-	if _, err := s.GetSpec(ctx, "flow-1"); err != nil {
+	if _, err := s.GetSpec(ctx, namespace, "flow-1"); err != nil {
 		t.Fatalf("GetSpec after restore: %v", err)
+	}
+	if _, err := s.GetSpec(ctx, "team-b", "flow-1"); err != nil {
+		t.Fatalf("other namespace was affected by delete/restore: %v", err)
+	}
+}
+
+func TestSQLiteStore_FlowNameContract(t *testing.T) {
+	conn := store.NewSQLiteConn(context.Background(), t.TempDir())
+	defer conn.Close()
+	ctx := context.Background()
+	s := flow.NewFlowSQLiteStore(conn)
+
+	first := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "Security_Fixer", Namespace: "team-a"},
+		Kind:       "flow",
+	}
+	if err := s.CreateSpec(ctx, first, "test", "create"); err != nil {
+		t.Fatalf("CreateSpec: %v", err)
+	}
+	if err := s.CreateSpec(ctx, first, "test", "duplicate"); !errors.Is(err, flow.ErrAlreadyExists) {
+		t.Fatalf("duplicate CreateSpec error = %v, want ErrAlreadyExists", err)
+	}
+	caseVariant := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "security_fixer", Namespace: "team-a"},
+		Kind:       "flow",
+	}
+	if err := s.CreateSpec(ctx, caseVariant, "test", "case duplicate"); !errors.Is(err, flow.ErrAlreadyExists) {
+		t.Fatalf("case-insensitive duplicate error = %v, want ErrAlreadyExists", err)
+	}
+	caseVariant.Namespace = "team-b"
+	if err := s.CreateSpec(ctx, caseVariant, "test", "other namespace"); err != nil {
+		t.Fatalf("same name in another namespace: %v", err)
+	}
+	if err := s.SaveSpec(ctx, &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "1-invalid", Namespace: "team-a"}, Kind: "flow",
+	}, "test", "invalid"); err == nil {
+		t.Fatal("SaveSpec accepted an invalid flow name")
 	}
 }

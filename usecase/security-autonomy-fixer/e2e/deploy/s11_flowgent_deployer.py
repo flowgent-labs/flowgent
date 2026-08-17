@@ -17,6 +17,7 @@ import base64
 import copy
 import ipaddress
 import json
+import secrets
 import socket
 import subprocess
 from urllib.parse import urlsplit, urlunsplit
@@ -29,7 +30,10 @@ DEFAULT_RELEASE = "flowgent"
 DEFAULT_TIMEOUT = 300
 FLOWGENT_IMAGE = "localhost/flowgent-core:latest"
 FLOWGENT_PG_CONTAINER = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "sigbot_e2e_164364_postgres")
-APP_NAMESPACE_PREFIX = os.getenv("FLOWGENT_K8S_APP_NAMESPACE_PREFIX", "flowgent-")
+WORKLOAD_NAMESPACE_PREFIX = os.getenv(
+    "FLOWGENT_K8S_WORKLOAD_NAMESPACE_PREFIX",
+    "flowgent-",
+)
 TENANT_NAMESPACE = os.getenv("FLOWGENT_NAMESPACE_ID", "default")
 RUNTIME_CREDENTIAL_SECRET = os.getenv("FLOWGENT_E2E_RUNTIME_SECRET", "flowgent-e2e-runtime-env")
 RUNTIME_CREDENTIAL_KEYS = (
@@ -48,6 +52,10 @@ RUNTIME_PROXY_KEYS = (
     "all_proxy",
 )
 PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
+NOTIFICATION_TOKEN_ENV = "FLOWGENT_E2E_NOTIFICATION_TOKEN"
+NOTIFICATION_RECEIVER = "flowgent-e2e-webhook"
+AUTH_TOKEN_ENV = "FLOWGENT_E2E_AUTH_TOKEN"
+AUTH_SECRET = os.getenv("FLOWGENT_E2E_AUTH_SECRET", "flowgent-e2e-authorization")
 NO_PROXY_DEFAULTS = (
     "localhost",
     "127.0.0.1",
@@ -61,6 +69,9 @@ NO_PROXY_DEFAULTS = (
     "flowgent-apiserver",
     "flowgent-emqx",
     "flowgent-jaeger",
+)
+HOST_WORKSPACE = os.path.realpath(
+    os.getenv("FLOWGENT_E2E_HOST_WORKSPACE", "/mnt/disk1/flowgent/e2e")
 )
 
 def _usable_kubeconfig(path: str) -> bool:
@@ -92,9 +103,9 @@ def _helm(args, timeout=300):
     return run_cmd(["helm"] + args, timeout=timeout)
 
 
-def _cleanup_application_resources():
-    print("\n-- Cleaning application-mode resources --")
-    for ns in sorted({DEFAULT_NAMESPACE, "default", _application_namespace()}):
+def _cleanup_runtime_resources():
+    print("\n-- Cleaning Flow and resource-pool runtime resources --")
+    for ns in sorted({DEFAULT_NAMESPACE, "default", _workload_namespace()}):
         _kubectl([
             "delete", "deployment", "-n", ns,
             "-l", "app.kubernetes.io/component in (taskmanager,sandbox)",
@@ -107,22 +118,45 @@ def _cleanup_application_resources():
         ], timeout=60)
     _kubectl([
         "delete", "deployment", "-A",
-        "-l", "flowgent.io/mode=application",
+        "-l", "flowgent.io/runtime-boundary=flow-jobmanager",
         "--ignore-not-found=true", "--force", "--grace-period=0",
     ], timeout=120)
     _kubectl([
         "delete", "pod", "-A",
-        "-l", "flowgent.io/mode=application",
+        "-l", "flowgent.io/runtime-boundary=flow-jobmanager",
         "--ignore-not-found=true", "--force", "--grace-period=0", "--wait=false",
     ], timeout=60)
     _kubectl([
         "delete", "ns",
-        "-l", "flowgent.io/mode=application",
+        "-l", "flowgent.io/runtime-boundary=namespace",
         "--ignore-not-found=true", "--force", "--grace-period=0", "--wait=false",
     ], timeout=30)
-    _force_finalize_terminating_application_namespaces()
-    _wait_labeled_resources_gone("deployments", "flowgent.io/mode=application", timeout=60)
-    _wait_labeled_resources_gone("pods", "flowgent.io/mode=application", timeout=60)
+    _force_finalize_terminating_runtime_namespaces()
+    _wait_labeled_resources_gone("deployments", "flowgent.io/runtime-boundary=flow-jobmanager", timeout=60)
+    _wait_labeled_resources_gone("pods", "flowgent.io/runtime-boundary=flow-jobmanager", timeout=60)
+    _cleanup_runtime_workspace()
+
+
+def _cleanup_runtime_workspace():
+    """Remove only regenerable E2E runtime workspaces after all app pods exit."""
+    tenant_workspace = os.path.realpath(os.path.join(HOST_WORKSPACE, TENANT_NAMESPACE))
+    if (
+        not os.path.isdir(tenant_workspace)
+        or tenant_workspace == HOST_WORKSPACE
+        or os.path.commonpath((HOST_WORKSPACE, tenant_workspace)) != HOST_WORKSPACE
+    ):
+        return
+    result = subprocess.run(
+        ["sudo", "find", tenant_workspace, "-mindepth", "1", "-depth", "-delete"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print(f"  WARN: E2E workspace cleanup incomplete: {result.stderr.strip()[:300]}")
+        return
+    print(f"  E2E runtime workspace cleaned: {tenant_workspace}")
 
 
 def _wait_labeled_resources_gone(kind, selector, timeout=60):
@@ -147,9 +181,9 @@ def _wait_labeled_resources_gone(kind, selector, timeout=60):
     return False
 
 
-def _force_finalize_terminating_application_namespaces():
+def _force_finalize_terminating_runtime_namespaces():
     rc, out = _kubectl([
-        "get", "ns", "-l", "flowgent.io/mode=application", "-o", "json",
+        "get", "ns", "-l", "flowgent.io/runtime-boundary=namespace", "-o", "json",
     ], timeout=20)
     if rc != 0:
         return
@@ -185,6 +219,38 @@ def _uninstall_release(release, namespace):
     if rc != 0:
         print(f"  ERROR: helm uninstall failed for {release}")
         return False
+    return True
+
+
+def _ensure_authorization_secret(namespace):
+    """Create an explicit test-only auth secret without ever printing values."""
+    bootstrap_token = os.environ.get(AUTH_TOKEN_ENV)
+    if not bootstrap_token:
+        bootstrap_token = secrets.token_urlsafe(48)
+        os.environ[AUTH_TOKEN_ENV] = bootstrap_token
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": AUTH_SECRET, "namespace": namespace},
+        "type": "Opaque",
+        "stringData": {
+            "bootstrap-token": bootstrap_token,
+            "controller-token": secrets.token_urlsafe(48),
+            "notifier-token": secrets.token_urlsafe(48),
+            "a2a-token": secrets.token_urlsafe(48),
+        },
+    }
+    result = subprocess.run(
+        ["kubectl", "apply", "-f", "-"],
+        input=yaml.safe_dump(manifest),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        print(f"  ERROR: apply authorization secret failed: {result.stderr[:200]}")
+        return False
+    print(f"  Authorization secret ready: {namespace}/{AUTH_SECRET} (values redacted)")
     return True
 
 
@@ -247,8 +313,8 @@ def _service_cluster_ip(namespace, service):
     return out.strip() if rc == 0 else ""
 
 
-def _application_namespace():
-    return f"{APP_NAMESPACE_PREFIX}{TENANT_NAMESPACE}"
+def _workload_namespace():
+    return f"{WORKLOAD_NAMESPACE_PREFIX}{TENANT_NAMESPACE}"
 
 
 def _kubectl_jsonpath(jsonpath):
@@ -401,6 +467,117 @@ def _ensure_runtime_credential_secret(namespaces):
     return ok
 
 
+def _ensure_notification_receiver(namespace):
+    """Deploy a real authenticated HTTP receiver for notification delivery E2E."""
+    token = os.environ.get(NOTIFICATION_TOKEN_ENV)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        os.environ[NOTIFICATION_TOKEN_ENV] = token
+    server_script = r'''
+import hmac, json, os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+expected = "Bearer " + os.environ["EXPECTED_TOKEN"]
+receipts = []
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        authorized = hmac.compare_digest(self.headers.get("Authorization", ""), expected)
+        if authorized:
+            receipts.append({"authorized": True, "bytes": len(body)})
+        self.send_response(200 if authorized else 401)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"accepted": authorized}).encode())
+
+    def do_GET(self):
+        if self.path == "/healthz":
+            payload, status = {"status": "ok"}, 200
+        elif self.path == "/receipts":
+            payload, status = {"authorized_count": len(receipts)}, 200
+        else:
+            payload, status = {"error": "not found"}, 404
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+
+    def log_message(self, *_):
+        return
+
+ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+'''
+    resources = {
+        "apiVersion": "v1",
+        "kind": "List",
+        "items": [
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace},
+                "type": "Opaque",
+                "stringData": {"token": token},
+            },
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace},
+                "spec": {
+                    "replicas": 1,
+                    "selector": {"matchLabels": {"app": NOTIFICATION_RECEIVER}},
+                    "template": {
+                        "metadata": {"labels": {"app": NOTIFICATION_RECEIVER}},
+                        "spec": {
+                            "containers": [{
+                                "name": "receiver",
+                                "image": FLOWGENT_IMAGE,
+                                "imagePullPolicy": "IfNotPresent",
+                                "command": ["python3", "-c", server_script],
+                                "env": [{
+                                    "name": "EXPECTED_TOKEN",
+                                    "valueFrom": {"secretKeyRef": {"name": NOTIFICATION_RECEIVER, "key": "token"}},
+                                }],
+                                "ports": [{"containerPort": 8080}],
+                                "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8080}},
+                                "resources": {
+                                    "requests": {"cpu": "10m", "memory": "24Mi"},
+                                    "limits": {"cpu": "100m", "memory": "64Mi"},
+                                },
+                            }],
+                        },
+                    },
+                },
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace},
+                "spec": {
+                    "selector": {"app": NOTIFICATION_RECEIVER},
+                    "ports": [{"name": "http", "port": 8080, "targetPort": 8080}],
+                },
+            },
+        ],
+    }
+    result = subprocess.run(
+        ["kubectl", "apply", "-f", "-"],
+        input=json.dumps(resources), capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        print(f"  ERROR: apply notification receiver failed: {result.stderr[:200]}")
+        return False
+    _kubectl(["rollout", "restart", f"deployment/{NOTIFICATION_RECEIVER}", "-n", namespace], timeout=30)
+    rc, _ = _kubectl([
+        "rollout", "status", f"deployment/{NOTIFICATION_RECEIVER}", "-n", namespace,
+        "--timeout=120s",
+    ], timeout=150)
+    if rc == 0:
+        print(f"  Authenticated notification receiver ready: {NOTIFICATION_RECEIVER}.{namespace}.svc.cluster.local:8080")
+    return rc == 0
+
+
 def _wait_tcp(host, port, label, timeout=120):
     print(f"\n-- Waiting for {label} TCP readiness ({host}:{port}, timeout={timeout}s) --")
     deadline = time.time() + timeout
@@ -416,11 +593,11 @@ def _wait_tcp(host, port, label, timeout=120):
     return False
 
 
-def _ensure_application_configmap(namespace, release):
-    app_ns = _application_namespace()
-    print(f"\n-- Ensuring application namespace config ({app_ns}) --")
+def _ensure_workload_configmap(namespace, release):
+    workload_ns = _workload_namespace()
+    print(f"\n-- Ensuring workload namespace config ({workload_ns}) --")
     create_ns = subprocess.run(
-        ["kubectl", "create", "namespace", app_ns, "--dry-run=client", "-o", "json"],
+        ["kubectl", "create", "namespace", workload_ns, "--dry-run=client", "-o", "json"],
         capture_output=True,
         text=True,
         timeout=20,
@@ -439,8 +616,8 @@ def _ensure_application_configmap(namespace, release):
         print(f"  ERROR: apply namespace failed: {apply_ns.stderr[:200]}")
         return False
     _kubectl([
-        "label", "namespace", app_ns,
-        "flowgent.io/mode=application",
+        "label", "namespace", workload_ns,
+        "flowgent.io/runtime-boundary=namespace",
         f"flowgent.io/namespace={TENANT_NAMESPACE}",
         "--overwrite",
     ], timeout=20)
@@ -467,7 +644,7 @@ def _ensure_application_configmap(namespace, release):
     sandbox_deploy["image"] = FLOWGENT_IMAGE
     base_labels = cm.get("metadata", {}).get("labels", {})
 
-    for dest_ns in (namespace, app_ns):
+    for dest_ns in (namespace, workload_ns):
         dest_cm = copy.deepcopy(cm)
         dest_yaml = copy.deepcopy(flowgent_yaml)
         dest_runtime = dest_yaml.setdefault("runtime", {})
@@ -490,7 +667,7 @@ def _ensure_application_configmap(namespace, release):
         if apply_cm.returncode != 0:
             print(f"  ERROR: apply configmap failed for {dest_ns}: {apply_cm.stderr[:200]}")
             return False
-    print(f"  Application config ready: {app_ns}/{release}-config")
+    print(f"  Workload config ready: {workload_ns}/{release}-config")
     return True
 
 
@@ -503,10 +680,21 @@ def helm_install_or_upgrade(release, namespace):
         print(f"  ERROR: Helm chart not found: {HELM_CHART}")
         return False
 
-    _cleanup_application_resources()
+    _cleanup_runtime_resources()
     for legacy_ns in sorted({"default"} - {namespace}):
         _uninstall_release(release, legacy_ns)
     if not _uninstall_release(release, namespace):
+        return False
+
+    if not _ensure_authorization_secret(namespace):
+        return False
+
+    # Teardown temporarily leaves the locally built image unreferenced. Under
+    # disk pressure k3s can collect it before the replacement pods are created,
+    # so refresh it at the deployment boundary rather than relying on cache
+    # state from a prior round.
+    from common.images import import_core_image_to_k3s
+    if not import_core_image_to_k3s():
         return False
 
     runtime_env = _runtime_env(namespace, release)
@@ -528,7 +716,9 @@ def helm_install_or_upgrade(release, namespace):
         "--set", "apiserver.replicas=1",
         "--set", "controller.replicas=1",
         "--set", "notifier.replicas=1",
-        "--set", "a2a.enabled=false",
+        "--set", "a2a.enabled=true",
+        "--set", "a2a.replicas=2",
+        "--set-string", f"authorization.existingSecret={AUTH_SECRET}",
         "--set", "wallet.enabled=false",
     ]
     rc, _ = _helm(cmd, timeout=360)
@@ -554,11 +744,13 @@ def helm_install_or_upgrade(release, namespace):
         return False
 
     print("\n-- Applying runtime env to dependent Helm deployments --")
-    if not _set_runtime_env(namespace, release, [f"{release}-controller", f"{release}-notifier"]):
+    if not _set_runtime_env(namespace, release, [f"{release}-controller", f"{release}-notifier", f"{release}-a2a"]):
         return False
-    if not _ensure_application_configmap(namespace, release):
+    if not _ensure_workload_configmap(namespace, release):
         return False
-    if not _ensure_runtime_credential_secret([namespace, _application_namespace()]):
+    if not _ensure_runtime_credential_secret([namespace, _workload_namespace()]):
+        return False
+    if not _ensure_notification_receiver(namespace):
         return False
     return wait_for_rollouts(namespace, release, DEFAULT_TIMEOUT)
 
@@ -571,7 +763,7 @@ def _wait_rollout(namespace, deploy, timeout):
 def wait_for_rollouts(namespace, release, timeout):
     print(f"\n-- Waiting for deployment rollouts (timeout={timeout}s) --")
     ok = True
-    for deploy in (f"{release}-apiserver", f"{release}-controller", f"{release}-notifier", f"{release}-emqx", f"{release}-jaeger"):
+    for deploy in (f"{release}-apiserver", f"{release}-controller", f"{release}-notifier", f"{release}-a2a", f"{release}-emqx", f"{release}-jaeger"):
         ok = _wait_rollout(namespace, deploy, timeout) and ok
     return ok
 

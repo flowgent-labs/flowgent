@@ -26,13 +26,16 @@ const (
 
 // ExecutionPlan is the primary runtime object in the system.
 type ExecutionPlan struct {
-	PlanID                string   `json:"plan_id"`
-	AgentFlowRunID        string   `json:"agentflow_run_id"`
-	AgentFlowDefinitionID string   `json:"agentflow_definition_id"`
-	Namespace             string   `json:"namespace_id,omitempty"`
-	TaskID                string   `json:"task_id"`
-	TaskType              TaskType `json:"task_type"`
-	NodeID                string   `json:"node_id"`
+	PlanID                string            `json:"plan_id"`
+	AgentFlowRunID        string            `json:"agentflow_run_id"`
+	AgentFlowDefinitionID string            `json:"agentflow_definition_id"`
+	Namespace             string            `json:"namespace_id,omitempty"`
+	ResourcePoolID        string            `json:"resource_pool_id"`
+	TaskID                string            `json:"task_id"`
+	ParentTaskRunID       string            `json:"parent_task_run_id,omitempty"`
+	TaskType              TaskType          `json:"task_type"`
+	NodeID                string            `json:"node_id"`
+	TraceContext          map[string]string `json:"trace_context,omitempty"`
 
 	State      TaskStatus `json:"state"`
 	RetryCount int        `json:"retry_count"`

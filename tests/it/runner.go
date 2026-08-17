@@ -9,6 +9,7 @@ package it
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -145,6 +146,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	sqURL, ghURL, llmURL string) *ITRunner {
 
 	t.Helper()
+	t.Setenv("FLOWGENT_IT_LLM_API_KEY", "test-key")
 	namespace := "test"
 	flow.Namespace = namespace
 
@@ -176,19 +178,39 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	// ── apiserver (no auth) ──
 	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", namespace, nil)
+	if err := flowHandler.FlowStore().SaveSpec(context.Background(), flow, "integration-test", "integration test fixture"); err != nil {
+		t.Fatalf("persist integration test flow: %v", err)
+	}
 	nw := handler.NewNotifierWSBridge(nil)
+	notifierCfg := config.NotifierConfig{SecretEncryption: config.NotifierSecretEncryptionConfig{
+		Provider: "aesgcm", ActiveKeyID: "it-v1",
+		Keys: map[string]string{"it-v1": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}}
+	notifierHandler, err := handler.NewNotifierHandler(storeImpl, notifierCfg, nil, logger)
+	if err != nil {
+		t.Fatalf("create notifier handler: %v", err)
+	}
+	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(storeImpl, notifierCfg.SecretEncryption)
+	if err != nil {
+		t.Fatalf("create runtime configuration handler: %v", err)
+	}
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{},
 		flowHandler,
 		handler.NewAgentDefHandler(storeImpl, logger),
-		handler.NewFlowRunHandler(storeImpl, nil, logger),
+		handler.NewFlowRunHandler(storeImpl, nil, nil, logger),
 		handler.NewHumanHandler(storeImpl, nil, logger),
-		handler.NewNotifierHandler(storeImpl, logger),
+		notifierHandler,
 		nw,
 		handler.NewLlmProviderHandler(storeImpl),
 		handler.NewMcpHandler(storeImpl),
 		handler.NewWebhookHandler(flowHandler, logger, namespace),
 		handler.NewKnowledgeHandler(storeImpl),
+		nil,
+		nil,
+		nil,
+		runtimeConfigHandler,
+		nil,
 	)
 	srv := httptest.NewServer(restMux)
 	t.Cleanup(srv.Close)
@@ -217,14 +239,14 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	inMemQ := messager.NewLocalMessager(1000)
 
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:     engine.ProviderStandalone,
-		PoolSize:     8,
-		TaskState:    &client.TaskStateClient{Client: apiClient, Namespace: namespace},
-		ApprovalInfo: &client.HumanApprovalClient{Client: apiClient},
-		Logger:       logger,
-		APIServerURL: srv.URL,
-		Namespace:    namespace,
-		Messager:     inMemQ,
+		Provider:         engine.ProviderStandalone,
+		PoolSize:         8,
+		TaskState:        &client.TaskStateClient{Client: apiClient, Namespace: namespace},
+		ApprovalInfo:     &client.HumanApprovalClient{Client: apiClient},
+		Logger:           logger,
+		APIServerURL:     srv.URL,
+		Namespace:        namespace,
+		Messager:         inMemQ,
 		SandboxWorkspace: sbWorkspace,
 		SandboxPolicy:    &model.SandboxPolicy{},
 	})
@@ -284,7 +306,7 @@ func (r *ITRunner) SeedLLMProvider(endpoint string) {
 	// doesn't pick up a URL whose httptest server has already been closed.
 	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_providers WHERE provider = 'mock'`)
 	r.Post("/api/v1/"+r.Namespace+"/llm/providers", entities.LlmProviderInfo{
-		Provider: "mock", Endpoint: endpoint, ApiKey: "test-key",
+		Provider: "mock", Endpoint: endpoint, ApiKeyEnv: "FLOWGENT_IT_LLM_API_KEY",
 		Status: "ACTIVE", Enabled: true, RateLimit: 100000,
 	})
 }
@@ -292,7 +314,7 @@ func (r *ITRunner) SeedLLMProvider(endpoint string) {
 func (r *ITRunner) SeedMCP(name, url string) {
 	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_mcp WHERE name = $1 AND namespace_id = $2`, name, r.Namespace)
 	r.Post("/api/v1/"+r.Namespace+"/mcp", entities.McpInfo{
-		Name: name, Type: "http", URL: url, Enabled: true,
+		Name: name, Type: "streamable-http", URL: url, Enabled: true,
 	})
 }
 
@@ -402,8 +424,6 @@ func (r *ITRunner) RunStatus(runID string) string {
 	_ = json.NewDecoder(resp.Body).Decode(&run)
 	return run.Status
 }
-
-
 
 // ─── shared fixtures ─────────────────────────────────────────────────────
 

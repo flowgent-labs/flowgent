@@ -421,7 +421,7 @@ func main() {
 	jobmanagerCmd.AddCommand(jobmanagerStartCmd)
 	jobmanagerCmd.AddCommand(jobmanagerStopCmd)
 	jobmanagerCmd.AddCommand(jobmanagerRestartCmd)
-	jobmanagerStartCmd.Flags().StringVar(&jmFlowID, "flow-id", "", "Dedicated flow ID (application mode)")
+	jobmanagerStartCmd.Flags().StringVar(&jmFlowID, "flow-id", "", "Flow ID owned by this JobManager")
 
 	// 6. taskmanager
 	rootCmd.AddCommand(taskmanagerCmd)

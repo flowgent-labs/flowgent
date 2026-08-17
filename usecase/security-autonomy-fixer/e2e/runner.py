@@ -49,6 +49,11 @@ _SHELL_ENV_FILES = (
     "~/.wl4gshrc.sec",
 )
 
+# Core builds are deliberately single-threaded below to protect the shared
+# k3s host. A cold compiler/module cache therefore needs a wider budget than
+# ordinary E2E subprocesses; keep this separate from runtime verifier limits.
+_CORE_BUILD_TIMEOUT_SECONDS = 20 * 60
+
 
 def _load_shell_env_files():
     """Merge exported variables from standard shell env files into this runner.
@@ -127,6 +132,7 @@ class _PortForwards:
 
     _SPECS = (
         ("flowgent-apiserver", ("9999:9999",)),
+        ("flowgent-a2a", ("9992:9992",)),
         ("flowgent-emqx", ("1883:1883", "18083:18083")),
         ("flowgent-jaeger", ("16687:16686",)),
     )
@@ -158,6 +164,12 @@ class _PortForwards:
             return False
         try:
             with urllib.request.urlopen("http://127.0.0.1:9999/_/healthz", timeout=1) as resp:
+                if resp.status != 200:
+                    return False
+        except Exception:
+            return False
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:9992/_/healthz", timeout=1) as resp:
                 if resp.status != 200:
                     return False
         except Exception:
@@ -216,7 +228,7 @@ class _PortForwards:
         self._cleanup_stale_forwards()
         self.ensure()
         self._wait_service_probes()
-        print("  Local verification tunnels ready: apiserver, EMQX, Jaeger")
+        print("  Local verification tunnels ready: apiserver, A2A, EMQX, Jaeger")
         return self
 
     def ensure(self):
@@ -226,6 +238,14 @@ class _PortForwards:
                 continue
             self._start_one(service, ports)
         self._wait_service_probes()
+
+    def healthy(self):
+        return all(
+            self.processes.get(service) is not None
+            and self.processes[service].poll() is None
+            and self._ports_reachable(ports)
+            for service, ports in self._SPECS
+        ) and self._service_probe_ok()
 
     def stop(self):
         for process in reversed(list(self.processes.values())):
@@ -241,14 +261,8 @@ SCENARIOS = {
     "11": ("Infrastructure — Pre-Deployment & Pod Readiness",             "verifier.s11_infra_readiness_verifier"),
     "12": ("Console Import — Binary, Import Command, DB Verification",    "verifier.s12_console_import_verifier"),
     "13": ("OTEL — Jaeger Span Coverage",                                 "verifier.s13_otel_verifier"),
-    # L1 — Flowgent Engine
-    "21": ("API Server — REST CRUD + Lifecycle Events",                   "verifier.s21_apiserver_verifier"),
-    "22": ("Notifier — Multi-Channel Delivery",                           "verifier.s22_notifier_verifier"),
-    "23": ("Controller — Application Mode Lifecycle",                     "verifier.s23_controller_verifier"),
-    "24": ("Messager — MQTT Topics + Sandbox Chain",                      "verifier.s24_messager_verifier"),
-    "25": ("A2A Protocol — Agent Card & Task Submit",                     "verifier.s25_a2a_protocol_verifier"),
-    "26": ("Wallet — x402 Key Management + MQTT Signing",                 "verifier.s26_wallet_verifier"),
-    # L2 — Application
+    # L2 — Use case. Verify run-scoped pods/workspaces before the
+    # JobManager's expected terminal-state garbage collection window closes.
     "31": ("E2E Fixer — Seed & Trigger",                                  "verifier.s31_seed_trigger_verifier"),
     "32": ("E2E Fixer — Discovery & Analyze",                             "verifier.s32_discovery_analyze_verifier"),
     "33": ("E2E Fixer — Remediation",                                     "verifier.s33_remediation_verifier"),
@@ -256,6 +270,13 @@ SCENARIOS = {
     "35": ("PR Commits — Verify Fix Commits on Target PR",                "verifier.s35_pr_commit_verifier"),
     "36": ("Knowledge — RAG Retrieval & Injection",                       "verifier.s36_knowledge_verifier"),
     "37": ("Volume Workspace — Pod-Container Mount, Git Clone Evidence (kubectl exec only)", "verifier.s37_volume_workspace_verifier"),
+    # L1 — Flowgent Engine. These checks are independent of the UI run's
+    # ephemeral Flow and resource-pool runtime resources and can safely run afterward.
+    "21": ("API Server — REST CRUD + Lifecycle Events",                   "verifier.s21_apiserver_verifier"),
+    "22": ("Notifier — Multi-Channel Delivery",                           "verifier.s22_notifier_verifier"),
+    "23": ("Controller — Flow JM and Resource Pool Lifecycle",             "verifier.s23_controller_verifier"),
+    "24": ("Messager — MQTT Topics + Sandbox Chain",                      "verifier.s24_messager_verifier"),
+    "25": ("A2A Protocol — Agent Card & Task Submit",                     "verifier.s25_a2a_protocol_verifier"),
 }
 
 
@@ -297,8 +318,11 @@ def _step_build():
     from common import run_cmd
     print("\n-- Step: Build flowgent-core --")
     build_env = {"GOFLAGS": "-p=1", "GOMAXPROCS": "1", "GOGC": "50"}
-    # A cold Go build can exceed two minutes while compiling uncached modules.
-    rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:core"], timeout=600, env=build_env)
+    rc, _ = run_cmd(
+        ["make", "-C", PROJECT_ROOT, "build:core"],
+        timeout=_CORE_BUILD_TIMEOUT_SECONDS,
+        env=build_env,
+    )
     if rc != 0:
         print("  ERROR: Build failed")
         return False
@@ -308,7 +332,7 @@ def _step_build():
         print(f"  ERROR: Binary not found after build: {CONSOLE_BIN}")
         return False
 
-    print("\n-- Step: Build and import flowgent-core image --")
+    print("\n-- Step: Build flowgent-core image --")
     _ensure_disk_headroom("before image build")
     # The Makefile enables its proxy-aware image recipe only when both flags
     # are present.  Keep this scoped to image builds so ordinary local commands
@@ -318,10 +342,10 @@ def _step_build():
         "HTTPS_PROXY": "http://127.0.0.1:8800",
         "IN_CN_GFW": "true",
     }
-    rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:image:core"], timeout=600, env=env)
+    rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:image:core"], timeout=1200, env=env)
     if rc != 0:
         print("  WARN: image build failed, retrying with HTTPS_PROXY=http://127.0.0.1:8800")
-        rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:image:core"], timeout=600, env=env)
+        rc, _ = run_cmd(["make", "-C", PROJECT_ROOT, "build:image:core"], timeout=1200, env=env)
     if rc != 0:
         print("  ERROR: Docker image build failed")
         return False
@@ -330,15 +354,20 @@ def _step_build():
     if rc != 0:
         print("  ERROR: docker tag failed")
         return False
-    rc, _ = run_cmd(["sh", "-c", "docker save localhost/flowgent-core:latest | sudo k3s ctr images import -"], timeout=300)
-    if rc != 0:
-        print("  ERROR: importing image into k3s containerd failed")
-        return False
-    _ensure_disk_headroom("after image import")
+    # Docker is provided by Podman in this environment. Its Docker-compatible
+    # `builder prune -af` can delete the just-tagged final image, not only
+    # intermediate cache. Never run a builder prune after producing the image
+    # that the following deployment step must export into k3s.
+    _ensure_disk_headroom("after image build", prune_builder_cache=False)
     return True
 
 
-def _ensure_disk_headroom(label: str, min_free_gib: int = 12, max_used_percent: int = 88):
+def _ensure_disk_headroom(
+    label: str,
+    min_free_gib: int = 12,
+    max_used_percent: int = 88,
+    prune_builder_cache: bool = True,
+):
     """Clean transient build cache only when root disk is near kubelet eviction."""
     usage = shutil.disk_usage("/")
     free_gib = usage.free / (1024 ** 3)
@@ -352,9 +381,10 @@ def _ensure_disk_headroom(label: str, min_free_gib: int = 12, max_used_percent: 
         f"  WARN: low disk headroom {label}: free={free_gib:.1f}GiB used={used_percent}% "
         f"(target free>={min_free_gib}GiB used<={max_used_percent}%)"
     )
-    rc, _ = run_cmd(["docker", "builder", "prune", "-af"], timeout=120)
-    if rc != 0:
-        run_cmd(["podman", "builder", "prune", "-af"], timeout=120)
+    if prune_builder_cache:
+        rc, _ = run_cmd(["docker", "builder", "prune", "-af"], timeout=120)
+        if rc != 0:
+            run_cmd(["podman", "builder", "prune", "-af"], timeout=120)
 
     removed = 0
     for path in glob.glob("/tmp/go-build*"):

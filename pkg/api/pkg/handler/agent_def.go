@@ -40,7 +40,15 @@ func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = namespace
+	filtered := make([]*entities.AgentInfo, 0, len(agents.Items))
+	for _, item := range agents.Items {
+		if item != nil && item.Namespace == namespace {
+			filtered = append(filtered, item)
+		}
+	}
+	agents.Items = filtered
+	agents.TotalCount = int64(len(filtered))
+	agents.TotalPages = 1
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agents)
 }
@@ -59,6 +67,9 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	agent.ID = uuid.New().String()
 	agent.Namespace = namespace
+	if agent.Status == "" {
+		agent.Status = "ACTIVE"
+	}
 	agent.CreatedAt = time.Now()
 	agent.UpdatedAt = time.Now()
 	if err := h.store.Save(r.Context(), &agent); err != nil {
@@ -75,7 +86,7 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *AgentDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	agent, err := h.store.Get(r.Context(), name)
-	if err != nil || agent == nil {
+	if err != nil || agent == nil || agent.Namespace != r.PathValue("namespace") {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -89,7 +100,7 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 
 	existing, err := h.store.Get(r.Context(), name)
-	if err != nil || existing == nil {
+	if err != nil || existing == nil || existing.Namespace != namespace {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -116,7 +127,15 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if updates.MaxTokens != 0 {
 		existing.MaxTokens = updates.MaxTokens
 	}
-	existing.Namespace = namespace
+	if updates.OutputSchema != nil {
+		existing.OutputSchema = updates.OutputSchema
+	}
+	if updates.Labels != nil {
+		existing.Labels = updates.Labels
+	}
+	if updates.Description != "" {
+		existing.Description = updates.Description
+	}
 	existing.UpdatedAt = time.Now()
 
 	if err := h.store.Save(r.Context(), existing); err != nil {
@@ -131,6 +150,11 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes an agent definition.
 func (h *AgentDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	existing, err := h.store.Get(r.Context(), name)
+	if err != nil || existing == nil || existing.Namespace != r.PathValue("namespace") {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
 	if err := h.store.Delete(r.Context(), name); err != nil {
 		h.logger.Error("delete agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

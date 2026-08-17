@@ -56,7 +56,9 @@ func (s *TaskPostgresStore) GetByExecID(ctx context.Context, execID string) (*en
 }
 
 func (s *TaskPostgresStore) CreateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
-	e.ID = uuid.New().String()
+	if e.ID == "" {
+		e.ID = uuid.New().String()
+	}
 	now := time.Now().UTC()
 	e.CreatedAt = now
 	e.UpdatedAt = now
@@ -73,8 +75,8 @@ func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.TaskR
 		return err
 	}
 	_, err = s.inner.Pool.Exec(ctx,
-		`INSERT INTO task_runs (id, agentflow_run_id, node_id, status, input, output, error, retry_count, max_retries, exec_id, parent_task_run_id, started_at, finished_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		`INSERT INTO task_runs (id, agentflow_run_id, node_id, status, input, output, error, retry_count, max_retries, exec_id, parent_task_run_id, sequence, started_at, finished_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 ON CONFLICT (id) DO UPDATE SET
 		     status            = EXCLUDED.status,
 		     input             = COALESCE(EXCLUDED.input, task_runs.input),
@@ -84,10 +86,11 @@ func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, e *entities.TaskR
 		     max_retries       = COALESCE(EXCLUDED.max_retries, task_runs.max_retries),
 		     exec_id           = COALESCE(EXCLUDED.exec_id, task_runs.exec_id),
 		     parent_task_run_id = COALESCE(EXCLUDED.parent_task_run_id, task_runs.parent_task_run_id),
+		     sequence          = EXCLUDED.sequence,
 		     started_at        = COALESCE(EXCLUDED.started_at, task_runs.started_at),
 		     finished_at       = COALESCE(EXCLUDED.finished_at, task_runs.finished_at),
 		     updated_at        = NOW()`,
-		e.ID, e.AgentFlowRunID, e.NodeID, e.Status, input, output, e.Error, e.RetryCount, e.MaxRetries, e.ExecID, e.ParentTaskRunID, e.StartedAt, e.FinishedAt)
+		e.ID, e.AgentFlowRunID, e.NodeID, e.Status, input, output, e.Error, e.RetryCount, e.MaxRetries, e.ExecID, e.ParentTaskRunID, e.Sequence, e.StartedAt, e.FinishedAt)
 	return err
 }
 

@@ -112,7 +112,7 @@ func (c *goLdapConn) Search(req *SearchRequest) (*SearchResult, error) {
 }
 
 func (c *goLdapConn) StartTLS(config *tls.Config) error { return c.conn.StartTLS(config) }
-func (c *goLdapConn) Close() error                       { return c.conn.Close() }
+func (c *goLdapConn) Close() error                      { return c.conn.Close() }
 
 func dial(network, addr string, timeout time.Duration) (LDAPConnection, error) {
 	conn, err := ldapv3.Dial(network, addr)

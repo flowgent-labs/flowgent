@@ -33,7 +33,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/flowgent-labs/flowgent/cache v0.0.0 // indirect
-	github.com/flowgent-labs/flowgent/wallet v0.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.7 // indirect
@@ -150,5 +149,4 @@ replace (
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../sandbox
 	github.com/flowgent-labs/flowgent/store => ../store
-	github.com/flowgent-labs/flowgent/wallet => ../wallet
 )

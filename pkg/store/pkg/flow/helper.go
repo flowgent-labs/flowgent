@@ -13,8 +13,11 @@ import (
 	"github.com/flowgent-labs/flowgent/store/pkg"
 )
 
-// LoadFromDB reads flow definitions from the database (Standard mode).
-func LoadFromDB(ctx context.Context, s store.IStore) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
+// LoadFromDB reads flow definitions from the database.
+func LoadFromDB(ctx context.Context, s store.IStore, namespace string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
+	if namespace == "" {
+		namespace = defaultNamespace
+	}
 	var flows []entities.FlowInfo
 	subFlows := make(map[string]entities.FlowInfo)
 
@@ -26,11 +29,11 @@ func LoadFromDB(ctx context.Context, s store.IStore) ([]entities.FlowInfo, map[s
 		afStore = NewFlowSQLiteStore(db)
 	}
 
-	page, err := afStore.Select(ctx, entities.PageRequest{Page: 1, Size: 1000})
-	versions := page.Items
+	page, err := afStore.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return flows, subFlows, fmt.Errorf("list flow definitions: %w", err)
 	}
+	versions := page.Items
 
 	seen := make(map[string]bool)
 	for _, v := range versions {
@@ -57,3 +60,5 @@ func LoadFromDB(ctx context.Context, s store.IStore) ([]entities.FlowInfo, map[s
 
 	return flows, subFlows, nil
 }
+
+const defaultNamespace = "default"

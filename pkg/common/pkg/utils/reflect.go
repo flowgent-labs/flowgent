@@ -261,6 +261,7 @@ func (s *timeFieldScanner) set(tm time.Time, zeroOrNil bool) {
 func ParseTime(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02 15:04:05",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
 		"2006-01-02T15:04:05Z",
 		"2006-01-02T15:04:05-07:00",
 		time.RFC3339,

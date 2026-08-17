@@ -8,6 +8,8 @@ require (
 	github.com/flowgent-labs/flowgent/config v0.0.0
 	github.com/flowgent-labs/flowgent/core v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
+	github.com/flowgent-labs/flowgent/store v0.0.0
+	github.com/jackc/pgx/v5 v5.7.6
 )
 
 require (
@@ -37,4 +39,5 @@ replace (
 	github.com/flowgent-labs/flowgent/config => ../config
 	github.com/flowgent-labs/flowgent/core => ../core
 	github.com/flowgent-labs/flowgent/model => ../model
+	github.com/flowgent-labs/flowgent/store => ../store
 )

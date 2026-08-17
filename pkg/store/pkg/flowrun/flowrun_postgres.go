@@ -30,6 +30,24 @@ func (s *FlowRunPostgresStore) Get(ctx context.Context, id string) (*entities.Fl
 func (s *FlowRunPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.FlowRunInfo], error) {
 	return s.inner.Select(ctx, req)
 }
+func (s *FlowRunPostgresStore) HasActiveForFlow(ctx context.Context, namespace, flowID string) (bool, error) {
+	var active bool
+	err := s.inner.Pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM orh_flowrun
+		WHERE namespace=$1 AND agentflow_id=$2 AND del_flag=FALSE
+		  AND status IN ('PENDING','RUNNING','PAUSED')
+	)`, namespace, flowID).Scan(&active)
+	return active, err
+}
+func (s *FlowRunPostgresStore) HasActiveForPool(ctx context.Context, namespace, poolID string) (bool, error) {
+	var active bool
+	err := s.inner.Pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM orh_flowrun
+		WHERE namespace=$1 AND resource_pool_id=$2 AND del_flag=FALSE
+		  AND status IN ('PENDING','RUNNING','PAUSED')
+	)`, namespace, poolID).Scan(&active)
+	return active, err
+}
 func (s *FlowRunPostgresStore) Save(ctx context.Context, e *entities.FlowRunInfo) error {
 	return s.inner.Save(ctx, e)
 }

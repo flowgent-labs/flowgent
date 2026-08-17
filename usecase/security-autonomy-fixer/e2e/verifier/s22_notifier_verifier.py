@@ -1,213 +1,163 @@
-"""
-Scenario 22 — Notifier: Multi-Channel Delivery via MQTT + REST.
+"""Scenario 22 — encrypted notification CRUD and real MQTT→HTTP delivery."""
 
-Validates notification channel CRUD, test endpoint, and MQTT notify roundtrip.
-
-Steps with Expected I/O:
-  Step 1. EMQX Broker Status
-    Action:  GET http://{EMQX}:{EMQX_DASH}/api/v5/status
-    Input:   EMQX dashboard port forwarded
-    Output:  HTTP 200, body contains "status" (WARN if unreachable — non-critical)
-
-  Step 2. Create Channel (REST)
-    Action:  POST /api/v1/{namespace}/notifications/channels
-    Input:   {name, type: "webhook", config: {url}, enabled: true}
-    Output:  HTTP 200/201, body contains "id"
-
-  Step 3. Test Channel Endpoint
-    Action:  POST /api/v1/{namespace}/notifications/test
-    Input:   {channel_id, message}
-    Output:  HTTP 200 (endpoint exists; actual delivery depends on external webhook)
-
-  Step 4. MQTT Notify Roundtrip
-    Action:  self-publish notify/event → self-subscribe notify/result
-    Input:   MQTT broker reachable; paho-mqtt installed
-    Output:  Both event and result messages received within 5s
-
-  Step 5. Notify Event Observation
-    Action:  Subscribe to flowgent/v1/+/flows/+/runs/+/notify/event
-    Input:   MQTT broker reachable
-    Output:  Subscription confirmed (message count reported)
-"""
-
-import sys
-import time
+import base64
 import json
+import os
+import subprocess
+import time
 import uuid
+
 import requests
-from common import config
+from common import api as common_api
+
+from common import config, pg_connect
 
 API = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
+SYSTEM_NAMESPACE = config.SYSTEM_NAMESPACE
 EMQX = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
-EMQX_DASH = config.EMQX_DASHBOARD
+CHANNEL_NAME = "security-autonomy-alerts"
+RECEIVER = "flowgent-e2e-webhook"
 
 
-def rand_id() -> str:
-    return str(uuid.uuid4())[:8]
+def _decode_delivery(payload):
+    value = json.loads(payload.decode())
+    encoded = value.get("payload") if isinstance(value, dict) else None
+    if encoded:
+        value = json.loads(base64.b64decode(encoded).decode())
+    return value
+
+
+def _receiver_receipts():
+    pod_response = subprocess.run(
+        [
+            "kubectl", "get", "pod", "-n", SYSTEM_NAMESPACE,
+            "-l", f"app={RECEIVER}", "--field-selector=status.phase=Running", "-o", "json",
+        ],
+        capture_output=True, text=True, timeout=20, check=True,
+    )
+    candidates = []
+    for item in json.loads(pod_response.stdout).get("items", []):
+        ready = any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for condition in item.get("status", {}).get("conditions", [])
+        )
+        if ready:
+            candidates.append(item)
+    if not candidates:
+        raise AssertionError("ready notification receiver pod not found")
+    candidates.sort(key=lambda item: item.get("status", {}).get("startTime", ""))
+    pod = candidates[-1]["metadata"]["name"]
+    result = subprocess.run(
+        [
+            "kubectl", "exec", "-n", SYSTEM_NAMESPACE, pod, "--",
+            "curl", "-fsS", "http://127.0.0.1:8080/receipts",
+        ],
+        capture_output=True, text=True, timeout=20, check=True,
+    )
+    return json.loads(result.stdout)
 
 
 def run():
     print("\n" + "=" * 60)
-    print("  Scenario 22: Notifier — Multi-Channel Delivery")
+    print("  Scenario 22: Encrypted Notifier — Real Delivery")
     print("=" * 60)
 
-    results = {}
+    session = common_api.flowgent_session()
+    channels_response = session.get(
+        f"{API}/api/v1/{NAMESPACE}/notifications/channels", timeout=10,
+    )
+    channels_response.raise_for_status()
+    channels = channels_response.json().get("items", [])
+    matches = [item for item in channels if item.get("name") == CHANNEL_NAME]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one UI-provisioned {CHANNEL_NAME}, got {len(matches)}")
+    channel = matches[0]
+    channel_id = channel.get("id")
+    configured = set(channel.get("configured_secret_fields") or [])
+    if configured != {"url", "headers"}:
+        raise AssertionError(f"configured secret fields mismatch: {sorted(configured)}")
+    public_json = json.dumps(channel)
+    token = os.getenv("FLOWGENT_E2E_NOTIFICATION_TOKEN", "")
+    receiver_url = os.getenv("FLOWGENT_E2E_NOTIFICATION_URL", "")
+    if token and token in public_json:
+        raise AssertionError("notification token leaked through management API")
+    if receiver_url and receiver_url in public_json:
+        raise AssertionError("notification URL leaked through management API")
+    print("  ✓ UI-provisioned channel is write-only/redacted")
 
-    # ── 1. EMQX status ───────────────────────────────────────
-    print("\n  → [1] EMQX broker status...")
+    conn = pg_connect()
+    if conn is None:
+        raise AssertionError("PostgreSQL connection is required for ciphertext verification")
     try:
-        r = requests.get(f"http://{EMQX}:{EMQX_DASH}/api/v5/status", timeout=3)
-        if r.status_code == 200:
-            print(f"      ✓ EMQX OK: {r.json().get('status', 'unknown')}")
-            results["EMQX Status"] = True
-        else:
-            print(f"      ⚠ EMQX status HTTP {r.status_code}")
-            results["EMQX Status"] = True  # accept — dashboard may not be exposed
-    except Exception as e:
-        print(f"      ⚠ EMQX dashboard not reachable (port not forwarded): {e}")
-        results["EMQX Status"] = True  # accept — MQTT broker reachability verified via tests below
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT config::text FROM nfy_channel WHERE id=%s", (channel_id,))
+            row = cursor.fetchone()
+        if not row:
+            raise AssertionError("notification DB row not found")
+        stored = row[0]
+        if token and token in stored:
+            raise AssertionError("notification token stored in plaintext")
+        if receiver_url and receiver_url in stored:
+            raise AssertionError("notification URL stored in plaintext")
+        if "ciphertext" not in stored or "__flowgent_sealed_secrets_v1" not in stored:
+            raise AssertionError("notification DB config has no versioned ciphertext envelope")
+    finally:
+        conn.close()
+    print("  ✓ DB contains a versioned authenticated ciphertext envelope")
 
-    # ── 2. Create webhook channel via REST ─────────────────────
-    print("\n  → [2] Create notification channel (REST)...")
-    channel_id = None
-    channel_name = f"e2e-notify-{rand_id()}"
     try:
-        r = requests.post(
-            f"{API}/api/v1/{NAMESPACE}/notifications/channels",
+        import paho.mqtt.client as mqtt
+    except ImportError as exc:
+        raise AssertionError("paho-mqtt is required for real notification E2E") from exc
+
+    delivery_id = str(uuid.uuid4())
+    result_topic = f"flowgent/v1/{NAMESPACE}/flows/notification-test/runs/{delivery_id}/notify/result"
+    received = []
+
+    def on_message(_client, _userdata, message):
+        try:
+            received.append(_decode_delivery(message.payload))
+        except Exception as exc:  # keep a diagnostic without printing payload/secrets
+            received.append({"status": "DECODE_FAILED", "error": str(exc)})
+
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    mqtt_client.on_message = on_message
+    mqtt_client.connect(EMQX, EMQX_PORT, 10)
+    mqtt_client.subscribe(result_topic, qos=1)
+    mqtt_client.loop_start()
+    try:
+        response = session.post(
+            f"{API}/api/v1/{NAMESPACE}/notifications/test",
             json={
-                "name": channel_name,
-                "provider": "webhook",
-                "config": {"url": "https://httpbin.org/post"},
-                "enabled": True,
+                "channel_id": channel_id,
+                "delivery_id": delivery_id,
+                "title": "Security autonomy fixer E2E",
+                "message": "authenticated notification delivery",
             },
             timeout=10,
         )
-        if r.status_code not in (200, 201):
-            raise AssertionError(f"create channel: {r.status_code} {r.text[:160]}")
-        channel_id = r.json().get("id")
-        print(f"      ✓ Channel created: id={channel_id}")
-        results["Channel Create"] = True
-    except Exception as e:
-        print(f"      ✗ Channel create failed: {e}")
-        results["Channel Create"] = False
+        if response.status_code != 202:
+            raise AssertionError(f"notification test returned {response.status_code}: {response.text[:160]}")
+        deadline = time.time() + 20
+        while time.time() < deadline and not received:
+            time.sleep(0.2)
+    finally:
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
 
-    # ── 3. Test channel endpoint ───────────────────────────────
-    print("\n  → [3] POST /notifications/test...")
-    try:
-        r = requests.post(
-            f"{API}/api/v1/{NAMESPACE}/notifications/test",
-            json={"channel_id": channel_id, "message": "e2e notifier test"},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            print(f"      ✓ Test endpoint returned 200")
-            results["Channel Test"] = True
-        else:
-            print(f"      ⚠ Test endpoint returned {r.status_code} (may be stub)")
-            results["Channel Test"] = True  # endpoint exists
-    except Exception as e:
-        print(f"      ✗ Test endpoint failed: {e}")
-        results["Channel Test"] = False
+    if not received:
+        raise AssertionError("no Notifier delivery result received over MQTT")
+    result = received[-1]
+    if result.get("delivery_id") != delivery_id or result.get("channel_id") != channel_id:
+        raise AssertionError("delivery result correlation mismatch")
+    if result.get("status") != "DELIVERED":
+        raise AssertionError(f"real notification delivery failed: {result.get('error', 'unknown')}")
+    print("  ✓ Notifier decrypted the DB secret and emitted DELIVERED")
 
-    # ── 4. MQTT notify/event → notify/result roundtrip ─────────
-    print("\n  → [4] MQTT notify/event → notify/result roundtrip...")
-    try:
-        import paho.mqtt.client as mqtt
-    except ImportError:
-        print("      SKIP: paho-mqtt not installed")
-        results["MQTT Notify"] = True
-    else:
-        flow_id = "notify-test-" + rand_id()
-        run_id = "run-" + rand_id()
-        event_topic = f"flowgent/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/notify/event"
-        result_topic = f"flowgent/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/notify/result"
-        received = {}
-
-        def on_message(client, userdata, msg):
-            received[msg.topic] = msg.payload
-
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        client.on_message = on_message
-        try:
-            client.connect(EMQX, EMQX_PORT, 10)
-            client.subscribe("flowgent/v1/+/flows/+/runs/+/notify/event")
-            client.subscribe(result_topic)
-            client.loop_start()
-            time.sleep(0.3)
-
-            event_payload = {
-                "channel": channel_name,
-                "provider": "webhook",
-                "message": "e2e notification event",
-                "run_id": run_id,
-            }
-            client.publish(event_topic, json.dumps(event_payload), qos=1)
-            print(f"      → Published to {event_topic}")
-
-            # Simulate notifier delivery confirmation
-            result_payload = {"status": "delivered", "channel": channel_name}
-            client.publish(result_topic, json.dumps(result_payload), qos=1)
-
-            deadline = time.time() + 5
-            while time.time() < deadline and len(received) < 2:
-                time.sleep(0.1)
-
-            client.loop_stop()
-            client.disconnect()
-
-            if event_topic not in received and not any("notify/event" in t for t in received):
-                raise AssertionError("notify/event not received")
-            if result_topic not in received:
-                raise AssertionError("notify/result not received")
-
-            print(f"      ✓ MQTT roundtrip verified ({len(received)} messages)")
-            results["MQTT Notify"] = True
-        except Exception as e:
-            print(f"      ✗ MQTT notify failed: {e}")
-            results["MQTT Notify"] = False
-
-    # ── 5. Observe the production topic without joining its worker group ─
-    print("\n  → [5] Non-shared notify event observation...")
-    try:
-        import paho.mqtt.client as mqtt
-
-        messages = []
-
-        def on_message(client, userdata, msg):
-            messages.append(msg.payload)
-
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        client.on_message = on_message
-        client.connect(EMQX, EMQX_PORT, 10)
-        client.subscribe("flowgent/v1/+/flows/+/runs/+/notify/event")
-        client.loop_start()
-        time.sleep(2)
-        client.loop_stop()
-        client.disconnect()
-        print(f"      ✓ Observed notify/event without a shared subscription ({len(messages)} messages)")
-        results["Notify Queue"] = True
-    except Exception as e:
-        print(f"      ⚠ Notify queue subscription: {e}")
-        results["Notify Queue"] = True
-
-    # ── Cleanup channel ────────────────────────────────────────
-    if channel_id:
-        try:
-            requests.delete(f"{API}/api/v1/{NAMESPACE}/notifications/channels/{channel_id}", timeout=5)
-            print(f"\n  cleanup: deleted channel {channel_id}")
-        except Exception:
-            pass
-
-    passed = sum(1 for v in results.values() if v)
-    total = len(results)
-    print(f"\n  {'=' * 60}")
-    print(f"  Summary: {passed}/{total} notifier checks passed")
-    print(f"  {'=' * 60}")
-
-    if passed < total:
-        failed = [k for k, v in results.items() if not v]
-        raise AssertionError(f"Failed notifier checks: {failed}")
-
-    print(f"\n  ✓ All Notifier tests passed")
+    receipts = _receiver_receipts()
+    if int(receipts.get("authorized_count", 0)) < 1:
+        raise AssertionError("authenticated webhook receiver has no accepted delivery")
+    print("  ✓ Authenticated HTTP receiver accepted the real webhook")
+    print("\n  ✓ All encrypted Notifier checks passed")

@@ -6,15 +6,13 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
-// ExportAll collects all non-wallet resources from the database and returns
-// them as an ExportData structure. Wallets are intentionally excluded — they
-// can only be imported or deleted, never exported.
+// ExportAll collects all Flowgent-owned resources from the database.
 func (fc *FlowgentConsole) ExportAll() (*ExportData, error) {
 	return fc.ExportKinds(nil)
 }
 
 // ExportKinds exports only the specified resource kinds. An empty or nil
-// kinds slice exports all supported kinds (everything except wallets).
+// kinds slice exports all supported kinds.
 // Valid kinds: llm, channel, mcp, skill, agent, flow, flowrun.
 func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 	ls := fc.getStores()
@@ -64,12 +62,12 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 		}
 	}
 	if include("flow") || include("skill") {
-		if page, err := ls.flows.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, fv := range page.Items {
 				if fv == nil {
 					continue
 				}
-				spec, _ := ls.flows.GetSpec(fc.ctx, fv.FlowID)
+				spec, _ := ls.flows.GetSpec(fc.ctx, fc.namespace, fv.FlowID)
 				if spec == nil {
 					continue
 				}

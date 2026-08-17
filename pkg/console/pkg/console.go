@@ -3,7 +3,6 @@ package console
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -15,18 +14,16 @@ import (
 	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
 	"github.com/flowgent-labs/flowgent/store/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/store/pkg/notifier"
-	payments "github.com/flowgent-labs/flowgent/wallet/pkg"
-	walletproviders "github.com/flowgent-labs/flowgent/wallet/pkg/providers"
 )
 
 // FlowgentConsole is the unified resource management class for import/export
 // and CRUD of all Flowgent resource kinds (agents, flows, MCPs, LLM providers,
-// channels, skills, runs, wallets).
+// channels, skills, and runs). Wallet keys are owned by the external Wallet
+// service and are managed with walletd, outside the Flowgent process.
 type FlowgentConsole struct {
-	store       store.IStore
-	secretStore payments.SecretStoreProvider
-	namespace      string
-	ctx         context.Context
+	store     store.IStore
+	namespace string
+	ctx       context.Context
 }
 
 // lazyStores holds lazily-initialized per-entity stores.
@@ -52,28 +49,7 @@ func NewFlowgentConsole(cfg *config.FlowgentConfig) (*FlowgentConsole, error) {
 		fc.namespace = cfg.Runtime.Namespace.DefaultNamespace
 	}
 
-	fc.initSecretStore(cfg)
 	return fc, nil
-}
-
-func (fc *FlowgentConsole) initSecretStore(cfg *config.FlowgentConfig) {
-	if cfg.Wallet == nil {
-		return
-	}
-	mkf := cfg.Wallet.SecretStore.MasterKeyFile
-	if mkf == "" {
-		return
-	}
-	db, ok := fc.store.DB().(*sql.DB)
-	if !ok {
-		return
-	}
-	ss, err := walletproviders.NewDefaultSecretStoreProvider(db, mkf)
-	if err != nil {
-		slog.Warn("secret store init failed (wallet commands unavailable)", "err", err)
-		return
-	}
-	fc.secretStore = ss
 }
 
 // SetNamespace sets the active namespace.

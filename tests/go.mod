@@ -14,7 +14,6 @@ replace (
 	github.com/flowgent-labs/flowgent/notifier => ../pkg/notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../pkg/sandbox
 	github.com/flowgent-labs/flowgent/store => ../pkg/store
-	github.com/flowgent-labs/flowgent/wallet => ../pkg/wallet
 )
 
 require (

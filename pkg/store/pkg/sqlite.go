@@ -96,13 +96,26 @@ func (s *SQLiteGenericStore[T]) Save(ctx context.Context, entity *T) error {
 		return fmt.Errorf("no fields")
 	}
 	holders := make([]string, len(cols))
-	for i := range cols {
+	updates := make([]string, len(cols))
+	for i, col := range cols {
 		holders[i] = "?"
+		updates[i] = fmt.Sprintf("%s=excluded.%s", sqliteQuote(col), sqliteQuote(col))
 	}
-	sql := fmt.Sprintf("INSERT OR REPLACE INTO %s (%s) VALUES (%s)",
-		s.Table, strings.Join(cols, ","), strings.Join(holders, ","))
+	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+		sqliteQuote(s.Table), sqliteQuoteCols(cols), strings.Join(holders, ","),
+		sqliteQuote(s.IDCol), strings.Join(updates, ","))
 	_, err := s.Conn.ExecContext(ctx, sql, args...)
 	return err
+}
+
+func sqliteQuote(identifier string) string { return `"` + identifier + `"` }
+
+func sqliteQuoteCols(columns []string) string {
+	quoted := make([]string, len(columns))
+	for i, column := range columns {
+		quoted[i] = sqliteQuote(column)
+	}
+	return strings.Join(quoted, ",")
 }
 
 func (s *SQLiteGenericStore[T]) Delete(ctx context.Context, id string) error {

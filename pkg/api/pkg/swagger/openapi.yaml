@@ -56,6 +56,186 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: Task runs }
+  /{namespace}/runtime-config:
+    get:
+      summary: Read redacted namespace runtime configuration
+      operationId: getNamespaceRuntimeConfig
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      responses:
+        '200':
+          description: Local and effective namespace configuration; secret values are never returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigView' }
+  /{namespace}/runtime-config/environment:
+    put:
+      summary: Replace namespace environment variables
+      operationId: updateNamespaceEnvironment
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeEnvironmentUpdate' }
+      responses:
+        '200':
+          description: Updated redacted configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigView' }
+  /{namespace}/runtime-config/secrets:
+    put:
+      summary: Merge or clear write-only namespace secrets
+      operationId: updateNamespaceSecrets
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeSecretUpdate' }
+      responses:
+        '200':
+          description: Updated redacted configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigView' }
+  /{namespace}/flows/{flow_id}/runtime-config:
+    get:
+      summary: Read redacted Flow runtime configuration with namespace inheritance
+      operationId: getFlowRuntimeConfig
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/FlowID'
+      responses:
+        '200':
+          description: Local, inherited, and effective Flow configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigView' }
+  /{namespace}/flows/{flow_id}/runtime-config/environment:
+    put:
+      summary: Replace Flow-local environment variable overrides
+      operationId: updateFlowEnvironment
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/FlowID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeEnvironmentUpdate' }
+      responses:
+        '200':
+          description: Updated redacted configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigView' }
+  /{namespace}/flows/{flow_id}/runtime-config/secrets:
+    put:
+      summary: Merge or clear write-only Flow secret overrides
+      operationId: updateFlowSecrets
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/FlowID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuntimeSecretUpdate' }
+      responses:
+        '200':
+          description: Updated redacted configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigView' }
+  /{namespace}/flows/{flow_id}/runtime-config/resolved:
+    get:
+      summary: Resolve effective Flow runtime configuration for the controller workload
+      description: Workload-only endpoint; human and ordinary API-key roles must not receive this permission.
+      operationId: resolveFlowRuntimeConfig
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/FlowID'
+      responses:
+        '200':
+          description: Effective environment and secret values for Kubernetes materialization
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolvedRuntimeConfig' }
+  /{namespace}/resource-pools:
+    get:
+      summary: List namespace resource pools
+      operationId: listResourcePools
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      responses:
+        '200':
+          description: Resource pools available to Flows in this namespace
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ResourcePool' }
+    post:
+      summary: Create a namespace resource pool
+      operationId: createResourcePool
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourcePool' }
+      responses:
+        '201':
+          description: Resource pool created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourcePool' }
+        '409': { description: A case-insensitive name collision exists }
+  /{namespace}/resource-pools/{pool_name}:
+    get:
+      summary: Get a namespace resource pool
+      operationId: getResourcePool
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/ResourcePoolName'
+      responses:
+        '200':
+          description: Resource pool
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourcePool' }
+        '404': { description: Resource pool not found }
+    put:
+      summary: Update resource-pool capacity and placement
+      operationId: updateResourcePool
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/ResourcePoolName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourcePool' }
+      responses:
+        '200':
+          description: Resource pool updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourcePool' }
+    delete:
+      summary: Delete an unused resource pool
+      operationId: deleteResourcePool
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/ResourcePoolName'
+      responses:
+        '204': { description: Resource pool deleted }
+        '409': { description: A Flow or active run still references the pool }
   /webhook/{provider}:
     post:
       summary: Receive an SCM (GitHub/GitLab/Gitea) webhook and trigger matching flows
@@ -100,3 +280,92 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: Rejected }
+components:
+  parameters:
+    Namespace:
+      name: namespace
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
+    FlowID:
+      name: flow_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
+    ResourcePoolName:
+      name: pool_name
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
+  schemas:
+    ResourceQuantity:
+      type: object
+      additionalProperties: false
+      properties:
+        cpu: { type: string, example: 500m }
+        memory: { type: string, example: 512Mi }
+    ResourcePool:
+      type: object
+      required: [name, replicas, slots_per_pod, sandbox_replicas, sandbox_slots_per_pod]
+      properties:
+        name: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
+        description: { type: string }
+        replicas: { type: integer, minimum: 1, maximum: 100 }
+        slots_per_pod: { type: integer, minimum: 1, maximum: 256 }
+        resources: { $ref: '#/components/schemas/ResourceQuantity' }
+        sandbox_replicas: { type: integer, minimum: 0, maximum: 100 }
+        sandbox_slots_per_pod: { type: integer, minimum: 1, maximum: 256 }
+        sandbox_resources: { $ref: '#/components/schemas/ResourceQuantity' }
+        priority_class_name: { type: string }
+        node_selector:
+          type: object
+          additionalProperties: { type: string }
+    RuntimeConfigLayer:
+      type: object
+      required: [environment, secret_keys]
+      properties:
+        environment:
+          type: object
+          additionalProperties: { type: string }
+        secret_keys:
+          type: array
+          items: { type: string }
+          description: Configured names only; values are write-only.
+    RuntimeConfigView:
+      type: object
+      required: [local, inherited, effective]
+      properties:
+        local: { $ref: '#/components/schemas/RuntimeConfigLayer' }
+        inherited: { $ref: '#/components/schemas/RuntimeConfigLayer' }
+        effective: { $ref: '#/components/schemas/RuntimeConfigLayer' }
+    RuntimeEnvironmentUpdate:
+      type: object
+      required: [environment]
+      additionalProperties: false
+      properties:
+        environment:
+          type: object
+          additionalProperties: { type: string, maxLength: 65536 }
+    RuntimeSecretUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        secrets:
+          type: object
+          writeOnly: true
+          additionalProperties: { type: string, minLength: 1, maxLength: 65536 }
+        clear_secret_keys:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+    ResolvedRuntimeConfig:
+      type: object
+      required: [environment, secrets]
+      properties:
+        environment:
+          type: object
+          additionalProperties: { type: string }
+        secrets:
+          type: object
+          writeOnly: true
+          additionalProperties: { type: string }

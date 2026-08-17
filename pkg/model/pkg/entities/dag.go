@@ -16,7 +16,7 @@ const (
 	MapNode        NodeType = "map"
 	AgentFlowNode  NodeType = "agentflow"
 	ConditionNode  NodeType = "condition"
-	CommitteeNode   NodeType = "committee"
+	CommitteeNode  NodeType = "committee"
 	HumanNode      NodeType = "human"
 	SupervisorNode NodeType = "supervisor"
 	SandboxNode    NodeType = "sandbox"
@@ -27,64 +27,64 @@ const (
 // Node represents a single node in the agentflow DAG.
 // Both old flat format and new kind+spec nested format are supported via custom UnmarshalYAML.
 type Node struct {
-	ID               string               `json:"id" yaml:"id"`
-	Kind             NodeType             `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Type             NodeType             `json:"type" yaml:"type,omitempty"`
-	Solution         string               `json:"solution,omitempty" yaml:"solution,omitempty"`
-	Agent            string               `json:"agent,omitempty" yaml:"agent,omitempty"`
-	Skill            string               `json:"skill,omitempty" yaml:"skill,omitempty"`
-	Tool             string               `json:"tool,omitempty" yaml:"tool,omitempty"`
-	Source           string               `json:"source,omitempty" yaml:"source,omitempty"`
-	Expression       string               `json:"expression,omitempty" yaml:"expression,omitempty"`
-	Instruction      string               `json:"instruction,omitempty" yaml:"instruction,omitempty"`
-	Strategy         map[string]any        `json:"strategy,omitempty" yaml:"strategy,omitempty"`
-	Input            map[string]any        `json:"input,omitempty" yaml:"input,omitempty"`
-	Retry            *RetryPolicy          `json:"retry,omitempty" yaml:"retry,omitempty"`
-	Node             *Node                 `json:"node,omitempty" yaml:"node,omitempty"`
-	Concurrency      int                   `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
-	Approval         *HumanApprovalConfig  `json:"approval,omitempty" yaml:"approval,omitempty"`
-	SupervisorConfig *SupervisorConfig     `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
-	AgentFlowID      string                `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
-	OutputSchema     map[string]any        `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
-	Runtime          string                `json:"runtime,omitempty" yaml:"runtime,omitempty"`
-	Script           string                `json:"script,omitempty" yaml:"script,omitempty"`
-	Timeout          string                `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-	Resources        *model.SandboxResources    `json:"resources,omitempty" yaml:"resources,omitempty"`
-	NetworkPolicy    *model.NetworkPolicy       `json:"network_policy,omitempty" yaml:"network_policy,omitempty"`
-	Workspace        string                `json:"workspace,omitempty" yaml:"workspace,omitempty"`
-	Args             map[string]any        `json:"args,omitempty" yaml:"args,omitempty"`
+	ID               string                  `json:"id" yaml:"id"`
+	Kind             NodeType                `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Type             NodeType                `json:"type" yaml:"type,omitempty"`
+	Solution         string                  `json:"solution,omitempty" yaml:"solution,omitempty"`
+	Agent            string                  `json:"agent,omitempty" yaml:"agent,omitempty"`
+	Skill            string                  `json:"skill,omitempty" yaml:"skill,omitempty"`
+	Tool             string                  `json:"tool,omitempty" yaml:"tool,omitempty"`
+	Source           string                  `json:"source,omitempty" yaml:"source,omitempty"`
+	Expression       string                  `json:"expression,omitempty" yaml:"expression,omitempty"`
+	Instruction      string                  `json:"instruction,omitempty" yaml:"instruction,omitempty"`
+	Strategy         map[string]any          `json:"strategy,omitempty" yaml:"strategy,omitempty"`
+	Input            map[string]any          `json:"input,omitempty" yaml:"input,omitempty"`
+	Retry            *RetryPolicy            `json:"retry,omitempty" yaml:"retry,omitempty"`
+	Node             *Node                   `json:"node,omitempty" yaml:"node,omitempty"`
+	Concurrency      int                     `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
+	Approval         *HumanApprovalConfig    `json:"approval,omitempty" yaml:"approval,omitempty"`
+	SupervisorConfig *SupervisorConfig       `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
+	AgentFlowID      string                  `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
+	OutputSchema     map[string]any          `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
+	Runtime          string                  `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	Script           string                  `json:"script,omitempty" yaml:"script,omitempty"`
+	Timeout          string                  `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Resources        *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+	NetworkPolicy    *model.NetworkPolicy    `json:"network_policy,omitempty" yaml:"network_policy,omitempty"`
+	Workspace        string                  `json:"workspace,omitempty" yaml:"workspace,omitempty"`
+	Args             map[string]any          `json:"args,omitempty" yaml:"args,omitempty"`
 }
 
 // nodeSpecNewFormat is the intermediate struct for parsing the new kind+spec node format.
 type nodeSpecNewFormat struct {
-	Tool             string                 `yaml:"tool"`
-	Agent            string                 `yaml:"agent"`
-	Skill            string                 `yaml:"skill"`
-	Source           string                 `yaml:"source"`
-	Expression       string                 `yaml:"expression"`
-	Args             map[string]any         `yaml:"args"`
-	Strategy         map[string]any         `yaml:"strategy"`
-	Retry            *RetryPolicy           `yaml:"retry"`
-	Concurrency      int                    `yaml:"concurrency"`
-	Approval         *HumanApprovalConfig   `yaml:"approval"`
-	SupervisorConfig *SupervisorConfig      `yaml:"supervisor_config"`
-	AgentFlowID      string                 `yaml:"agentflow"`
-	Runtime          string                 `yaml:"runtime"`
-	Script           string                 `yaml:"script"`
-	Timeout          string                 `yaml:"timeout"`
+	Tool             string                  `yaml:"tool"`
+	Agent            string                  `yaml:"agent"`
+	Skill            string                  `yaml:"skill"`
+	Source           string                  `yaml:"source"`
+	Expression       string                  `yaml:"expression"`
+	Args             map[string]any          `yaml:"args"`
+	Strategy         map[string]any          `yaml:"strategy"`
+	Retry            *RetryPolicy            `yaml:"retry"`
+	Concurrency      int                     `yaml:"concurrency"`
+	Approval         *HumanApprovalConfig    `yaml:"approval"`
+	SupervisorConfig *SupervisorConfig       `yaml:"supervisor_config"`
+	AgentFlowID      string                  `yaml:"agentflow"`
+	Runtime          string                  `yaml:"runtime"`
+	Script           string                  `yaml:"script"`
+	Timeout          string                  `yaml:"timeout"`
 	Resources        *model.SandboxResources `yaml:"resources"`
 	NetworkPolicy    *model.NetworkPolicy    `yaml:"network_policy"`
-	Workspace        string                 `yaml:"workspace"`
-	OutputSchema     map[string]any         `yaml:"output_schema"`
+	Workspace        string                  `yaml:"workspace"`
+	OutputSchema     map[string]any          `yaml:"output_schema"`
 }
 
 // nodeNewFormat is the top-level structure for the new kind+spec node format.
 type nodeNewFormat struct {
-	ID          string             `yaml:"id"`
-	Kind        string             `yaml:"kind"`
-	Instruction string             `yaml:"instruction"`
-	Solution    string             `yaml:"solution"`
-	Spec        nodeSpecNewFormat  `yaml:"spec"`
+	ID          string            `yaml:"id"`
+	Kind        string            `yaml:"kind"`
+	Instruction string            `yaml:"instruction"`
+	Solution    string            `yaml:"solution"`
+	Spec        nodeSpecNewFormat `yaml:"spec"`
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler for backward-compatible node parsing.
@@ -158,17 +158,17 @@ type Edge struct {
 
 // RetryPolicy defines the retry behavior for a node.
 type RetryPolicy struct {
-	Max      int      `json:"max" yaml:"max"`
+	Max      int                `json:"max" yaml:"max"`
 	Initial  utils.UnitDuration `json:"initial" yaml:"initial"`
 	MaxDelay utils.UnitDuration `json:"max_delay" yaml:"max_delay"`
-	Factor   float64  `json:"factor" yaml:"factor"`
+	Factor   float64            `json:"factor" yaml:"factor"`
 }
 
 // HumanApprovalConfig defines the approval gate configuration for human nodes.
 type HumanApprovalConfig struct {
 	Timeout   utils.UnitDuration `json:"timeout" yaml:"timeout"`
-	OnApprove string   `json:"on_approve" yaml:"on_approve"`
-	OnReject  string   `json:"on_reject" yaml:"on_reject"`
+	OnApprove string             `json:"on_approve" yaml:"on_approve"`
+	OnReject  string             `json:"on_reject" yaml:"on_reject"`
 }
 
 // SupervisorConfig defines the constraints for supervisor nodes.

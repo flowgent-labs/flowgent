@@ -22,6 +22,9 @@ spec:
         {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
 {{ end }}
     spec:
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled .Values.credentialProviders.vault.enabled }}
+      serviceAccountName: {{ include "flowgent.fullname" . }}-engine
+{{ end }}
       containers:
         - name: apiserver
           image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
@@ -35,6 +38,8 @@ spec:
               containerPort: {{ .Values.apiserver.service.mgmtPort }}
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
+            {{- include "flowgent.authorizationServerEnv" . | nindent 12 }}
+            {{- include "flowgent.notificationSecretEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent

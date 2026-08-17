@@ -21,6 +21,7 @@ Steps:
 """
 
 import os
+import re
 import subprocess
 import sys
 import json
@@ -29,7 +30,7 @@ from common import api as common_api
 from common import config
 
 NAMESPACE = config.NAMESPACE_ID
-APP_NAMESPACE = config.K8S_APP_NAMESPACE
+WORKLOAD_NAMESPACE = config.K8S_WORKLOAD_NAMESPACE
 FLOW_ID = "security-autonomy-fixer"
 SANDBOX_NODE_IDS = ("git-clone", "read-source-files", "wait-rescan")
 
@@ -67,53 +68,37 @@ def exec_in_pod(namespace: str, pod_name: str, container: str, cmd: str) -> tupl
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
-def find_tm_pod() -> tuple:
-    """Find a running flow-owned TaskManager pod. Returns (namespace, pod_name, container) or (None,None,None)."""
+def flow_resource_pool() -> str:
+    session = common_api.flowgent_session()
+    response = session.get(
+        f"{config.K8S_APISERVER_URL}/api/v1/{NAMESPACE}/flows/{FLOW_ID}", timeout=10
+    )
+    if response.status_code != 200:
+        raise AssertionError(f"cannot resolve Resource Pool for {FLOW_ID}: HTTP {response.status_code}")
+    pool_id = response.json().get("resource_pool_id")
+    if not pool_id:
+        raise AssertionError(f"Flow {FLOW_ID} has no resource_pool_id")
+    return pool_id
+
+
+def find_tm_pod(pool_id: str) -> tuple:
+    """Find a running Pool-owned TaskManager pod."""
     pods = kubectl_json([
-        "get", "pods", "-n", APP_NAMESPACE, "-l",
-        f"flowgent/role=worker,flowgent.io/flow={FLOW_ID}",
+        "get", "pods", "-n", WORKLOAD_NAMESPACE, "-l",
+        f"flowgent/role=worker,flowgent.io/resource-pool={pool_id}",
     ])
     if pods:
         for p in pods.get("items", []):
             phase = p.get("status", {}).get("phase", "")
             containers = [c["name"] for c in p.get("spec", {}).get("containers", [])]
             if phase == "Running" and containers:
-                return APP_NAMESPACE, p["metadata"]["name"], containers[0]
-
-    pods = kubectl_json(["get", "pods", "-n", APP_NAMESPACE])
-    if pods:
-        for p in pods.get("items", []):
-            name = p["metadata"]["name"]
-            phase = p.get("status", {}).get("phase", "")
-            containers = [c["name"] for c in p.get("spec", {}).get("containers", [])]
-            if phase == "Running" and "taskmanager" in name.lower() and containers:
-                return APP_NAMESPACE, name, containers[0]
+                return WORKLOAD_NAMESPACE, p["metadata"]["name"], containers[0]
 
     return None, None, None
 
 
-def deployment_for_pod(namespace: str, pod_name: str) -> tuple:
-    pod = kubectl_json(["get", "pod", "-n", namespace, pod_name])
-    if not pod:
-        return None, None
-    for owner in pod.get("metadata", {}).get("ownerReferences", []) or []:
-        if owner.get("kind") != "ReplicaSet":
-            continue
-        rs_name = owner.get("name")
-        if not rs_name:
-            continue
-        rs = kubectl_json(["get", "rs", "-n", namespace, rs_name])
-        if not rs:
-            continue
-        for rs_owner in rs.get("metadata", {}).get("ownerReferences", []) or []:
-            if rs_owner.get("kind") == "Deployment" and rs_owner.get("name"):
-                return namespace, rs_owner["name"]
-    return None, None
-
-
 def load_tasks(run_id: str) -> list:
-    session = requests.Session()
-    session.headers["Content-Type"] = "application/json"
+    session = common_api.flowgent_session()
     try:
         return common_api.get_tasks(session, config.K8S_APISERVER_URL, NAMESPACE, run_id)
     except Exception as exc:
@@ -121,9 +106,12 @@ def load_tasks(run_id: str) -> list:
         return []
 
 
-def task_id(tasks_by_node: dict, run_id: str, node_id: str) -> str:
+def workspace_plan_id(tasks_by_node: dict, run_id: str, node_id: str) -> str:
+    """Resolve the stable plan workspace from an attempt-scoped exec_id."""
     task = tasks_by_node.get(node_id) or {}
-    return task.get("exec_id") or f"plan-{run_id}-{node_id}"
+    exec_id = task.get("exec_id") or ""
+    match = re.fullmatch(r"(.+)-attempt-\d+", exec_id)
+    return match.group(1) if match else (exec_id or f"plan-{run_id}-{node_id}")
 
 
 def run():
@@ -150,14 +138,18 @@ def run():
     #     volume mount inside the container.
     # ═══════════════════════════════════════════════════════════════
     print("\n── L2: Pod container — /var/flowgent volume mount ──")
-    ns, pod_name, container = find_tm_pod()
+    pool_id = flow_resource_pool()
+    ns, pod_name, container = find_tm_pod(pool_id)
     if not pod_name:
         print("  [L2] No TM pod found, trying sandbox pod...")
-        pods = kubectl_json(["get", "pods", "-n", APP_NAMESPACE, "-l", f"flowgent/role=sandbox-worker,flowgent.io/flow={FLOW_ID}"])
+        pods = kubectl_json([
+            "get", "pods", "-n", WORKLOAD_NAMESPACE, "-l",
+            f"flowgent/role=sandbox-worker,flowgent.io/resource-pool={pool_id}",
+        ])
         if pods:
             for p in pods.get("items", []):
                 if p.get("status", {}).get("phase") == "Running":
-                    ns, pod_name = APP_NAMESPACE, p["metadata"]["name"]
+                    ns, pod_name = WORKLOAD_NAMESPACE, p["metadata"]["name"]
                     container = p.get("spec", {}).get("containers", [{}])[0].get("name", "sandbox")
                     break
 
@@ -179,34 +171,55 @@ def run():
         else:
             raise AssertionError(f"{CONTAINER_WORKSPACE} missing despite mount entry: {out[:300]}")
 
-    # L2.2 — workspace volumeMount in the selected shared runtime deployment.
-    deploy_ns, deploy_name = deployment_for_pod(ns, pod_name)
-    if not deploy_name:
-        deploy_name = "flowgent-taskmanager" if "task" in container.lower() or "taskmanager" in pod_name.lower() else "flowgent-sandbox"
-        deploy_ns = APP_NAMESPACE
-    runtime_deploy = kubectl_json(["get", "deploy", "-n", deploy_ns, deploy_name])
-    if runtime_deploy:
-        mount_found = False
-        volume_found = False
-        for c in runtime_deploy.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
-            if c.get("name") == container:
-                for vm in c.get("volumeMounts", []):
-                    if "workspace" in vm.get("name", "").lower():
-                        mount_found = True
-                        print(f"  [L2.2] OK: {deploy_ns}/{deploy_name} has workspace volumeMount: "
-                              f"name={vm['name']} mountPath={vm.get('mountPath','?')}")
-                        break
-        for v in runtime_deploy.get("spec", {}).get("template", {}).get("spec", {}).get("volumes", []):
-            if "workspace" in v.get("name", "").lower():
-                volume_found = True
-                host_path = v.get("hostPath", {}).get("path", "?")
-                print(f"  [L2.2] OK: {deploy_ns}/{deploy_name} has workspace volume: name={v['name']} "
-                      f"hostPath={host_path}")
-                break
-        if not mount_found or not volume_found:
-            raise AssertionError(f"{deploy_ns}/{deploy_name} missing workspace volume or mount")
-    else:
-        raise AssertionError(f"{deploy_ns}/{deploy_name} deployment not found")
+    # L2.2 — verify the selected runtime pod itself. JobManager may remove the
+    # owning Deployment as soon as a run reaches a terminal state while its pod
+    # remains available briefly. The pod spec is the authoritative evidence of
+    # the volume and mount actually used by this run and avoids that GC race.
+    runtime_pod = kubectl_json(["get", "pod", "-n", ns, pod_name])
+    if not runtime_pod:
+        raise AssertionError(f"Selected runtime pod disappeared: {ns}/{pod_name}")
+
+    pod_spec = runtime_pod.get("spec", {})
+    pod_volumes = {
+        volume.get("name"): volume
+        for volume in pod_spec.get("volumes", [])
+        if volume.get("name")
+    }
+    runtime_container = next(
+        (candidate for candidate in pod_spec.get("containers", []) if candidate.get("name") == container),
+        None,
+    )
+    if not runtime_container:
+        raise AssertionError(f"Container {container} not found in runtime pod {ns}/{pod_name}")
+
+    workspace_mount = next(
+        (
+            mount
+            for mount in runtime_container.get("volumeMounts", [])
+            if mount.get("mountPath") == CONTAINER_WORKSPACE
+        ),
+        None,
+    )
+    if not workspace_mount:
+        raise AssertionError(
+            f"{ns}/{pod_name} container {container} has no {CONTAINER_WORKSPACE} volumeMount"
+        )
+
+    workspace_volume = pod_volumes.get(workspace_mount.get("name"))
+    if not workspace_volume:
+        raise AssertionError(
+            f"{ns}/{pod_name} volumeMount {workspace_mount.get('name')} has no matching pod volume"
+        )
+
+    host_path = workspace_volume.get("hostPath", {}).get("path", "?")
+    print(
+        f"  [L2.2] OK: {ns}/{pod_name} has workspace volumeMount: "
+        f"name={workspace_mount['name']} mountPath={workspace_mount['mountPath']}"
+    )
+    print(
+        f"  [L2.2] OK: {ns}/{pod_name} has matching workspace volume: "
+        f"name={workspace_mount['name']} hostPath={host_path}"
+    )
 
     # ═══════════════════════════════════════════════════════════════
     # L3: Verify /var/flowgent is writable inside the container.
@@ -243,7 +256,7 @@ def run():
 
     expected_plan_paths = {}
     for node_id in SANDBOX_NODE_IDS:
-        plan_id = task_id(tasks_by_node, run_id, node_id)
+        plan_id = workspace_plan_id(tasks_by_node, run_id, node_id)
         plan_path = f"{run_workspace}/{plan_id}"
         expected_plan_paths[node_id] = plan_path
         rc, out, err = exec_in_pod(ns, pod_name, container,

@@ -1,6 +1,7 @@
 """Scenario 34 — Delivery & Report: branch/commit/PR creation, SonarQube re-scan, compare, report, PG final."""
 
 import requests
+from common import api as common_api
 import sys
 import os
 import json
@@ -197,8 +198,7 @@ def run():
         run_id = f.read().strip()
     print(f"  Using run_id: {run_id}")
 
-    s = requests.Session()
-    s.headers["Content-Type"] = "application/json"
+    s = common_api.flowgent_session()
 
     print("\n-- Fetching task list from API --")
     tasks = c.get_tasks(s, run_id)

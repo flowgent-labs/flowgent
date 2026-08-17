@@ -3,7 +3,12 @@ module github.com/flowgent-labs/flowgent/api
 go 1.26.0
 
 require (
+	cloud.google.com/go/storage v1.56.3
 	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/aws/aws-sdk-go-v2 v1.43.5
+	github.com/aws/aws-sdk-go-v2/config v1.32.36
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.35
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.1
 	github.com/flowgent-labs/flowgent/common v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/flowgent-labs/flowgent/store v0.0.0
@@ -13,6 +18,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
+	google.golang.org/api v0.247.0
 )
 
 require (

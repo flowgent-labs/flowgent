@@ -98,7 +98,7 @@ func (c *oidcClient) exchangeCode(ctx context.Context, code string) (map[string]
 
 // extractUserInfo extracts user identity from ID token claims or the userinfo endpoint.
 func (c *oidcClient) extractUserInfo(ctx context.Context, tokenResp map[string]any) (*auth.UserInfo, error) {
-	user := &auth.UserInfo{Extra: make(map[string]any)}
+	user := &auth.UserInfo{Issuer: "oidc:" + strings.TrimRight(c.cfg.IssueURL, "/"), Extra: make(map[string]any)}
 
 	// Try ID token claims first
 	if idToken, ok := tokenResp["id_token"].(string); ok {

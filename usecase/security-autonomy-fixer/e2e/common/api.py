@@ -7,6 +7,26 @@ Functions extracted from verifier/_common.py and available to all tests.
 import os
 import re
 import json
+import requests
+
+
+AUTH_TOKEN_ENV = "FLOWGENT_E2E_AUTH_TOKEN"
+
+
+def flowgent_headers() -> dict:
+    """Return control-plane auth headers without logging or persisting secrets."""
+    token = os.environ.get(AUTH_TOKEN_ENV, "").strip()
+    if not token:
+        raise RuntimeError(f"{AUTH_TOKEN_ENV} is required for authenticated E2E requests")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def flowgent_session() -> requests.Session:
+    """Create the canonical authenticated session for Flowgent API/A2A tests."""
+    session = requests.Session()
+    session.headers.update(flowgent_headers())
+    session.headers["Content-Type"] = "application/json"
+    return session
 
 
 def unwrap_k8s(data: dict) -> dict:

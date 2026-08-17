@@ -66,4 +66,3 @@ func TestNewOIDCClient(t *testing.T) {
 		t.Fatal("client should not be nil")
 	}
 }
-

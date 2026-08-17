@@ -17,13 +17,19 @@ import (
 	"github.com/flowgent-labs/flowgent/api/pkg/auth"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
+	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
+	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
+	tracequery "github.com/flowgent-labs/flowgent/api/pkg/trace"
 	tracing "github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flow"
+	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
+	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
+	resourcepoolstore "github.com/flowgent-labs/flowgent/store/pkg/resourcepool"
 )
 
 // FlowgentApiServer is the sole DB client and REST API server. It serves
@@ -35,6 +41,7 @@ type FlowgentApiServer struct {
 	restServer   *http.Server
 	ppServer     *http.Server
 	otelProvider *tracing.Provider
+	taskPayloads taskpayload.ITaskPayloadProvider
 
 	// Handlers (set during construction)
 	agentFlowHandler *handler.FlowDefHandler
@@ -52,7 +59,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	// ── Load agentflows from DB ──
 	var agentFlows []entities.FlowInfo
 	subAgentFlows := make(map[string]entities.FlowInfo)
-	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), storeImpl); dberr != nil {
+	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), storeImpl, cfg.Runtime.Namespace.DefaultNamespace); dberr != nil {
 		slog.Warn("Failed to load agentflows from DB", "error", dberr)
 	} else {
 		agentFlows = append(agentFlows, dbFlows...)
@@ -62,6 +69,12 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	}
 
 	logger := utils.NewLogger(cfg.Logging.Mode, cfg.Logging.Level)
+	payloadProvider, err := taskpayload.NewProvider(context.Background(), cfg.Storage.Artifacts)
+	if err != nil {
+		_ = storeImpl.Close()
+		return nil, fmt.Errorf("create task payload provider: %w", err)
+	}
+	slog.Info("Task payload storage configured", "provider", payloadProvider.Name())
 
 	// ── OTEL Tracing ──
 	var otelProvider *tracing.Provider
@@ -81,6 +94,15 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 			slog.Info("OTEL tracing enabled", "endpoint", cfg.Mgmt.OTEL.Endpoint)
 		}
 	}
+	cleanupConstruction := func() {
+		if otelProvider != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = otelProvider.Shutdown(shutdownCtx)
+			cancel()
+		}
+		_ = payloadProvider.Close()
+		_ = storeImpl.Close()
+	}
 
 	// ── MQTT Publisher (optional) ──
 	var mqttPub handler.MQTTPublisher
@@ -96,26 +118,63 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
 	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
-	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPub, logger)
-	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
+	runHandler := handler.NewFlowRunHandler(storeImpl, payloadProvider, mqttPub, logger)
+	notifHandler, err := handler.NewNotifierHandler(storeImpl, cfg.Notifier, mqttPub, logger)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("notification secret encryption: %w", err)
+	}
 	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 	mcpHandler := handler.NewMcpHandler(storeImpl)
 	webhookHandler := handler.NewWebhookHandler(agentFlowHandler, logger, cfg.Runtime.Namespace.DefaultNamespace)
 	knowledgeHandler := handler.NewKnowledgeHandler(storeImpl)
+	jaegerClient, err := tracequery.NewJaegerClientFromConfig(cfg.Mgmt.OTEL)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("create Jaeger query client: %w", err)
+	}
+	traceHandler := handler.NewTraceHandler(storeImpl, jaegerClient)
+	iamRepository, err := iamstore.NewRepository(storeImpl)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("IAM repository: %w", err)
+	}
+	authorizer := authz.NewService(cfg.Auth.Authorization, iamRepository)
+	agentFlowHandler.SetPoolAuthorizer(authorizer)
+	iamHandler := handler.NewIAMHandler(iamRepository, authorizer)
+	flowReleaseRepository, err := flowreleasestore.NewRepository(storeImpl)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("flow release repository: %w", err)
+	}
+	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, iamRepository, agentFlowHandler)
+	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(storeImpl, cfg.Notifier.SecretEncryption)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("runtime configuration secrets: %w", err)
+	}
+	resourcePoolRepository, err := resourcepoolstore.NewRepository(storeImpl)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("resource pool repository: %w", err)
+	}
+	resourcePoolHandler := handler.NewResourcePoolHandler(resourcePoolRepository, agentFlowHandler.FlowStore(), agentFlowHandler.FlowRunStore())
 
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Routes ──
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler, resourcePoolHandler)
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(cfg.Auth)
 	if err != nil {
+		cleanupConstruction()
 		return nil, fmt.Errorf("auth service: %w", err)
 	}
 	authSvc.Register(oidc.NewService(cfg.Auth.OIDC, authSvc.TokenService()))
 	authSvc.Register(ldap.NewService(cfg.Auth.LDAP, authSvc.TokenService()))
-	restHandler = authSvc.Middleware()(restMux)
+	authSvc.SetCredentialAuthenticator(authorizer)
+	restHandler = authSvc.Middleware()(authorizer.Middleware(restMux))
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
 	if readTO == 0 {
@@ -140,6 +199,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		store:            storeImpl,
 		restServer:       restSrv,
 		otelProvider:     otelProvider,
+		taskPayloads:     payloadProvider,
 		agentFlowHandler: agentFlowHandler,
 	}
 
@@ -221,6 +281,11 @@ func (s *FlowgentApiServer) Shutdown() error {
 	if s.otelProvider != nil {
 		if err := s.otelProvider.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("OTEL provider shutdown", "error", err)
+		}
+	}
+	if s.taskPayloads != nil {
+		if err := s.taskPayloads.Close(); err != nil {
+			slog.Warn("task payload provider shutdown", "error", err)
 		}
 	}
 	return nil

@@ -23,8 +23,16 @@ data:
       otel:
         enabled: true
         endpoint: "{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.otlpHttp }}"
-        protocol: "http"
+        protocol: "http/protobuf"
         sample_rate: 1.0
+        {{- if .Values.jaeger.enabled }}
+        query_endpoint: "http://{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.ui }}"
+        {{- else }}
+        query_endpoint: {{ .Values.jaeger.queryEndpoint | quote }}
+        {{- end }}
+        query_timeout: 10000
+        query_lookback: "24h"
+        query_limit: 20
       metrics: { enabled: false }
     logging:
       mode: JSON
@@ -37,6 +45,19 @@ data:
         {{- range .Values.apiserver.config.anonymousPaths }}
         - {{ . | quote }}
         {{- end }}
+      authorization:
+        enabled: {{ .Values.authorization.enabled }}
+        enforcement: {{ .Values.authorization.enforcement | quote }}
+        bootstrap_token: "${FLOWGENT_AUTH_BOOTSTRAP_TOKEN}"
+        internal_tokens:
+          controller: "${FLOWGENT_AUTH_CONTROLLER_TOKEN}"
+          jobmanager: "${FLOWGENT_AUTH_JOBMANAGER_TOKEN}"
+          taskmanager: "${FLOWGENT_AUTH_TASKMANAGER_TOKEN}"
+          notifier: "${FLOWGENT_AUTH_NOTIFIER_TOKEN}"
+          a2a: "${FLOWGENT_AUTH_A2A_TOKEN}"
+        audit_allow: {{ .Values.authorization.auditAllow }}
+        audit_deny: {{ .Values.authorization.auditDeny }}
+        trusted_proxy_cidrs: []
     cache:
       provider: Memory
       memory:
@@ -63,6 +84,25 @@ data:
         min_connections: 2
         max_connections: 20
       {{- end }}
+      artifacts:
+        provider: {{ .Values.storage.artifacts.provider | default "default" | quote }}
+        inline_max_bytes: {{ int64 .Values.storage.artifacts.inlineMaxBytes }}
+        max_payload_bytes: {{ int64 .Values.storage.artifacts.maxPayloadBytes }}
+        compression: {{ .Values.storage.artifacts.compression | default "gzip" | quote }}
+        prefix: {{ .Values.storage.artifacts.prefix | default "flowgent/task-runs" | quote }}
+        put_timeout: {{ .Values.storage.artifacts.putTimeout | default "30s" | quote }}
+        get_timeout: {{ .Values.storage.artifacts.getTimeout | default "30s" | quote }}
+        verify_checksum: {{ .Values.storage.artifacts.verifyChecksum }}
+        s3:
+          bucket: {{ .Values.storage.artifacts.s3.bucket | default "" | quote }}
+          region: {{ .Values.storage.artifacts.s3.region | default "" | quote }}
+          endpoint: {{ .Values.storage.artifacts.s3.endpoint | default "" | quote }}
+          force_path_style: {{ .Values.storage.artifacts.s3.forcePathStyle }}
+        gcs:
+          bucket: {{ .Values.storage.artifacts.gcs.bucket | default "" | quote }}
+          endpoint: {{ .Values.storage.artifacts.gcs.endpoint | default "" | quote }}
+          credentials_file: {{ .Values.storage.artifacts.gcs.credentialsFile | default "" | quote }}
+          anonymous: {{ .Values.storage.artifacts.gcs.anonymous }}
     orchestration:
       max_concurrent_flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
       flow_execution_timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
@@ -76,11 +116,22 @@ data:
       provider: {{ .Values.lock.provider | default (ternary "postgres" "memory" (eq (.Values.storage.type | default "SQLITE") "POSTGRE")) | quote }}
     notifier:
       enabled: {{ .Values.notifier.enabled }}
+      scan_interval: {{ .Values.notifier.scanInterval | quote }}
+      cleanup_interval: {{ .Values.notifier.cleanupInterval | quote }}
+      route_timeout: {{ .Values.notifier.routeTimeout | quote }}
+      secret_encryption:
+        provider: {{ .Values.notifier.secretEncryption.provider | quote }}
+        active_key_id: {{ .Values.notifier.secretEncryption.activeKeyId | quote }}
+        keys:
+          {{ .Values.notifier.secretEncryption.activeKeyId }}: "${FLOWGENT_NOTIFICATION_KEY_V1}"
     runtime:
       system_namespace: {{ .Values.runtime.systemNamespace | default "flowgen-system" | quote }}
       k8s_namespace: {{ .Values.runtime.systemNamespace | default .Release.Namespace | quote }}
       tm_orphan_timeout: {{ .Values.runtime.tmOrphanTimeout | default "3m" | quote }}
       credential_env_secret: {{ .Values.runtime.credentialEnvSecret | default "" | quote }}
+      internal_auth_secret: {{ include "flowgent.runtimeAuthorizationSecretName" . | quote }}
+      jobmanager_auth_key: {{ .Values.authorization.jobmanagerKey | quote }}
+      taskmanager_auth_key: {{ .Values.authorization.taskmanagerKey | quote }}
       namespace:
         default_namespace: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
         namespace_prefix: {{ .Values.runtime.namespace.namespacePrefix | default "flowgent-" | quote }}
@@ -88,9 +139,22 @@ data:
         base_path: {{ .Values.runtime.credentialPaths.basePath | default "/var/flowgent" | quote }}
     wallet:
       enabled: {{ .Values.wallet.enabled | default false }}
-      secret_store:
-        provider: default
-        master_key_file: {{ .Values.wallet.keyFile | default "/var/secrets/flowgent/master.key" | quote }}
+      transport: {{ .Values.wallet.transport | default "mqtt" | quote }}
+      client_id_prefix: {{ .Values.wallet.clientIdPrefix | default "flowgent-" | quote }}
+      key_id: {{ .Values.wallet.keyId | default "" | quote }}
+      public_address: {{ .Values.wallet.publicAddress | default "" | quote }}
+      sign_timeout: {{ .Values.wallet.signTimeout | default "30s" | quote }}
+      local_socket: {{ .Values.wallet.localSocket | default "/run/wallet/wallet.sock" | quote }}
+      policies:
+        max_single_payment_usd: {{ .Values.wallet.policies.maxSinglePaymentUsd }}
+        max_daily_budget_usd: {{ .Values.wallet.policies.maxDailyBudgetUsd }}
+        allowed_domains: {{ .Values.wallet.policies.allowedDomains | toJson }}
+        blocked_domains: {{ .Values.wallet.policies.blockedDomains | toJson }}
+        require_human_approval_above_usd: {{ .Values.wallet.policies.requireHumanApprovalAboveUsd }}
+        allowed_assets: {{ .Values.wallet.policies.allowedAssets | toJson }}
+        allowed_chains: {{ .Values.wallet.policies.allowedChains | toJson }}
+      x402:
+        timeout: {{ .Values.wallet.httpTimeout | default "30s" | quote }}
     sandbox:
       workspace: {{ .Values.sandbox.workspace | default "/var/flowgent" | quote }}
       host_workspace: {{ .Values.sandbox.hostWorkspace | default "/mnt/disk1/flowgent/e2e" | quote }}

@@ -2,7 +2,7 @@ package store
 
 import (
 	"testing"
-	
+
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )

@@ -28,7 +28,8 @@ func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResour
 		ID: "tm-local", SlotCount: poolSize,
 		Messager: cfg.Messager, State: cfg.TaskState, ApprovalInfo: cfg.ApprovalInfo,
 		APIServerURL: cfg.APIServerURL, Namespace: cfg.Namespace, Logger: cfg.Logger,
-		SandboxMessager:             cfg.Messager,
+		ResourcePoolID:           cfg.ResourcePoolID,
+		SandboxMessager:          cfg.Messager,
 		SandboxPolicy:            cfg.SandboxPolicy,
 		SandboxWorkspace:         cfg.SandboxWorkspace,
 		SandboxDeploymentEnabled: false,
@@ -51,7 +52,7 @@ func (s *StandaloneResourceManager) Validate(ctx context.Context) error {
 }
 
 // Schedule acquires a slot (non-blocking), executes the plan via the local TM.
-// Returns INSUFFICIENT_RESOURCES if all slots are occupied (session mode capacity).
+// Returns INSUFFICIENT_RESOURCES if all local slots are occupied.
 func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
 	select {
 	case s.sem <- struct{}{}:

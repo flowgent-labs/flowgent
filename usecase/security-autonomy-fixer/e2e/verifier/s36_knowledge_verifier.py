@@ -21,10 +21,12 @@ import sys
 import os
 
 from common import config
+from common import api as common_api
 
 API = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
 BASE = f"{API}/api/v1/{NAMESPACE}"
+SESSION = common_api.flowgent_session()
 
 SEED_TITLE = "SQL Injection Prevention in Java"
 
@@ -44,7 +46,7 @@ def seed_knowledge():
         "source_ref": "e2e:36",
         "tags": ["security", "java", "sql-injection"],
     }
-    resp = requests.post(_kw_path(), json=payload, timeout=10)
+    resp = SESSION.post(_kw_path(), json=payload, timeout=10)
     assert resp.status_code in (200, 201), f"Create knowledge failed: {resp.status_code} {resp.text}"
     entry = resp.json()
     assert "id" in entry, f"No id in response: {entry}"
@@ -54,7 +56,7 @@ def seed_knowledge():
 
 def list_knowledge():
     """Phase 1: List knowledge entries."""
-    resp = requests.get(_kw_path(), timeout=10)
+    resp = SESSION.get(_kw_path(), timeout=10)
     assert resp.status_code == 200, f"List knowledge failed: {resp.status_code}"
     entries = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", [])
     print(f"  PASS: Listed {len(entries)} knowledge entries")
@@ -63,7 +65,7 @@ def list_knowledge():
 
 def get_knowledge(kid: str):
     """Phase 1: Get a single knowledge entry."""
-    resp = requests.get(_kw_path(kid), timeout=10)
+    resp = SESSION.get(_kw_path(kid), timeout=10)
     assert resp.status_code == 200, f"Get knowledge failed: {resp.status_code}"
     entry = resp.json()
     assert entry["title"] == SEED_TITLE, f"Title mismatch: {entry['title']}"
@@ -73,7 +75,7 @@ def get_knowledge(kid: str):
 
 def update_knowledge(kid: str):
     """Phase 1: Update a knowledge entry."""
-    resp = requests.put(_kw_path(kid), json={"content": "Updated: Always use parameterized queries."}, timeout=10)
+    resp = SESSION.put(_kw_path(kid), json={"content": "Updated: Always use parameterized queries."}, timeout=10)
     assert resp.status_code == 200, f"Update knowledge failed: {resp.status_code}"
     updated = resp.json()
     assert "Updated" in updated.get("content", ""), f"Content not updated: {updated}"
@@ -82,7 +84,7 @@ def update_knowledge(kid: str):
 
 def search_knowledge():
     """Phase 2: Search knowledge by keyword."""
-    resp = requests.post(f"{BASE}/knowledge/search",
+    resp = SESSION.post(f"{BASE}/knowledge/search",
                          json={"query": "SQL injection parameterized query", "top_k": 5},
                          timeout=10)
     assert resp.status_code == 200, f"Search failed: {resp.status_code}"
@@ -93,7 +95,7 @@ def search_knowledge():
 
 def search_by_tags():
     """Phase 2: List entries filtered by tags."""
-    resp = requests.get(f"{BASE}/knowledge?tags=security,java", timeout=10)
+    resp = SESSION.get(f"{BASE}/knowledge?tags=security,java", timeout=10)
     assert resp.status_code == 200, f"List by tags failed: {resp.status_code}"
     entries = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", [])
     print(f"  PASS: Tag-filtered list returned {len(entries)} entries")
@@ -101,7 +103,7 @@ def search_by_tags():
 
 def list_tags():
     """Phase 2: List all distinct tags."""
-    resp = requests.get(f"{BASE}/knowledge/tags", timeout=10)
+    resp = SESSION.get(f"{BASE}/knowledge/tags", timeout=10)
     assert resp.status_code == 200, f"List tags failed: {resp.status_code}"
     tags = resp.json()
     assert len(tags) > 0, "No tags returned"
@@ -110,17 +112,17 @@ def list_tags():
 
 def delete_knowledge(kid: str):
     """Phase 1: Delete a knowledge entry."""
-    resp = requests.delete(_kw_path(kid), timeout=10)
+    resp = SESSION.delete(_kw_path(kid), timeout=10)
     assert resp.status_code in (200, 204), f"Delete failed: {resp.status_code}"
     # Verify it's gone
-    resp2 = requests.get(_kw_path(kid), timeout=10)
+    resp2 = SESSION.get(_kw_path(kid), timeout=10)
     assert resp2.status_code in (404, 200), f"Expected not-found after delete: {resp2.status_code}"
     print(f"  PASS: Deleted knowledge entry")
 
 
 def verify_post_handle():
     """Phase 4: Verify knowledge was created from flow run outputs."""
-    resp = requests.get(f"{BASE}/knowledge?source=flow_run", timeout=10)
+    resp = SESSION.get(f"{BASE}/knowledge?source=flow_run", timeout=10)
     assert resp.status_code == 200, f"List by source failed: {resp.status_code}"
     entries = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", [])
     print(f"  INFO: {len(entries)} knowledge entries from flow runs")

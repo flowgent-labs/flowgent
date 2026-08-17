@@ -1,7 +1,6 @@
 package console
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretref"
 	"github.com/google/uuid"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -36,8 +36,17 @@ func replaceEnvVars(s string) string {
 // replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
 // Unknown patterns (flow template vars, DAG references) are left unchanged.
 func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
-	// Resolve env vars in raw YAML before parsing
-	raw = []byte(replaceEnvVars(string(raw)))
+	// Runtime credential resources persist environment references. Expanding
+	// them here would copy plaintext secrets into the database and make safe API
+	// reads impossible. Other resource kinds keep the historical substitution
+	// behavior for non-secret deploy-time values.
+	var probe struct {
+		Kind string `yaml:"kind" json:"kind"`
+	}
+	_ = yaml.Unmarshal(raw, &probe)
+	if !strings.EqualFold(probe.Kind, "llmprovider") && !strings.EqualFold(probe.Kind, "mcp") {
+		raw = []byte(replaceEnvVars(string(raw)))
+	}
 	if fm == "yaml" {
 		var generic map[string]any
 		if err := yaml.Unmarshal(raw, &generic); err != nil {
@@ -189,6 +198,18 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		if m.Name == "" && ri.metadataName() != "" {
 			m.Name = ri.metadataName()
 		}
+		for key, value := range m.Headers {
+			if secretref.IsSensitiveHeader(key) && !secretref.TemplateIsReference(value) {
+				fmt.Printf("Error saving MCP %s: header %q must reference an injected environment secret\n", m.Name, key)
+				return false
+			}
+		}
+		for key, value := range m.Env {
+			if _, ok := secretref.EnvName(value); !ok {
+				fmt.Printf("Error saving MCP %s: environment value %q must be an injected secret reference\n", m.Name, key)
+				return false
+			}
+		}
 		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.namespace)
 		// Align Enabled with Status so that MCPs imported with status=active are
 		// immediately usable. TM skips MCPs with enabled=false (taskmanager.go:83).
@@ -215,6 +236,15 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			p.Status = p.BaseEntity.Status
 		}
 		p.Status = activeRuntimeStatus(p.Status)
+		if strings.TrimSpace(p.ApiKey) != "" {
+			normalized, err := secretref.Normalize(p.ApiKey)
+			if err != nil {
+				fmt.Printf("Error saving LLMProvider %s: inline API keys are forbidden; use an environment reference\n", p.ID)
+				return false
+			}
+			p.ApiKey = normalized
+		}
+		p.Credentials = nil
 		if err := ls.llm.Save(fc.ctx, &p); err != nil {
 			fmt.Printf("Error saving LLMProvider %s: %v\n", p.ID, err)
 			return false
@@ -301,10 +331,10 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 // --- Bulk import ---
 
 // ImportAll imports all resources from an ExportData structure into the
-// database. Returns counts: [llms, channels, mcps, skills, agents, flows, runs, wallets].
+// database. Returns counts: [llms, channels, mcps, skills, agents, flows, runs].
 func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	ls := fc.getStores()
-	counts := make([]int, 8)
+	counts := make([]int, 7)
 
 	for i := range data.LLMs {
 		llm := &data.LLMs[i]
@@ -400,22 +430,6 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		}
 		counts[6]++
 	}
-	if len(data.Wallets) > 0 && fc.secretStore == nil {
-		fmt.Println("Warning: secret store not available, skipping wallet import.")
-	}
-	for _, w := range data.Wallets {
-		if fc.secretStore == nil {
-			break
-		}
-		keyBytes, err := hex.DecodeString(w.PrivateKey)
-		if err != nil {
-			return counts, fmt.Errorf("wallet %s: invalid hex key: %w", w.Name, err)
-		}
-		if err := fc.secretStore.PutSecret(fc.ctx, "wallet:"+w.Name, keyBytes); err != nil {
-			return counts, fmt.Errorf("wallet %s: %w", w.Name, err)
-		}
-		counts[7]++
-	}
 	return counts, nil
 }
 
@@ -454,8 +468,8 @@ func (fc *FlowgentConsole) ImportFile(filePath string, extraArgs []string) bool 
 		fmt.Printf("Error importing: %v\n", err)
 		return false
 	}
-	fmt.Printf("Imported from %s (%d llms, %d channels, %d mcps, %d skills, %d agents, %d flows, %d runs, %d wallets)\n",
-		filePath, counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6], counts[7])
+	fmt.Printf("Imported from %s (%d llms, %d channels, %d mcps, %d skills, %d agents, %d flows, %d runs)\n",
+		filePath, counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6])
 	return true
 }
 

@@ -1,6 +1,7 @@
 """Scenario 32 — Discovery & Analyze: commit fetch, SonarQube scan, issue aggregation."""
 
 import requests
+from common import api as common_api
 import time
 import sys
 import os
@@ -146,13 +147,12 @@ def run():
         run_id = f.read().strip()
     print(f"  Using run_id: {run_id}")
 
-    s = requests.Session()
-    s.headers["Content-Type"] = "application/json"
+    s = common_api.flowgent_session()
 
     print("\n-- [32 Runtime Pods] Verify JM-created TM/Sandbox pods --")
     c.ensure_global_mqtt_audit(run_id)
     try:
-        c.wait_for_application_components(c.FLOW_ID, timeout=240)
+        c.wait_for_workload_components(c.FLOW_ID, timeout=240)
 
         # Poll run until task data is available
         print(f"\n-- Polling run {run_id} for task availability --")

@@ -18,7 +18,7 @@ func TestNotifier_ChannelCRUD(t *testing.T) {
 
 	ch := map[string]any{
 		"name": "test-telegram", "provider": "telegram",
-		"config":  map[string]any{"chat_id": "-1001234567890", "token": "test-bot-token"},
+		"config":  map[string]any{"chat_id": "-1001234567890", "bot_token": "test-bot-token"},
 		"enabled": true,
 	}
 	b, _ := json.Marshal(ch)
@@ -92,7 +92,7 @@ func TestNotifier_FlowCompletionNotification(t *testing.T) {
 	fs := it.New(t, flow)
 	ch := map[string]any{
 		"name": "flow-complete-telegram", "provider": "telegram",
-		"config":  map[string]any{"chat_id": "-1001234567890", "token": "test-bot-token"},
+		"config":  map[string]any{"chat_id": "-1001234567890", "bot_token": "test-bot-token"},
 		"enabled": true,
 	}
 	b, _ := json.Marshal(ch)

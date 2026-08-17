@@ -16,6 +16,5 @@ use (
 	./pkg/notifier
 	./pkg/sandbox
 	./pkg/store
-	./pkg/wallet
 	./tests
 )

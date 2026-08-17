@@ -1,6 +1,14 @@
 package handler
 
-type contextKey string
+import (
+	"context"
 
-// CtxUserID is the context key for the authenticated user ID.
-const CtxUserID contextKey = "user_id"
+	"github.com/flowgent-labs/flowgent/api/pkg/auth"
+)
+
+func authenticatedUserID(ctx context.Context) string {
+	if user, ok := auth.UserFromContext(ctx); ok {
+		return user.UserID
+	}
+	return ""
+}

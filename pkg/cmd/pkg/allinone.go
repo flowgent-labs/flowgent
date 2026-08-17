@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"log/slog"
@@ -13,18 +12,22 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/a2aproject/a2a-go/a2a"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
 
+	a2apkg "github.com/flowgent-labs/flowgent/a2a/pkg"
 	"github.com/flowgent-labs/flowgent/api/pkg"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
+	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
+	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
+	tracequery "github.com/flowgent-labs/flowgent/api/pkg/trace"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -32,11 +35,13 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/trigger"
-	model "github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/notifier/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flow"
+	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
+	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
+	resourcepoolstore "github.com/flowgent-labs/flowgent/store/pkg/resourcepool"
 )
 
 // allInOneState bundles shared dependencies for the all-in-one process.
@@ -44,11 +49,11 @@ type allInOneState struct {
 	cfg         *config.FlowgentConfig
 	store       store.IStore
 	apiClient   *client.FlowgentClient
-	httpClient  model.IFlowgentAPIClient
 	namespace   string
 	taskClient  *client.TaskStateClient
 	humanClient *client.HumanApprovalClient
 	logger      *utils.Logger
+	payloads    taskpayload.ITaskPayloadProvider
 }
 
 func StartAllInOne(cfgPath, pidFile string) error {
@@ -76,11 +81,26 @@ func startAllInOne(cfgPath string) error {
 	}
 	config.LogConfig(svcCfg)
 	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
+	if svcCfg.Auth.Authorization.Enabled {
+		if svcCfg.Auth.Authorization.InternalTokens == nil {
+			svcCfg.Auth.Authorization.InternalTokens = make(map[string]string)
+		}
+		token := svcCfg.Auth.Authorization.InternalTokens["allinone"]
+		if token == "" || strings.Contains(token, "${") {
+			token = uuid.NewString() + uuid.NewString()
+			svcCfg.Auth.Authorization.InternalTokens["allinone"] = token
+		}
+	}
 
 	storeImpl := store.InitStore(svcCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
+	payloadProvider, err := taskpayload.NewProvider(context.Background(), svcCfg.Storage.Artifacts)
+	if err != nil {
+		return fmt.Errorf("create task payload provider: %w", err)
+	}
+	defer payloadProvider.Close()
 
-	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
+	apiClient := client.NewFlowgentClientWithToken(svcCfg.Runtime.APIServerURL, svcCfg.Auth.Authorization.InternalTokens["allinone"])
 	namespace := svcCfg.Runtime.Namespace.DefaultNamespace
 	if namespace == "" {
 		namespace = "default"
@@ -90,11 +110,11 @@ func startAllInOne(cfgPath string) error {
 		cfg:         svcCfg,
 		store:       storeImpl,
 		apiClient:   apiClient,
-		httpClient:  client.NewHttpClient(svcCfg, nil),
 		namespace:   namespace,
 		taskClient:  &client.TaskStateClient{Client: apiClient, Namespace: namespace},
 		humanClient: &client.HumanApprovalClient{Client: apiClient},
 		logger:      logger,
+		payloads:    payloadProvider,
 	}
 
 	// Load agent flows (YAML + DB)
@@ -105,10 +125,16 @@ func startAllInOne(cfgPath string) error {
 	rm := createStandaloneRM(state)
 
 	// Notifier + WS bridge (before REST so bridge is available)
-	notifSvc, wsBridge := startNotifier(state)
+	notifSvc, wsBridge, err := startNotifier(state)
+	if err != nil {
+		return err
+	}
 
 	// REST API Server (with optional WS bridge)
-	restSrv, flowHandler := startRESTServer(state, agentFlows, subFlows, wsBridge)
+	restSrv, flowHandler, err := startRESTServer(state, agentFlows, subFlows, wsBridge)
+	if err != nil {
+		return err
+	}
 
 	// Cron triggers
 	startCronScheduler(allFlows, state.apiClient, state.namespace)
@@ -117,7 +143,10 @@ func startAllInOne(cfgPath string) error {
 	startOrchestrator(state, rm, flowHandler.AgentFlows())
 
 	// A2A Server
-	a2aSrv := startA2AServer(state)
+	a2aSrv, err := startA2AServer(state)
+	if err != nil {
+		return err
+	}
 
 	// Pprof
 	pprofSrv := startPprof(state)
@@ -132,7 +161,7 @@ func loadFlows(state *allInOneState, cfgPath string) ([]entities.FlowInfo, map[s
 	if err != nil {
 		slog.Warn("load agent flows from YAML", "error", err)
 	}
-	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), state.store); dberr == nil {
+	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), state.store, state.namespace); dberr == nil {
 		agentFlows = append(agentFlows, dbFlows...)
 		for k, v := range dbSubFlows {
 			subFlows[k] = v
@@ -167,16 +196,19 @@ func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
 
 // ─── Notifier ─────────────────────────────────────────────────────
 
-func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *handler.NotifierWSBridge) {
-	notifSvc := notifier.CreateNotifierService(state.apiClient, state.cfg, state.httpClient)
+func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *handler.NotifierWSBridge, error) {
+	notifSvc, err := notifier.CreateNotifierService(state.apiClient, state.cfg, client.NewGenericHttpClient(30*time.Second))
+	if err != nil {
+		return nil, nil, err
+	}
 	go func() { _ = notifSvc.Start(context.Background()) }()
-	return notifSvc, handler.NewNotifierWSBridge(&notifier.NotifToWSAdapter{Svc: notifSvc})
+	return notifSvc, handler.NewNotifierWSBridge(&notifier.NotifToWSAdapter{Svc: notifSvc}), nil
 }
 
 // ─── REST API Server ──────────────────────────────────────────────
 
 func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
-	subFlows map[string]entities.FlowInfo, wsBridge *handler.NotifierWSBridge) (*http.Server, *handler.FlowDefHandler) {
+	subFlows map[string]entities.FlowInfo, wsBridge *handler.NotifierWSBridge) (*http.Server, *handler.FlowDefHandler, error) {
 
 	var mqttPub handler.MQTTPublisher
 	if state.cfg.Messager.Type == "mqtt" && state.cfg.Messager.MQTT.Broker != "" {
@@ -189,26 +221,56 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	humanHandler := handler.NewHumanHandler(state.store, mqttPub, state.logger)
-	runHandler := handler.NewFlowRunHandler(state.store, mqttPub, state.logger)
-	notifHandler := handler.NewNotifierHandler(state.store, state.logger)
+	runHandler := handler.NewFlowRunHandler(state.store, state.payloads, mqttPub, state.logger)
+	notifHandler, err := handler.NewNotifierHandler(state.store, state.cfg.Notifier, mqttPub, state.logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("notification secret encryption: %w", err)
+	}
 	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
 	mcpHandler := handler.NewMcpHandler(state.store)
 	knowledgeHandler := handler.NewKnowledgeHandler(state.store)
 	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Runtime.Namespace.DefaultNamespace)
+	jaegerClient, traceErr := tracequery.NewJaegerClientFromConfig(state.cfg.Mgmt.OTEL)
+	if traceErr != nil {
+		slog.Warn("Jaeger query client init failed, trace query disabled", "error", traceErr)
+		jaegerClient = nil
+	}
+	traceHandler := handler.NewTraceHandler(state.store, jaegerClient)
+	iamRepository, err := iamstore.NewRepository(state.store)
+	if err != nil {
+		return nil, nil, fmt.Errorf("IAM repository: %w", err)
+	}
+	authorizer := authz.NewService(state.cfg.Auth.Authorization, iamRepository)
+	iamHandler := handler.NewIAMHandler(iamRepository, authorizer)
+	flowReleaseRepository, err := flowreleasestore.NewRepository(state.store)
+	if err != nil {
+		return nil, nil, fmt.Errorf("flow release repository: %w", err)
+	}
+	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, iamRepository, flowHandler)
+	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(state.store, state.cfg.Notifier.SecretEncryption)
+	if err != nil {
+		return nil, nil, fmt.Errorf("runtime configuration secrets: %w", err)
+	}
+	resourcePoolRepository, err := resourcepoolstore.NewRepository(state.store)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resource pool repository: %w", err)
+	}
+	resourcePoolHandler := handler.NewResourcePoolHandler(resourcePoolRepository, flowHandler.FlowStore(), flowHandler.FlowRunStore())
 
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler)
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler, resourcePoolHandler)
 
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(state.cfg.Auth)
 	if err != nil {
 		slog.Error("auth service setup failed", "error", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("auth service setup: %w", err)
 	}
 	authSvc.Register(oidc.NewService(state.cfg.Auth.OIDC, authSvc.TokenService()))
 	authSvc.Register(ldap.NewService(state.cfg.Auth.LDAP, authSvc.TokenService()))
-	restHandler = authSvc.Middleware()(restMux)
+	authSvc.SetCredentialAuthenticator(authorizer)
+	restHandler = authSvc.Middleware()(authorizer.Middleware(restMux))
 
 	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
 	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
@@ -223,7 +285,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 		slog.Info("REST API server", "addr", restAddr)
 		_ = restSrv.ListenAndServe()
 	}()
-	return restSrv, flowHandler
+	return restSrv, flowHandler, nil
 }
 
 // ─── Cron Scheduler ───────────────────────────────────────────────
@@ -261,57 +323,22 @@ func startOrchestrator(state *allInOneState, rm resourcemanager.ResourceManager,
 
 // ─── A2A Server ───────────────────────────────────────────────────
 
-func startA2AServer(state *allInOneState) *http.Server {
+func startA2AServer(state *allInOneState) (*http.Server, error) {
 	if !state.cfg.A2A.Enabled {
-		return nil
+		return nil, nil
 	}
-
-	a2aMux := http.NewServeMux()
-	a2aMux.HandleFunc("GET /.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(a2a.AgentCard{
-			Name: state.cfg.ServiceName, Description: "Flowgent orchestration engine",
-			URL:     fmt.Sprintf("http://%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
-			Version: "dev", Capabilities: a2a.AgentCapabilities{Streaming: false},
-		})
-	})
-	a2aMux.HandleFunc("POST /a2a/tasks", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			AgentFlowID string         `json:"agentflow_id"`
-			Vars        map[string]any `json:"vars"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		run := &entities.FlowRunInfo{
-			BaseEntity:  entities.BaseEntity{ID: uuid.NewString()},
-			AgentFlowID: req.AgentFlowID, Version: 1,
-			Status: entities.RunPending, Vars: req.Vars,
-		}
-		run.SetTrigger(entities.TriggerInfo{Type: "api", Source: "a2a"})
-		if _, err := state.apiClient.CreateRun(r.Context(), state.namespace, run); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(a2a.Task{
-			ID: a2a.TaskID(run.ID), ContextID: run.ID,
-			Status: a2a.TaskStatus{State: a2a.TaskStateSubmitted},
-		})
-	})
-	a2aMux.HandleFunc("GET /_/healthz", (&handler.HealthHandler{}).Healthz)
-
-	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
-	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
-
-	a2aSrv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", state.cfg.A2A.Host, state.cfg.A2A.Port),
-		Handler: a2aMux, ReadTimeout: readTO, WriteTimeout: writeTO,
+	taskStore, err := a2apkg.NewPersistentTaskStore(state.store)
+	if err != nil {
+		return nil, fmt.Errorf("create A2A task store: %w", err)
 	}
+	a2aSrv := a2apkg.NewHTTPServer(state.cfg, taskStore)
 	go func() {
 		slog.Info("A2A server", "addr", a2aSrv.Addr)
-		_ = a2aSrv.ListenAndServe()
+		if err := a2aSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("A2A server stopped", "error", err)
+		}
 	}()
-	return a2aSrv
+	return a2aSrv, nil
 }
 
 // ─── Pprof ────────────────────────────────────────────────────────

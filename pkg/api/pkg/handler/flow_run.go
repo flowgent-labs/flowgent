@@ -6,24 +6,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 
+	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 	"github.com/flowgent-labs/flowgent/store/pkg/task"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type FlowRunHandler struct {
 	runStore  flowrun.IFlowRunStore
 	taskStore task.ITaskStore
+	payloads  taskpayload.ITaskPayloadProvider
 	mqtt      MQTTPublisher
 	logger    *utils.Logger
 }
 
-func NewFlowRunHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger) *FlowRunHandler {
+func NewFlowRunHandler(s store.IStore, payloads taskpayload.ITaskPayloadProvider, mqtt MQTTPublisher, logger *utils.Logger) *FlowRunHandler {
 	var runStore flowrun.IFlowRunStore
 	var taskStore task.ITaskStore
 	switch db := s.DB().(type) {
@@ -34,7 +38,10 @@ func NewFlowRunHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger)
 		runStore = flowrun.NewFlowRunSQLiteStore(db)
 		taskStore = task.NewTaskSQLiteStore(db)
 	}
-	return &FlowRunHandler{runStore: runStore, taskStore: taskStore, mqtt: mqtt, logger: logger}
+	if payloads == nil {
+		payloads = taskpayload.NewDefaultTaskPayloadProvider(0)
+	}
+	return &FlowRunHandler{runStore: runStore, taskStore: taskStore, payloads: payloads, mqtt: mqtt, logger: logger}
 }
 
 // Create inserts a new FlowRunInfo.
@@ -45,9 +52,11 @@ func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	if run.Namespace == "" {
-		run.Namespace = namespace
+	if run.Namespace != "" && run.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
+		return
 	}
+	run.Namespace = namespace
 	if err := h.runStore.Create(r.Context(), &run); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -60,7 +69,7 @@ func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // publishRunCreatedEvent emits the `ctrl/run/created` lifecycle event on MQTT
 // for a directly-created run (POST /runs — used by the Controller's
-// createApplicationRun and by tests). Mirrors FlowDefHandler's event so both
+// createScheduledRun and by tests). Mirrors FlowDefHandler's event so both
 // run-creation paths publish the identical topic/payload (docs §2.4 /
 // VERIFICATION.md §4.2.4). Best-effort — a broker outage never fails the
 // create.
@@ -101,22 +110,27 @@ func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	status := q.Get("status")
 	namespace := q.Get("k8s_namespace")
-	flowID := q.Get("agentflow_id")
-	filtered := filterRuns(runs.Items, status, namespace, flowID)
+	flowID := r.PathValue("flow_id")
+	if flowID == "" {
+		flowID = q.Get("agentflow_id")
+	}
+	filtered := filterRuns(runs.Items, r.PathValue("namespace"), status, namespace, flowID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entities.Page[entities.FlowRunInfo]{Items: filtered, TotalCount: int64(len(filtered))})
+	json.NewEncoder(w).Encode(entities.Page[entities.FlowRunInfo]{
+		Items: filtered, TotalCount: int64(len(filtered)), Request: pageReq,
+	})
 }
 
-func filterRuns(runs []*entities.FlowRunInfo, status, namespace, flowID string) []*entities.FlowRunInfo {
-	if status == "" && namespace == "" && flowID == "" {
-		return runs
-	}
+func filterRuns(runs []*entities.FlowRunInfo, tenantNamespace, status, k8sNamespace, flowID string) []*entities.FlowRunInfo {
 	var out []*entities.FlowRunInfo
 	for _, r := range runs {
+		if r.Namespace != tenantNamespace {
+			continue
+		}
 		if status != "" && string(r.Status) != status {
 			continue
 		}
-		if namespace != "" && r.K8sNamespace != namespace {
+		if k8sNamespace != "" && r.K8sNamespace != k8sNamespace {
 			continue
 		}
 		if flowID != "" && r.AgentFlowID != flowID {
@@ -128,8 +142,8 @@ func filterRuns(runs []*entities.FlowRunInfo, status, namespace, flowID string) 
 }
 
 func (h *FlowRunHandler) Get(w http.ResponseWriter, r *http.Request) {
-	run, err := h.runStore.Get(r.Context(), r.PathValue("id"))
-	if err != nil || run == nil {
+	run, ok := h.ownedRun(r)
+	if !ok {
 		http.Error(w, "not found", 404)
 		return
 	}
@@ -137,27 +151,33 @@ func (h *FlowRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(run)
 }
 
-// Update updates run status fields.
+// Update persists the narrow lifecycle transition produced by JobMaster.
 func (h *FlowRunHandler) Update(w http.ResponseWriter, r *http.Request) {
-	runID := r.PathValue("id")
-	var req struct {
-		Status string `json:"status"`
-		Error  string `json:"error"`
-	}
+	var req entities.RunLifecycleUpdate
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	run, err := h.runStore.Get(r.Context(), runID)
-	if err != nil || run == nil {
+	run, ok := h.ownedRun(r)
+	if !ok {
 		http.Error(w, "not found", 404)
 		return
 	}
 	if req.Status != "" {
-		run.Status = entities.RunStatus(req.Status)
+		run.Status = req.Status
 	}
 	if req.Error != "" {
 		run.Error = req.Error
+	}
+	if req.StartedAt != nil {
+		run.StartedAt = req.StartedAt
+	}
+	if req.FinishedAt != nil {
+		run.FinishedAt = req.FinishedAt
+	}
+	if run.FinishedAt != nil && run.StartedAt != nil && run.FinishedAt.Before(*run.StartedAt) {
+		http.Error(w, "finished_at must not precede started_at", http.StatusBadRequest)
+		return
 	}
 	if err := h.runStore.Update(r.Context(), run); err != nil {
 		http.Error(w, "internal", 500)
@@ -167,15 +187,28 @@ func (h *FlowRunHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowRunHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.runStore.Delete(r.Context(), r.PathValue("id")); err != nil {
+	if _, ok := h.ownedRun(r); !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	tasks, _ := h.taskStore.ListByFlowRun(r.Context(), requestRunID(r))
+	if err := h.runStore.Delete(r.Context(), requestRunID(r)); err != nil {
 		http.Error(w, "internal", 500)
 		return
+	}
+	for _, task := range tasks {
+		h.deletePayloadBestEffort(r.Context(), task.Input)
+		h.deletePayloadBestEffort(r.Context(), task.Output)
 	}
 	w.WriteHeader(200)
 }
 
 func (h *FlowRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	if err := h.runStore.Cancel(r.Context(), r.PathValue("id")); err != nil {
+	if _, ok := h.ownedRun(r); !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err := h.runStore.Cancel(r.Context(), requestRunID(r)); err != nil {
 		http.Error(w, "internal", 500)
 		return
 	}
@@ -183,10 +216,20 @@ func (h *FlowRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowRunHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.taskStore.ListByFlowRun(r.Context(), r.PathValue("id"))
+	if _, ok := h.ownedRun(r); !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	tasks, err := h.taskStore.ListByFlowRun(r.Context(), requestRunID(r))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
+	}
+	for _, task := range tasks {
+		if err := h.resolveTaskPayloads(r.Context(), task); err != nil {
+			h.payloadUnavailable(w, err)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)
@@ -194,25 +237,58 @@ func (h *FlowRunHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 // CreateTask creates a new task run for a flow run.
 func (h *FlowRunHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.ownedRun(r); !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	var task entities.TaskRunInfo
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	task.AgentFlowRunID = r.PathValue("id")
+	task.AgentFlowRunID = requestRunID(r)
+	task.Namespace = r.PathValue("namespace")
+	if task.ID != "" {
+		if existing, err := h.taskStore.Get(r.Context(), task.ID); err == nil && existing != nil {
+			http.Error(w, "task already exists", http.StatusConflict)
+			return
+		} else if err != nil && !isNotFoundError(err) {
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		task.ID = uuid.NewString()
+	}
+	originalInput, originalOutput := task.Input, task.Output
+	if err := h.persistTaskPayloads(r.Context(), &task); err != nil {
+		h.cleanupReplacedPayloads(r.Context(), nil, &task)
+		h.payloadUnavailable(w, err)
+		return
+	}
 	if err := h.taskStore.CreateTaskRun(r.Context(), &task); err != nil {
+		h.deletePayloadBestEffort(r.Context(), task.Input)
+		h.deletePayloadBestEffort(r.Context(), task.Output)
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	task.Input, task.Output = originalInput, originalOutput
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(task)
 }
 
 func (h *FlowRunHandler) GetTask(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.ownedRun(r); !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	task, err := h.taskStore.Get(r.Context(), r.PathValue("task_id"))
-	if err != nil || task == nil {
+	if err != nil || task == nil || task.AgentFlowRunID != requestRunID(r) {
 		http.Error(w, "not found", 404)
+		return
+	}
+	if err := h.resolveTaskPayloads(r.Context(), task); err != nil {
+		h.payloadUnavailable(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -220,16 +296,127 @@ func (h *FlowRunHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.ownedRun(r); !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	var task entities.TaskRunInfo
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
 	task.ID = r.PathValue("task_id")
+	task.AgentFlowRunID = requestRunID(r)
+	task.Namespace = r.PathValue("namespace")
+	var existing *entities.TaskRunInfo
+	if current, err := h.taskStore.Get(r.Context(), task.ID); err == nil && current != nil {
+		existing = current
+		if existing.AgentFlowRunID != task.AgentFlowRunID {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+	} else if err != nil && !isNotFoundError(err) {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	if existing != nil {
+		if task.Input == nil {
+			task.Input = existing.Input
+		}
+		if task.Output == nil {
+			task.Output = existing.Output
+		}
+	}
+	if err := h.persistTaskPayloads(r.Context(), &task); err != nil {
+		h.cleanupReplacedPayloads(r.Context(), existing, &task)
+		h.payloadUnavailable(w, err)
+		return
+	}
 	if err := h.taskStore.UpdateTaskRun(r.Context(), &task); err != nil {
+		h.cleanupReplacedPayloads(r.Context(), existing, &task)
 		h.logger.Error("save task", "error", err)
 		http.Error(w, "internal", 500)
 		return
 	}
+	if existing != nil {
+		if !reflect.DeepEqual(existing.Input, task.Input) {
+			h.deletePayloadBestEffort(r.Context(), existing.Input)
+		}
+		if !reflect.DeepEqual(existing.Output, task.Output) {
+			h.deletePayloadBestEffort(r.Context(), existing.Output)
+		}
+	}
 	w.WriteHeader(200)
+}
+
+func (h *FlowRunHandler) persistTaskPayloads(ctx context.Context, task *entities.TaskRunInfo) error {
+	key := taskpayload.TaskPayloadKey{Namespace: task.Namespace, RunID: task.AgentFlowRunID, TaskID: task.ID}
+	key.Kind = taskpayload.PayloadInput
+	input, err := h.payloads.Persist(ctx, key, task.Input)
+	if err != nil {
+		return fmt.Errorf("persist task input: %w", err)
+	}
+	task.Input = input
+	key.Kind = taskpayload.PayloadOutput
+	output, err := h.payloads.Persist(ctx, key, task.Output)
+	if err != nil {
+		return fmt.Errorf("persist task output: %w", err)
+	}
+	task.Output = output
+	return nil
+}
+
+func (h *FlowRunHandler) resolveTaskPayloads(ctx context.Context, task *entities.TaskRunInfo) error {
+	input, err := h.payloads.Resolve(ctx, task.Input)
+	if err != nil {
+		return fmt.Errorf("resolve task input: %w", err)
+	}
+	output, err := h.payloads.Resolve(ctx, task.Output)
+	if err != nil {
+		return fmt.Errorf("resolve task output: %w", err)
+	}
+	task.Input, task.Output = input, output
+	return nil
+}
+
+// cleanupReplacedPayloads removes only newly-created objects after a failed DB
+// write; objects already referenced by the current row must remain intact.
+func (h *FlowRunHandler) cleanupReplacedPayloads(ctx context.Context, existing, next *entities.TaskRunInfo) {
+	if existing == nil || !reflect.DeepEqual(existing.Input, next.Input) {
+		h.deletePayloadBestEffort(ctx, next.Input)
+	}
+	if existing == nil || !reflect.DeepEqual(existing.Output, next.Output) {
+		h.deletePayloadBestEffort(ctx, next.Output)
+	}
+}
+
+func (h *FlowRunHandler) deletePayloadBestEffort(ctx context.Context, stored map[string]any) {
+	if err := h.payloads.Delete(ctx, stored); err != nil && h.logger != nil {
+		h.logger.Warn("delete task payload", "provider", h.payloads.Name(), "error", err)
+	}
+}
+
+func (h *FlowRunHandler) payloadUnavailable(w http.ResponseWriter, err error) {
+	if h.logger != nil {
+		h.logger.Error("task payload unavailable", "provider", h.payloads.Name(), "error", err)
+	}
+	http.Error(w, "task payload unavailable", http.StatusBadGateway)
+}
+
+func (h *FlowRunHandler) ownedRun(r *http.Request) (*entities.FlowRunInfo, bool) {
+	run, err := h.runStore.Get(r.Context(), requestRunID(r))
+	if err != nil || run == nil || run.Namespace != r.PathValue("namespace") {
+		return nil, false
+	}
+	if flowID := r.PathValue("flow_id"); flowID != "" && run.AgentFlowID != flowID {
+		return nil, false
+	}
+	return run, true
+}
+
+func requestRunID(r *http.Request) string {
+	if id := r.PathValue("run_id"); id != "" {
+		return id
+	}
+	return r.PathValue("id")
 }

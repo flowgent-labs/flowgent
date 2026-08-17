@@ -3,9 +3,12 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretref"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -14,13 +17,44 @@ import (
 	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
 )
 
-// fixEnabled derives the Enabled field from Status for API responses.
-// Enabled has db:"-" so it is never persisted; Status is the source of truth.
-func fixEnabled(p *entities.LlmProviderInfo) *entities.LlmProviderInfo {
-	if p != nil {
-		p.Enabled = p.Status == "ACTIVE"
+// publicLlmProvider returns the browser-safe resource projection. The API key
+// is persisted only as an env:// reference and is never serialized back to a
+// client. api_key_env is safe configuration metadata, not a credential value.
+func publicLlmProvider(p *entities.LlmProviderInfo) *entities.LlmProviderInfo {
+	if p == nil {
+		return nil
 	}
-	return p
+	result := *p
+	result.Enabled = result.Status == "ACTIVE"
+	result.KeyConfigured = strings.TrimSpace(result.ApiKey) != ""
+	if envName, ok := secretref.EnvName(result.ApiKey); ok {
+		result.ApiKeyEnv = envName
+	}
+	result.ApiKey = ""
+	result.Credentials = nil
+	return &result
+}
+
+func normalizeLlmSecret(p *entities.LlmProviderInfo) error {
+	candidate := strings.TrimSpace(p.ApiKey)
+	if strings.TrimSpace(p.ApiKeyEnv) != "" {
+		candidate = "${" + strings.TrimSpace(p.ApiKeyEnv) + "}"
+	}
+	if candidate == "" && p.Credentials != nil {
+		if value, ok := p.Credentials["apikey"].(string); ok {
+			candidate = strings.TrimSpace(value)
+		}
+	}
+	if candidate != "" {
+		normalized, err := secretref.Normalize(candidate)
+		if err != nil {
+			return fmt.Errorf("apikey: %w; inline credentials are forbidden", err)
+		}
+		p.ApiKey = normalized
+	}
+	p.ApiKeyEnv = ""
+	p.Credentials = nil
+	return nil
 }
 
 // LlmProviderHandler serves DB-backed LLM provider definitions.
@@ -48,14 +82,14 @@ func (h *LlmProviderHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := page.Items
-	if items == nil {
-		items = []*entities.LlmProviderInfo{}
-	}
+	publicItems := make([]*entities.LlmProviderInfo, 0, len(items))
 	for _, p := range items {
-		fixEnabled(p)
+		if p.Namespace == r.PathValue("namespace") {
+			publicItems = append(publicItems, publicLlmProvider(p))
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(publicItems)
 }
 
 // Create adds a new LLM provider.
@@ -67,12 +101,9 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = uuid.New().String()
 	p.Namespace = r.PathValue("namespace")
-	if p.ApiKey == "" {
-		if v, ok := p.Credentials["apikey"]; ok {
-			if vs, ok := v.(string); ok {
-				p.ApiKey = vs
-			}
-		}
+	if err := normalizeLlmSecret(&p); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if p.Status == "" {
 		if p.Enabled {
@@ -89,7 +120,7 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
-	json.NewEncoder(w).Encode(p)
+	json.NewEncoder(w).Encode(publicLlmProvider(&p))
 }
 
 // Get returns a single LLM provider by ID.
@@ -103,47 +134,65 @@ func (h *LlmProviderHandler) Get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if p == nil {
+	if p == nil || p.Namespace != r.PathValue("namespace") {
 		http.Error(w, "not found", 404)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(fixEnabled(p))
+	json.NewEncoder(w).Encode(publicLlmProvider(p))
 }
 
 // Update modifies an existing LLM provider.
 func (h *LlmProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
-	var p entities.LlmProviderInfo
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	existing, err := h.store.Get(r.Context(), r.PathValue("id"))
+	if err != nil || existing == nil || existing.Namespace != r.PathValue("namespace") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var updates entities.LlmProviderInfo
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	p.ID = r.PathValue("id")
-	if p.ApiKey == "" {
-		if v, ok := p.Credentials["apikey"]; ok {
-			if vs, ok := v.(string); ok {
-				p.ApiKey = vs
-			}
-		}
+	secretSupplied := strings.TrimSpace(updates.ApiKey) != "" || strings.TrimSpace(updates.ApiKeyEnv) != ""
+	if !secretSupplied && updates.Credentials != nil {
+		_, secretSupplied = updates.Credentials["apikey"]
 	}
-	if p.Status == "" {
-		if p.Enabled {
-			p.Status = "ACTIVE"
+	if err := normalizeLlmSecret(&updates); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !secretSupplied {
+		updates.ApiKey = existing.ApiKey
+	}
+	updates.ID = existing.ID
+	updates.Namespace = existing.Namespace
+	updates.CreatedAt = existing.CreatedAt
+	updates.CreatedBy = existing.CreatedBy
+	updates.DelFlag = existing.DelFlag
+	if updates.Status == "" {
+		if updates.Enabled {
+			updates.Status = "ACTIVE"
 		} else {
-			p.Status = "INACTIVE"
+			updates.Status = existing.Status
 		}
 	}
-	p.UpdatedAt = time.Now()
-	if err := h.store.Save(r.Context(), &p); err != nil {
+	updates.UpdatedAt = time.Now()
+	if err := h.store.Save(r.Context(), &updates); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(p)
+	json.NewEncoder(w).Encode(publicLlmProvider(&updates))
 }
 
 // Delete removes an LLM provider.
 func (h *LlmProviderHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	p, err := h.store.Get(r.Context(), r.PathValue("id"))
+	if err != nil || p == nil || p.Namespace != r.PathValue("namespace") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	if err := h.store.Delete(r.Context(), r.PathValue("id")); err != nil {
 		http.Error(w, err.Error(), 500)
 		return

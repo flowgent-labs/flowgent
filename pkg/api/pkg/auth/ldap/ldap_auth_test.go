@@ -12,18 +12,18 @@ import (
 
 func testLDAPCfg() config.LDAPConfig {
 	return config.LDAPConfig{
-		Enabled:            true,
-		URL:                "ldap://localhost:389",
-		BaseDN:             "dc=example,dc=com",
-		UserDN:             "cn=svc,dc=example,dc=com",
-		Password:       "secret",
-		UserSearchFilter:   "(cn=%s)",
-		UsernameAttribute:  "cn",
-		EmailAttribute:     "mail",
+		Enabled:              true,
+		URL:                  "ldap://localhost:389",
+		BaseDN:               "dc=example,dc=com",
+		UserDN:               "cn=svc,dc=example,dc=com",
+		Password:             "secret",
+		UserSearchFilter:     "(cn=%s)",
+		UsernameAttribute:    "cn",
+		EmailAttribute:       "mail",
 		DisplayNameAttribute: "displayName",
-		GroupSearchBase:    "ou=groups,dc=example,dc=com",
-		GroupSearchFilter:  "(uniqueMember=%s)",
-		GroupNameAttribute: "cn",
+		GroupSearchBase:      "ou=groups,dc=example,dc=com",
+		GroupSearchFilter:    "(uniqueMember=%s)",
+		GroupNameAttribute:   "cn",
 	}
 }
 

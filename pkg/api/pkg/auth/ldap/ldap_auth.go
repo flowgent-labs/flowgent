@@ -83,12 +83,12 @@ func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 //
 // Flow mirrors Spring's LdapTemplate.authenticate:
 //
-//	1. Service account bind (LdapContextSource.getContext)
-//	2. User search (EqualsFilter + SUBTREE_SCOPE + countLimit=1)
-//	3. User password bind (re-bind as the found DN)
-//	4. Config-driven attribute mapping (CustomLdapContextMapper)
-//	5. Group resolution from memberOf / group search
-//	6. Role mapping from AD groups or domain
+//  1. Service account bind (LdapContextSource.getContext)
+//  2. User search (EqualsFilter + SUBTREE_SCOPE + countLimit=1)
+//  3. User password bind (re-bind as the found DN)
+//  4. Config-driven attribute mapping (CustomLdapContextMapper)
+//  5. Group resolution from memberOf / group search
+//  6. Role mapping from AD groups or domain
 func (p *Service) authenticate(r *http.Request, username, password string) (*auth.UserInfo, error) {
 	conn, err := p.dial()
 	if err != nil {
@@ -220,6 +220,7 @@ func (p *Service) groupSearchFilter() string {
 // When UserAttrMapping is configured, extra attributes are populated per the mapping.
 func (p *Service) buildUserInfo(entry *ldapEntry, username, domain string) *auth.UserInfo {
 	user := &auth.UserInfo{
+		Issuer:      "ldap:" + domain,
 		UserID:      getAttr(entry, p.usernameAttribute(), username),
 		Username:    getAttr(entry, p.usernameAttribute(), username),
 		Email:       getAttr(entry, p.emailAttribute(), ""),

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
-	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // fakeTaskState is a no-op taskmanager.TaskStateStore for unit tests that

@@ -16,7 +16,7 @@
 #
 # Job DAG:
 #   release (bump + tag, outputs new_tag)
-#      ├─ build-binaries (checkout tag, build flowgent-core + flowgent-wallet)
+#      ├─ build-binaries (checkout tag, build flowgent-core)
 #      │    └─ upload-release (GitHub Release + binaries)
 #      └─ build-images (checkout tag, docker build + push to ghcr.io)
 #
@@ -141,13 +141,10 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Build flowgent-core
         run: make build-core
-
-      - name: Build flowgent-wallet
-        run: make build-wallet
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
@@ -162,9 +159,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      matrix:
-        image: [core, wallet]
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -184,15 +178,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push flowgent-${{ matrix.image }}
+      - name: Build and push flowgent-core
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/Dockerfile.${{ matrix.image }}
+          file: deploy/docker/Dockerfile.core
           push: true
           tags: |
-            ghcr.io/flowgent-labs/flowgent-${{ matrix.image }}:${{ needs.release.outputs.new_tag }}
-            ghcr.io/flowgent-labs/flowgent-${{ matrix.image }}:latest
+            ghcr.io/flowgent-labs/flowgent-core:${{ needs.release.outputs.new_tag }}
+            ghcr.io/flowgent-labs/flowgent-core:latest
           platforms: linux/amd64,linux/arm64
 
   upload-release:
@@ -222,7 +216,7 @@ jobs:
             ${{ github.event_name == 'pull_request' && github.event.pull_request.body || github.event.head_commit.message }}
 
             ### Binaries
-            flowgent-core and flowgent-wallet built from main.
+            flowgent-core built from main.
           files: bin/flowgent-*
           generate_release_notes: true
         env:

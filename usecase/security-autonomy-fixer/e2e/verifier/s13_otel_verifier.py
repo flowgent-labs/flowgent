@@ -33,10 +33,12 @@ import urllib.request
 from typing import Dict, Any, Optional
 
 from common import config
+from common import api as common_api
 
 JAEGER_API = config.JAEGER_UI_URL
 API_BASE = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
+FLOWGENT_SESSION = common_api.flowgent_session()
 SYSTEM_NAMESPACE = config.SYSTEM_NAMESPACE
 
 _CONFIG_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "config")
@@ -46,8 +48,10 @@ _AGENTS_DIR = os.path.join(_CONFIG_ROOT, "agents")
 _USE_REAL_MCP = os.getenv("FLOWGENT_E2E_USE_REAL_MCP", "true").lower() == "true"
 _MOCK_MCP_COMMAND = ["/app/mcp-server.sh"]
 
-JM_NAMESPACE = config.K8S_APP_NAMESPACE
+JM_NAMESPACE = config.K8S_WORKLOAD_NAMESPACE
 JM_DEPLOY_NAME = f"flowgent-jobmanager-{NAMESPACE}-security-autonomy-fixer"
+UI_PROVISION_MODE = os.getenv("FLOWGENT_E2E_PROVISION_MODE", "console").lower() == "ui"
+LAST_RUN_ID_PATH = os.path.join(os.path.dirname(__file__), "..", ".last_run_id")
 
 
 def _unwrap_k8s(data: dict) -> dict:
@@ -64,10 +68,10 @@ def _unwrap_k8s(data: dict) -> dict:
 
 
 def _get_or_post(get_path, post_path, payload, kind):
-    r = requests.get(f"{API_BASE}{get_path}")
+    r = FLOWGENT_SESSION.get(f"{API_BASE}{get_path}")
     if r.status_code == 200:
         return True
-    r = requests.post(f"{API_BASE}{post_path}", json=payload)
+    r = FLOWGENT_SESSION.post(f"{API_BASE}{post_path}", json=payload)
     if r.status_code not in (200, 201):
         print(f"  WARN: failed to register {kind} {payload.get('name')}: {r.status_code} {r.text[:160]}")
         return False
@@ -110,9 +114,9 @@ def seed_agents_and_mcps():
             mcp_def = {"name": mode, "enabled": True, "type": "stdio",
                        "command": _MOCK_MCP_COMMAND, "args": [mode], "env": {}}
         mcp_def["enabled"] = True
-        existing = requests.get(f"{API_BASE}/api/v1/{NAMESPACE}/mcp/{mode}")
+        existing = FLOWGENT_SESSION.get(f"{API_BASE}/api/v1/{NAMESPACE}/mcp/{mode}")
         if existing.status_code == 200:
-            updated = requests.put(f"{API_BASE}/api/v1/{NAMESPACE}/mcp/{mode}", json=mcp_def)
+            updated = FLOWGENT_SESSION.put(f"{API_BASE}/api/v1/{NAMESPACE}/mcp/{mode}", json=mcp_def)
             if updated.status_code not in (200, 204):
                 print(f"  WARN: failed to enable mcp {mode}: {updated.status_code} {updated.text[:160]}")
         else:
@@ -325,10 +329,10 @@ def ensure_security_fixer_flow_exists():
     with open(_FLOW_YAML_PATH) as f:
         flow_def = _resolve_env_vars(_unwrap_k8s(yaml.safe_load(f)))
     flow_def.pop("triggers", None)
-    resp = requests.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=flow_def, timeout=10)
+    resp = FLOWGENT_SESSION.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=flow_def, timeout=10)
     if resp.status_code not in (200, 201):
         raise Exception(f"Flow upsert failed: {resp.status_code} {resp.text}")
-    print(f"  OK Flow definition ready: {flow_def.get('id')} (priority={flow_def.get('priority')})")
+    print(f"  OK Flow definition ready: {flow_def.get('id')} (resource_pool={flow_def.get('resource_pool_id')})")
 
 
 def trigger_security_fixer() -> str:
@@ -340,7 +344,7 @@ def trigger_security_fixer() -> str:
             "max_iterations": 1,
         }
     }
-    resp = requests.post(url, json=payload, timeout=10)
+    resp = FLOWGENT_SESSION.post(url, json=payload, timeout=10)
     if resp.status_code not in [200, 201]:
         raise Exception(f"Trigger failed: {resp.status_code} {resp.text}")
     data = resp.json()
@@ -357,7 +361,7 @@ def wait_for_completion(run_id: str, timeout: int = 600):
     start = time.time()
     while time.time() - start < timeout:
         try:
-            resp = requests.get(url, timeout=5)
+            resp = FLOWGENT_SESSION.get(url, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
                 status = data.get("status")
@@ -532,10 +536,18 @@ def run():
     print("  Scenario 13: OTEL Tracing — MANDATORY Jaeger Trace Verification")
     print("=" * 60)
 
-    seed_agents_and_mcps()
-    ensure_security_fixer_flow_exists()
-
-    run_id = trigger_security_fixer()
+    if UI_PROVISION_MODE:
+        if not os.path.isfile(LAST_RUN_ID_PATH):
+            raise AssertionError("UI provisioning mode requires .last_run_id from the browser journey")
+        with open(LAST_RUN_ID_PATH) as run_file:
+            run_id = run_file.read().strip()
+        if not run_id:
+            raise AssertionError("UI provisioning mode produced an empty .last_run_id")
+        print(f"  -> Reusing UI-triggered run_id={run_id}; no API seed or trigger is permitted")
+    else:
+        seed_agents_and_mcps()
+        ensure_security_fixer_flow_exists()
+        run_id = trigger_security_fixer()
     status = wait_for_completion(run_id, timeout=600)
     if status != "COMPLETED":
         print(f"  WARN: Flow status={status}, continuing verification...")

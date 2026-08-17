@@ -160,7 +160,7 @@ func (fc *FlowgentConsole) RemoveMCP(name string) error {
 // ListFlows returns all flow version entries.
 func (fc *FlowgentConsole) ListFlows() ([]entities.FlowVersionInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.flows.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (fc *FlowgentConsole) ListFlows() ([]entities.FlowVersionInfo, error) {
 
 // GetFlow returns a full flow spec by ID.
 func (fc *FlowgentConsole) GetFlow(id string) (*entities.FlowInfo, error) {
-	return fc.getStores().flows.GetSpec(fc.ctx, id)
+	return fc.getStores().flows.GetSpec(fc.ctx, fc.namespace, id)
 }
 
 // AddFlow saves a new flow spec. It generates an ID if empty and defaults Kind to "flow".
@@ -192,7 +192,7 @@ func (fc *FlowgentConsole) AddFlow(spec *entities.FlowInfo) error {
 
 // RemoveFlow deletes a flow by ID.
 func (fc *FlowgentConsole) RemoveFlow(id string) error {
-	return fc.getStores().flows.Delete(fc.ctx, id)
+	return fc.getStores().flows.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Skill ───────────────────────────────────────────────────────
@@ -200,7 +200,7 @@ func (fc *FlowgentConsole) RemoveFlow(id string) error {
 // ListSkills returns all skill version entries.
 func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.flows.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 		if fv == nil {
 			continue
 		}
-		spec, _ := ls.flows.GetSpec(fc.ctx, fv.FlowID)
+		spec, _ := ls.flows.GetSpec(fc.ctx, fc.namespace, fv.FlowID)
 		if spec != nil && spec.Kind == "skill" {
 			result = append(result, *fv)
 		}
@@ -219,7 +219,7 @@ func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 
 // GetSkill returns a single skill by ID.
 func (fc *FlowgentConsole) GetSkill(id string) (*entities.FlowInfo, error) {
-	spec, err := fc.getStores().flows.GetSpec(fc.ctx, id)
+	spec, err := fc.getStores().flows.GetSpec(fc.ctx, fc.namespace, id)
 	if err != nil || spec == nil {
 		return nil, fmt.Errorf("skill not found: %s", id)
 	}
@@ -238,7 +238,7 @@ func (fc *FlowgentConsole) AddSkill(spec *entities.FlowInfo) error {
 
 // RemoveSkill deletes a skill by ID.
 func (fc *FlowgentConsole) RemoveSkill(id string) error {
-	return fc.getStores().flows.Delete(fc.ctx, id)
+	return fc.getStores().flows.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Run ─────────────────────────────────────────────────────────

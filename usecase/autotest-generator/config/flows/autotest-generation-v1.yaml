@@ -2,7 +2,7 @@ name: autotest-generation
 kind: Flow
 data:
   id: autotest-generation
-  priority: medium
+  resource_pool_id: default
   namespace_id: default
   description: |
     Enterprise auto test code generation agentflow:

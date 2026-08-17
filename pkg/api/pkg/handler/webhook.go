@@ -42,8 +42,8 @@ const maxWebhookBody = 1 << 20
 // new provider is a single new case, never a change to the trigger/dispatch
 // logic.
 type WebhookHandler struct {
-	trigger       *FlowDefHandler
-	logger        *utils.Logger
+	trigger          *FlowDefHandler
+	logger           *utils.Logger
 	defaultNamespace string
 }
 
@@ -54,8 +54,8 @@ type WebhookHandler struct {
 // namespace-scoped in the URL).
 func NewWebhookHandler(trigger *FlowDefHandler, logger *utils.Logger, defaultNamespace string) *WebhookHandler {
 	return &WebhookHandler{
-		trigger:       trigger,
-		logger:        logger,
+		trigger:          trigger,
+		logger:           logger,
 		defaultNamespace: coalesceNamespace(defaultNamespace),
 	}
 }
@@ -64,14 +64,14 @@ func NewWebhookHandler(trigger *FlowDefHandler, logger *utils.Logger, defaultNam
 // normalizes to. Downstream trigger-matching and run creation only ever see
 // this struct, never a provider's raw JSON.
 type WebhookEvent struct {
-	Provider   string         // "github" | "gitlab" | "gitea"
-	Event      string         // canonical event name: "push" | "pull_request" | "merge_request" ...
-	Repo       string         // "owner/name" (or GitLab path_with_namespace)
-	Ref        string         // e.g. "refs/heads/main" or the PR/MR source branch
-	CommitSHA  string         // head commit / MR SHA when available
-	PRNumber   int            // pull-/merge-request number (0 if N/A)
-	Sender     string         // actor login/username
-	Payload    map[string]any // full raw payload, forwarded into run vars/trigger
+	Provider  string         // "github" | "gitlab" | "gitea"
+	Event     string         // canonical event name: "push" | "pull_request" | "merge_request" ...
+	Repo      string         // "owner/name" (or GitLab path_with_namespace)
+	Ref       string         // e.g. "refs/heads/main" or the PR/MR source branch
+	CommitSHA string         // head commit / MR SHA when available
+	PRNumber  int            // pull-/merge-request number (0 if N/A)
+	Sender    string         // actor login/username
+	Payload   map[string]any // full raw payload, forwarded into run vars/trigger
 }
 
 // providerEvent extracts the canonical event name from the provider-specific
@@ -359,10 +359,10 @@ func parseGitHubLike(provider, headerEvent string, body []byte) (WebhookEvent, e
 // under object_attributes.
 func parseGitLab(headerEvent string, body []byte) (WebhookEvent, error) {
 	var raw struct {
-		ObjectKind string `json:"object_kind"`
-		Ref        string `json:"ref"`
+		ObjectKind  string `json:"object_kind"`
+		Ref         string `json:"ref"`
 		CheckoutSHA string `json:"checkout_sha"`
-		Project    struct {
+		Project     struct {
 			PathWithNamespace string `json:"path_with_namespace"`
 		} `json:"project"`
 		User struct {

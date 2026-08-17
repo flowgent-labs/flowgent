@@ -59,10 +59,10 @@ Steps with Expected I/O:
       Input:   Skill YAMLs imported
       Output:  ≥2 skill records
 
-    Step 3.8 No idle application runtime
-      Action:  kubectl get deployments/pods -A for application JM and JM-owned TM labels
+    Step 3.8 No idle Flow/Pool runtime
+      Action:  kubectl get deployments/pods -A for Flow JM and Resource Pool labels
       Input:   Config import completed, no FlowRun triggered yet
-      Output:  No application-mode JM/TM runtime resources exist
+      Output:  No Flow JobManager or Resource Pool worker resources exist
 """
 
 import subprocess
@@ -91,8 +91,11 @@ MIN_AGENTS = 5
 MIN_FLOWS = 1
 MIN_MCPS = 2
 MIN_LLM_PROVIDERS = 1
-MIN_NOTIFIERS = 2
 MIN_SKILLS = 2
+UI_PROVISION_MODE = os.getenv("FLOWGENT_E2E_PROVISION_MODE", "console").lower() == "ui"
+MIN_NOTIFIERS = 1 if UI_PROVISION_MODE else 2
+UI_EVIDENCE_PATH = os.path.join(os.path.dirname(__file__), "..", ".last_ui_provision.json")
+RUN_ID_PATH = os.path.join(os.path.dirname(__file__), "..", ".last_run_id")
 PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
 os.environ.setdefault(PROXY_ALLOWLIST_ENV, "github.com")
 
@@ -145,7 +148,7 @@ def _names(items):
     ]
 
 
-def _verify_no_idle_application_runtime(failures):
+def _verify_no_idle_workload_runtime(failures):
     checks = [
         (
             "JM deployments",
@@ -168,13 +171,13 @@ def _verify_no_idle_application_runtime(failures):
         data, err = _kubectl_json(args)
         if data is None:
             print(f"  [3.8] WARN: Could not query {label}: {err}")
-            failures.append(f"could not query idle application {label}: {err}")
+            failures.append(f"could not query idle workload {label}: {err}")
             continue
         items = data.get("items", [])
         if items:
             found = _names(items)
-            print(f"  [3.8] WARN: Idle application {label} exist after import: {found}")
-            failures.append(f"idle application {label} exist after import: {found}")
+            print(f"  [3.8] WARN: Idle workload {label} exist after import: {found}")
+            failures.append(f"idle workload {label} exist after import: {found}")
         else:
             print(f"  [3.8] {label}: none after metadata import")
 
@@ -227,8 +230,10 @@ def run():
 
     # ── L1.1: Binary exists ─────────────────────────────────
     print("\n── L1: Binary Check ──")
-    binary = _find_binary()
-    if binary:
+    binary = None if UI_PROVISION_MODE else _find_binary()
+    if UI_PROVISION_MODE:
+        print("  [1.1] UI provisioning mode: console binary/import is intentionally not executed")
+    elif binary:
         result = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=10)
         version_out = (result.stdout + result.stderr)[:300]
         has_console = any(kw in version_out.lower() for kw in ["console", "import", "export", "flowgent"])
@@ -237,7 +242,7 @@ def run():
             print("  [1.1] Console subcommand detected in help output")
         else:
             print("  [1.1] WARN: Console subcommand not found in help — binary may be minimal build")
-    else:
+    elif not UI_PROVISION_MODE:
         print("  [1.1] WARN: flowgent-core binary not found. Searched:")
         for bp in BINARY_PATHS:
             print(f"          {bp}")
@@ -260,7 +265,37 @@ def run():
     imported_count = 0
     import_summary = ""
 
-    if binary:
+    if UI_PROVISION_MODE:
+        print("  [2.1] Validating visible UI provisioning evidence; no console import")
+        try:
+            with open(UI_EVIDENCE_PATH) as evidence_file:
+                evidence = json.load(evidence_file)
+            with open(RUN_ID_PATH) as run_file:
+                run_id = run_file.read().strip()
+            configured = evidence.get("configured", {})
+            expected = {
+                "llm_providers": MIN_LLM_PROVIDERS,
+                "mcps": MIN_MCPS,
+                "agents": 7,
+                "runtime_skills": MIN_SKILLS,
+                "flows": MIN_FLOWS,
+            }
+            missing = {
+                key: (configured.get(key, 0), minimum)
+                for key, minimum in expected.items()
+                if configured.get(key, 0) < minimum
+            }
+            if evidence.get("provisioning_mode") != "ui" or evidence.get("run_id") != run_id or missing:
+                raise AssertionError(
+                    f"mode={evidence.get('provisioning_mode')} "
+                    f"run_match={evidence.get('run_id') == run_id} missing={missing}"
+                )
+            imported_count = sum(int(value) for value in configured.values())
+            print(f"  [2.2] UI evidence accepted: {configured}; run_id={run_id}")
+        except Exception as exc:
+            failures.append(f"UI provisioning evidence invalid: {exc}")
+            print(f"  [2.2] WARN: {exc}")
+    elif binary:
         cfg = _find_config()
         if not cfg:
             print("  [2.1] WARN: No flowgent config file found. Searched:")
@@ -271,7 +306,7 @@ def run():
             print(f"  [2.1] WARN: Config directory not found: {CONFIG_DIR}")
         else:
             print(f"  [2.1] Running: {binary} --config {cfg} console import {CONFIG_DIR}")
-            env = {**os.environ, "HOME": os.environ.get("HOME", "/root")}
+            env = dict(os.environ)
             result = subprocess.run(
                 [binary, "--config", cfg, "console", "import", CONFIG_DIR],
                 capture_output=True, text=True, timeout=60,
@@ -309,7 +344,7 @@ def run():
                     print("  [2.2] Bulk import summary detected")
                 else:
                     failures.append("console import produced no OK markers or bulk summary")
-    else:
+    elif not UI_PROVISION_MODE:
         print("  [2.1] SKIP: Binary not available, skipping import execution.")
         print("  [2.2] SKIP: No import output to analyze.")
 
@@ -443,7 +478,10 @@ def run():
     _verify_security_flow_network_policy(failures)
 
     # ── L3.8: Metadata import must not allocate runtime pods ──
-    _verify_no_idle_application_runtime(failures)
+    if UI_PROVISION_MODE:
+        print("  [3.8] UI mode already triggered a real run; idle-runtime assertion is not applicable")
+    else:
+        _verify_no_idle_workload_runtime(failures)
 
     # ── L3.9: Cross-table summary ────────────────────────────
     print("\n  ── Resource Inventory ──")
@@ -467,8 +505,10 @@ def run():
             failures.append(f"inventory query failed for {label}")
 
     # ── Summary ────────────────────────────────────────────────
-    print(f"\n  Console import & DB verification complete.")
-    if imported_count > 0:
+    print(f"\n  Resource provisioning & DB verification complete.")
+    if UI_PROVISION_MODE:
+        print(f"  Provisioning: {imported_count} resources configured through visible UI interactions.")
+    elif imported_count > 0:
         print(f"  Import: {imported_count} resources imported via console.")
     else:
         print("  Import: Not executed (binary or config missing). DB verification only.")

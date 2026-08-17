@@ -10,17 +10,18 @@ type SandboxResources struct {
 // SandboxRunner pods via MQTT.
 type SandboxTrigger struct {
 	Namespace      string            `json:"namespace_id,omitempty"`
-	FlowID        string            `json:"flow_id"`
-	RunID         string            `json:"run_id"`
-	PlanID        string            `json:"plan_id"`
-	ScriptPath    string            `json:"script_path"`
-	Runtime       string            `json:"runtime"`
-	Timeout       string            `json:"timeout"`
-	Resources     *SandboxResources `json:"resources,omitempty"`
-	NetworkPolicy *NetworkPolicy    `json:"network_policy,omitempty"`
-	Workspace     string            `json:"workspace,omitempty"`
-	SpanID        string            `json:"span_id"`
-	Env           map[string]string `json:"env,omitempty"`
+	ResourcePoolID string            `json:"resource_pool_id"`
+	FlowID         string            `json:"flow_id"`
+	RunID          string            `json:"run_id"`
+	PlanID         string            `json:"plan_id"`
+	ScriptPath     string            `json:"script_path"`
+	Runtime        string            `json:"runtime"`
+	Timeout        string            `json:"timeout"`
+	Resources      *SandboxResources `json:"resources,omitempty"`
+	NetworkPolicy  *NetworkPolicy    `json:"network_policy,omitempty"`
+	Workspace      string            `json:"workspace,omitempty"`
+	SpanID         string            `json:"span_id"`
+	Env            map[string]string `json:"env,omitempty"`
 }
 
 // SandboxDeploymentConfig defines K8s deployment settings for sandbox pods.

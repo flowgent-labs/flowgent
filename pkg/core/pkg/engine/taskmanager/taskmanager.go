@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretref"
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -38,6 +39,7 @@ type TaskManagerConfig struct {
 	ApprovalInfo             executor.HumanApprovalStore
 	APIServerURL             string // API server URL for runtime resource resolution
 	Namespace                string // default namespace for API calls
+	ResourcePoolID           string // Resource Pool scope for work and readiness
 	Logger                   *utils.Logger
 	HeartbeatInterval        time.Duration
 	SandboxMessager          messager.IMessager
@@ -50,16 +52,19 @@ type TaskManagerConfig struct {
 // TaskManager is a persistent worker that consumes ExecutionPlans from
 // a queue (MQTT or local) and executes them via a pool of SlotWorkers.
 type TaskManager struct {
-	ID          string
-	slotWorkers []*SlotWorker
-	router      *executor.TaskExecutorRouter
-	queue       messager.IMessager
-	state       TaskStateStore
-	metrics     *TaskManagerMetrics
-	logger      *utils.Logger
-	mu          sync.Mutex
-	stopCh      chan struct{}
-	stopped     bool
+	ID                string
+	slotWorkers       []*SlotWorker
+	router            *executor.TaskExecutorRouter
+	queue             messager.IMessager
+	state             TaskStateStore
+	metrics           *TaskManagerMetrics
+	logger            *utils.Logger
+	namespace         string
+	resourcePoolID    string
+	heartbeatInterval time.Duration
+	mu                sync.Mutex
+	stopCh            chan struct{}
+	stopped           bool
 }
 
 func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
@@ -68,6 +73,12 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	}
 	if cfg.SlotCount <= 0 {
 		cfg.SlotCount = 4
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = "default"
+	}
+	if cfg.ResourcePoolID == "" {
+		cfg.ResourcePoolID = "default"
 	}
 
 	// Runtime resolvers — TM owns MCP/agent/LLM lifecycle, resolved via API at execution time.
@@ -87,10 +98,18 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 				continue
 			}
 			slog.Info("taskmanager register MCP", "name", m.Name, "type", m.Type, "url", m.URL)
-			// Expand ${ENV_VAR} placeholders in headers and URL
+			// Resolve persisted credential references from the K8s Secret envFrom.
+			persistedHeaders := m.Headers
+			if m.HeaderRefs != nil {
+				persistedHeaders = m.HeaderRefs
+			}
 			headers := make(map[string]string)
-			for k, v := range m.Headers {
-				headers[k] = os.ExpandEnv(v)
+			for k, v := range persistedHeaders {
+				resolved, resolveErr := secretref.Expand(v)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve MCP %s header %s: %w", m.Name, k, resolveErr)
+				}
+				headers[k] = resolved
 			}
 			url := os.ExpandEnv(m.URL)
 			slog.Info("taskmanager MCP resolved", "name", m.Name, "url", url)
@@ -120,29 +139,35 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	router.Register(executor.NewHumanExecutor(cfg.ApprovalInfo))
 	router.Register(&executor.NoopExecutor{})
 	router.Register(&executor.SkillExecutor{})
-	router.Register(executor.NewSandboxExecutor(cfg.SandboxMessager, cfg.SandboxPolicy, cfg.SandboxWorkspace))
+	sandboxExec := executor.NewSandboxExecutor(cfg.SandboxMessager, cfg.SandboxPolicy, cfg.SandboxWorkspace)
+	sandboxExec.SetRuntimeConfigResolver(apiClient)
+	router.Register(sandboxExec)
 
 	metrics := NewTaskManagerMetrics()
 
 	tm := &TaskManager{
-		ID:      cfg.ID,
-		router:  router,
-		queue:   cfg.Messager,
-		state:   cfg.State,
-		metrics: metrics,
-		logger:  cfg.Logger,
-		stopCh:  make(chan struct{}),
+		ID:                cfg.ID,
+		router:            router,
+		queue:             cfg.Messager,
+		state:             cfg.State,
+		metrics:           metrics,
+		logger:            cfg.Logger,
+		namespace:         cfg.Namespace,
+		resourcePoolID:    cfg.ResourcePoolID,
+		heartbeatInterval: cfg.HeartbeatInterval,
+		stopCh:            make(chan struct{}),
 	}
 
 	for i := 0; i < cfg.SlotCount; i++ {
 		slotID := fmt.Sprintf("%s-slot-%d", cfg.ID, i)
-		sw := NewSlotWorker(slotID, cfg.ID, cfg.Messager, router, cfg.State, metrics)
+		sw := NewSlotWorker(slotID, cfg.ID, cfg.Namespace, cfg.ResourcePoolID, cfg.Messager, router, cfg.State, metrics)
 		tm.slotWorkers = append(tm.slotWorkers, sw)
 	}
 
 	if !cfg.SandboxDeploymentEnabled && cfg.SandboxMessager != nil {
 		embeddedRunner := sandbox.NewFlowgentSandboxManager(
 			cfg.ID+"-sb", cfg.SandboxMessager, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
+		embeddedRunner.SetScope(cfg.Namespace, cfg.ResourcePoolID)
 		go func() {
 			slog.Info("embedded sandbox runner started", "id", embeddedRunner.GetID())
 			if err := embeddedRunner.Start(context.Background()); err != nil {
@@ -155,10 +180,14 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 }
 
 func (tm *TaskManager) Start(ctx context.Context) error {
-	startHeartbeat(tm.ID, tm.queue, 0)
 	for _, sw := range tm.slotWorkers {
-		go sw.Loop(ctx)
+		if err := sw.Subscribe(ctx); err != nil {
+			return fmt.Errorf("subscribe slot worker %s: %w", sw.id, err)
+		}
 	}
+	// Readiness is emitted only after every slot handler is registered. The
+	// JobManager waits for this scoped lease before publishing the first plan.
+	startHeartbeat(ctx, tm.ID, tm.namespace, tm.resourcePoolID, tm.queue, tm.heartbeatInterval)
 	tm.logger.Info("task manager started", "id", tm.ID, "slots", len(tm.slotWorkers))
 	return nil
 }
@@ -174,11 +203,41 @@ func (tm *TaskManager) Stop() {
 
 // ExecutePlan executes a single ExecutionPlan via the router.
 func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.ExecutionPlan, task *entities.TaskRunInfo) (*entities.TaskResult, error) {
+	if task == nil {
+		task = &entities.TaskRunInfo{}
+	}
+	if task.ID == "" {
+		task.BaseEntity.ID = plan.TaskID
+	}
+	task.AgentFlowRunID = plan.AgentFlowRunID
+	task.NodeID = plan.NodeID
 	task.Input = plan.Input
+	task.RetryCount = plan.RetryCount
+	task.MaxRetries = plan.MaxRetries
+	task.ExecID = fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1)
+	task.Sequence = plan.RetryCount + 1
+	startedAt := time.Now().UTC()
+	if plan.StartedAt != nil {
+		startedAt = *plan.StartedAt
+	} else {
+		plan.StartedAt = &startedAt
+	}
+	task.StartedAt = &startedAt
 	scope := map[string]map[string]any{"input": plan.Input}
 	result, err := tm.router.Execute(ctx, plan, scope)
 	if err != nil {
+		task.Status = entities.Failed
+		task.Error = err.Error()
+		now := time.Now().UTC()
+		task.FinishedAt = &now
+		plan.FinishedAt = &now
+		if tm.state != nil {
+			_ = tm.state.SaveTask(ctx, task)
+		}
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("executor returned no result")
 	}
 	task.Output = result.Output
 	task.Error = result.Error
@@ -187,10 +246,12 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 	} else {
 		task.Status = entities.Success
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	task.FinishedAt = &now
 	plan.FinishedAt = &now
-	_ = tm.state.SaveTask(ctx, task)
+	if tm.state != nil {
+		_ = tm.state.SaveTask(ctx, task)
+	}
 	return result, nil
 }
 

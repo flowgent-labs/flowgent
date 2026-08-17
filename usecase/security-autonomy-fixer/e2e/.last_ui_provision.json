@@ -1,0 +1,276 @@
+{
+  "provisioning_mode": "ui",
+  "run_id": "2b2c7ae8-ecfe-4157-af74-377519419da9",
+  "configured": {
+    "llm_providers": 1,
+    "notification_channels": 1,
+    "mcps": 2,
+    "agents": 7,
+    "runtime_skills": 2,
+    "resource_pools": 1,
+    "flows": 1,
+    "namespace_principals": 1,
+    "flow_access_bindings": 1,
+    "namespace_runtime_environments": 2,
+    "namespace_runtime_secrets": 1,
+    "flow_runtime_environment_overrides": 1,
+    "flow_runtime_secret_overrides": 1,
+    "revoked_api_keys": 1
+  },
+  "node_attempts": [
+    {
+      "node_id": "get-commit",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "scan-sonarqube",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "aggregate-issues",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "git-clone",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "read-source-files",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "generate-fixes",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "review-security",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "review-quality",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "review-arch",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "committee",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "supervisor-check",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "is-approved",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "review-needs-human",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "human-approval",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "check-existing-pr",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "pr-exists",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "commit-to-existing",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "trigger-rescan",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "wait-rescan",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "check-resolved",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "compare-results",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "fix-complete",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "remediation-incomplete",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "summary-report",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "notify-pr",
+      "attempts": 1,
+      "retries": 0
+    },
+    {
+      "node_id": "end",
+      "attempts": 1,
+      "retries": 0
+    }
+  ],
+  "jaeger_attempts_verified": 26,
+  "ui_writes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/default/llm/providers",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/notifications/channels",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/mcp",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/mcp",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/agents",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/skills",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/skills",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/resource-pools",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/flows",
+      "status": 201
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/default/runtime-config/environment",
+      "status": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/default/runtime-config/secrets",
+      "status": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/default/flows/security-autonomy-fixer/runtime-config/environment",
+      "status": 200
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/default/flows/security-autonomy-fixer/runtime-config/secrets",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/iam/principals",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/flows/security-autonomy-fixer/iam/bindings",
+      "status": 201
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/iam/api-keys",
+      "status": 201
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/default/iam/api-keys/f40eb081-5447-4f32-a40c-077993a475d9",
+      "status": 204
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/flows/security-autonomy-fixer/trigger",
+      "status": 200
+    }
+  ],
+  "completed_at": "2026-08-16T20:36:02.659Z"
+}

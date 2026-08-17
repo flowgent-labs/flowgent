@@ -2,6 +2,7 @@ package jobmanager
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -137,6 +138,29 @@ func (jm *JobMaster) GetChildCondition(from, to string) *bool {
 func (jm *JobMaster) Ready() []string {
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
+
+	// Propagate an inactive branch through its single-path descendants. A
+	// convergence node remains reachable when at least one inbound edge is
+	// active; a node whose inbound edges are all inactive is skipped. Repeat to
+	// a fixed point so an entire unselected branch is removed in one pass.
+	for {
+		changed := false
+		for _, n := range jm.nodes {
+			if jm.completed[n] || jm.skipped[n] || jm.failed[n] || len(jm.deps[n]) == 0 {
+				continue
+			}
+			resolved, active := jm.dependencyStateLocked(n)
+			if resolved && !active {
+				jm.skipped[n] = true
+				jm.pending[n] = false
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+
 	var r []string
 	for _, n := range jm.nodes {
 		if !jm.completed[n] && !jm.skipped[n] && !jm.failed[n] && jm.depsDone(n) {
@@ -146,18 +170,8 @@ func (jm *JobMaster) Ready() []string {
 	return r
 }
 func (jm *JobMaster) depsDone(n string) bool {
-	anySatisfied := len(jm.deps[n]) == 0
-	for _, d := range jm.deps[n] {
-		if jm.skipped[d] || jm.completed[d] {
-			anySatisfied = true
-			continue
-		}
-		if c, exists := jm.edgeConditions[d+"->"+n]; exists && c != nil {
-			continue // dormant conditional edge (source not yet evaluated)
-		}
-		return false
-	}
-	return anySatisfied
+	resolved, active := jm.dependencyStateLocked(n)
+	return resolved && active
 }
 func (jm *JobMaster) Done(n string) {
 	jm.mu.Lock()
@@ -250,18 +264,53 @@ func (jm *JobMaster) dumpGraphState() string {
 }
 
 func (jm *JobMaster) depsDoneLocked(n string) bool {
-	anySatisfied := len(jm.deps[n]) == 0
+	resolved, active := jm.dependencyStateLocked(n)
+	return resolved && active
+}
+
+// dependencyStateLocked resolves incoming edges independently of node state.
+// An unconditional edge is active when its source completed. A conditional
+// edge is active only when the source's evaluated result matches the edge.
+// Skipped sources and non-matching conditional edges are inactive. Callers
+// must hold jm.mu.
+func (jm *JobMaster) dependencyStateLocked(n string) (resolved, active bool) {
+	if len(jm.deps[n]) == 0 {
+		return true, true
+	}
+	anyActive := false
+	hasDormantConditional := false
 	for _, d := range jm.deps[n] {
-		if jm.skipped[d] || jm.completed[d] {
-			anySatisfied = true
+		if jm.skipped[d] {
 			continue
 		}
-		if c, exists := jm.edgeConditions[d+"->"+n]; exists && c != nil {
-			continue // dormant conditional edge (source not yet evaluated)
+		if expected := jm.edgeConditions[d+"->"+n]; expected != nil {
+			if !jm.completed[d] {
+				// A conditional edge whose source has not run is dormant. It
+				// must not block an already-active initial path (feedback edges),
+				// but a node fed only by dormant edges must keep waiting.
+				hasDormantConditional = true
+				continue
+			}
+			actual, evaluated := jm.conditions[d]
+			if !evaluated {
+				hasDormantConditional = true
+				continue
+			}
+			if actual != *expected {
+				continue
+			}
+		} else if !jm.completed[d] {
+			return false, false
 		}
-		return false
+		anyActive = true
 	}
-	return anySatisfied
+	if anyActive {
+		return true, true
+	}
+	if hasDormantConditional {
+		return false, false
+	}
+	return true, anyActive
 }
 
 // ─── buildExecutionGraph — single pass: DAG state + ExecutionPlans ─
@@ -313,15 +362,17 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
+		nodeSpec := entities.NodeSpecFromNode(n)
 		jm.planMap[n.ID] = &entities.ExecutionPlan{
 			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
 			AgentFlowRunID:        runID,
 			AgentFlowDefinitionID: spec.ID,
 			Namespace:             spec.Namespace,
+			ResourcePoolID:        spec.ResourcePoolID,
 			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
-			TaskType:              NodeToTaskType(n.Kind), NodeID: n.ID,
+			TaskType:              NodeToTaskType(nodeSpec.Kind), NodeID: n.ID,
 			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
-			NodeSpec: entities.NodeSpecFromNode(n), CreatedAt: time.Now(),
+			NodeSpec: nodeSpec, CreatedAt: time.Now(),
 		}
 	}
 }
@@ -403,6 +454,11 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		slog.Debug("jobmaster execute iteration", "iteration", iteration, "ready", ready,
 			"completed", len(jm.completed), "total", len(jm.nodes), "deps", jm.dumpGraphState())
 		if len(ready) == 0 {
+			// Ready may have propagated the final inactive branch to skipped.
+			// Re-enter the loop so the normal completion path persists the run.
+			if jm.IsComplete() {
+				continue
+			}
 			slog.Debug("jobmaster execute no ready nodes, breaking", "completed", len(jm.completed),
 				"failed", len(jm.failed), "skipped", len(jm.skipped), "pending", len(jm.pending))
 			break
@@ -439,25 +495,15 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 				}
 			}
 			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
-			_ = jm.state.SaveTask(nodeCtx, taskRunFromPlan(plan))
 
 			slog.Debug("jobmaster execute scheduling node", "node", nodeID, "type", plan.TaskType, "planID", plan.PlanID)
-			result, err := jm.rm.Schedule(nodeCtx, plan)
+			result, err := jm.scheduleNodeWithRetry(nodeCtx, plan)
 			if err != nil {
-				slog.Warn("jobmaster execute schedule failed", "node", nodeID, "err", err)
-				jm.logger.Error("submit failed", "node", nodeID, "err", err)
+				slog.Warn("jobmaster execute node failed", "node", nodeID, "err", err)
+				jm.logger.Error("node failed", "node", nodeID, "err", err)
 				jm.nodeErrors[nodeID] = err.Error()
 				nodeSpan.RecordError(err)
-				nodeSpan.SetStatus(codes.Error, "schedule failed")
-				nodeSpan.End()
-				jm.Fail(nodeID)
-				continue
-			}
-			if result.Error != "" {
-				slog.Warn("jobmaster execute execution failed", "node", nodeID, "err", result.Error)
-				jm.logger.Error("node execution failed", "node", nodeID, "err", result.Error)
-				jm.nodeErrors[nodeID] = result.Error
-				nodeSpan.SetStatus(codes.Error, result.Error)
+				nodeSpan.SetStatus(codes.Error, "node attempts exhausted")
 				nodeSpan.End()
 				jm.Fail(nodeID)
 				continue
@@ -475,17 +521,112 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 			if plan.TaskType == entities.TaskCondition {
 				if r, ok := result.Output["result"].(bool); ok {
 					jm.SetConditionResult(nodeID, r)
-					for _, child := range jm.Children(nodeID) {
-						if c := jm.GetChildCondition(nodeID, child); c != nil && *c != r {
-							jm.Skip(child)
-						}
-					}
 				}
 			}
 		}
 	}
 	slog.Debug("jobmaster execute loop exited, returning nil")
 	return nil
+}
+
+func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
+	policy := jm.nodeRetryPolicy(plan.NodeSpec.Retry)
+	plan.MaxRetries = policy.Max
+	baseTaskID := plan.TaskID
+	previousTaskID := ""
+	delay := policy.Initial
+	var lastErr error
+
+	for attempt := 0; attempt <= policy.Max; attempt++ {
+		if attempt > 0 {
+			if err := waitForRetry(ctx, delay); err != nil {
+				return nil, err
+			}
+			delay = nextRetryDelay(delay, policy)
+		}
+
+		plan.TaskID = taskAttemptID(baseTaskID, attempt)
+		plan.ParentTaskRunID = previousTaskID
+		plan.RetryCount = attempt
+		plan.State = entities.TaskPending
+		plan.Result = nil
+		plan.FinishedAt = nil
+		startedAt := time.Now().UTC()
+		plan.StartedAt = &startedAt
+
+		attemptCtx, attemptSpan := jm.tracer.Start(ctx, "jobmaster.node.attempt",
+			trace.WithAttributes(
+				attribute.String("run.id", plan.AgentFlowRunID),
+				attribute.String("agentflow.id", plan.AgentFlowDefinitionID),
+				attribute.String("flowgent.node_id", plan.NodeID),
+				attribute.String("flowgent.task_id", plan.TaskID),
+				attribute.String("flowgent.plan_id", plan.PlanID),
+				attribute.Int("flowgent.attempt", attempt+1),
+				attribute.Int("flowgent.max_retries", policy.Max),
+			),
+		)
+		attemptSpan.SetAttributes(tracing.PayloadAttributes("input", plan.Input)...)
+		task := taskRunFromPlan(plan)
+		if err := jm.state.SaveTask(attemptCtx, task); err != nil {
+			attemptSpan.RecordError(err)
+			attemptSpan.SetStatus(codes.Error, "persist attempt failed")
+			attemptSpan.End()
+			return nil, fmt.Errorf("persist task attempt: %w", err)
+		}
+
+		result, scheduleErr := jm.rm.Schedule(attemptCtx, plan)
+		lastErr = scheduleErr
+		if lastErr == nil && result == nil {
+			lastErr = fmt.Errorf("task execution returned no result")
+		}
+		if lastErr == nil && result.Error != "" {
+			lastErr = fmt.Errorf("%s", result.Error)
+		}
+
+		finishedAt := time.Now().UTC()
+		plan.FinishedAt = &finishedAt
+		task.FinishedAt = &finishedAt
+		if lastErr == nil {
+			plan.State = entities.Success
+			plan.Result = result
+			task.Status = entities.Success
+			task.Output = result.Output
+			task.Error = ""
+			attemptSpan.SetAttributes(tracing.PayloadAttributes("output", result.Output)...)
+			if err := jm.state.SaveTask(attemptCtx, task); err != nil {
+				attemptSpan.RecordError(err)
+				attemptSpan.SetStatus(codes.Error, "persist result failed")
+				attemptSpan.End()
+				return nil, fmt.Errorf("persist task result: %w", err)
+			}
+			attemptSpan.SetStatus(codes.Ok, "done")
+			attemptSpan.End()
+			return result, nil
+		}
+
+		plan.State = entities.Failed
+		plan.Result = &entities.TaskResult{Error: lastErr.Error()}
+		task.Status = entities.Failed
+		task.Error = lastErr.Error()
+		_ = jm.state.SaveTask(attemptCtx, task)
+		attemptSpan.RecordError(lastErr)
+		attemptSpan.SetStatus(codes.Error, "attempt failed")
+		attemptSpan.End()
+		previousTaskID = plan.TaskID
+	}
+
+	return nil, fmt.Errorf("retry exhausted after %d attempt(s): %w", policy.Max+1, lastErr)
+}
+
+func (jm *JobMaster) nodeRetryPolicy(config *entities.RetryPolicy) RetryPolicy {
+	if config == nil {
+		return RetryPolicy{Max: 0, Initial: time.Second, MaxDelay: 30 * time.Second, Factor: 2}
+	}
+	policy := ModelRetry(config)
+	if config.Max <= 0 && jm.nodeLimit > 0 {
+		policy.Max = jm.nodeLimit
+	}
+	return policy
 }
 
 func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[string]any {
@@ -646,14 +787,40 @@ func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 // taskRunFromPlan converts an ExecutionPlan to a minimal TaskRunInfo for persistence.
 func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 	return &entities.TaskRunInfo{
-		BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
-		AgentFlowRunID: plan.AgentFlowRunID,
-		NodeID:         plan.NodeID,
-		Status:         plan.State,
-		Input:          plan.Input,
-		ExecID:         plan.PlanID,
-		MaxRetries:     plan.MaxRetries,
+		BaseEntity:      entities.BaseEntity{ID: plan.TaskID},
+		AgentFlowRunID:  plan.AgentFlowRunID,
+		NodeID:          plan.NodeID,
+		Status:          plan.State,
+		Input:           plan.Input,
+		Output:          planResultOutput(plan.Result),
+		Error:           planResultError(plan.Result),
+		RetryCount:      plan.RetryCount,
+		ExecID:          fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1),
+		MaxRetries:      plan.MaxRetries,
+		ParentTaskRunID: plan.ParentTaskRunID,
+		Sequence:        plan.RetryCount + 1,
+		StartedAt:       plan.StartedAt,
+		FinishedAt:      plan.FinishedAt,
 	}
+}
+
+func planResultOutput(result *entities.TaskResult) map[string]any {
+	if result == nil {
+		return nil
+	}
+	return result.Output
+}
+
+func planResultError(result *entities.TaskResult) string {
+	if result == nil {
+		return ""
+	}
+	return result.Error
+}
+
+func taskAttemptID(baseTaskID string, attempt int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", baseTaskID, attempt)))
+	return fmt.Sprintf("task-%x", sum[:16])
 }
 
 func NodeToTaskType(nt entities.NodeType) entities.TaskType {
@@ -687,7 +854,7 @@ func NodeToTaskType(nt entities.NodeType) entities.TaskType {
 
 func RetryMax(r *entities.RetryPolicy) int {
 	if r == nil {
-		return 3
+		return 0
 	}
 	return r.Max
 }
@@ -730,11 +897,10 @@ func RetryWithBackoff(ctx context.Context, policy RetryPolicy, fn func() error) 
 		default:
 		}
 		if i > 0 {
-			time.Sleep(delay)
-			delay = time.Duration(float64(delay) * policy.Factor)
-			if delay > policy.MaxDelay {
-				delay = policy.MaxDelay
+			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
+				return waitErr
 			}
+			delay = nextRetryDelay(delay, policy)
 		}
 		err = fn()
 		if err == nil {
@@ -742,6 +908,28 @@ func RetryWithBackoff(ctx context.Context, policy RetryPolicy, fn func() error) 
 		}
 	}
 	return fmt.Errorf("retry exhausted after %d attempts: %w", policy.Max, err)
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func nextRetryDelay(delay time.Duration, policy RetryPolicy) time.Duration {
+	next := time.Duration(float64(delay) * policy.Factor)
+	if next > policy.MaxDelay {
+		return policy.MaxDelay
+	}
+	return next
 }
 
 type JobManagerMetrics struct {

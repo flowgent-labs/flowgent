@@ -11,6 +11,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ── Context keys ──────────────────────────────────────────────────
@@ -32,19 +34,37 @@ const (
 	CtxUserID    contextKey = "user_id"
 	CtxJWTClaims contextKey = "jwt_claims"
 	CtxUserRole  contextKey = "user_role"
+	ctxUser      contextKey = "user"
 )
 
 // ── UserInfo ─────────────────────────────────────────────────────
 
 // UserInfo is the normalized user representation returned by all auth backends.
 type UserInfo struct {
-	UserID      string
-	Username    string
-	Email       string
-	DisplayName string
-	Role        string
-	Groups      []string
-	Extra       map[string]any
+	UserID            string                 `json:"id"`
+	Issuer            string                 `json:"issuer,omitempty"`
+	Username          string                 `json:"username"`
+	Email             string                 `json:"email,omitempty"`
+	DisplayName       string                 `json:"display_name,omitempty"`
+	Role              string                 `json:"role,omitempty"`
+	Groups            []string               `json:"groups,omitempty"`
+	Extra             map[string]any         `json:"attributes,omitempty"`
+	Type              entities.PrincipalType `json:"type"`
+	DirectPermissions []string               `json:"permissions,omitempty"`
+	AllowedNamespaces []string               `json:"namespaces,omitempty"`
+	CredentialID      string                 `json:"credential_id,omitempty"`
+}
+
+// UserFromContext returns the fully normalized authenticated principal.
+func UserFromContext(ctx context.Context) (*UserInfo, bool) {
+	user, ok := ctx.Value(ctxUser).(*UserInfo)
+	return user, ok && user != nil
+}
+
+// CredentialAuthenticator validates opaque break-glass, workload, and API-key
+// credentials before JWT parsing.
+type CredentialAuthenticator interface {
+	AuthenticateCredential(context.Context, string) (*UserInfo, error)
 }
 
 // ── AuthProviderService interface ──────────────────────────────────
@@ -64,6 +84,7 @@ type AuthService struct {
 	cfg          config.AuthConfig
 	tokenService *TokenService
 	providers    []AuthProviderService
+	credentials  CredentialAuthenticator
 }
 
 // NewService creates an AuthService and initializes the JWT TokenService.
@@ -78,6 +99,10 @@ func NewService(cfg config.AuthConfig) (*AuthService, error) {
 
 // TokenService returns the shared JWT token service.
 func (s *AuthService) TokenService() *TokenService { return s.tokenService }
+
+func (s *AuthService) SetCredentialAuthenticator(authenticator CredentialAuthenticator) {
+	s.credentials = authenticator
+}
 
 // Register adds an authentication backend service.
 func (s *AuthService) Register(p AuthProviderService) {
@@ -124,40 +149,61 @@ func (s *AuthService) Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			claims := &jwt.RegisteredClaims{}
+			if s.credentials != nil {
+				if user, credentialErr := s.credentials.AuthenticateCredential(r.Context(), parts[1]); credentialErr == nil {
+					if serveAuthenticatedIdentity(w, r, user) {
+						return
+					}
+					next.ServeHTTP(w, r.WithContext(contextWithUser(r.Context(), user, nil)))
+					return
+				} else if strings.HasPrefix(parts[1], "fgk_") {
+					writeAuthError(w, "Invalid or expired credential")
+					return
+				}
+			}
+
+			claims := &Claims{}
 			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (any, error) {
 				if t.Method.Alg() != alg {
 					return nil, fmt.Errorf("unexpected signing algorithm: %s", t.Method.Alg())
 				}
 				return publicKey, nil
-			})
+			}, jwt.WithIssuer("flowgent"), jwt.WithAudience("flowgent"), jwt.WithValidMethods([]string{alg}))
 			if err != nil || !token.Valid {
 				writeAuthError(w, "Invalid or expired token")
 				return
 			}
 
 			user := &UserInfo{
-				UserID: claims.Subject,
-				Extra:  make(map[string]any),
+				UserID: claims.Subject, Issuer: claims.IdentityIssuer, Username: claims.Username, Email: claims.Email,
+				DisplayName: claims.DisplayName, Groups: append([]string(nil), claims.Groups...),
+				Type: claims.PrincipalType, Extra: make(map[string]any),
 			}
-			if uid, ok := token.Header["uid"].(string); ok {
-				user.UserID = uid
+			if user.Type == "" {
+				user.Type = entities.PrincipalUser
 			}
-			if uname, ok := token.Header["uname"].(string); ok {
-				user.Username = uname
-			}
-			if role, ok := token.Header["role"].(string); ok {
-				user.Role = role
-			}
-
-			ctx := context.WithValue(r.Context(), CtxJWTClaims, claims)
-			ctx = context.WithValue(ctx, CtxUserID, user.UserID)
-			ctx = context.WithValue(ctx, CtxUserRole, user.Role)
 
 			slog.Debug("auth: JWT validated", "user", user.UserID, "username", user.Username)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			if serveAuthenticatedIdentity(w, r, user) {
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(contextWithUser(r.Context(), user, claims)))
 		})
 	}
+}
+
+func serveAuthenticatedIdentity(w http.ResponseWriter, r *http.Request, user *UserInfo) bool {
+	if r.URL.Path != "/api/v1/auth/me" {
+		return false
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"principal": user})
+	return true
 }
 
 // ── JWT Token Service ─────────────────────────────────────────────
@@ -169,6 +215,16 @@ type TokenService struct {
 	publicKey  any
 	akValidity time.Duration
 	rkValidity time.Duration
+}
+
+type Claims struct {
+	jwt.RegisteredClaims
+	Username       string                 `json:"preferred_username,omitempty"`
+	Email          string                 `json:"email,omitempty"`
+	DisplayName    string                 `json:"name,omitempty"`
+	Groups         []string               `json:"groups,omitempty"`
+	PrincipalType  entities.PrincipalType `json:"principal_type,omitempty"`
+	IdentityIssuer string                 `json:"identity_issuer,omitempty"`
 }
 
 // NewTokenService creates a TokenService from the auth configuration.
@@ -210,18 +266,19 @@ func (s *TokenService) IssueRefreshToken(user *UserInfo) (string, error) {
 
 func (s *TokenService) issueToken(user *UserInfo, ttl time.Duration) (string, error) {
 	now := time.Now()
-	claims := &jwt.RegisteredClaims{
-		Issuer:    "flowgent",
-		Subject:   user.UserID,
-		Audience:  jwt.ClaimStrings{"flowgent"},
-		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-		IssuedAt:  jwt.NewNumericDate(now),
-		NotBefore: jwt.NewNumericDate(now),
+	principalType := user.Type
+	if principalType == "" {
+		principalType = entities.PrincipalUser
+	}
+	claims := &Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: "flowgent", Subject: user.UserID, Audience: jwt.ClaimStrings{"flowgent"},
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)), IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now),
+		},
+		Username: user.Username, Email: user.Email, DisplayName: user.DisplayName, IdentityIssuer: user.Issuer,
+		Groups: append([]string(nil), user.Groups...), PrincipalType: principalType,
 	}
 	token := jwt.NewWithClaims(s.signingMethod(), claims)
-	token.Header["uid"] = user.UserID
-	token.Header["uname"] = user.Username
-	token.Header["role"] = user.Role
 
 	signed, err := token.SignedString(s.privateKey)
 	if err != nil {
@@ -285,38 +342,29 @@ func Middleware(cfg config.AuthConfig, tokenService *TokenService) func(http.Han
 				return
 			}
 
-			claims := &jwt.RegisteredClaims{}
+			claims := &Claims{}
 			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (any, error) {
 				if t.Method.Alg() != alg {
 					return nil, fmt.Errorf("unexpected signing algorithm: %s", t.Method.Alg())
 				}
 				return publicKey, nil
-			})
+			}, jwt.WithIssuer("flowgent"), jwt.WithAudience("flowgent"), jwt.WithValidMethods([]string{alg}))
 			if err != nil || !token.Valid {
 				writeAuthError(w, "Invalid or expired token")
 				return
 			}
 
 			user := &UserInfo{
-				UserID: claims.Subject,
-				Extra:  make(map[string]any),
+				UserID: claims.Subject, Username: claims.Username, Email: claims.Email,
+				DisplayName: claims.DisplayName, Groups: append([]string(nil), claims.Groups...),
+				Type: claims.PrincipalType, Extra: make(map[string]any),
 			}
-			if uid, ok := token.Header["uid"].(string); ok {
-				user.UserID = uid
+			if user.Type == "" {
+				user.Type = entities.PrincipalUser
 			}
-			if uname, ok := token.Header["uname"].(string); ok {
-				user.Username = uname
-			}
-			if role, ok := token.Header["role"].(string); ok {
-				user.Role = role
-			}
-
-			ctx := context.WithValue(r.Context(), CtxJWTClaims, claims)
-			ctx = context.WithValue(ctx, CtxUserID, user.UserID)
-			ctx = context.WithValue(ctx, CtxUserRole, user.Role)
 
 			slog.Debug("auth: JWT validated", "user", user.UserID, "username", user.Username)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(contextWithUser(r.Context(), user, claims)))
 		})
 	}
 }
@@ -403,6 +451,16 @@ func writeAuthError(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	fmt.Fprintf(w, `{"success":false,"message":"%s"}`, msg)
+}
+
+func contextWithUser(ctx context.Context, user *UserInfo, claims *Claims) context.Context {
+	ctx = context.WithValue(ctx, ctxUser, user)
+	ctx = context.WithValue(ctx, CtxUserID, user.UserID)
+	ctx = context.WithValue(ctx, CtxUserRole, user.Role)
+	if claims != nil {
+		ctx = context.WithValue(ctx, CtxJWTClaims, claims)
+	}
+	return ctx
 }
 
 // WriteJSON writes a JSON response. Exported for backend sub-packages.

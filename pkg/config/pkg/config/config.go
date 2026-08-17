@@ -75,11 +75,15 @@ type PProfConfig struct {
 }
 
 type OTELConfig struct {
-	Enabled    bool    `json:"enabled" yaml:"enabled"`
-	Endpoint   string  `json:"endpoint" yaml:"endpoint"`
-	Protocol   string  `json:"protocol" yaml:"protocol"`
-	Timeout    int     `json:"timeout" yaml:"timeout"`
-	SampleRate float64 `json:"sample_rate" yaml:"sample_rate"`
+	Enabled       bool    `json:"enabled" yaml:"enabled"`
+	Endpoint      string  `json:"endpoint" yaml:"endpoint"`
+	Protocol      string  `json:"protocol" yaml:"protocol"`
+	Timeout       int     `json:"timeout" yaml:"timeout"`
+	SampleRate    float64 `json:"sample_rate" yaml:"sample_rate"`
+	QueryEndpoint string  `json:"query_endpoint" yaml:"query_endpoint"`
+	QueryTimeout  int     `json:"query_timeout" yaml:"query_timeout"`
+	QueryLookback string  `json:"query_lookback" yaml:"query_lookback"`
+	QueryLimit    int     `json:"query_limit" yaml:"query_limit"`
 }
 
 type MetricsConfig struct {
@@ -104,15 +108,30 @@ type LoggingConfig struct {
 }
 
 type AuthConfig struct {
-	JWTValidityAK  int              `json:"jwt_validity_ak" yaml:"jwt_validity_ak"`
-	JWTValidityRK  int              `json:"jwt_validity_rk" yaml:"jwt_validity_rk"`
-	JWTAlgorithm   string           `json:"jwt_algorithm" yaml:"jwt_algorithm"`
-	JWTPrivateKey  string           `json:"jwt_private_key" yaml:"jwt_private_key"`
-	JWTPublicKey   string           `json:"jwt_public_key" yaml:"jwt_public_key"`
-	AnonymousPaths []string         `json:"anonymous_paths" yaml:"anonymous_paths"`
-	OIDC           OIDCConfig       `json:"oidc" yaml:"oidc"`
-	LDAP           LDAPConfig       `json:"ldap" yaml:"ldap"`
-	GitHub         GitHubAuthConfig `json:"github" yaml:"github"`
+	JWTValidityAK  int                 `json:"jwt_validity_ak" yaml:"jwt_validity_ak"`
+	JWTValidityRK  int                 `json:"jwt_validity_rk" yaml:"jwt_validity_rk"`
+	JWTAlgorithm   string              `json:"jwt_algorithm" yaml:"jwt_algorithm"`
+	JWTPrivateKey  string              `json:"jwt_private_key" yaml:"jwt_private_key"`
+	JWTPublicKey   string              `json:"jwt_public_key" yaml:"jwt_public_key"`
+	AnonymousPaths []string            `json:"anonymous_paths" yaml:"anonymous_paths"`
+	OIDC           OIDCConfig          `json:"oidc" yaml:"oidc"`
+	LDAP           LDAPConfig          `json:"ldap" yaml:"ldap"`
+	GitHub         GitHubAuthConfig    `json:"github" yaml:"github"`
+	Authorization  AuthorizationConfig `json:"authorization" yaml:"authorization"`
+}
+
+// AuthorizationConfig controls default-deny API authorization. BootstrapToken
+// is a rotatable break-glass credential; InternalTokens are distinct workload
+// identities for Flowgent components and must be sourced from Kubernetes
+// Secrets or an equivalent external secret manager.
+type AuthorizationConfig struct {
+	Enabled           bool              `json:"enabled" yaml:"enabled"`
+	Enforcement       string            `json:"enforcement" yaml:"enforcement"`
+	BootstrapToken    string            `json:"bootstrap_token" yaml:"bootstrap_token"`
+	InternalTokens    map[string]string `json:"internal_tokens" yaml:"internal_tokens"`
+	AuditAllow        bool              `json:"audit_allow" yaml:"audit_allow"`
+	AuditDeny         bool              `json:"audit_deny" yaml:"audit_deny"`
+	TrustedProxyCIDRs []string          `json:"trusted_proxy_cidrs" yaml:"trusted_proxy_cidrs"`
 }
 
 type OIDCConfig struct {
@@ -224,9 +243,10 @@ type RedisCacheConfig struct {
 // ─── Storage ─────────────────────────────────────────────────
 
 type StorageConfig struct {
-	Type     string         `json:"type" yaml:"type"`
-	SQLite   SQLiteConfig   `json:"sqlite" yaml:"sqlite"`
-	Postgres PostgresConfig `json:"postgres" yaml:"postgres"`
+	Type      string                `json:"type" yaml:"type"`
+	SQLite    SQLiteConfig          `json:"sqlite" yaml:"sqlite"`
+	Postgres  PostgresConfig        `json:"postgres" yaml:"postgres"`
+	Artifacts ArtifactStorageConfig `json:"artifacts" yaml:"artifacts"`
 }
 
 type SQLiteConfig struct {
@@ -244,6 +264,45 @@ type PostgresConfig struct {
 	MinConnections int    `json:"min_connections" yaml:"min_connections"`
 	MaxConnections int    `json:"max_connections" yaml:"max_connections"`
 	UseSSL         bool   `json:"use_ssl" yaml:"use_ssl"`
+}
+
+// ArtifactStorageConfig controls storage for large, immutable runtime artifacts.
+// TaskRun input/output is the first artifact kind. The DB always retains either
+// the complete inline JSON value or a versioned reference that the API Server
+// resolves before returning the TaskRun REST resource.
+type ArtifactStorageConfig struct {
+	Provider        string            `json:"provider" yaml:"provider"` // default | s3 | gcs
+	InlineMaxBytes  int64             `json:"inline_max_bytes" yaml:"inline_max_bytes"`
+	MaxPayloadBytes int64             `json:"max_payload_bytes" yaml:"max_payload_bytes"`
+	Compression     string            `json:"compression" yaml:"compression"` // none | gzip
+	Prefix          string            `json:"prefix" yaml:"prefix"`
+	PutTimeout      string            `json:"put_timeout" yaml:"put_timeout"`
+	GetTimeout      string            `json:"get_timeout" yaml:"get_timeout"`
+	VerifyChecksum  bool              `json:"verify_checksum" yaml:"verify_checksum"`
+	S3              S3ArtifactConfig  `json:"s3" yaml:"s3"`
+	GCS             GCSArtifactConfig `json:"gcs" yaml:"gcs"`
+}
+
+// S3ArtifactConfig supports AWS S3 and S3-compatible services. Credentials are
+// optional; when omitted, the AWS SDK default credential chain is used.
+type S3ArtifactConfig struct {
+	Bucket          string `json:"bucket" yaml:"bucket"`
+	Region          string `json:"region" yaml:"region"`
+	Endpoint        string `json:"endpoint" yaml:"endpoint"`
+	ForcePathStyle  bool   `json:"force_path_style" yaml:"force_path_style"`
+	AccessKeyID     string `json:"access_key_id" yaml:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key" yaml:"secret_access_key"`
+	SessionToken    string `json:"session_token" yaml:"session_token"`
+}
+
+// GCSArtifactConfig uses Application Default Credentials unless a credentials
+// file is explicitly configured. Anonymous must only be enabled for an emulator
+// or another trusted GCS-compatible endpoint.
+type GCSArtifactConfig struct {
+	Bucket          string `json:"bucket" yaml:"bucket"`
+	Endpoint        string `json:"endpoint" yaml:"endpoint"`
+	CredentialsFile string `json:"credentials_file" yaml:"credentials_file"`
+	Anonymous       bool   `json:"anonymous" yaml:"anonymous"`
 }
 
 // ─── Orchestration ────────────────────────────────────────────
@@ -302,12 +361,22 @@ type McpInfo = entities.McpInfo
 // NotifierConfig configures the notifier service (always-on daemon like apiserver).
 // Channels are managed via DB CRUD API; this struct holds low-level tech settings.
 type NotifierConfig struct {
-	ScanInterval    string              `json:"scan_interval" yaml:"scan_interval"`
-	CleanupInterval string              `json:"cleanup_interval" yaml:"cleanup_interval"`
-	RouteTimeout    string              `json:"route_timeout" yaml:"route_timeout"`
-	WebSocket       NotifierWSConfig    `json:"websocket" yaml:"websocket"`
-	Telegram        NotifierTelegramCfg `json:"telegram" yaml:"telegram"`
-	Email           NotifierEmailCfg    `json:"email" yaml:"email"`
+	ScanInterval     string                         `json:"scan_interval" yaml:"scan_interval"`
+	CleanupInterval  string                         `json:"cleanup_interval" yaml:"cleanup_interval"`
+	RouteTimeout     string                         `json:"route_timeout" yaml:"route_timeout"`
+	SecretEncryption NotifierSecretEncryptionConfig `json:"secret_encryption" yaml:"secret_encryption"`
+	WebSocket        NotifierWSConfig               `json:"websocket" yaml:"websocket"`
+	Telegram         NotifierTelegramCfg            `json:"telegram" yaml:"telegram"`
+	Email            NotifierEmailCfg               `json:"email" yaml:"email"`
+}
+
+// NotifierSecretEncryptionConfig configures encryption-at-rest for dynamic
+// per-channel connection secrets. Values in Keys must come from environment or
+// a CSI-mounted credential; only encrypted envelopes are persisted in DB.
+type NotifierSecretEncryptionConfig struct {
+	Provider    string            `json:"provider" yaml:"provider"`
+	ActiveKeyID string            `json:"active_key_id" yaml:"active_key_id"`
+	Keys        map[string]string `json:"keys" yaml:"keys"`
 }
 
 // NotifierWSConfig holds WebSocket push notification settings for the notifier.
@@ -344,11 +413,15 @@ type RuntimeConfig struct {
 	K8sNamespace        string                `json:"k8s_namespace" yaml:"k8s_namespace"`
 	SystemNamespace     string                `json:"system_namespace" yaml:"system_namespace"`
 	AgentFlowID         string                `json:"agent_flow_id" yaml:"agent_flow_id"`
+	ResourcePoolID      string                `json:"resource_pool_id" yaml:"resource_pool_id"`
 	TMID                string                `json:"tm_id" yaml:"tm_id"`
 	TMDeploy            string                `json:"tm_deploy" yaml:"tm_deploy"`
 	TMSlots             int                   `json:"tm_slots" yaml:"tm_slots"`
 	TMOrphanTimeout     string                `json:"tm_orphan_timeout" yaml:"tm_orphan_timeout"`
 	CredentialEnvSecret string                `json:"credential_env_secret" yaml:"credential_env_secret"`
+	InternalAuthSecret  string                `json:"internal_auth_secret" yaml:"internal_auth_secret"`
+	JobManagerAuthKey   string                `json:"jobmanager_auth_key" yaml:"jobmanager_auth_key"`
+	TaskManagerAuthKey  string                `json:"taskmanager_auth_key" yaml:"taskmanager_auth_key"`
 	ControllerLabel     string                `json:"controller_label" yaml:"controller_label"`
 	JMImage             string                `json:"jm_image" yaml:"jm_image"`
 	TMImage             string                `json:"tm_image" yaml:"tm_image"`
@@ -637,10 +710,15 @@ func expandStringWithCreds(s string, creds map[string]string) string {
 // ── Wallet config types ─────────────────────────────────────
 
 type WalletConfig struct {
-	Enabled     bool           `json:"enabled" yaml:"enabled"`
-	Policies    PoliciesConfig `json:"policies" yaml:"policies"`
-	SecretStore SecretStoreCfg `json:"secret_store" yaml:"secret_store"`
-	X402        X402Cfg        `json:"x402" yaml:"x402"`
+	Enabled        bool           `json:"enabled" yaml:"enabled"`
+	Transport      string         `json:"transport" yaml:"transport"`
+	ClientIDPrefix string         `json:"client_id_prefix" yaml:"client_id_prefix"`
+	KeyID          string         `json:"key_id" yaml:"key_id"`
+	PublicAddress  string         `json:"public_address" yaml:"public_address"`
+	SignTimeout    string         `json:"sign_timeout" yaml:"sign_timeout"`
+	LocalSocket    string         `json:"local_socket" yaml:"local_socket"`
+	Policies       PoliciesConfig `json:"policies" yaml:"policies"`
+	X402           X402Cfg        `json:"x402" yaml:"x402"`
 }
 
 type PoliciesConfig struct {
@@ -653,26 +731,8 @@ type PoliciesConfig struct {
 	AllowedChains                []string `json:"allowed_chains" yaml:"allowed_chains"`
 }
 
-type SecretStoreCfg struct {
-	Provider      string   `json:"provider" yaml:"provider"`
-	MasterKey     string   `json:"master_key" yaml:"master_key"`
-	MasterKeyFile string   `json:"master_key_file" yaml:"master_key_file"`
-	Vault         VaultCfg `json:"vault" yaml:"vault"`
-}
-
-type VaultCfg struct {
-	Address    string `json:"address" yaml:"address"`
-	Token      string `json:"token" yaml:"token"`
-	TokenFile  string `json:"token_file" yaml:"token_file"`
-	MountPath  string `json:"mount_path" yaml:"mount_path"`
-	SecretPath string `json:"secret_path" yaml:"secret_path"`
-	Role       string `json:"role" yaml:"role"`
-}
-
 type X402Cfg struct {
-	DefaultFacilitator string `json:"default_facilitator" yaml:"default_facilitator"`
-	Timeout            string `json:"timeout" yaml:"timeout"`
-	MaxRetries         int    `json:"max_retries" yaml:"max_retries"`
+	Timeout string `json:"timeout" yaml:"timeout"`
 }
 
 // expandEnvVars recursively walks a struct and replaces ${VAR} placeholders
@@ -756,6 +816,11 @@ func LogConfig(cfg *FlowgentConfig) {
 		}
 		slog.Info("Storage", "type", "SQLite", "dir", dir)
 	}
+	artifactProvider := cfg.Storage.Artifacts.Provider
+	if artifactProvider == "" {
+		artifactProvider = "default"
+	}
+	slog.Info("Artifact storage", "provider", artifactProvider, "inline_max_bytes", cfg.Storage.Artifacts.InlineMaxBytes, "max_payload_bytes", cfg.Storage.Artifacts.MaxPayloadBytes, "compression", cfg.Storage.Artifacts.Compression)
 
 	slog.Info("Cache", "provider", cfg.Cache.Provider)
 	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "context", cfg.Server.ContextPath)

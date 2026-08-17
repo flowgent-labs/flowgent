@@ -2,11 +2,13 @@ package taskmanager
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
-	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // fakeTaskState is a no-op TaskStateStore for unit tests that don't
@@ -77,16 +79,40 @@ func TestNewTaskManager_AutoID(t *testing.T) {
 }
 
 func TestTaskManager_StartStop(t *testing.T) {
+	q := messager.NewLocalMessager(10)
+	readyCh := make(chan messager.RuntimeReady, 1)
+	if err := q.Subscribe(context.Background(), messager.RuntimeReadyWildcard("default", "default", "taskmanager"), func(_ string, payload []byte) {
+		var ready messager.RuntimeReady
+		if json.Unmarshal(payload, &ready) == nil {
+			readyCh <- ready
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
 	tm, err := NewTaskManager(&TaskManagerConfig{
 		ID: "tm-startstop", SlotCount: 2,
-		State:    fakeTaskState{},
-		Messager: messager.NewLocalMessager(10),
-		Logger:   utils.NewLogger("JSON", "DEBUG"),
+		State:          fakeTaskState{},
+		Messager:       q,
+		Namespace:      "default",
+		ResourcePoolID: "default",
+		Logger:         utils.NewLogger("JSON", "DEBUG"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Start and immediately stop — should not panic or hang
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := tm.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	select {
+	case ready := <-readyCh:
+		if ready.WorkerID != "tm-startstop" || ready.Role != "taskmanager" {
+			t.Fatalf("unexpected readiness: %+v", ready)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TaskManager did not advertise readiness after slot subscriptions")
+	}
 	tm.Stop()
 	// Stop is idempotent
 	tm.Stop()

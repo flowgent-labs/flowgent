@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretref"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
@@ -36,7 +37,7 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
-				slog.Debug("llm loaded provider", "id", dbp.ID, "provider", dbp.Provider, "status", dbp.Status, "apiKeyLen", len(dbp.ApiKey))
+				slog.Debug("llm loaded provider", "id", dbp.ID, "provider", dbp.Provider, "status", dbp.Status, "keyConfigured", dbp.KeyConfigured || dbp.ApiKeyEnv != "" || dbp.ApiKey != "")
 				if dbp.Status != "ACTIVE" || dbp.ID == "" {
 					slog.Debug("llm skip provider", "id", dbp.ID, "status", dbp.Status)
 					continue
@@ -53,15 +54,16 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 }
 
 func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
-	// DB stores apikey in the apikey column directly.
-	// Also check Credentials map for backward compatibility.
-	if dbP.ApiKey == "" {
-		if v, ok := dbP.Credentials["apikey"]; ok {
-			if vs, ok := v.(string); ok {
-				dbP.ApiKey = vs
-			}
-		}
+	reference := dbP.ApiKey
+	if dbP.ApiKeyEnv != "" {
+		reference = secretref.Prefix + dbP.ApiKeyEnv
 	}
+	resolved, err := secretref.Resolve(reference)
+	if err != nil {
+		slog.Error("llm provider secret reference is unavailable", "id", dbP.ID, "provider", dbP.Provider, "error", err)
+		return
+	}
+	dbP.ApiKey = resolved
 	// Convert DB timeout_ms (int) to Timeout duration string for provider constructors.
 	if dbP.TimeoutMs > 0 && dbP.Timeout == "" {
 		dbP.Timeout = fmt.Sprintf("%dms", dbP.TimeoutMs)
