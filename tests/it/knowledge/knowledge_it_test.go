@@ -61,7 +61,10 @@ func TestKnowledge_CRUD(t *testing.T) {
 		t.Fatal("list returned no items")
 	}
 
-	update := map[string]any{"content": "Always use parameterized queries."}
+	update := map[string]any{
+		"title": "SQL Injection Prevention", "content": "Always use parameterized queries.",
+		"content_type": "text", "source": "manual", "tags": []string{"security", "java"},
+	}
 	b, _ = json.Marshal(update)
 	req, _ := http.NewRequest(http.MethodPut, base+"/"+created.ID, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -97,9 +100,9 @@ func TestKnowledge_CRUD(t *testing.T) {
 		t.Fatalf("list by tags: %v", err)
 	}
 	defer resp.Body.Close()
-	var tagged []*entities.KnowledgeEntry
+	var tagged entities.Page[entities.KnowledgeEntry]
 	json.NewDecoder(resp.Body).Decode(&tagged)
-	if len(tagged) == 0 {
+	if len(tagged.Items) == 0 {
 		t.Error("tag-filtered list returned no results")
 	}
 
@@ -138,10 +141,11 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 	llmLog := &externalmock.LLMCallLog{}
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "rag-wiring", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector"}, {ID: "fix", Type: entities.AgentNode, Agent: "fixer-agent"}},
-		Edges:      []entities.Edge{{From: "detect", To: "fix"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{{ID: "detect", Kind: entities.AgentNode, Agent: "issue-detector"}, {ID: "fix", Kind: entities.AgentNode, Agent: "fixer-agent"}},
+		Edges:    []entities.Edge{{From: "detect", To: "fix"}},
 	}
 	fs := it.NewWithLLMLog(t, flow, llmLog)
 	namespace := fs.Namespace
@@ -192,10 +196,11 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 func TestKnowledge_PostHandle(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "knowledge-posthandle", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "step-a", Type: entities.NoopNode}, {ID: "step-b", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{{From: "step-a", To: "step-b"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{{ID: "step-a", Kind: entities.NoopNode}, {ID: "step-b", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{{From: "step-a", To: "step-b"}},
 	}
 	fs := it.New(t, flow)
 	namespace := fs.Namespace

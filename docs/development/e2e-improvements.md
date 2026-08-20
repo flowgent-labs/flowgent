@@ -12,7 +12,8 @@ third-party boundaries.
 Database, middleware, messaging, Flowgent runtime components, and deployment
 topology MUST use real local instances. Distributed coverage therefore includes
 PostgreSQL, an MQTT broker, API Server, Controller, JobManager, TaskManager,
-Sandbox, Notifier, Kubernetes, dedicated Flow JobManagers, and Resource Pools.
+Sandbox, Notifier, Kubernetes, session runtime clusters, and per-run
+application runtime clusters.
 
 Core components MUST NOT be replaced by in-memory implementations, fakes,
 stubs, or mocks. A test may do so only when it is explicitly classified as a
@@ -44,10 +45,10 @@ standalone/local smoke suite and MUST NOT be described as distributed E2E.
 | # | Problem | Required change | Acceptance criteria |
 |---|---|---|---|
 | 1 | Harness scope is inaccurate | Preserve the current layout. Distinguish standalone smoke from distributed E2E in README, Makefile, and CI; add or extend a distributed harness. | Documentation no longer overstates coverage. PostgreSQL, MQTT, and Kubernetes requirements are explicit. No unnecessary restructuring occurs. |
-| 2 | No real MQTT round trip | Start a real local MQTT broker. Run JM through its distributed MQTT path and let a real TM consume `$share/tm-pool/.../exec/plans`. | The test asserts JM publish → TM consume → REST `SaveTask` → TM result publish → JM unblock. Incorrect routing or subscribe order fails the test. |
+| 2 | No real MQTT round trip | Start a real local MQTT broker. Run JM through its distributed MQTT path and let a real TM consume the cluster-routed `$share/tm-{namespace}-{clusterId}/.../exec/plans` subscription. | The test asserts JM publish → TM consume → REST `SaveTask` → TM result publish → JM unblock. Incorrect routing or subscribe order fails the test. |
 | 3 | `exec/results` contract is unverified | Fix and verify the state-only result contract; output MUST be persisted through REST/task state. | `exec/results` contains only JM routing/state fields. Large-output leakage fails the test while output remains queryable from task state. |
 | 4 | Controller scenarios are not real | Start a real Controller and verify `ListFlows`, hash-mod sharding, active-Flow JM creation, run routing, and cleanup. | A missing Controller, incorrect shard, or missing JM create/cleanup fails the test. Test names remain accurate. |
-| 5 | No Resource-Pool Kubernetes E2E | Provide a k3s/kind/Helm profile that starts real API Server, Controller, Notifier, MQTT, PostgreSQL, and runtime components. | The test verifies namespace, Pool labels, per-Flow JM, pool-bound TM/Sandbox capacity, and Controller cleanup. |
+| 5 | No runtime-cluster Kubernetes E2E | Provide a k3s/kind/Helm profile that starts real API Server, Controller, Notifier, MQTT, PostgreSQL, session JM, and application runtime components. | The test verifies namespace isolation, runtime-cluster labels, per-run application JM, session JM routing, TM/Sandbox capacity, and Controller cleanup. |
 | 6 | DAG assertions are too weak | Add strong assertions for linear, fan-out/fan-in, condition, committee, map, join, supervisor, and subflow behavior. | Tests verify task rows, ordering, skip state, and output. Incorrect branches, decisions, or persistence fail. |
 | 7 | Failure paths are missing | Cover node failure, timeout, deadlock, invalid dependency, retry exhaustion, and cancellation. | Every boundary has deterministic setup, uses no arbitrary long sleep, and produces an observable error. |
 | 8 | Sandbox is not real | Distributed tests MUST start a real Sandbox worker and verify workspace, trigger/result, stdout/stderr, and exit code. | One scenario MUST NOT accept both success and failure. Network denial and seccomp are tested when supported, otherwise explicitly skipped. |
@@ -63,7 +64,7 @@ standalone/local smoke suite and MUST NOT be described as distributed E2E.
 |---|---|
 | `standalone` | Local API Server + PostgreSQL + standalone RM; named only smoke/local integration. |
 | `distributed` | Real PostgreSQL + MQTT + API Server + JM + TM + Sandbox/Notifier processes. |
-| `k8s` | Helm/kind/k3s coverage of real Resource Pools, Controller, and K8sRM. |
+| `k8s` | Helm/kind/k3s coverage of real runtime clusters, Controller, and K8sRM. |
 | `auth` | Local LDAP/OIDC provider containers. |
 | `usecase` | Real external-system verification under `usecase/`; not part of portable integration tests. |
 
@@ -71,7 +72,7 @@ standalone/local smoke suite and MUST NOT be described as distributed E2E.
 
 1. Correct documentation, naming, and harness classification.
 2. Add the MQTT JM/TM round trip and state-only result contract.
-3. Add real Controller, Resource-Pool, and Kubernetes E2E coverage.
+3. Add real Controller, runtime-cluster, and Kubernetes E2E coverage.
 4. Add Sandbox, Notifier, trigger, and failure-path coverage.
 5. Strengthen DAG assertions, consolidate fixtures, and make cleanup and
    fresh-clone execution reliable.

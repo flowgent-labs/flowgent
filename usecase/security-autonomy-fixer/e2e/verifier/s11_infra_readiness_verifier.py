@@ -281,11 +281,11 @@ def run():
         failures.append("A2A deployment flowgent-a2a not found")
 
     # ── L3.9: Check logs for errors ────────────────────────
-    # JobManagers and resource-pool workers are Controller/runtime-created and
+    # Application JobManagers and runtime workers are Controller/JM-created and
     # exist only after actual workload demand. Only check components that are
-    # actually always-on Helm Deployments here; scenario 23 checks dedicated
-    # JM pod logs separately once a test flow exists.
-    for component in ["apiserver", "controller", "notifier", "a2a"]:
+    # actually always-on Helm Deployments here; scenario 23 checks application
+    # runtime pod logs separately once a test flow exists.
+    for component in ["apiserver", "controller", "session-jobmanager", "notifier", "a2a"]:
         # Deployments are labeled app.kubernetes.io/component={component}, not
         # app.kubernetes.io/name (which is always the chart name "flowgent" —
         # see deploy/helm/flowgent/templates/apiserver.yaml etc).

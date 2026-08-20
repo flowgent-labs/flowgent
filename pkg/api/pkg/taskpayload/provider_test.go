@@ -149,6 +149,9 @@ func TestObjectTaskPayloadProviderRejectsCorruption(t *testing.T) {
 func TestTaskPayloadProviderFactoryValidatesCloudConfiguration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+	if _, err := NewProvider(ctx, config.ArtifactStorageConfig{}); err == nil || !strings.Contains(err.Error(), "provider is required") {
+		t.Fatalf("empty provider error = %v", err)
+	}
 	if _, err := NewProvider(ctx, config.ArtifactStorageConfig{Provider: "unknown"}); err == nil {
 		t.Fatal("unknown provider was accepted")
 	}

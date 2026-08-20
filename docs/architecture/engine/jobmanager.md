@@ -77,11 +77,11 @@ time precedes its start time.
 
 ### JobManager Scope
 
-The Controller starts `jobmanager start --flow-id <id>`. `StartRunPoller`
-filters `ListRuns` by that Flow ID and Kubernetes namespace, loading the Flow
-through the API Server when necessary. Before scheduling, the JobManager uses
-the FlowRun's immutable `resource_pool_id` snapshot rather than a later Flow
-edit.
+Session deployments start `jobmanager start` and poll only session runs in the
+configured runtime namespace. Application deployments start
+`jobmanager start --flow-id <id> --run-id <runId>` and poll only that FlowRun.
+Before scheduling, the JobManager uses the FlowRun's immutable runtime mode and
+its configured `runtime_cluster_id`; a later Flow edit cannot move an active run.
 
 ### DAG Dependency Coordination — Iteration Loop + Blocking Schedule
 
@@ -200,8 +200,8 @@ K8sRM.Schedule(plan):
      s.runResults[runID][plan.NodeID] = resultCh
      // ^^ channel registered BEFORE publish — no race
 
-  3. PUBLISH plan to exec/plans/{namespace}/{flow}/{run}
-     → TM pods consume via $share/tm-pool
+  3. PUBLISH plan to exec/plans/{namespace}/{cluster}/{flow}/{run}
+     → TM pods consume via $share/tm-{namespace}-{cluster}
 
   4. BLOCK on resultCh (with planTimeout):
      select {
@@ -298,18 +298,19 @@ next is dispatched), not concurrently. See
 [DAG Dependency Coordination](#dag-dependency-coordination-iteration-loop-blocking-schedule)
 for the full design.
 
-**TM pod management**: Reconciles the selected Pool Deployment
-`flowgent-taskmanager-{namespaceId}-{poolId}`. It applies the Pool's fixed
-replicas, slots, resources, PriorityClass, and NodeSelector, waits for runtime
-readiness, then publishes to the namespace/pool topic.
+**TM pod management**: Reconciles the runtime-cluster Deployment
+`flowgent-taskmanager-{namespaceId}-{clusterId}`. It applies platform defaults
+and any application-mode pod-size override, waits for runtime readiness, then
+publishes to the namespace/cluster topic.
 
 **Sandbox pod management**: The same K8sRM reconciles
-`flowgent-sandbox-{namespaceId}-{poolId}` from Pool sandbox replicas, resources,
-and slots. Each pod's shared subscription is scoped to namespace/pool.
+`flowgent-sandbox-{namespaceId}-{clusterId}` from runtime sandbox defaults and
+any application-mode pod-size override. Each pod's shared subscription is scoped
+to namespace/cluster.
 
-A `scalingLoop` reconciles observed replicas and readiness. Pool capacity is an
-explicit operator-owned SLA boundary; a Flow cannot silently burst into another
-Pool.
+A `scalingLoop` reconciles observed replicas and readiness. Runtime-cluster id
+is the hard isolation boundary; a FlowRun cannot silently burst into another
+cluster.
 
 ---
 
@@ -326,8 +327,8 @@ Pool.
    **then** JobManager MUST wait for the matching `(runID,nodeID)` result and
    MUST fail on the configured timeout rather than advancing the DAG.
 5. **Given** task or sandbox demand, **when** capacity is reconciled, **then**
-   replicas, slots, resources, PriorityClass, and NodeSelector MUST match the
-   run's selected Resource Pool.
+   replicas, slots, and resources MUST match the selected runtime mode, cluster
+   id, platform defaults, and any application-mode pod-size overrides.
 6. **Given** a failed node, **when** the execution loop observes failure, **then**
    the run MUST become failed and children MUST NOT execute as if successful.
 7. **Given** several ready siblings, **when** the current scheduler executes

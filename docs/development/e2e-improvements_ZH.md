@@ -4,7 +4,7 @@
 
 ## 硬性目标
 
-`tests/it` 必须严格对齐 `docs/architecture/overview.md` 的真实 E2E。唯一允许 mock 的是外部系统 API：LLM provider、GitHub、SonarQube、Telegram、LDAP/OIDC provider 等。除此之外，数据库、中间件、消息队列、Flowgent 运行组件、部署形态必须使用本地真实实例，包括 PostgreSQL、MQTT broker、apiserver、controller、jobmanager、taskmanager、sandbox、notifier、Kubernetes Resource Pool。
+`tests/it` 必须严格对齐 `docs/architecture/overview.md` 的真实 E2E。唯一允许 mock 的是外部系统 API：LLM provider、GitHub、SonarQube、Telegram、LDAP/OIDC provider 等。除此之外，数据库、中间件、消息队列、Flowgent 运行组件、部署形态必须使用本地真实实例，包括 PostgreSQL、MQTT broker、apiserver、controller、jobmanager、taskmanager、sandbox、notifier、Kubernetes session runtime cluster 和 per-run application runtime cluster。
 
 严禁用 in-memory、fake、stub、mock 替代核心组件；除非测试明确标记为 standalone/local smoke，且不得声称覆盖真实 E2E。fresh clone 后必须能按文档启动依赖并稳定运行。
 
@@ -28,10 +28,10 @@
 | # | 问题 | 必须修改 | 验收标准 |
 |---|---|---|---|
 | 1 | Harness 定位不准 | 保留现有目录结构；在 README/Makefile/CI 中明确区分 standalone smoke 与 distributed E2E；新增或扩展 distributed harness。 | 文档不再夸大覆盖；需要 PostgreSQL/MQTT/K8s 时必须写清；无必要结构重排。 |
-| 2 | 缺真实 MQTT 往返 | 启动本地真实 MQTT broker；JM 使用 MQTT 分布式路径；真实 TM 消费 `$share/tm-pool/.../exec/plans`。 | 断言 JM publish -> TM consume -> REST SaveTask -> TM publish result -> JM unblock；路由或订阅顺序错误必须失败。 |
+| 2 | 缺真实 MQTT 往返 | 启动本地真实 MQTT broker；JM 使用 MQTT 分布式路径；真实 TM 消费 cluster-routed `$share/tm-{namespace}-{clusterId}/.../exec/plans`。 | 断言 JM publish -> TM consume -> REST SaveTask -> TM publish result -> JM unblock；路由或订阅顺序错误必须失败。 |
 | 3 | `exec/results` 契约未验证 | 修复并测试 state-only result；输出必须通过 REST/task state 持久化。 | `exec/results` 只含 JM 所需路由/状态字段；重输出泄漏必须失败；output 仍可查询。 |
 | 4 | Controller 用例不真实 | 启动真实 Controller；验证 `ListFlows`、hash-mod sharding、活跃 Flow JM 创建、run 路由、cleanup。 | Controller 未运行、shard 错误、JM 创建/清理缺失必须失败；测试名不得误导。 |
-| 5 | 缺 Resource Pool K8s E2E | 提供 k3s/kind/Helm E2E profile；启动真实 apiserver/controller/notifier/MQTT/PostgreSQL/组件。 | 验证 namespace、Pool labels、per-Flow JM、Pool 绑定 TM/Sandbox 容量与 Controller cleanup。 |
+| 5 | 缺 runtime cluster K8s E2E | 提供 k3s/kind/Helm E2E profile；启动真实 apiserver/controller/notifier/MQTT/PostgreSQL/session JM/application runtime 组件。 | 验证 namespace 隔离、runtime-cluster labels、per-run application JM、session JM 路由、TM/Sandbox 容量与 Controller cleanup。 |
 | 6 | DAG 断言过弱 | 为线性、fan-out/fan-in、condition、committee、map、join、supervisor、subflow 增加强断言。 | 必须验证 task rows、顺序、skip、输出；错误 branch/decision/持久化必须失败。 |
 | 7 | 缺失败路径 | 增加 node failure、timeout、deadlock、invalid dependency、retry exhaustion、cancel。 | 每个边界场景必须确定性 setup；不得依赖任意长 sleep；错误必须可观测。 |
 | 8 | Sandbox 不真实 | distributed 测试必须启动真实 sandbox worker；验证 workspace、trigger/result、stdout/stderr/exit code。 | 同一场景严禁同时接受成功和失败；网络 deny、seccomp 能力支持时必须测，不支持必须显式 skip。 |
@@ -47,7 +47,7 @@
 |---|---|
 | `standalone` | 本地 apiserver + PostgreSQL + standalone RM；只能叫 smoke/local integration。 |
 | `distributed` | 真实 PostgreSQL + MQTT + apiserver + JM + TM + sandbox/notifier processes。 |
-| `k8s` | Helm/kind/k3s 覆盖真实 Resource Pool、Controller、K8sRM。 |
+| `k8s` | Helm/kind/k3s 覆盖真实 runtime cluster、Controller、K8sRM。 |
 | `auth` | 本地 LDAP/OIDC provider containers。 |
 | `usecase` | `usecase/` 下真实外部系统验证，不属于 portable IT。 |
 
@@ -55,6 +55,6 @@
 
 1. 修正文档、命名和 harness 定位。
 2. 补齐 MQTT JM/TM 往返和 state-only result 契约。
-3. 补齐真实 Controller/Resource Pool/K8s E2E。
+3. 补齐真实 Controller/runtime cluster/K8s E2E。
 4. 补齐 Sandbox、Notifier、Trigger、失败路径。
 5. 加强 DAG 断言，合并 fixtures，完善清理与 fresh-clone 可靠性。

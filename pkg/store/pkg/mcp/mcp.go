@@ -8,8 +8,8 @@ import (
 
 // IMCPStore is the MCP definition entity store interface.
 type IMCPStore interface {
-	Get(ctx context.Context, name string) (*entities.McpInfo, error)
-	Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.McpInfo], error)
+	Get(ctx context.Context, namespace, name string) (*entities.McpInfo, error)
+	List(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[entities.McpInfo], error)
 	Save(ctx context.Context, entity *entities.McpInfo) error
-	Delete(ctx context.Context, name string) error
+	Delete(ctx context.Context, namespace, name string) error
 }

@@ -9,7 +9,7 @@ import (
 func TestOpenAPIHandler(t *testing.T) {
 	req := httptest.NewRequest("GET", "/_/openapi.yaml", nil)
 	w := httptest.NewRecorder()
-	OpenAPIHandler(w, req)
+	NewOpenAPIHandler(DefaultSwaggerConfig())(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -22,7 +22,7 @@ func TestOpenAPIHandler(t *testing.T) {
 func TestSwaggerUIHandler(t *testing.T) {
 	req := httptest.NewRequest("GET", "/_/swagger-ui", nil)
 	w := httptest.NewRecorder()
-	SwaggerUIHandler(w, req)
+	NewSwaggerUIHandler(DefaultSwaggerConfig())(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)

@@ -2,6 +2,7 @@ package resourcemanager
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
@@ -15,6 +16,33 @@ import (
 type fakeTaskState struct{}
 
 func (fakeTaskState) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error { return nil }
+
+func TestNewResourceManagerRejectsMissingOrUnknownProvider(t *testing.T) {
+	for name, cfg := range map[string]*ResourceManagerConfig{
+		"missing config": nil,
+		"empty provider": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rm, err := NewResourceManager(cfg)
+			if err == nil || rm != nil {
+				t.Fatalf("NewResourceManager() = (%T, %v), want nil and an error", rm, err)
+			}
+		})
+	}
+}
+
+func TestNewResourceManagerDoesNotDowngradeKubernetesInitializationFailure(t *testing.T) {
+	rm, err := NewResourceManager(&ResourceManagerConfig{
+		Provider:          engine.ProviderKubernetes,
+		K8sKubeConfigPath: "/definitely/not/a/kubeconfig",
+	})
+	if err == nil || rm != nil {
+		t.Fatalf("NewResourceManager() = (%T, %v), want nil and an error", rm, err)
+	}
+	if !strings.Contains(err.Error(), "initialize kubernetes resource manager") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
 func TestNewStandaloneResourceManager_Defaults(t *testing.T) {
 	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
@@ -59,7 +87,7 @@ func TestStandaloneResourceManager_Schedule_Noop(t *testing.T) {
 	plan := &entities.ExecutionPlan{
 		PlanID: "p1", AgentFlowRunID: "r1", NodeID: "n1",
 		TaskType: entities.TaskNoop,
-		NodeSpec: &entities.NodeSpec{ID: "n1", Type: entities.NoopNode},
+		NodeSpec: &entities.NodeSpec{ID: "n1", Kind: entities.NoopNode},
 	}
 	result, err := rm.Schedule(context.Background(), plan)
 	if err != nil {
@@ -81,7 +109,7 @@ func TestStandaloneResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
 	plan := &entities.ExecutionPlan{
 		PlanID: "p1", AgentFlowRunID: "r1", NodeID: "n1",
 		TaskType: entities.TaskNoop,
-		NodeSpec: &entities.NodeSpec{ID: "n1", Type: entities.NoopNode},
+		NodeSpec: &entities.NodeSpec{ID: "n1", Kind: entities.NoopNode},
 	}
 	// Should schedule same plan twice without blocking (pool=2)
 	result, err := rm.Schedule(context.Background(), plan)

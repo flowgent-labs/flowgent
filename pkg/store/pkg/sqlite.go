@@ -51,6 +51,20 @@ func (s *SQLiteGenericStore[T]) Get(ctx context.Context, id string) (*T, error) 
 	return &entity, nil
 }
 
+func (s *SQLiteGenericStore[T]) GetScoped(ctx context.Context, namespace, id string) (*T, error) {
+	if err := utils.ValidateIdent(s.Table, s.IDCol); err != nil {
+		return nil, err
+	}
+	row := s.Conn.QueryRowContext(ctx, fmt.Sprintf(
+		"SELECT %s FROM %s WHERE namespace_id=?1 AND %s=?2 AND del_flag=0 LIMIT 1",
+		utils.Columns[T](), s.Table, s.IDCol), namespace, id)
+	entity := new(T)
+	if err := utils.ScanStruct(row, entity); err != nil {
+		return nil, fmt.Errorf("%s: %w", s.Table, err)
+	}
+	return entity, nil
+}
+
 func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[T], error) {
 	if err := utils.ValidateIdent(s.Table); err != nil {
 		return nil, err
@@ -83,6 +97,42 @@ func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req entities.PageReq
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		items = append(items, e)
+	}
+	return entities.NewPage(items, total, req), nil
+}
+
+func (s *SQLiteGenericStore[T]) SelectScoped(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[T], error) {
+	if err := utils.ValidateIdent(s.Table); err != nil {
+		return nil, err
+	}
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.Size < 1 {
+		req.Size = 20
+	}
+	var total int64
+	if err := s.Conn.QueryRowContext(ctx, fmt.Sprintf(
+		"SELECT COUNT(1) FROM %s WHERE namespace_id=?1 AND del_flag=0", s.Table), namespace).Scan(&total); err != nil {
+		return nil, err
+	}
+	rows, err := s.Conn.QueryContext(ctx, fmt.Sprintf(
+		"SELECT %s FROM %s WHERE namespace_id=?1 AND del_flag=0 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+		utils.Columns[T](), s.Table), namespace, req.Size, (req.Page-1)*req.Size)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]*T, 0)
+	for rows.Next() {
+		entity := new(T)
+		if err := utils.ScanStruct(rows, entity); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		items = append(items, entity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return entities.NewPage(items, total, req), nil
 }
@@ -124,6 +174,16 @@ func (s *SQLiteGenericStore[T]) Delete(ctx context.Context, id string) error {
 	}
 	_, err := s.Conn.ExecContext(ctx,
 		fmt.Sprintf("UPDATE %s SET del_flag=1, status='DELETED', updated_at=CURRENT_TIMESTAMP WHERE %s=?1", s.Table, s.IDCol), id)
+	return err
+}
+
+func (s *SQLiteGenericStore[T]) DeleteScoped(ctx context.Context, namespace, id string) error {
+	if err := utils.ValidateIdent(s.Table, s.IDCol); err != nil {
+		return err
+	}
+	_, err := s.Conn.ExecContext(ctx, fmt.Sprintf(
+		"UPDATE %s SET del_flag=1,status='DELETED',updated_at=CURRENT_TIMESTAMP WHERE namespace_id=?1 AND %s=?2 AND del_flag=0",
+		s.Table, s.IDCol), namespace, id)
 	return err
 }
 

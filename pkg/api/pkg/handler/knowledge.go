@@ -33,12 +33,12 @@ func NewKnowledgeHandler(s store.IStore) *KnowledgeHandler {
 	return &KnowledgeHandler{store: kStore}
 }
 
-// List returns all knowledge entries for the given namespace, with optional
-// tag filtering and pagination.
+// List returns one stable paginated representation after applying all filters
+// inside the namespace-scoped database query.
 func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
-	tagsParam := r.URL.Query().Get("tags")
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	query := r.URL.Query()
+	page, _ := strconv.Atoi(query.Get("page"))
+	size, _ := strconv.Atoi(query.Get("size"))
 	if page < 1 {
 		page = 1
 	}
@@ -46,22 +46,18 @@ func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
 		size = 20
 	}
 
-	if tagsParam != "" {
-		tags := strings.Split(tagsParam, ",")
-		results, err := h.store.SearchByTags(r.Context(), tags)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+	tags := make([]string, 0)
+	for _, tag := range strings.Split(query.Get("tags"), ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tags = append(tags, tag)
 		}
-		if results == nil {
-			results = []*entities.KnowledgeEntry{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
-		return
 	}
-
-	result, err := h.store.Select(r.Context(), entities.PageRequest{Page: page, Size: size})
+	result, err := h.store.List(r.Context(), knowledge.ListFilter{
+		Namespace: r.PathValue("namespace"),
+		Scope:     query.Get("scope"),
+		Tags:      tags,
+		Page:      entities.PageRequest{Page: page, Size: size},
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -78,12 +74,16 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 
 	var entry entities.KnowledgeEntry
-	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+	if err := decodeStrictJSON(r, &entry); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 	if entry.Title == "" && entry.Content == "" {
 		http.Error(w, "title or content is required", http.StatusBadRequest)
+		return
+	}
+	if entry.Namespace != "" && entry.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get returns a single knowledge entry by ID.
 func (h *KnowledgeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	entry, err := h.store.Get(r.Context(), id)
+	entry, err := h.store.Get(r.Context(), r.PathValue("namespace"), id)
 	if err != nil {
 		http.Error(w, "knowledge entry not found", http.StatusNotFound)
 		return
@@ -129,56 +129,63 @@ func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	namespace := r.PathValue("namespace")
 
-	existing, err := h.store.Get(r.Context(), id)
+	existing, err := h.store.Get(r.Context(), namespace, id)
 	if err != nil || existing == nil {
 		http.Error(w, "knowledge entry not found", http.StatusNotFound)
 		return
 	}
 
 	var updates entities.KnowledgeEntry
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	if err := decodeStrictJSON(r, &updates); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Merge: preserve existing values, apply non-zero updates
-	if updates.Title != "" {
-		existing.Title = updates.Title
+	if updates.ID != "" && updates.ID != id {
+		http.Error(w, "id mismatch", http.StatusBadRequest)
+		return
 	}
-	if updates.Content != "" {
-		existing.Content = updates.Content
+	if updates.Namespace != "" && updates.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
+		return
 	}
-	if updates.ContentType != "" {
-		existing.ContentType = updates.ContentType
+	if updates.Title == "" && updates.Content == "" {
+		http.Error(w, "title or content is required", http.StatusBadRequest)
+		return
 	}
-	if updates.Source != "" {
-		existing.Source = updates.Source
+	updates.ID = id
+	updates.Namespace = namespace
+	updates.Status = existing.Status
+	updates.CreatedAt = existing.CreatedAt
+	updates.CreatedBy = existing.CreatedBy
+	updates.UpdatedAt = time.Now()
+	updates.UpdatedBy = existing.UpdatedBy
+	updates.DelFlag = false
+	if updates.Tags == nil {
+		updates.Tags = []string{}
 	}
-	if updates.SourceRef != "" {
-		existing.SourceRef = updates.SourceRef
+	if updates.Metadata == nil {
+		updates.Metadata = map[string]any{}
 	}
-	if updates.Tags != nil {
-		existing.Tags = updates.Tags
-	}
-	if updates.Metadata != nil {
-		existing.Metadata = updates.Metadata
-	}
-	existing.Namespace = namespace
-	existing.UpdatedAt = time.Now()
 
-	if err := h.store.Save(r.Context(), existing); err != nil {
+	if err := h.store.Save(r.Context(), &updates); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(existing)
+	json.NewEncoder(w).Encode(updates)
 }
 
 // Delete removes a knowledge entry by ID.
 func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := h.store.Delete(r.Context(), id); err != nil {
+	namespace := r.PathValue("namespace")
+	if _, err := h.store.Get(r.Context(), namespace, id); err != nil {
+		http.Error(w, "knowledge entry not found", http.StatusNotFound)
+		return
+	}
+	if err := h.store.Delete(r.Context(), namespace, id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -188,7 +195,7 @@ func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // Search performs a knowledge search with optional tag filtering.
 func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var req entities.KnowledgeSearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -197,7 +204,7 @@ func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := h.store.Search(r.Context(), req)
+	results, err := h.store.Search(r.Context(), r.PathValue("namespace"), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -212,7 +219,7 @@ func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 // ListTags returns all distinct tags from knowledge entries.
 func (h *KnowledgeHandler) ListTags(w http.ResponseWriter, r *http.Request) {
-	tags, err := h.store.ListTags(r.Context())
+	tags, err := h.store.ListTags(r.Context(), r.PathValue("namespace"), r.URL.Query().Get("scope"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

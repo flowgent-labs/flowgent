@@ -2,12 +2,12 @@
 
 [中文](security-fixer-ui-e2e_ZH.md)
 
-**Status:** Complete — Phase 5 Resource Pool runtime and GitHub-style shell accepted
+**Status:** Complete — runtime-cluster real UI E2E soak passed 5/5 on 2026-08-18
 **Started:** 2026-08-15
 
 ## Outcome
 
-Prove the real Resource-Pool-bound `security-autonomy-fixer` path from a clean
+Prove the real runtime-cluster-bound `security-autonomy-fixer` path from a clean
 deployment without `flowgent console import` or test-side REST seeding:
 
 ```text
@@ -54,22 +54,23 @@ This plan records implementation progress and verification evidence only.
    round MUST configure namespace defaults and Flow overrides in visible
    Settings UI, prove secret readback is impossible, and retain Settings,
    DAG, attempt-I/O, Jaeger, RBAC, and A2A evidence.
-10. Phase 5 requires five consecutive clean redeploys after removing the UI
-    mock/runtime-mode paths and introducing Resource Pools. Each round MUST
-    create or verify the Pool through visible namespace Settings, bind the Flow,
-    prove namespace/pool-scoped TM and Sandbox workers, pass the real A2A
-    verifier, and retain screenshots without secret values.
+10. The current runtime-cluster phase requires five consecutive clean redeploys after deleting every
+    production UI mock/fixture/alternate-data path, removing backend silent
+    fallbacks, and introducing Flink-style runtime clusters. Each round MUST
+    configure runtime mode through visible Flow UI, prove application/session
+    runtime-cluster scoped TM and Sandbox workers, pass the real A2A verifier,
+    and retain screenshots without secret values.
 
 ## Work Status
 
 | Workstream               | Status           | Evidence / next action                                                                                                                                                                                             |
 | ------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Baseline audit           | Complete         | Browser fixture IT remains a component/integration gate; `test:system` is the real-cluster acceptance gate.                                                                                                        |
+| Baseline audit           | Complete         | The fixture-backed browser suite was deleted; `test:system` is the only browser E2E gate. Isolated unit-test doubles remain test-only.                                                                              |
 | Secure LLM/MCP contracts | Complete         | Browser submits env-reference names only; reads are redacted and runtime values come from the configured Kubernetes Secret.                                                                                        |
 | Runtime Skill contract   | Complete         | Namespaced CRUD for runtime `kind=skill` definitions is separate from portable Skill Studio drafts.                                                                                                                |
 | UI resource authoring    | Complete         | Playwright creates LLM -> MCP -> Agent -> runtime Skill -> Flow through visible UI interactions.                                                                                                                   |
 | UI trigger and tracking  | Complete         | The UI triggers/approves a real Run and inspects every TaskRun attempt plus Jaeger trace correlation.                                                                                                              |
-| Verifier compatibility   | Complete         | UI-provisioned mode reuses the browser run and prohibits console import, REST seeding, or replacement triggers.                                                                                                    |
+| Canonical verifier contract | Complete      | UI-provisioned mode reuses the browser run and prohibits console import, REST seeding, replacement triggers, and obsolete endpoint/payload variants.                                                               |
 | Ten-round soak           | Complete (10/10) | Ten consecutive clean-deploy UI system rounds passed on 2026-08-15; every round passed all 15 verifier scenarios and matched 26 persisted attempts, 26 UI-inspected attempts, and 26 Jaeger attempt links exactly. |
 | Notification encryption  | Complete         | Secrets are authored dynamically in UI, stored with AES-256-GCM, redacted on reads, decrypted by the real Notifier, and delivered to an authenticated external receiver.                                           |
 | JM lifecycle timestamps  | Complete         | JobMaster authoritatively persists `started_at` and `finished_at`; the UI system test requires both and validates their ordering.                                                                                   |
@@ -78,9 +79,11 @@ This plan records implementation progress and verification evidence only.
 | A2A acceptance           | Complete                  | A2A 0.3 JSON-RPC, Bearer-to-APIServer RBAC propagation, shared caller-isolated task storage, two replicas, real FlowRun scenario 25, and strict health gates passed the Phase-3 soak. |
 | Phase-3 five-round soak  | Complete (5/5)            | Five consecutive clean-database Helm redeploys passed on 2026-08-16 with visible UI provisioning, exact-flow RBAC allow/deny/revoke checks, 2/2 A2A replicas, real A2A FlowRuns, all 15 scenarios, and retained screenshots. |
 | Settings/runtime configuration | Complete (5/5) | GitHub-style settings sidebars, canonical Flow URLs, namespace→Flow environment/secret inheritance, encrypted write-only storage, least-privilege APIs, and JM/TM/Sandbox checksum rollout passed five consecutive clean-deploy rounds. |
-| Resource Pool runtime | Complete (5/5) | Namespace-scoped CRUD/RBAC, immutable Run snapshot, Flow binding guard, pool-scoped MQTT/readiness, shared TM/Sandbox Deployments, full-template reconciliation, per-attempt Flow configuration, and deletion GC passed the Phase-5 soak. |
+| Runtime cluster model | Complete (5/5) | Resource-pool APIs/UI are removed. `runtime_mode` plus `runtime_cluster_id` now drive placement: application runs create per-run JM/TM/Sandbox clusters; session runs use the Helm session JM. Five consecutive real UI system rounds passed on 2026-08-18. |
 | GitHub-style shell cleanup | Complete (5/5) | The fixed global sidebar/footer and global `Live API` deployment badge are removed; one top navigation remains, with one local sidebar under namespace/Flow Settings and canonical `/{namespace}/{flow}` routes. Retained screenshots were reviewed after the soak. |
-| Phase-5 five-round soak | Complete (5/5) | Five consecutive clean-database Helm redeploys passed on 2026-08-17. Every round used visible UI Pool/Flow authoring, passed browser tests 2/2 and verifier scenarios 15/15, retained retry/tracking screenshots, and completed a separate real A2A FlowRun. |
+| Frontend real-API contract | Complete       | Production `src/mocks`, the fixture-backed `e2e-real` suite, test-only fake HTTP response suites, mock-mode configuration, response-shape decoders, local analytics synthesis, and alternate repository modes are deleted. One `ApiClient` composition serves every production repository; `e2e-system` is the only browser API acceptance path. |
+| Backend strict contract | Complete          | Resource Manager configuration, Flow runtime mode binding, and canonical REST payloads fail fast; no provider downgrade, implicit runtime placement, legacy migration rename, or old human-approval endpoint remains. |
+| Previous strict-contract soak | Superseded | The prior pool-model soak passed on 2026-08-17 but no longer represents the current runtime model. Current acceptance is covered by the 2026-08-18 runtime-cluster soak below. |
 
 ## Ten-Round Matrix
 
@@ -127,10 +130,10 @@ A2A FlowRun through a healthy two-replica deployment.
 |     5 | `b0589199-7593-4cf1-8078-4fee498454a4` |           87 | `69c517b6-3031-49f8-a372-79aef7e3c7f5` | Pass   |
 
 All five main runs had 26 nodes with one attempt per node; no natural retry was
-observed. Retry persistence and UI projection are covered by deterministic unit
-and fixture integration tests. A dedicated runtime retry probe, if required,
-should use a separate intentionally failing E2E-only Flow rather than changing
-the production security fixer Flow.
+observed. Deterministic unit tests cover retry projection, while the later
+system phases add a separate intentionally failing E2E-only Flow that proves
+real persistence, UI attempt I/O, and Jaeger correlation without changing the
+production security fixer Flow.
 
 ## Phase-4 Five-Round Matrix
 
@@ -160,29 +163,54 @@ and triggered through the visible UI to fail deterministically. Run
 attempts to a real Jaeger trace with eight spans. The probe Flow and its runtime
 configuration were deleted after verification.
 
-## Phase-5 Five-Round Matrix
+## Runtime-Cluster Five-Round Matrix
 
-Every round reset PostgreSQL, fully redeployed Helm, created the complete
-resource inventory through visible UI interactions, bound
-`security-autonomy-fixer` to `security-critical`, and proved that TM/Sandbox
-workers and MQTT dispatch were isolated by namespace and Pool. Each round also
-ran a deterministic real three-attempt retry probe, inspected its request and
-response in the UI, correlated it with an eight-span Jaeger trace, passed all
-15 verifier scenarios, and completed a separate authenticated A2A FlowRun.
+Each round reset PostgreSQL, fully redeployed Helm, provisioned all
+security-fixer resources through visible UI, triggered the main Flow through UI
+as an application-mode run, and passed the ordered 15-scenario verifier suite.
+The suite verified legacy placement cleanup fallout, the Helm session JobManager
+health gate, application runtime-cluster JM/TM/Sandbox creation and cleanup,
+cluster-routed MQTT dispatch topics, Jaeger correlation, redacted UI evidence,
+and the dedicated real A2A verifier.
 
 | Round | Main Run ID                            | Jaeger spans | A2A Run ID                             | Result |
 | ----: | -------------------------------------- | -----------: | -------------------------------------- | ------ |
-|     1 | `3ce6bbe8-5486-4dbc-80a9-de1430d0f4a3` |           86 | `abb56adf-c1c1-4a17-a42c-2828c3d77afd` | Pass   |
-|     2 | `bef7b197-71d3-42e4-afdc-1a52a05e844c` |           87 | `f7fe7071-f534-456c-bf4d-b22dd7128c34` | Pass   |
-|     3 | `33f1d3d0-626a-455e-bd2d-db776684f157` |           87 | `ef28d58f-1714-4241-9b95-7ca9246b67a2` | Pass   |
-|     4 | `08f9f386-082f-4ef4-87df-2562f898780d` |           87 | `9fe90fb3-7867-4e44-9671-b66c1700d0a1` | Pass   |
-|     5 | `2b2c7ae8-ecfe-4157-af74-377519419da9` |           87 | `2caddddb-a8e7-4e89-86cf-55efb7d5c20e` | Pass   |
+|     1 | `319bf35b-7cac-4fc8-9ad0-26d10fadef45` |           87 | `67baecad-81c6-4a74-8855-e89619be1bec` | Pass   |
+|     2 | `c8d09038-3fcc-4dd8-9f9d-328163f80b25` |           86 | `18f66ea4-dda2-4411-a2d5-4c75104dab3a` | Pass   |
+|     3 | `a5a95dca-439d-4a22-ae0b-4076c4af3a14` |           86 | `7634e8e0-4296-40b1-9bf3-d37e31f73570` | Pass   |
+|     4 | `d41703a0-e1c9-4d9b-85a7-d63baf7ee084` |           87 | `79019066-a4ab-4b91-91a5-9cdcb705a9e7` | Pass   |
+|     5 | `e14e61c1-d9cd-42d7-865c-50326105588c` |           86 | `3d3f61ad-3e2a-41d1-94ed-e9fcaee3420e` | Pass   |
+
+The machine-readable summary is `PASS` with `5/5` consecutive successes at
+`usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/summary.json`.
+Each round retained `00_summary.md`, all 15 scenario reports, Playwright HTML
+output, and screenshots. Representative round-05 screenshots include
+`ui-run-dag.png`, `ui-attempt-io.png`, `ui-jaeger-attempt.png`,
+`ui-real-retry-attempts.png`, `ui-real-retry-jaeger.png`,
+`ui-flow-settings-environment.png`, `ui-flow-settings-secrets.png`,
+`ui-namespace-settings-environment.png`, `ui-flow-access.png`, and
+`ui-notification-channel.png`.
+
+## Previous Strict-Contract Five-Round Matrix (Superseded)
+
+This matrix is historical evidence for the previous pool-model runtime. It is
+kept only to preserve the audit trail. It no longer proves the current
+runtime-cluster contract. Current acceptance requires a fresh clean-deploy soak
+covering `runtime_mode=application`, the Helm session JobManager, and
+`runtime_cluster_id`-scoped TM/Sandbox routing.
+
+| Round | Main Run ID                            | Jaeger spans | A2A Run ID                             | Result |
+| ----: | -------------------------------------- | -----------: | -------------------------------------- | ------ |
+|     1 | `88436405-b677-4e78-8efc-cb4ff22ce5e6` |           87 | `049ec41f-a5dd-4c11-809f-3b10ece7455a` | Pass   |
+|     2 | `88b80c6d-56da-4a3a-bbbb-d4ebc94edac9` |           86 | `28082455-f089-4bca-a65e-a946fec8a5cc` | Pass   |
+|     3 | `00db538c-08fa-4a52-b45f-cebdbf5e3de4` |           87 | `e08d5768-4b3f-4a9c-818c-3b6fdd27a262` | Pass   |
+|     4 | `b10c35ef-6345-48d3-8396-1d9293eacf79` |           86 | `f4c22e16-6bc5-48e3-b697-8c3a37c96b28` | Pass   |
+|     5 | `faa971e1-51cd-4098-9f70-b0b6be7cc9cd` |           86 | `7a4a31a7-76dc-4ff6-a95c-8dd3550197e1` | Pass   |
 
 The machine-readable summary is `PASS` with `5/5` consecutive successes.
 All main runs had 26 persisted attempts, 26 UI-inspected attempts, 26 Jaeger
-links, and complete `exec/plans`/`exec/results` MQTT coverage. The Pool
-lifecycle verifier independently proved scale-up, cancellation, deletion, and
-garbage collection of the JM, TM, Sandbox, ConfigMap, and Secret resources.
+links, and complete `exec/plans`/`exec/results` MQTT coverage under the previous
+runtime model.
 
 ## Discovered Gaps
 
@@ -190,7 +218,7 @@ garbage collection of the JM, TM, Sandbox, ConfigMap, and Secret resources.
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | LLM/MCP UI was mock/blocked           | Backend needed opaque env references and redacted reads.                                                                 | Resolved                                                                                                                                                              |
 | Runtime Skill UI was unavailable      | Runtime Skills needed a distinct `kind=skill` REST lifecycle.                                                            | Resolved                                                                                                                                                              |
-| Current `e2e-real` overstated realism | It seeds execution records and serves fixture Jaeger JSON.                                                               | Reclassified as fixture IT; `e2e-system` is the acceptance gate.                                                                                                      |
+| Fixture-backed browser test path      | `e2e-real` seeded execution records and served fixture Jaeger JSON, so it could be mistaken for system evidence.         | Deleted completely; `e2e-system` is the sole browser E2E path and requires the live API Server, PostgreSQL, Kubernetes runtime, MQTT, Jaeger, and external services.   |
 | Verifier assumed console import       | Scenarios 12/31 needed UI-provisioned mode with unchanged assertions.                                                    | Resolved                                                                                                                                                              |
 | Notification channel secrets          | External notification secrets must be mutable through UI without plaintext storage or readback.                          | Resolved with schema-defined secret fields, versioned AES-256-GCM envelopes, preserve/explicit-clear semantics, real decrypted delivery, and UI/E2E gates.             |
 | k3s local-image GC during soak        | The unreferenced image disappeared between uninstall and the next install.                                               | Resolved in the E2E deploy lifecycle; the image is refreshed after teardown and before Helm install.                                                                  |
@@ -200,15 +228,15 @@ garbage collection of the JM, TM, Sandbox, ConfigMap, and Secret resources.
 | Enterprise RBAC resource model        | The confirmed model is deployment → namespace/org → exact resource, without Enterprise/Workspace rows.                  | Resolved with explicit namespace membership, team/role bindings, Flow Settings, immutable producer releases, and consumer-owned installs.                              |
 | Legacy A2A verifier                   | It used obsolete REST paths and treated unreachable as SKIP/PASS; Deployment health probes were also misaligned.         | Resolved in implementation: standard A2A 0.3 JSON-RPC, strict real execution verifier, shared task DB, Bearer RBAC propagation, and required 2/2 replica health.        |
 | Empty runtime configuration response  | Empty secret-key collections serialized as `null`, which violated the UI collection contract on a clean database.       | Resolved at both API serialization and UI repository boundaries, with backend and frontend regression tests.                                                          |
-| Runtime workload reconciliation permission | A Flow JM reconciles its bound Pool worker templates, but the workload `flowgent-runtime` Role lacked Deployment `update`. | Resolved by granting the same-namespace runtime Role only the required Deployment verb; regression tests, Helm lint, and five live redeploy rounds pass. |
-| Pool-routed MQTT audit                 | The observer still subscribed to the pre-Pool `exec/plans` and `sandbox/trigger` paths, so a successful run could be misclassified. | Resolved by observing non-shared `/{namespace}/pools/+/{flow}/...` dispatch topics while keeping point-to-point callbacks on the Flow path; all five rounds proved 26/26 plan/result coverage. |
+| Runtime workload reconciliation permission | A Flow JM reconciles runtime-cluster worker templates, and its Role needs Deployment update/scale. | Resolved: templates grant the minimal Deployment verbs for session JM and application runtime workers; the runtime-cluster soak passed five clean redeploy rounds. |
+| Cluster-routed MQTT audit                 | The observer must subscribe to `/clusters/+` `exec/plans` and `sandbox/trigger` paths. | Resolved: verifier code observes cluster-routed dispatch topics while keeping point-to-point callbacks on the Flow path; the runtime-cluster soak passed five clean redeploy rounds. |
 | MQTT evidence secret persistence       | Sandbox trigger audit payloads contain attempt-scoped environment values even though application APIs and screenshots are redacted. | Resolved at the evidence serialization boundary: all environment values and recursively named secret/token/password/auth/cookie/API-key fields are replaced with `<redacted>` before disk writes; the current artifact was sanitized without printing values. |
 | Notifier verifier pod selection       | A redeploy could leave an older failed pod first in an unordered list.                                                    | Resolved by selecting the newest Ready pod from a Running-only query; encrypted real-delivery assertions remain unchanged.                                             |
 | Cold core build timeout               | The constrained clean core image build can legitimately exceed the old ten-minute generic timeout.                      | Resolved with a core-build-specific 20-minute bound; other command timeouts remain unchanged.                                                                          |
 | Orphan runtime configuration           | Deleting a Flow could leave its materialized per-Flow runtime ConfigMap and Secret after the runtime Deployments were gone. | Resolved with controller-scoped garbage collection that deletes only controller-managed artifacts for missing Flows; scenario 23 now proves both materialization and deletion. |
-| Broker subscription readiness race     | Kubernetes `AvailableReplicas` did not prove that a newly reconciled TM/Sandbox had completed its MQTT subscriptions, so the first plan could be lost. | Resolved with Namespace/Pool/role-scoped `RuntimeReady` leases emitted only after subscriptions are registered; the resource manager waits for fresh readiness before the first plan/trigger. |
-| Legacy deployment selector              | A global selector cannot express business-team SLA capacity without coupling placement to orchestration semantics. | Replaced by Namespace Resource Pools; every Flow binds one Pool and every Run snapshots it. |
-| Shared worker Flow configuration         | Mounting Flow env/secrets into a Pool Deployment would leak values between Flows. | Resolved by TaskManager fetching effective configuration per Sandbox attempt and placing it only in that attempt trigger. |
+| Broker subscription readiness race     | Kubernetes `AvailableReplicas` did not prove that a newly reconciled TM/Sandbox had completed its MQTT subscriptions, so the first plan could be lost. | Resolved with Namespace/Cluster/role-scoped `RuntimeReady` leases emitted only after subscriptions are registered; the resource manager waits for fresh readiness before the first plan/trigger. |
+| Legacy deployment selector              | A global selector cannot express isolation without coupling placement to orchestration semantics. | Replaced by `runtime_mode` and `runtime_cluster_id`; application creates per-run clusters and session uses Helm cluster scope. |
+| Shared worker Flow configuration         | Mounting Flow env/secrets into a shared worker Deployment would leak values between Flows. | Flow effective configuration remains attempt-scoped for sandbox triggers; runtime cluster ownership does not broaden secret visibility. |
 
 ## Evidence Policy
 
@@ -227,9 +255,8 @@ garbage collection of the JM, TM, Sandbox, ConfigMap, and Secret resources.
   the Playwright HTML report, and redacted UI screenshots.
 - The real three-attempt retry probe screenshots are retained in the Phase-4
   evidence tree under `retry-probe/`.
-- Phase-5 Resource Pool evidence is archived under
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase5-resource-pools/`;
-  each round retains `round.json`, `ui-provision.json`, all 15 scenario reports,
-  and screenshots for Pool configuration, GitHub-style Settings, DAG,
-  attempt I/O, RBAC, redacted Secrets, and Jaeger correlation.
+- Superseded Phase-5 pool-model evidence is historical evidence for the
+  previous model, not acceptance evidence for runtime clusters.
+- Current runtime-cluster acceptance evidence must be archived under
+  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/`.
 - No secret value may be written into this plan or generated evidence.

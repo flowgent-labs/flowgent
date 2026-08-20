@@ -41,7 +41,6 @@ import (
 	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
 	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
-	resourcepoolstore "github.com/flowgent-labs/flowgent/store/pkg/resourcepool"
 )
 
 // allInOneState bundles shared dependencies for the all-in-one process.
@@ -112,17 +111,20 @@ func startAllInOne(cfgPath string) error {
 		apiClient:   apiClient,
 		namespace:   namespace,
 		taskClient:  &client.TaskStateClient{Client: apiClient, Namespace: namespace},
-		humanClient: &client.HumanApprovalClient{Client: apiClient},
+		humanClient: &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
 		logger:      logger,
 		payloads:    payloadProvider,
 	}
 
-	// Load agent flows (YAML + DB)
-	agentFlows, subFlows := loadFlows(state, cfgPath)
+	// Flow definitions are DB-backed and are loaded through the store.
+	agentFlows, subFlows := loadFlows(state)
 	allFlows := append(agentFlows, flattenSubflows(subFlows)...)
 
 	// Resource Manager (standalone, starts TM in-process)
-	rm := createStandaloneRM(state)
+	rm, err := createStandaloneRM(state)
+	if err != nil {
+		return err
+	}
 
 	// Notifier + WS bridge (before REST so bridge is available)
 	notifSvc, wsBridge, err := startNotifier(state)
@@ -156,16 +158,11 @@ func startAllInOne(cfgPath string) error {
 
 // ─── Flow loading ─────────────────────────────────────────────────
 
-func loadFlows(state *allInOneState, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo) {
-	agentFlows, subFlows, err := config.LoadAgentFlows(state.cfg, cfgPath)
+func loadFlows(state *allInOneState) ([]entities.FlowInfo, map[string]entities.FlowInfo) {
+	agentFlows, subFlows, err := flow.LoadFromDB(context.Background(), state.store, state.namespace)
 	if err != nil {
-		slog.Warn("load agent flows from YAML", "error", err)
-	}
-	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), state.store, state.namespace); dberr == nil {
-		agentFlows = append(agentFlows, dbFlows...)
-		for k, v := range dbSubFlows {
-			subFlows[k] = v
-		}
+		slog.Warn("load agent flows from database", "error", err)
+		return nil, make(map[string]entities.FlowInfo)
 	}
 	slog.Info("AgentFlows loaded", "count", len(agentFlows)+len(subFlows))
 	return agentFlows, subFlows
@@ -181,17 +178,17 @@ func flattenSubflows(m map[string]entities.FlowInfo) []entities.FlowInfo {
 
 // ─── Resource Manager ─────────────────────────────────────────────
 
-func createStandaloneRM(state *allInOneState) resourcemanager.ResourceManager {
-	rm, _ := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:     engine.ProviderStandalone,
-		PoolSize:     state.cfg.Orchestration.MaxConcurrentFlows,
-		TaskState:    state.taskClient,
-		ApprovalInfo: state.humanClient,
-		Logger:       state.logger,
-		APIServerURL: state.cfg.Runtime.APIServerURL,
-		Namespace:    state.namespace,
+func createStandaloneRM(state *allInOneState) (resourcemanager.ResourceManager, error) {
+	return resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
+		Provider:         engine.ProviderStandalone,
+		PoolSize:         state.cfg.Orchestration.MaxConcurrentFlows,
+		TaskState:        state.taskClient,
+		ApprovalInfo:     state.humanClient,
+		Logger:           state.logger,
+		APIServerURL:     state.cfg.Runtime.APIServerURL,
+		Namespace:        state.namespace,
+		RuntimeClusterID: "local",
 	})
-	return rm
 }
 
 // ─── Notifier ─────────────────────────────────────────────────────
@@ -218,7 +215,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 			state.cfg.Messager.MQTT.Password)
 	}
 
-	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
+	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, "default", mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	humanHandler := handler.NewHumanHandler(state.store, mqttPub, state.logger)
 	runHandler := handler.NewFlowRunHandler(state.store, state.payloads, mqttPub, state.logger)
@@ -251,15 +248,9 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	if err != nil {
 		return nil, nil, fmt.Errorf("runtime configuration secrets: %w", err)
 	}
-	resourcePoolRepository, err := resourcepoolstore.NewRepository(state.store)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resource pool repository: %w", err)
-	}
-	resourcePoolHandler := handler.NewResourcePoolHandler(resourcePoolRepository, flowHandler.FlowStore(), flowHandler.FlowRunStore())
-
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler, resourcePoolHandler)
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler)
 
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(state.cfg.Auth)
@@ -292,8 +283,21 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 
 func startCronScheduler(allFlows []entities.FlowInfo, apiClient *client.FlowgentClient, namespace string) {
 	cronSched := trigger.NewScheduleTrigger()
+	flowByID := make(map[string]entities.FlowInfo, len(allFlows))
+	for i := range allFlows {
+		flowByID[allFlows[i].ID] = allFlows[i]
+	}
 	cronSched.RegisterAgentFlows(allFlows, func(ctx context.Context, id string) {
-		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending}
+		spec, ok := flowByID[id]
+		if !ok {
+			slog.Warn("cron trigger skipped unknown flow", "flow_id", id)
+			return
+		}
+		if err := entities.ValidateRuntimeMode(spec.RuntimeMode); err != nil {
+			slog.Warn("cron trigger skipped flow with invalid runtime_mode", "flow_id", id, "runtime_mode", spec.RuntimeMode, "error", err)
+			return
+		}
+		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending, RuntimeMode: spec.RuntimeMode}
 		run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "cron"})
 		_, _ = apiClient.CreateRun(ctx, namespace, run)
 	})
@@ -312,13 +316,19 @@ func startOrchestrator(state *allInOneState, rm resourcemanager.ResourceManager,
 		FlowExecutionTimeout: timeout,
 		MaxNodeRetries:       state.cfg.Orchestration.MaxNodeRetries,
 		MaxConcurrentFlows:   state.cfg.Orchestration.MaxConcurrentFlows,
+		RuntimeClusterID:     "local",
 	})
 	if err != nil {
 		slog.Error("create jobmanager", "error", err)
 		return
 	}
 
-	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.namespace, jm, flowMap, "", "")
+	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.namespace, jm, flowMap, jobmanager.RunPollerConfig{
+		RuntimeMode: entities.RuntimeModeApplication,
+	})
+	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.namespace, jm, flowMap, jobmanager.RunPollerConfig{
+		RuntimeMode: entities.RuntimeModeSession,
+	})
 }
 
 // ─── A2A Server ───────────────────────────────────────────────────

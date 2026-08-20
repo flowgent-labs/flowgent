@@ -20,9 +20,9 @@ func TestSQLiteReleaseGrantAndAtomicInstall(t *testing.T) {
 		BaseEntity: entities.BaseEntity{ID: "release-1", Namespace: "producer"},
 		FlowID:     "shared-flow", FlowVersion: 1, ReleaseVersion: "1.0.0",
 		Definition: entities.FlowInfo{
-			BaseEntity: entities.BaseEntity{ID: "shared-flow", Status: "ACTIVE"},
-			Nodes:      []entities.Node{{ID: "agent", Agent: "security-agent"}},
-			ResourcePoolID: "default",
+			BaseEntity:  entities.BaseEntity{ID: "shared-flow", Status: "ACTIVE"},
+			Nodes:       []entities.Node{{ID: "agent", Agent: "security-agent"}},
+			RuntimeMode: entities.RuntimeModeApplication,
 		},
 		Checksum: "release-checksum", Visibility: "PRIVATE", PublishedAt: now,
 	}

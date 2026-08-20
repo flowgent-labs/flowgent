@@ -89,12 +89,12 @@ def verify_trigger(s, conn):
     if conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, status, agentflow_id, resource_pool_id FROM orh_flowrun WHERE id=%s",
+            "SELECT id, status, agentflow_id, runtime_mode FROM orh_flowrun WHERE id=%s",
             (run_id,),
         )
         row = cur.fetchone()
         if row:
-            print(f"  OK PG orh_flowrun: status={row[1]} flow={row[2]} resource_pool={row[3]}")
+            print(f"  OK PG orh_flowrun: status={row[1]} flow={row[2]} runtime_mode={row[3]}")
         else:
             print("  WARN: run_id not yet visible in PG (may need persistence delay)")
 
@@ -165,7 +165,7 @@ def run():
         audit = c.start_global_mqtt_audit()
         run_id = verify_trigger(s, conn)
         audit.set_run_id(run_id)
-        c.wait_for_workload_components(c.FLOW_ID, timeout=240)
+        c.wait_for_workload_components(c.FLOW_ID, run_id=run_id, timeout=240)
         audit.wait_for("ctrl/run/created", timeout=20)
         audit.wait_for("exec/plans", timeout=45)
         c.save_mqtt_audit(run_id, c.snapshot_global_mqtt_audit(run_id))

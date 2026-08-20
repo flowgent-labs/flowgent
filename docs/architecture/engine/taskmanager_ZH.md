@@ -16,8 +16,9 @@ JobManager ──ExecutionPlan/MQTT──► SlotWorker ──► TaskExecutorRo
 
 ## Worker 执行
 
-Kubernetes 使用 namespace/pool 范围共享 Deployment，all-in-one 使用进程内
-Worker。Pool Worker 只订阅自己的 ExecutionPlan topic，并拒绝范围不匹配消息。
+Kubernetes 使用 runtime-cluster 范围共享 Deployment，all-in-one 使用进程内
+Worker。TaskManager Worker 只订阅自己的 ExecutionPlan topic，并拒绝 namespace
+或 `runtime_cluster_id` 不匹配的消息。
 每个 TM Pod 运行 N 个
 `SlotWorker` Goroutine（默认 4）。每个 Slot 独立从 MQTT Queue（或 Channel）
 取一个 `ExecutionPlan`，通过 `TaskExecutorRouter` 执行，经 API Server REST

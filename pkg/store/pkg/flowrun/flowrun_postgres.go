@@ -3,8 +3,11 @@ package flowrun
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/google/uuid"
@@ -27,25 +30,85 @@ func NewFlowRunPostgresStore(pool *pgxpool.Pool) *FlowRunPostgresStore {
 func (s *FlowRunPostgresStore) Get(ctx context.Context, id string) (*entities.FlowRunInfo, error) {
 	return s.inner.Get(ctx, id)
 }
-func (s *FlowRunPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.FlowRunInfo], error) {
-	return s.inner.Select(ctx, req)
+func (s *FlowRunPostgresStore) List(ctx context.Context, filter ListFilter) (*entities.Page[entities.FlowRunInfo], error) {
+	if filter.Page.Page < 1 {
+		filter.Page.Page = 1
+	}
+	if filter.Page.Size < 1 {
+		filter.Page.Size = 50
+	}
+	clauses := []string{"del_flag=FALSE", "namespace_id=$1"}
+	args := []any{filter.Namespace}
+	add := func(column, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf("%s=$%d", column, len(args)))
+	}
+	add("status", filter.Status)
+	add("runtime_mode", filter.RuntimeMode)
+	add("namespace", filter.K8sNamespace)
+	add("agentflow_id", filter.FlowID)
+	where := strings.Join(clauses, " AND ")
+	var total int64
+	if err := s.inner.Pool.QueryRow(ctx, "SELECT COUNT(1) FROM orh_flowrun WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, err
+	}
+	args = append(args, filter.Page.Size, (filter.Page.Page-1)*filter.Page.Size)
+	rows, err := s.inner.Pool.Query(ctx, fmt.Sprintf(
+		"SELECT %s FROM orh_flowrun WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
+		utils.Columns[entities.FlowRunInfo](), where, len(args)-1, len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]*entities.FlowRunInfo, 0)
+	for rows.Next() {
+		item := new(entities.FlowRunInfo)
+		if err := utils.ScanStruct(rows, item); err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entities.NewPage(items, total, filter.Page), nil
+}
+
+func (s *FlowRunPostgresStore) Metrics(ctx context.Context, req MetricRequest) (*entities.RunMetrics, error) {
+	widthSeconds := req.Until.Sub(req.Since).Seconds() / float64(req.Buckets)
+	rows, err := s.inner.Pool.Query(ctx, `SELECT
+		FLOOR(EXTRACT(EPOCH FROM (created_at - $2::timestamptz)) / $4)::int AS bucket,
+		status, COUNT(1)
+		FROM orh_flowrun
+		WHERE del_flag=FALSE AND namespace_id=$1 AND created_at >= $2 AND created_at < $3
+		GROUP BY bucket, status ORDER BY bucket`, req.Namespace, req.Since, req.Until, widthSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make([]metricRow, 0)
+	for rows.Next() {
+		var row metricRow
+		if err := rows.Scan(&row.bucket, &row.status, &row.count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return buildMetrics(req, counts), nil
 }
 func (s *FlowRunPostgresStore) HasActiveForFlow(ctx context.Context, namespace, flowID string) (bool, error) {
 	var active bool
 	err := s.inner.Pool.QueryRow(ctx, `SELECT EXISTS (
 		SELECT 1 FROM orh_flowrun
-		WHERE namespace=$1 AND agentflow_id=$2 AND del_flag=FALSE
+		WHERE namespace_id=$1 AND agentflow_id=$2 AND del_flag=FALSE
 		  AND status IN ('PENDING','RUNNING','PAUSED')
 	)`, namespace, flowID).Scan(&active)
-	return active, err
-}
-func (s *FlowRunPostgresStore) HasActiveForPool(ctx context.Context, namespace, poolID string) (bool, error) {
-	var active bool
-	err := s.inner.Pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM orh_flowrun
-		WHERE namespace=$1 AND resource_pool_id=$2 AND del_flag=FALSE
-		  AND status IN ('PENDING','RUNNING','PAUSED')
-	)`, namespace, poolID).Scan(&active)
 	return active, err
 }
 func (s *FlowRunPostgresStore) Save(ctx context.Context, e *entities.FlowRunInfo) error {

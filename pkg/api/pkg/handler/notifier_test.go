@@ -31,21 +31,29 @@ type notifierStoreStub struct {
 	deleted  string
 }
 
-func (s *notifierStoreStub) Get(_ context.Context, id string) (*entities.NotifyChannelInfo, error) {
+func (s *notifierStoreStub) Get(_ context.Context, namespace, id string) (*entities.NotifyChannelInfo, error) {
 	if channel := s.channels[id]; channel != nil {
-		return channel, nil
+		if channel.Namespace == namespace {
+			return channel, nil
+		}
 	}
 	return nil, sql.ErrNoRows
 }
-func (s *notifierStoreStub) Select(context.Context, entities.PageRequest) (*entities.Page[entities.NotifyChannelInfo], error) {
-	return s.page, nil
+func (s *notifierStoreStub) List(_ context.Context, namespace string, page entities.PageRequest) (*entities.Page[entities.NotifyChannelInfo], error) {
+	items := make([]*entities.NotifyChannelInfo, 0)
+	for _, channel := range s.page.Items {
+		if channel.Namespace == namespace {
+			items = append(items, channel)
+		}
+	}
+	return entities.NewPage(items, int64(len(items)), page), nil
 }
 func (s *notifierStoreStub) Save(_ context.Context, channel *entities.NotifyChannelInfo) error {
 	copy := *channel
 	s.saved = &copy
 	return nil
 }
-func (s *notifierStoreStub) Delete(_ context.Context, id string) error {
+func (s *notifierStoreStub) Delete(_ context.Context, _ string, id string) error {
 	s.deleted = id
 	return nil
 }
@@ -109,7 +117,7 @@ func TestNotifierCreateEncryptsAndRedactsSecrets(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&public); err != nil {
 		t.Fatal(err)
 	}
-	if len(public.ConfiguredSecretFields) != 2 || public.SealedSecrets == nil {
+	if len(public.ConfiguredSecretFields) != 2 || public.SealedSecrets != nil {
 		t.Fatalf("public secret metadata = %+v", public)
 	}
 	resolved, err := store.saved.ResolveSecrets(context.Background(), testNotificationCipher(t))
@@ -149,11 +157,12 @@ func TestNotifierMutationsRequireNamespaceOwnership(t *testing.T) {
 	}
 
 	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/v1/tenant-a/notifications/channels/channel-a", strings.NewReader(`{"enabled":false}`)))
+	body := `{"name":"existing","provider":"webhook","config":{},"enabled":false}`
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/v1/tenant-a/notifications/channels/channel-a", strings.NewReader(body)))
 	if response.Code != http.StatusOK {
 		t.Fatalf("owned update status = %d body=%s", response.Code, response.Body.String())
 	}
 	if store.saved == nil || store.saved.Namespace != "tenant-a" || store.saved.Name != "existing" || store.saved.Enabled {
-		t.Fatalf("partial update did not preserve ownership/resource fields: %+v", store.saved)
+		t.Fatalf("replacement update did not preserve ownership/resource fields: %+v", store.saved)
 	}
 }

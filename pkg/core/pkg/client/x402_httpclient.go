@@ -18,8 +18,7 @@ import (
 )
 
 // ApprovalHandler gates payment signing when policy requires human approval.
-// The returned receipt is retained for compatibility with existing approvers;
-// only the approval decision is consumed here.
+// The returned receipt records the approval decision.
 type ApprovalHandler interface {
 	RequestApproval(ctx context.Context, intent *model.PaymentIntent) (*model.PaymentReceipt, error)
 }

@@ -20,14 +20,14 @@ func TestSlotWorker_Execute(t *testing.T) {
 	worker := NewSlotWorker("slot-1", "tm-test", "test-namespace", "default", q, router, nil, nil)
 
 	plan := &entities.ExecutionPlan{
-		PlanID:         "plan-test-1",
-		Namespace:      "test-namespace",
-		ResourcePoolID: "default",
-		NodeID:         "node-1",
-		TaskType:       entities.TaskNoop,
-		State:          entities.TaskPending,
-		Input:          map[string]any{"key": "val"},
-		NodeSpec:       &entities.NodeSpec{Type: entities.NoopNode},
+		PlanID:           "plan-test-1",
+		Namespace:        "test-namespace",
+		RuntimeClusterID: "default",
+		NodeID:           "node-1",
+		TaskType:         entities.TaskNoop,
+		State:            entities.TaskPending,
+		Input:            map[string]any{"key": "val"},
+		NodeSpec:         &entities.NodeSpec{Kind: entities.NoopNode},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -72,13 +72,13 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 	worker := NewSlotWorker("slot-3", "tm-test", "test-namespace", "default", q, router, nil, nil)
 
 	plan := &entities.ExecutionPlan{
-		PlanID:         "plan-fail-1",
-		Namespace:      "test-namespace",
-		ResourcePoolID: "default",
-		NodeID:         "node-fail",
-		TaskType:       entities.TaskType("failing"),
-		State:          entities.TaskPending,
-		NodeSpec:       &entities.NodeSpec{Type: entities.NodeType("failing")},
+		PlanID:           "plan-fail-1",
+		Namespace:        "test-namespace",
+		RuntimeClusterID: "default",
+		NodeID:           "node-fail",
+		TaskType:         entities.TaskType("failing"),
+		State:            entities.TaskPending,
+		NodeSpec:         &entities.NodeSpec{Kind: entities.NodeType("failing")},
 	}
 	payload, _ := json.Marshal(plan)
 

@@ -59,10 +59,10 @@ Steps with Expected I/O:
       Input:   Skill YAMLs imported
       Output:  ≥2 skill records
 
-    Step 3.8 No idle Flow/Pool runtime
-      Action:  kubectl get deployments/pods -A for Flow JM and Resource Pool labels
+    Step 3.8 No idle application runtime
+      Action:  kubectl get deployments/pods -A for application runtime labels
       Input:   Config import completed, no FlowRun triggered yet
-      Output:  No Flow JobManager or Resource Pool worker resources exist
+      Output:  No application JobManager or per-run runtime worker resources exist
 """
 
 import subprocess

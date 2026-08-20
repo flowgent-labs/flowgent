@@ -27,19 +27,19 @@ type SlotWorker struct {
 	id        string
 	tmID      string
 	namespace string
-	poolID    string
+	clusterID string
 	q         messager.IMessager
 	router    *executor.TaskExecutorRouter
 	state     TaskStateStore
 	metrics   *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID, namespace, poolID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID, namespace, clusterID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:        id,
 		tmID:      tmID,
 		namespace: namespace,
-		poolID:    poolID,
+		clusterID: clusterID,
 		q:         q,
 		router:    router,
 		state:     state,
@@ -61,20 +61,20 @@ func (sw *SlotWorker) Loop(ctx context.Context) {
 // Subscribe registers this slot's execution handler synchronously. TaskManager
 // uses it as a startup barrier before advertising runtime readiness.
 func (sw *SlotWorker) Subscribe(ctx context.Context) error {
-	if sw.namespace == "" || sw.poolID == "" {
-		return fmt.Errorf("slot worker requires namespace and resource pool scope")
+	if sw.namespace == "" || sw.clusterID == "" {
+		return fmt.Errorf("slot worker requires namespace and runtime cluster scope")
 	}
-	return sw.q.Subscribe(ctx, messager.SharedExecPlans(sw.namespace, sw.poolID), func(topic string, payload []byte) {
+	return sw.q.Subscribe(ctx, messager.SharedExecPlans(sw.namespace, sw.clusterID), func(topic string, payload []byte) {
 		slog.Debug("slot worker received execution plan", "slot", sw.id, "len", len(payload))
 		var plan entities.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
 			slog.Error("slot worker cannot unmarshal execution plan", "error", err)
 			return
 		}
-		if plan.Namespace != sw.namespace || plan.ResourcePoolID != sw.poolID {
-			slog.Error("slot worker rejected out-of-pool plan", "plan", plan.PlanID,
-				"plan_namespace", plan.Namespace, "plan_pool", plan.ResourcePoolID,
-				"worker_namespace", sw.namespace, "worker_pool", sw.poolID)
+		if plan.Namespace != sw.namespace || plan.RuntimeClusterID != sw.clusterID {
+			slog.Error("slot worker rejected out-of-cluster plan", "plan", plan.PlanID,
+				"plan_namespace", plan.Namespace, "plan_cluster", plan.RuntimeClusterID,
+				"worker_namespace", sw.namespace, "worker_cluster", sw.clusterID)
 			return
 		}
 		slog.Debug("slot worker executing plan", "slot", sw.id, "plan", plan.PlanID, "node", plan.NodeID, "type", string(plan.TaskType))

@@ -3,10 +3,8 @@
 package client
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"testing"
 
@@ -47,31 +45,24 @@ func TestParseV2Header(t *testing.T) {
 	}
 }
 
-func TestParseV2BodyCompatibility(t *testing.T) {
-	raw, err := json.Marshal(testPaymentRequired(t))
+func TestParseRejectsInvalidResponses(t *testing.T) {
+	versionOne, err := json.Marshal(types.PaymentRequired{X402Version: 1, Accepts: []types.PaymentRequirements{{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := &http.Response{
-		StatusCode: http.StatusPaymentRequired,
-		Body:       io.NopCloser(bytes.NewReader(raw)),
-	}
-
-	parsed, err := Parse(resp)
-	if err != nil {
-		t.Fatalf("Parse V2 body: %v", err)
-	}
-	if parsed.X402Version != 2 {
-		t.Fatalf("unexpected version: %d", parsed.X402Version)
-	}
-}
-
-func TestParseRejectsInvalidResponses(t *testing.T) {
 	tests := map[string]*http.Response{
-		"nil":                 nil,
-		"not 402":             {StatusCode: http.StatusOK},
-		"empty":               {StatusCode: http.StatusPaymentRequired, Body: io.NopCloser(bytes.NewReader(nil))},
-		"unsupported version": {StatusCode: http.StatusPaymentRequired, Body: io.NopCloser(bytes.NewBufferString(`{"x402Version":1,"accepts":[{}]}`))},
+		"nil":     nil,
+		"not 402": {StatusCode: http.StatusOK},
+		"missing header": {
+			StatusCode: http.StatusPaymentRequired,
+			Header:     make(http.Header),
+		},
+		"unsupported version": {
+			StatusCode: http.StatusPaymentRequired,
+			Header: http.Header{
+				http.CanonicalHeaderKey(HeaderPaymentRequired): []string{base64.StdEncoding.EncodeToString(versionOne)},
+			},
+		},
 	}
 	for name, resp := range tests {
 		t.Run(name, func(t *testing.T) {

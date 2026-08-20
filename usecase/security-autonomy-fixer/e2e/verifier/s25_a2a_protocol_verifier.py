@@ -106,8 +106,9 @@ def run():
     assert isinstance(flows, list), f"A2A list_flows returned {type(flows).__name__}, want list"
     flow_spec = {
         "id": FLOW_ID,
+        "kind": "flow",
         "description": "Real A2A protocol execution verifier",
-        "resource_pool_id": "default",
+        "runtime_mode": "session",
         "nodes": [
             {
                 "id": "a2a-proof",

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
 type traceRunStore struct {
@@ -17,13 +18,13 @@ type traceRunStore struct {
 func (s *traceRunStore) Get(context.Context, string) (*entities.FlowRunInfo, error) {
 	return s.run, nil
 }
-func (s *traceRunStore) Select(context.Context, entities.PageRequest) (*entities.Page[entities.FlowRunInfo], error) {
+func (s *traceRunStore) List(context.Context, flowrun.ListFilter) (*entities.Page[entities.FlowRunInfo], error) {
+	return nil, nil
+}
+func (s *traceRunStore) Metrics(context.Context, flowrun.MetricRequest) (*entities.RunMetrics, error) {
 	return nil, nil
 }
 func (s *traceRunStore) HasActiveForFlow(context.Context, string, string) (bool, error) {
-	return false, nil
-}
-func (s *traceRunStore) HasActiveForPool(context.Context, string, string) (bool, error) {
 	return false, nil
 }
 func (s *traceRunStore) Save(context.Context, *entities.FlowRunInfo) error   { return nil }

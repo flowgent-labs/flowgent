@@ -12,7 +12,7 @@ metadata:
 data:
   provider: OPENAI
   endpoint: https://api.deepseek.com/v1
-  apikey: ${DEEPSEEK_API_KEY_FLOWGENT}
+  api_key_env: DEEPSEEK_API_KEY_FLOWGENT
   defaultModel: deepseek-chat
   timeout: 120s
   models:

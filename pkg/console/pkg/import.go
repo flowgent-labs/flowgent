@@ -1,8 +1,10 @@
 package console
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// --- K8s-style single-resource parsing ---
+// --- Canonical single-resource parsing ---
 
 // replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
 // Unknown patterns (flow template vars, DAG references) are left unchanged.
@@ -31,15 +33,14 @@ func replaceEnvVars(s string) string {
 	})
 }
 
-// ParseResourceImport detects and parses a K8s-style {kind, metadata, spec}
-// resource. Also accepts flat-style {kind, name, namespace, ..., spec} as fallback.
+// ParseResourceImport parses the single canonical
+// {consoleVersion, kind, metadata, data} resource envelope.
 // replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
 // Unknown patterns (flow template vars, DAG references) are left unchanged.
-func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
+func ParseResourceImport(raw []byte, _ string) (*ResourceImport, bool) {
 	// Runtime credential resources persist environment references. Expanding
 	// them here would copy plaintext secrets into the database and make safe API
-	// reads impossible. Other resource kinds keep the historical substitution
-	// behavior for non-secret deploy-time values.
+	// reads impossible. Other resource kinds expand non-secret deploy-time values.
 	var probe struct {
 		Kind string `yaml:"kind" json:"kind"`
 	}
@@ -47,69 +48,35 @@ func ParseResourceImport(raw []byte, fm string) (*ResourceImport, bool) {
 	if !strings.EqualFold(probe.Kind, "llmprovider") && !strings.EqualFold(probe.Kind, "mcp") {
 		raw = []byte(replaceEnvVars(string(raw)))
 	}
-	if fm == "yaml" {
-		var generic map[string]any
-		if err := yaml.Unmarshal(raw, &generic); err != nil {
-			return nil, false
-		}
-		kind, _ := generic["kind"].(string)
-		if kind == "" {
-			return nil, false
-		}
-		ri := &ResourceImport{
-			APIVersion: toString(generic["apiVersion"]),
-			Kind:       kind,
-		}
-
-		if meta, ok := generic["metadata"]; ok {
-			metaJSON, _ := json.Marshal(meta)
-			var md ResourceMetadata
-			if err := json.Unmarshal(metaJSON, &md); err == nil {
-				ri.Metadata = &md
-			}
-		} else {
-			md := &ResourceMetadata{
-				Name:        toString(generic["name"]),
-				Namespace:   toString(generic["namespace"]),
-				Status:      toString(generic["status"]),
-				Description: toString(generic["description"]),
-			}
-			if labels, ok := generic["labels"]; ok {
-				md.Labels = toStringMap(labels)
-			}
-			if md.Name != "" || md.Namespace != "" || md.Status != "" || md.Description != "" || len(md.Labels) > 0 {
-				ri.Metadata = md
-			}
-		}
-
-		if spec, ok := generic["spec"]; ok {
-			specJSON, err := json.Marshal(spec)
-			if err != nil {
-				return nil, false
-			}
-			ri.Spec = specJSON
-		} else if data, ok := generic["data"]; ok {
-			specJSON, err := json.Marshal(data)
-			if err != nil {
-				return nil, false
-			}
-			ri.Spec = specJSON
-		}
-		// accept consoleVersion as an alias for apiVersion
-		if ri.APIVersion == "" {
-			ri.APIVersion = toString(generic["consoleVersion"])
-		}
-		return ri, true
+	var envelope struct {
+		ConsoleVersion string            `yaml:"consoleVersion"`
+		Kind           string            `yaml:"kind"`
+		Metadata       *ResourceMetadata `yaml:"metadata"`
+		Data           any               `yaml:"data"`
 	}
-
-	var ri ResourceImport
-	if err := json.Unmarshal(raw, &ri); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&envelope); err != nil {
 		return nil, false
 	}
-	if ri.Kind == "" {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, false
 	}
-	return &ri, true
+	if envelope.ConsoleVersion != ConsoleAPIVersion || envelope.Kind == "" ||
+		envelope.Metadata == nil || envelope.Metadata.Name == "" || envelope.Data == nil {
+		return nil, false
+	}
+	dataJSON, err := json.Marshal(envelope.Data)
+	if err != nil {
+		return nil, false
+	}
+	return &ResourceImport{
+		ConsoleVersion: envelope.ConsoleVersion,
+		Kind:           envelope.Kind,
+		Metadata:       envelope.Metadata,
+		Data:           dataJSON,
+	}, true
 }
 
 // applyWrapperMeta applies metadata (namespace, labels, description, status) from
@@ -151,10 +118,19 @@ func (ri *ResourceImport) metadataName() string {
 }
 
 func parseSpec(raw json.RawMessage, v any) error {
-	return json.Unmarshal(raw, v)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return fmt.Errorf("body must contain exactly one JSON value")
+	}
+	return nil
 }
 
-// ImportResource imports a single K8s-style resource into the database.
+// ImportResource imports a single canonical resource into the database.
 func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) bool {
 	ls := fc.getStores()
 	kind := strings.ToLower(ri.Kind)
@@ -162,7 +138,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 	switch kind {
 	case "agent":
 		var a entities.AgentInfo
-		if err := parseSpec(ri.Spec, &a); err != nil {
+		if err := parseSpec(ri.Data, &a); err != nil {
 			fmt.Printf("Error parsing Agent spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -183,7 +159,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 
 	case "mcp":
 		var m entities.McpInfo
-		if err := parseSpec(ri.Spec, &m); err != nil {
+		if err := parseSpec(ri.Data, &m); err != nil {
 			fmt.Printf("Error parsing MCP spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -198,18 +174,29 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		if m.Name == "" && ri.metadataName() != "" {
 			m.Name = ri.metadataName()
 		}
-		for key, value := range m.Headers {
+		for key, value := range m.HeaderRefs {
 			if secretref.IsSensitiveHeader(key) && !secretref.TemplateIsReference(value) {
 				fmt.Printf("Error saving MCP %s: header %q must reference an injected environment secret\n", m.Name, key)
 				return false
 			}
+			if m.Headers == nil {
+				m.Headers = make(map[string]string)
+			}
+			m.Headers[key] = strings.TrimSpace(value)
 		}
-		for key, value := range m.Env {
-			if _, ok := secretref.EnvName(value); !ok {
+		for key, value := range m.EnvRefs {
+			name, ok := secretref.EnvName(value)
+			if !ok {
 				fmt.Printf("Error saving MCP %s: environment value %q must be an injected secret reference\n", m.Name, key)
 				return false
 			}
+			if m.Env == nil {
+				m.Env = make(map[string]string)
+			}
+			m.Env[key] = "${" + name + "}"
 		}
+		m.HeaderRefs = nil
+		m.EnvRefs = nil
 		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.namespace)
 		// Align Enabled with Status so that MCPs imported with status=active are
 		// immediately usable. TM skips MCPs with enabled=false (taskmanager.go:83).
@@ -224,7 +211,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 
 	case "llmprovider":
 		var p entities.LlmProviderInfo
-		if err := parseSpec(ri.Spec, &p); err != nil {
+		if err := parseSpec(ri.Data, &p); err != nil {
 			fmt.Printf("Error parsing LLMProvider spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -236,15 +223,15 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			p.Status = p.BaseEntity.Status
 		}
 		p.Status = activeRuntimeStatus(p.Status)
-		if strings.TrimSpace(p.ApiKey) != "" {
-			normalized, err := secretref.Normalize(p.ApiKey)
+		if strings.TrimSpace(p.ApiKeyEnv) != "" {
+			normalized, err := secretref.Normalize("${" + strings.TrimSpace(p.ApiKeyEnv) + "}")
 			if err != nil {
-				fmt.Printf("Error saving LLMProvider %s: inline API keys are forbidden; use an environment reference\n", p.ID)
+				fmt.Printf("Error saving LLMProvider %s: api_key_env must name an injected environment variable\n", p.ID)
 				return false
 			}
 			p.ApiKey = normalized
 		}
-		p.Credentials = nil
+		p.ApiKeyEnv = ""
 		if err := ls.llm.Save(fc.ctx, &p); err != nil {
 			fmt.Printf("Error saving LLMProvider %s: %v\n", p.ID, err)
 			return false
@@ -253,7 +240,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 
 	case "flow":
 		var spec entities.FlowInfo
-		if err := parseSpec(ri.Spec, &spec); err != nil {
+		if err := parseSpec(ri.Data, &spec); err != nil {
 			fmt.Printf("Error parsing Flow spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -264,6 +251,10 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			spec.Kind = "flow"
 		}
 		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)
+		if err := spec.ValidateDAG(); err != nil {
+			fmt.Printf("Error validating Flow %s: %v\n", spec.ID, err)
+			return false
+		}
 		if err := ls.flows.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
 			fmt.Printf("Error saving Flow %s: %v\n", spec.ID, err)
 			return false
@@ -272,7 +263,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 
 	case "flowrun":
 		var run entities.FlowRunInfo
-		if err := parseSpec(ri.Spec, &run); err != nil {
+		if err := parseSpec(ri.Data, &run); err != nil {
 			fmt.Printf("Error parsing FlowRun spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -290,7 +281,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 
 	case "skill":
 		var spec entities.FlowInfo
-		if err := parseSpec(ri.Spec, &spec); err != nil {
+		if err := parseSpec(ri.Data, &spec); err != nil {
 			fmt.Printf("Error parsing Skill spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -299,6 +290,10 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		spec.Kind = "skill"
 		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)
+		if err := spec.ValidateDAG(); err != nil {
+			fmt.Printf("Error validating Skill %s: %v\n", spec.ID, err)
+			return false
+		}
 		if err := ls.flows.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
 			fmt.Printf("Error saving Skill %s: %v\n", spec.ID, err)
 			return false
@@ -307,7 +302,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 
 	case "notifychannel":
 		var ch entities.NotifyChannelInfo
-		if err := parseSpec(ri.Spec, &ch); err != nil {
+		if err := parseSpec(ri.Data, &ch); err != nil {
 			fmt.Printf("Error parsing NotifyChannel spec in %s: %v\n", filePath, err)
 			return false
 		}
@@ -433,8 +428,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	return counts, nil
 }
 
-// ImportFile imports a single file (JSON or YAML). It first tries K8s-style
-// single-resource format, then falls back to bulk ExportData format.
+// ImportFile imports one canonical resource envelope or one bulk export file.
 func (fc *FlowgentConsole) ImportFile(filePath string, extraArgs []string) bool {
 	fm, err := DetectFormat(filePath, extraArgs)
 	if err != nil {

@@ -96,13 +96,13 @@ func TestAuditSurvivesRequestCancellation(t *testing.T) {
 func TestAuthorizeAdditionalUsesBodyDerivedResourceScope(t *testing.T) {
 	repo := &fakeRepository{
 		roles: []*entities.IAMRole{{
-			BaseEntity:  entities.BaseEntity{ID: "pool-user", Status: "ACTIVE"},
-			Permissions: []string{"resource_pool.use"},
+			BaseEntity:  entities.BaseEntity{ID: "flow-user", Status: "ACTIVE"},
+			Permissions: []string{"flow.use"},
 		}},
 		bindings: []*entities.IAMRoleBinding{{
-			BaseEntity: entities.BaseEntity{ID: "critical-only", Namespace: "team-a", Status: "ACTIVE"},
-			RoleID:     "pool-user", SubjectType: entities.PrincipalUser, SubjectID: "breakglass:root",
-			ResourceType: "resource_pool", ResourceID: "critical", Effect: "ALLOW",
+			BaseEntity: entities.BaseEntity{ID: "flow-a-only", Namespace: "team-a", Status: "ACTIVE"},
+			RoleID:     "flow-user", SubjectType: entities.PrincipalUser, SubjectID: "breakglass:root",
+			ResourceType: "flow", ResourceID: "flow-a", Effect: "ALLOW",
 		}},
 	}
 	service := NewService(config.AuthorizationConfig{
@@ -114,8 +114,8 @@ func TestAuthorizeAdditionalUsesBodyDerivedResourceScope(t *testing.T) {
 	}
 	authService.SetCredentialAuthenticator(service)
 	handler := authService.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resourceID := r.URL.Query().Get("pool")
-		allowed, checkErr := service.AuthorizeAdditional(r, "team-a", "resource_pool.use", "resource_pool", resourceID)
+		resourceID := r.URL.Query().Get("flow")
+		allowed, checkErr := service.AuthorizeAdditional(r, "team-a", "flow.use", "flow", resourceID)
 		if checkErr != nil {
 			http.Error(w, checkErr.Error(), http.StatusServiceUnavailable)
 			return
@@ -127,20 +127,20 @@ func TestAuthorizeAdditionalUsesBodyDerivedResourceScope(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	request := func(pool string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/bind?pool="+pool, nil)
+	request := func(flow string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/bind?flow="+flow, nil)
 		req.Header.Set("Authorization", "Bearer root-token")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
 		return response
 	}
-	if response := request("critical"); response.Code != http.StatusNoContent {
-		t.Fatalf("critical status=%d body=%s", response.Code, response.Body.String())
+	if response := request("flow-a"); response.Code != http.StatusNoContent {
+		t.Fatalf("flow-a status=%d body=%s", response.Code, response.Body.String())
 	}
-	if response := request("economy"); response.Code != http.StatusForbidden {
-		t.Fatalf("economy status=%d body=%s", response.Code, response.Body.String())
+	if response := request("flow-b"); response.Code != http.StatusForbidden {
+		t.Fatalf("flow-b status=%d body=%s", response.Code, response.Body.String())
 	}
-	if len(repo.audits) != 2 || repo.audits[0].ResourceID != "critical" || repo.audits[1].ResourceID != "economy" {
+	if len(repo.audits) != 2 || repo.audits[0].ResourceID != "flow-a" || repo.audits[1].ResourceID != "flow-b" {
 		t.Fatalf("additional authorization audits=%#v", repo.audits)
 	}
 }
@@ -249,6 +249,8 @@ func TestPolicyForRequest(t *testing.T) {
 		{"POST", "/api/v1/team-a/flows/f1/trigger", "run.trigger", "flow", "f1"},
 		{"GET", "/api/v1/team-a/flows/f1/runs/r1/trace", "trace.read", "flow", "f1"},
 		{"POST", "/api/v1/team-a/flows/f1/runs/r1/approvals/a1/approve", "approval.resolve", "flow", "f1"},
+		{"POST", "/api/v1/team-a/runs/r1/approvals", "approval.internal.create", "approval", "r1"},
+		{"GET", "/api/v1/team-a/approvals", "approval.platform.read", "approval", "*"},
 		{"GET", "/api/v1/team-a/flows/f1/iam/bindings", "flow.access.manage", "flow", "f1"},
 		{"GET", "/api/v1/team-a/runtime-config", "namespace.config.read", "namespace", "team-a"},
 		{"PUT", "/api/v1/team-a/runtime-config/environment", "namespace.config.manage", "namespace", "team-a"},
@@ -263,6 +265,7 @@ func TestPolicyForRequest(t *testing.T) {
 		{"GET", "/api/v1/team-a/runs/r1/trace", "trace.read", "trace", "r1"},
 		{"PUT", "/api/v1/team-a/runs/r1/tasks/t1", "task.internal.write", "task", "t1"},
 		{"PUT", "/api/v1/team-a/notifications/channels/c1", "notification.secret.manage", "notification", "c1"},
+		{"GET", "/api/v1/team-a/notifications/runtime/channels", "notification.internal.deliver", "notification", "*"},
 		{"GET", "/api/v1/team-a/llm/providers/l1", "llm_provider.read", "llm_provider", "l1"},
 		{"GET", "/api/v1/team-a/ws/human-approvals", "approval.read", "approval", "*"},
 		{"GET", "/api/v1/team-a/iam/roles", "iam.role.read", "roles", "*"},

@@ -73,9 +73,10 @@ API 会拒绝 `finished_at` 早于 `started_at` 的更新。
 
 ### JobManager 范围
 
-Controller 以 `jobmanager start --flow-id <id>` 启动专用 JM；`StartRunPoller`
-按 Flow ID 与 Kubernetes Namespace 过滤 `ListRuns`。调度时使用 FlowRun 中不可变
-的 `resource_pool_id` 快照，不使用之后修改的 Flow 绑定。
+Session 部署以 `jobmanager start` 启动并只轮询 session Run。Application 部署以
+`jobmanager start --flow-id <id> --run-id <runId>` 启动并只轮询该 FlowRun。
+调度时使用 FlowRun 中不可变的 runtime mode 与 `runtime_cluster_id`；之后修改
+Flow 不会迁移活跃 Run。
 
 ### DAG 依赖协调——Iteration Loop + 阻塞 Schedule
 
@@ -182,8 +183,8 @@ K8sRM.Schedule(plan):
      s.runResults[runID][plan.NodeID] = resultCh
      // ^^ 发布前注册 Channel，不存在竞态
 
-  3. PUBLISH plan to exec/plans/{namespace}/{flow}/{run}
-     → TM Pod 通过 $share/tm-pool 消费
+  3. PUBLISH plan to exec/plans/{namespace}/{cluster}/{flow}/{run}
+     → TM Pod 通过 $share/tm-{namespace}-{cluster} 消费
 
   4. BLOCK on resultCh (with planTimeout):
      select {
@@ -269,15 +270,15 @@ Plan，再阻塞等待 TM 结果。先订阅后发布可以避免 TM 在 JM 开�
 创建并等待独立 Channel，因此当前 Sibling 是顺序分发，而非并发。完整规则见
 [DAG 依赖协调](#dag-依赖协调iteration-loop-阻塞-schedule)。
 
-**TM Pod 管理：** 协调 `flowgent-taskmanager-{namespaceId}-{poolId}`，完整应用
-Pool 的副本、slot、资源、PriorityClass 与 NodeSelector，等待对应范围 Worker
-Ready 后才发布 ExecutionPlan。
+**TM Pod 管理：** 协调 `flowgent-taskmanager-{namespaceId}-{clusterId}`，应用平台
+默认值和 application 模式 Pod size 覆盖，等待对应范围 Worker Ready 后才发布
+ExecutionPlan。
 
-**Sandbox Pod 管理：** 协调 `flowgent-sandbox-{namespaceId}-{poolId}`。每个
-Pod 运行 `slots_per_pod` 个 Worker，并只共享订阅对应 namespace/pool topic。
+**Sandbox Pod 管理：** 协调 `flowgent-sandbox-{namespaceId}-{clusterId}`。每个
+Pod 运行 configured slots，并只共享订阅对应 namespace/cluster topic。
 
-`scalingLoop` 协调观测副本与 Ready 状态。资源池容量是显式的 SLA 边界，Flow
-不能静默借用其他 Pool 的 Worker。
+`scalingLoop` 协调观测副本与 Ready 状态。`runtime_cluster_id` 是硬隔离边界，
+FlowRun 不能静默借用其他 cluster 的 Worker。
 
 ---
 
@@ -287,7 +288,7 @@ Pod 运行 `slots_per_pod` 个 Worker，并只共享订阅对应 namespace/pool 
 2. **给定**未满足依赖，**当**评估 Ready 状态时，**则**依赖 Node **MUST** 保持 Pending；只有 Root 和依赖完全满足的 Node 才能 Ready。
 3. **给定**条件 Edge，**当** Source 解析完成时，**则**只有匹配分支可以执行，另一直接 Child **MUST** 被跳过。
 4. **给定**已分发 Plan，**当**结果延迟或路由错误时，**则** JobManager **MUST** 等待匹配的 `(runID,nodeID)` 结果，并在配置超时后失败，**MUST NOT** 提前推进 DAG。
-5. **给定** Task 或 Sandbox 需求，**当**协调容量时，**则**副本、Slot、资源与放置约束 **MUST** 匹配 Run 的资源池。
+5. **给定** Task 或 Sandbox 需求，**当**协调容量时，**则**副本、Slot 与资源 **MUST** 匹配所选 runtime mode、cluster id、平台默认值及 application Pod size 覆盖。
 6. **给定**失败 Node，**当**执行循环观察到失败时，**则** Run **MUST** 变为失败，Child **MUST NOT** 按成功路径执行。
 7. **给定**多个 Ready Sibling，**当**当前 Scheduler 执行它们时，**则**可观察分发 **MUST** 保持顺序，直到并发调度被明确实现并验证。
 8. **给定** Node retry policy，**当**一次 attempt 失败时，**则** JobManager **MUST** 在退避前持久化该失败 attempt，并为下一次 attempt 使用独立且由 Parent 关联的 TaskRun。

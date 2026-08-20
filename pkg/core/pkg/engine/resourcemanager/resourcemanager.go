@@ -3,7 +3,6 @@ package resourcemanager
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/cache/pkg"
@@ -51,16 +50,20 @@ type ResourceManagerConfig struct {
 	K8sNamespace             string
 	K8sDeploymentName        string
 	K8sKubeConfigPath        string
+	ConfigMapName            string
 	TMImage                  string
 	TMResources              *model.SandboxResources
 	PriorityClassName        string
 	NodeSelector             map[string]string
 	PlanTimeout              time.Duration
 	OwnerNamespaceID         string
-	ResourcePoolID           string
+	RuntimeClusterID         string
 	OwnerFlowID              string
+	OwnerRunID               string
+	RuntimeMode              entities.RuntimeMode
 	OwnerJobManagerName      string
 	OwnerJobManagerNamespace string
+	DeleteOnShutdown         bool
 
 	// Sandbox deployment settings (for K8sRM in distributed mode)
 	SandboxEnabled        bool
@@ -84,16 +87,18 @@ type ResourceManagerConfig struct {
 
 // ─── Factory ──────────────────────────────────────────────────
 
-// NewResourceManager creates the configured resource manager implementation.
-// If the requested provider fails to initialize (e.g., K8s unreachable), falls
-// back to StandaloneResourceManager so the caller always gets a valid RM.
+// NewResourceManager creates exactly the configured resource manager.
+// Initialization errors are fatal because silently changing execution backends
+// would violate runtime cluster isolation and scheduling guarantees.
 func NewResourceManager(cfg *ResourceManagerConfig) (ResourceManager, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("resource manager config is required")
+	}
 	switch cfg.Provider {
 	case engine.ProviderKubernetes:
 		rm, err := NewKubernetesResourceManager(cfg)
 		if err != nil {
-			slog.Warn("kubernetes rm init failed, falling back to local", "err", err)
-			return NewStandaloneResourceManager(cfg)
+			return nil, fmt.Errorf("initialize kubernetes resource manager: %w", err)
 		}
 		if cfg.Messager != nil {
 			rm.SetQueue(cfg.Messager)
@@ -102,7 +107,7 @@ func NewResourceManager(cfg *ResourceManagerConfig) (ResourceManager, error) {
 	case engine.ProviderStandalone:
 		return NewStandaloneResourceManager(cfg)
 	default:
-		return NewStandaloneResourceManager(cfg)
+		return nil, fmt.Errorf("unsupported resource manager provider %q", cfg.Provider)
 	}
 }
 

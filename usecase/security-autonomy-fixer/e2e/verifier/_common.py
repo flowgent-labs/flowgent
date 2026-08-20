@@ -2,8 +2,10 @@
 
 import base64
 import atexit
+import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 import yaml
@@ -117,7 +119,7 @@ def get_tasks(s, run_id):
 
 
 def try_approve_pending_human(s, run_id, conn=None):
-    return _try_approve_raw(s, API, run_id, conn)
+    return _try_approve_raw(s, API, NAMESPACE, run_id, conn)
 
 
 def seed_agents_and_mcps(s):
@@ -215,22 +217,65 @@ def wait_for_pods(namespace, selector, label, min_count=1, timeout=180):
     raise AssertionError(f"{label} pods not ready within {timeout}s; last={last}")
 
 
-def resource_pool_for_flow(flow_id=FLOW_ID):
+def runtime_mode_for_flow(flow_id=FLOW_ID):
     response = flowgent_session().get(f"{API}/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=10)
     if response.status_code != 200:
-        raise AssertionError(f"cannot resolve Resource Pool for {flow_id}: HTTP {response.status_code}")
-    pool_id = response.json().get("resource_pool_id")
-    if not pool_id:
-        raise AssertionError(f"Flow {flow_id} has no resource_pool_id")
-    return pool_id
+        raise AssertionError(f"cannot resolve runtime_mode for {flow_id}: HTTP {response.status_code}")
+    mode = response.json().get("runtime_mode")
+    if mode not in ("application", "session"):
+        raise AssertionError(f"Flow {flow_id} has invalid runtime_mode={mode!r}")
+    return mode
 
 
-def wait_for_workload_components(flow_id=FLOW_ID, timeout=240):
+def _kubernetes_name(*parts):
+    raw = "-".join(parts)
+    lower = raw.lower()
+    normalized = []
+    previous_hyphen = False
+    needs_hash = False
+    for char in lower:
+        if "a" <= char <= "z" or "0" <= char <= "9":
+            normalized.append(char)
+            previous_hyphen = False
+            continue
+        if char != "-":
+            needs_hash = True
+        if not previous_hyphen:
+            normalized.append("-")
+            previous_hyphen = True
+    base = re.sub(r"^-+|-+$", "", "".join(normalized))
+    if not base:
+        base = "flowgent"
+        needs_hash = True
+    if len(base) > 63:
+        needs_hash = True
+    if not needs_hash:
+        return base
+    digest = hashlib.sha256(raw.lower().encode()).hexdigest()[:10]
+    max_base = 63 - 1 - len(digest)
+    return base[:max_base].rstrip("-") + "-" + digest
+
+
+def runtime_cluster_for_run(run_id):
+    if not run_id:
+        raise AssertionError("run_id is required to resolve application runtime cluster")
+    return _kubernetes_name("app", run_id)
+
+
+def wait_for_workload_components(flow_id=FLOW_ID, run_id=None, timeout=240):
+    mode = runtime_mode_for_flow(flow_id)
+    if mode == "session":
+        cluster_id = os.getenv("FLOWGENT_SESSION_CLUSTER_ID", "session")
+        ns = SYSTEM_NAMESPACE
+        wait_for_pods(ns, f"app.kubernetes.io/component=session-jobmanager,flowgent.io/runtime-cluster={cluster_id}", "Session JobManager", 1, timeout)
+        wait_for_pods(ns, f"flowgent/role=worker,flowgent.io/runtime-cluster={cluster_id}", "Session TaskManager", 1, timeout)
+        wait_for_pods(ns, f"flowgent/role=sandbox-worker,flowgent.io/runtime-cluster={cluster_id}", "Session Sandbox", 1, timeout)
+        return
+    cluster_id = runtime_cluster_for_run(run_id)
     ns = workload_namespace()
-    pool_id = resource_pool_for_flow(flow_id)
-    wait_for_pods(ns, f"app=flowgent-jobmanager,flowgent.io/flow={flow_id}", "JobManager", 1, timeout)
-    wait_for_pods(ns, f"flowgent/role=worker,flowgent.io/resource-pool={pool_id}", "TaskManager", 1, timeout)
-    wait_for_pods(ns, f"flowgent/role=sandbox-worker,flowgent.io/resource-pool={pool_id}", "Sandbox", 1, timeout)
+    wait_for_pods(ns, f"app=flowgent-jobmanager,flowgent.io/flow={flow_id},flowgent.io/run={run_id},flowgent.io/runtime-cluster={cluster_id}", "Application JobManager", 1, timeout)
+    wait_for_pods(ns, f"flowgent/role=worker,flowgent.io/runtime-cluster={cluster_id}", "Application TaskManager", 1, timeout)
+    wait_for_pods(ns, f"flowgent/role=sandbox-worker,flowgent.io/runtime-cluster={cluster_id}", "Application Sandbox", 1, timeout)
 
 
 def decode_mqtt_payload(raw_payload):
@@ -292,9 +337,9 @@ class MQTTAudit:
         topics = [
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/ctrl/run/created",
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/ctrl/run/status",
-            f"flowgent/v1/{NAMESPACE}/pools/+/flows/{FLOW_ID}/runs/+/exec/plans",
+            f"flowgent/v1/{NAMESPACE}/clusters/+/flows/{FLOW_ID}/runs/+/exec/plans",
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/exec/results",
-            f"flowgent/v1/{NAMESPACE}/pools/+/flows/{FLOW_ID}/runs/+/sandbox/trigger",
+            f"flowgent/v1/{NAMESPACE}/clusters/+/flows/{FLOW_ID}/runs/+/sandbox/trigger",
             f"flowgent/v1/{NAMESPACE}/flows/{FLOW_ID}/runs/+/sandbox/result",
             "flowgent/v1/heartbeat/+",
         ]

@@ -35,20 +35,11 @@ func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
 // List returns all agent definitions for the given namespace.
 func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
-	agents, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
+	agents, err := h.store.List(r.Context(), namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	filtered := make([]*entities.AgentInfo, 0, len(agents.Items))
-	for _, item := range agents.Items {
-		if item != nil && item.Namespace == namespace {
-			filtered = append(filtered, item)
-		}
-	}
-	agents.Items = filtered
-	agents.TotalCount = int64(len(filtered))
-	agents.TotalPages = 1
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agents)
 }
@@ -57,12 +48,16 @@ func (h *AgentDefHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 	var agent entities.AgentInfo
-	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
+	if err := decodeStrictJSON(r, &agent); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 	if agent.Name == "" {
 		http.Error(w, "agent name is required", http.StatusBadRequest)
+		return
+	}
+	if agent.Namespace != "" && agent.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
 	agent.ID = uuid.New().String()
@@ -85,8 +80,8 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get returns a single agent definition by name.
 func (h *AgentDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	agent, err := h.store.Get(r.Context(), name)
-	if err != nil || agent == nil || agent.Namespace != r.PathValue("namespace") {
+	agent, err := h.store.Get(r.Context(), r.PathValue("namespace"), name)
+	if err != nil || agent == nil {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -99,63 +94,59 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	namespace := r.PathValue("namespace")
 
-	existing, err := h.store.Get(r.Context(), name)
-	if err != nil || existing == nil || existing.Namespace != namespace {
+	existing, err := h.store.Get(r.Context(), namespace, name)
+	if err != nil || existing == nil {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
 
 	var updates entities.AgentInfo
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	if err := decodeStrictJSON(r, &updates); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Merge: preserve existing values, apply non-zero updates
-	if updates.Soul != "" {
-		existing.Soul = updates.Soul
+	if updates.Name != "" && updates.Name != name {
+		http.Error(w, "name mismatch", http.StatusBadRequest)
+		return
 	}
-	if updates.Instruction != "" {
-		existing.Instruction = updates.Instruction
+	if updates.Namespace != "" && updates.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
+		return
 	}
-	if updates.Model != "" {
-		existing.Model = updates.Model
+	if updates.Model == "" {
+		http.Error(w, "model is required", http.StatusBadRequest)
+		return
 	}
-	if updates.Temperature != nil {
-		existing.Temperature = updates.Temperature
-	}
-	if updates.MaxTokens != 0 {
-		existing.MaxTokens = updates.MaxTokens
-	}
-	if updates.OutputSchema != nil {
-		existing.OutputSchema = updates.OutputSchema
-	}
-	if updates.Labels != nil {
-		existing.Labels = updates.Labels
-	}
-	if updates.Description != "" {
-		existing.Description = updates.Description
-	}
-	existing.UpdatedAt = time.Now()
+	updates.ID = existing.ID
+	updates.Name = name
+	updates.Namespace = namespace
+	updates.Status = existing.Status
+	updates.CreatedAt = existing.CreatedAt
+	updates.CreatedBy = existing.CreatedBy
+	updates.UpdatedAt = time.Now()
+	updates.UpdatedBy = existing.UpdatedBy
+	updates.DelFlag = false
 
-	if err := h.store.Save(r.Context(), existing); err != nil {
+	if err := h.store.Save(r.Context(), &updates); err != nil {
 		h.logger.Error("update agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(existing)
+	json.NewEncoder(w).Encode(updates)
 }
 
 // Delete removes an agent definition.
 func (h *AgentDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	existing, err := h.store.Get(r.Context(), name)
-	if err != nil || existing == nil || existing.Namespace != r.PathValue("namespace") {
+	namespace := r.PathValue("namespace")
+	existing, err := h.store.Get(r.Context(), namespace, name)
+	if err != nil || existing == nil {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
-	if err := h.store.Delete(r.Context(), name); err != nil {
+	if err := h.store.Delete(r.Context(), namespace, name); err != nil {
 		h.logger.Error("delete agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

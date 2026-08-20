@@ -13,7 +13,7 @@ that owns the subject.
 | L1 Engine | [Engine overview](architecture/overview.md) | Cross-component calls, state and messaging contracts, deployment, and shared modules |
 | L1 Engine | [API Server](architecture/engine/apiserver.md) | External gateway and sole durable-state client |
 | L1 Engine | [Controller](architecture/engine/controller.md) | Active-run JobManager reconciliation |
-| L1 Engine | [Resource Pools](architecture/engine/resource-pools.md) | Namespace-scoped worker capacity and SLA isolation |
+| L1 Engine | [Runtime Clusters](architecture/engine/runtime-clusters.md) | Flink-style application/session runtime isolation |
 | L1 Engine | [JobManager](architecture/engine/jobmanager.md) | DAG scheduling and runtime ownership |
 | L1 Engine | [TaskManager](architecture/engine/taskmanager.md) | Slot execution and executor routing |
 | L1 Engine | [Sandbox](architecture/engine/sandbox.md) | Isolated script execution |

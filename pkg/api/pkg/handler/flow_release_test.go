@@ -6,12 +6,11 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
-func TestPortableFlowSnapshotAndResourceBindings(t *testing.T) {
+func TestPortableFlowSnapshotAndRuntimeBindings(t *testing.T) {
 	source := &entities.FlowInfo{
-		BaseEntity:     entities.BaseEntity{ID: "security-fixer", Namespace: "producer", Description: "shared"},
-		K8sNamespace:   "producer-runtime",
-		Credentials:    map[string]string{"github": "producer-secret"},
-		ResourcePoolID: "default",
+		BaseEntity:   entities.BaseEntity{ID: "security-fixer", Namespace: "producer", Description: "shared"},
+		K8sNamespace: "producer-runtime",
+		RuntimeMode:  entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
 			{ID: "agent", Agent: "security-agent"},
 			{ID: "map", Node: &entities.Node{ID: "skill", Skill: "fix-skill"}},
@@ -22,8 +21,11 @@ func TestPortableFlowSnapshotAndResourceBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Namespace != "" || snapshot.K8sNamespace != "" || snapshot.Credentials != nil {
+	if snapshot.Namespace != "" || snapshot.K8sNamespace != "" {
 		t.Fatalf("producer runtime data leaked into snapshot: %+v", snapshot)
+	}
+	if snapshot.RuntimeMode != entities.RuntimeModeApplication {
+		t.Fatalf("runtime mode was not preserved: %+v", snapshot.RuntimeMode)
 	}
 	if err := applyFlowResourceBindings(snapshot, map[string]string{
 		"agent:security-agent": "consumer-agent",

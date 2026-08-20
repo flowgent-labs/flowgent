@@ -55,15 +55,15 @@ type GHSimpleUser struct {
 }
 
 var ghBotUser = GHSimpleUser{
-	Login:     "flowgent-bot",
-	ID:        123456,
-	NodeID:    "MDQ6VXNlcjEyMzQ1Ng==",
-	AvatarURL: "https://avatars.githubusercontent.com/u/123456?v=4",
+	Login:      "flowgent-bot",
+	ID:         123456,
+	NodeID:     "MDQ6VXNlcjEyMzQ1Ng==",
+	AvatarURL:  "https://avatars.githubusercontent.com/u/123456?v=4",
 	GravatarID: "",
-	URL:       "https://api.github.com/users/flowgent-bot",
-	HTMLURL:   "https://github.com/flowgent-bot",
-	Type:      "User",
-	SiteAdmin: false,
+	URL:        "https://api.github.com/users/flowgent-bot",
+	HTMLURL:    "https://github.com/flowgent-bot",
+	Type:       "User",
+	SiteAdmin:  false,
 }
 
 // ─── Pull Requests ─────────────────────────────────────────────────────
@@ -81,76 +81,76 @@ type GHLabel struct {
 
 // GHMilestone matches the $milestone schema.
 type GHMilestone struct {
-	URL          string       `json:"url"`
-	HTMLURL      string       `json:"html_url"`
-	LabelsURL    string       `json:"labels_url"`
-	ID           int          `json:"id"`
-	NodeID       string       `json:"node_id"`
-	Number       int          `json:"number"`
-	State        string       `json:"state"`
-	Title        string       `json:"title"`
-	Description  string       `json:"description"`
+	URL          string        `json:"url"`
+	HTMLURL      string        `json:"html_url"`
+	LabelsURL    string        `json:"labels_url"`
+	ID           int           `json:"id"`
+	NodeID       string        `json:"node_id"`
+	Number       int           `json:"number"`
+	State        string        `json:"state"`
+	Title        string        `json:"title"`
+	Description  string        `json:"description"`
 	Creator      *GHSimpleUser `json:"creator"`
-	OpenIssues   int          `json:"open_issues"`
-	ClosedIssues int          `json:"closed_issues"`
-	CreatedAt    string       `json:"created_at"`
-	UpdatedAt    string       `json:"updated_at"`
-	ClosedAt     string       `json:"closed_at"`
-	DueOn        string       `json:"due_on"`
+	OpenIssues   int           `json:"open_issues"`
+	ClosedIssues int           `json:"closed_issues"`
+	CreatedAt    string        `json:"created_at"`
+	UpdatedAt    string        `json:"updated_at"`
+	ClosedAt     string        `json:"closed_at"`
+	DueOn        string        `json:"due_on"`
 }
 
 // GHPullRequest matches the GHES $pull-request schema (full).
 // Includes both pull-request-simple fields and the extra fields from pulls/get.
 type GHPullRequest struct {
-	URL                 string         `json:"url"`
-	ID                  int64          `json:"id"`
-	NodeID              string         `json:"node_id"`
-	HTMLURL             string         `json:"html_url"`
-	DiffURL             string         `json:"diff_url"`
-	PatchURL            string         `json:"patch_url"`
-	IssueURL            string         `json:"issue_url"`
-	CommitsURL          string         `json:"commits_url"`
-	ReviewCommentsURL   string         `json:"review_comments_url"`
-	ReviewCommentURL    string         `json:"review_comment_url"`
-	CommentsURL         string         `json:"comments_url"`
-	StatusesURL         string         `json:"statuses_url"`
-	Number              int            `json:"number"`
-	State               string         `json:"state"`
-	Locked              bool           `json:"locked"`
-	Title               string         `json:"title"`
-	User                *GHSimpleUser   `json:"user"`
-	Body                string         `json:"body"`
-	Labels              []GHLabel      `json:"labels"`
-	Milestone           *GHMilestone   `json:"milestone"`
-	ActiveLockReason    string         `json:"active_lock_reason,omitempty"`
-	CreatedAt           string         `json:"created_at"`
-	UpdatedAt           string         `json:"updated_at"`
-	ClosedAt            any            `json:"closed_at"`
-	MergedAt            any            `json:"merged_at"`
-	MergeCommitSHA      any            `json:"merge_commit_sha"`
-	Assignee            *GHSimpleUser   `json:"assignee"`
-	Assignees           []GHSimpleUser  `json:"assignees,omitempty"`
-	RequestedReviewers  []GHSimpleUser  `json:"requested_reviewers,omitempty"`
-	RequestedTeams      []any          `json:"requested_teams,omitempty"`
-	Head                GHRef          `json:"head"`
-	Base                GHRef          `json:"base"`
-	Links               GHLinks        `json:"_links"`
-	AuthorAssociation   string         `json:"author_association"`
-	AutoMerge           any            `json:"auto_merge"`
-	Draft               bool           `json:"draft"`
+	URL                string         `json:"url"`
+	ID                 int64          `json:"id"`
+	NodeID             string         `json:"node_id"`
+	HTMLURL            string         `json:"html_url"`
+	DiffURL            string         `json:"diff_url"`
+	PatchURL           string         `json:"patch_url"`
+	IssueURL           string         `json:"issue_url"`
+	CommitsURL         string         `json:"commits_url"`
+	ReviewCommentsURL  string         `json:"review_comments_url"`
+	ReviewCommentURL   string         `json:"review_comment_url"`
+	CommentsURL        string         `json:"comments_url"`
+	StatusesURL        string         `json:"statuses_url"`
+	Number             int            `json:"number"`
+	State              string         `json:"state"`
+	Locked             bool           `json:"locked"`
+	Title              string         `json:"title"`
+	User               *GHSimpleUser  `json:"user"`
+	Body               string         `json:"body"`
+	Labels             []GHLabel      `json:"labels"`
+	Milestone          *GHMilestone   `json:"milestone"`
+	ActiveLockReason   string         `json:"active_lock_reason,omitempty"`
+	CreatedAt          string         `json:"created_at"`
+	UpdatedAt          string         `json:"updated_at"`
+	ClosedAt           any            `json:"closed_at"`
+	MergedAt           any            `json:"merged_at"`
+	MergeCommitSHA     any            `json:"merge_commit_sha"`
+	Assignee           *GHSimpleUser  `json:"assignee"`
+	Assignees          []GHSimpleUser `json:"assignees,omitempty"`
+	RequestedReviewers []GHSimpleUser `json:"requested_reviewers,omitempty"`
+	RequestedTeams     []any          `json:"requested_teams,omitempty"`
+	Head               GHRef          `json:"head"`
+	Base               GHRef          `json:"base"`
+	Links              GHLinks        `json:"_links"`
+	AuthorAssociation  string         `json:"author_association"`
+	AutoMerge          any            `json:"auto_merge"`
+	Draft              bool           `json:"draft"`
 	// Extra fields from pulls/get (pull-request extends pull-request-simple)
-	Merged              bool           `json:"merged"`
-	Mergeable           bool           `json:"mergeable"`
-	Rebaseable          bool           `json:"rebaseable,omitempty"`
-	MergeableState      string         `json:"mergeable_state"`
-	MergedBy            *GHSimpleUser   `json:"merged_by"`
-	Comments            int            `json:"comments"`
-	ReviewComments      int            `json:"review_comments"`
-	MaintainerCanModify bool           `json:"maintainer_can_modify"`
-	Commits             int            `json:"commits"`
-	Additions           int            `json:"additions"`
-	Deletions           int            `json:"deletions"`
-	ChangedFiles        int            `json:"changed_files"`
+	Merged              bool          `json:"merged"`
+	Mergeable           bool          `json:"mergeable"`
+	Rebaseable          bool          `json:"rebaseable,omitempty"`
+	MergeableState      string        `json:"mergeable_state"`
+	MergedBy            *GHSimpleUser `json:"merged_by"`
+	Comments            int           `json:"comments"`
+	ReviewComments      int           `json:"review_comments"`
+	MaintainerCanModify bool          `json:"maintainer_can_modify"`
+	Commits             int           `json:"commits"`
+	Additions           int           `json:"additions"`
+	Deletions           int           `json:"deletions"`
+	ChangedFiles        int           `json:"changed_files"`
 }
 
 // GHRef matches the GHES head/base ref object in a PR plus git/refs responses.
@@ -158,34 +158,34 @@ type GHRef struct {
 	Label string        `json:"label"`
 	Ref   string        `json:"ref"`
 	SHA   string        `json:"sha"`
-	User  *GHSimpleUser  `json:"user"`
-	Repo  *GHRepoRef     `json:"repo"`
+	User  *GHSimpleUser `json:"user"`
+	Repo  *GHRepoRef    `json:"repo"`
 }
 
 // GHRepoRef is a minimal repo reference used in PR head/base.
 type GHRepoRef struct {
-	ID               int64  `json:"id"`
-	NodeID           string `json:"node_id"`
-	Name             string `json:"name"`
-	FullName         string `json:"full_name"`
-	Private          bool   `json:"private"`
-	HTMLURL          string `json:"html_url"`
-	Description      string `json:"description"`
-	Fork             bool   `json:"fork"`
-	URL              string `json:"url"`
-	DefaultBranch    string `json:"default_branch"`
+	ID            int64  `json:"id"`
+	NodeID        string `json:"node_id"`
+	Name          string `json:"name"`
+	FullName      string `json:"full_name"`
+	Private       bool   `json:"private"`
+	HTMLURL       string `json:"html_url"`
+	Description   string `json:"description"`
+	Fork          bool   `json:"fork"`
+	URL           string `json:"url"`
+	DefaultBranch string `json:"default_branch"`
 }
 
 // GHLinks matches the GHES _links object on a PR.
 type GHLinks struct {
-	Self            GHLink `json:"self"`
-	HTML            GHLink `json:"html"`
-	Issue           GHLink `json:"issue"`
-	Comments        GHLink `json:"comments"`
-	ReviewComments  GHLink `json:"review_comments"`
-	ReviewComment   GHLink `json:"review_comment"`
-	Commits         GHLink `json:"commits"`
-	Statuses        GHLink `json:"statuses"`
+	Self           GHLink `json:"self"`
+	HTML           GHLink `json:"html"`
+	Issue          GHLink `json:"issue"`
+	Comments       GHLink `json:"comments"`
+	ReviewComments GHLink `json:"review_comments"`
+	ReviewComment  GHLink `json:"review_comment"`
+	Commits        GHLink `json:"commits"`
+	Statuses       GHLink `json:"statuses"`
 }
 
 // GHLink is a single href link.
@@ -236,17 +236,17 @@ type GHTree struct {
 
 // GHCommit matches the GHES $commit schema.
 type GHCommit struct {
-	URL          string         `json:"url"`
-	SHA          string         `json:"sha"`
-	NodeID       string         `json:"node_id"`
-	HTMLURL      string         `json:"html_url"`
-	CommentsURL  string         `json:"comments_url"`
-	Commit       GHCommitDetail `json:"commit"`
-	Author       *GHSimpleUser   `json:"author"`
-	Committer    *GHSimpleUser   `json:"committer"`
-	Parents      []GHParent     `json:"parents"`
-	Stats        *GHStats       `json:"stats,omitempty"`
-	Files        []GHPullFile   `json:"files,omitempty"`
+	URL         string         `json:"url"`
+	SHA         string         `json:"sha"`
+	NodeID      string         `json:"node_id"`
+	HTMLURL     string         `json:"html_url"`
+	CommentsURL string         `json:"comments_url"`
+	Commit      GHCommitDetail `json:"commit"`
+	Author      *GHSimpleUser  `json:"author"`
+	Committer   *GHSimpleUser  `json:"committer"`
+	Parents     []GHParent     `json:"parents"`
+	Stats       *GHStats       `json:"stats,omitempty"`
+	Files       []GHPullFile   `json:"files,omitempty"`
 }
 
 // GHCommitDetail matches the nested commit.commit object.
@@ -284,9 +284,9 @@ type GHCreateRefRequest struct {
 
 // GHGritRefResponse matches the GHES $git-ref response.
 type GHGritRefResponse struct {
-	Ref    string      `json:"ref"`
-	NodeID string      `json:"node_id"`
-	URL    string      `json:"url"`
+	Ref    string       `json:"ref"`
+	NodeID string       `json:"node_id"`
+	URL    string       `json:"url"`
 	Object GHGritObject `json:"object"`
 }
 
@@ -311,20 +311,20 @@ type GHCreateContentRequest struct {
 
 // GHContentFile matches the GHES $content-file schema.
 type GHContentFile struct {
-	Type             string  `json:"type"`
-	Encoding         string  `json:"encoding"`
-	Size             int     `json:"size"`
-	Name             string  `json:"name"`
-	Path             string  `json:"path"`
-	Content          string  `json:"content"`
-	SHA              string  `json:"sha"`
-	URL              string  `json:"url"`
-	GITURL           string  `json:"git_url"`
-	HTMLURL          string  `json:"html_url"`
-	DownloadURL      string  `json:"download_url"`
-	Links            GHContentLinks `json:"_links"`
-	Target           string  `json:"target,omitempty"`
-	SubmoduleGITURL  string  `json:"submodule_git_url,omitempty"`
+	Type            string         `json:"type"`
+	Encoding        string         `json:"encoding"`
+	Size            int            `json:"size"`
+	Name            string         `json:"name"`
+	Path            string         `json:"path"`
+	Content         string         `json:"content"`
+	SHA             string         `json:"sha"`
+	URL             string         `json:"url"`
+	GITURL          string         `json:"git_url"`
+	HTMLURL         string         `json:"html_url"`
+	DownloadURL     string         `json:"download_url"`
+	Links           GHContentLinks `json:"_links"`
+	Target          string         `json:"target,omitempty"`
+	SubmoduleGITURL string         `json:"submodule_git_url,omitempty"`
 }
 
 // GHContentLinks matches the _links in content-file.
@@ -372,38 +372,38 @@ type GHReactionRollup struct {
 
 // GHIssue matches the GHES $issue schema.
 type GHIssue struct {
-	ID                   int               `json:"id"`
-	NodeID               string            `json:"node_id"`
-	URL                  string            `json:"url"`
-	RepositoryURL        string            `json:"repository_url"`
-	LabelsURL            string            `json:"labels_url"`
-	CommentsURL          string            `json:"comments_url"`
-	EventsURL            string            `json:"events_url"`
-	HTMLURL              string            `json:"html_url"`
-	Number               int               `json:"number"`
-	State                string            `json:"state"`
-	StateReason          string            `json:"state_reason,omitempty"`
-	Title                string            `json:"title"`
-	Body                 string            `json:"body,omitempty"`
-	User                 *GHSimpleUser      `json:"user"`
-	Labels               []any             `json:"labels"`
-	Assignee             *GHSimpleUser      `json:"assignee"`
-	Assignees            []GHSimpleUser     `json:"assignees,omitempty"`
-	Milestone            *GHMilestone      `json:"milestone"`
-	Locked               bool              `json:"locked"`
-	ActiveLockReason     string            `json:"active_lock_reason,omitempty"`
-	Comments             int               `json:"comments"`
-	PRRef                *GHIssuePRRef      `json:"pull_request,omitempty"`
-	ClosedAt             string            `json:"closed_at"`
-	CreatedAt            string            `json:"created_at"`
-	UpdatedAt            string            `json:"updated_at"`
-	Draft                bool              `json:"draft,omitempty"`
-	ClosedBy             *GHSimpleUser      `json:"closed_by,omitempty"`
-	BodyHTML             string            `json:"body_html,omitempty"`
-	BodyText             string            `json:"body_text,omitempty"`
-	TimelineURL          string            `json:"timeline_url,omitempty"`
-	AuthorAssociation    string            `json:"author_association,omitempty"`
-	Reactions            *GHReactionRollup `json:"reactions,omitempty"`
+	ID                int               `json:"id"`
+	NodeID            string            `json:"node_id"`
+	URL               string            `json:"url"`
+	RepositoryURL     string            `json:"repository_url"`
+	LabelsURL         string            `json:"labels_url"`
+	CommentsURL       string            `json:"comments_url"`
+	EventsURL         string            `json:"events_url"`
+	HTMLURL           string            `json:"html_url"`
+	Number            int               `json:"number"`
+	State             string            `json:"state"`
+	StateReason       string            `json:"state_reason,omitempty"`
+	Title             string            `json:"title"`
+	Body              string            `json:"body,omitempty"`
+	User              *GHSimpleUser     `json:"user"`
+	Labels            []any             `json:"labels"`
+	Assignee          *GHSimpleUser     `json:"assignee"`
+	Assignees         []GHSimpleUser    `json:"assignees,omitempty"`
+	Milestone         *GHMilestone      `json:"milestone"`
+	Locked            bool              `json:"locked"`
+	ActiveLockReason  string            `json:"active_lock_reason,omitempty"`
+	Comments          int               `json:"comments"`
+	PRRef             *GHIssuePRRef     `json:"pull_request,omitempty"`
+	ClosedAt          string            `json:"closed_at"`
+	CreatedAt         string            `json:"created_at"`
+	UpdatedAt         string            `json:"updated_at"`
+	Draft             bool              `json:"draft,omitempty"`
+	ClosedBy          *GHSimpleUser     `json:"closed_by,omitempty"`
+	BodyHTML          string            `json:"body_html,omitempty"`
+	BodyText          string            `json:"body_text,omitempty"`
+	TimelineURL       string            `json:"timeline_url,omitempty"`
+	AuthorAssociation string            `json:"author_association,omitempty"`
+	Reactions         *GHReactionRollup `json:"reactions,omitempty"`
 }
 
 // GHIssuePRRef is the pull_request field on issues that are PRs.
@@ -427,19 +427,19 @@ type GHCreateIssueRequest struct {
 
 // GHIssueComment matches the GHES $issue-comment schema.
 type GHIssueComment struct {
-	ID                   int               `json:"id"`
-	NodeID               string            `json:"node_id"`
-	URL                  string            `json:"url"`
-	Body                 string            `json:"body,omitempty"`
-	BodyText             string            `json:"body_text,omitempty"`
-	BodyHTML             string            `json:"body_html,omitempty"`
-	HTMLURL              string            `json:"html_url"`
-	User                 *GHSimpleUser      `json:"user"`
-	CreatedAt            string            `json:"created_at"`
-	UpdatedAt            string            `json:"updated_at"`
-	IssueURL             string            `json:"issue_url"`
-	AuthorAssociation    string            `json:"author_association,omitempty"`
-	Reactions            *GHReactionRollup `json:"reactions,omitempty"`
+	ID                int               `json:"id"`
+	NodeID            string            `json:"node_id"`
+	URL               string            `json:"url"`
+	Body              string            `json:"body,omitempty"`
+	BodyText          string            `json:"body_text,omitempty"`
+	BodyHTML          string            `json:"body_html,omitempty"`
+	HTMLURL           string            `json:"html_url"`
+	User              *GHSimpleUser     `json:"user"`
+	CreatedAt         string            `json:"created_at"`
+	UpdatedAt         string            `json:"updated_at"`
+	IssueURL          string            `json:"issue_url"`
+	AuthorAssociation string            `json:"author_association,omitempty"`
+	Reactions         *GHReactionRollup `json:"reactions,omitempty"`
 }
 
 // ─── Actions Secrets ───────────────────────────────────────────────────
@@ -593,15 +593,15 @@ func newGitHubHandler(log *RequestLog) http.HandlerFunc {
 					Links:       GHContentLinks{GIT: st.repoURL + "/git/blobs/" + commitSHA, HTML: "https://github.com/wl4g/rengine/blob/" + req.Branch + "/" + filePath, Self: st.repoURL + "/contents/" + filePath},
 				},
 				Commit: GHFileCommitDetail{
-					SHA:     commitSHA,
-					NodeID:  "C_" + commitSHA,
-					URL:     st.repoURL + "/commits/" + commitSHA,
-					HTMLURL: "https://github.com/wl4g/rengine/commit/" + commitSHA,
-					Author:  GHGitUser{Name: "Flowgent Labs", Email: "bot@flowgent.ai", Date: ghNow()},
+					SHA:       commitSHA,
+					NodeID:    "C_" + commitSHA,
+					URL:       st.repoURL + "/commits/" + commitSHA,
+					HTMLURL:   "https://github.com/wl4g/rengine/commit/" + commitSHA,
+					Author:    GHGitUser{Name: "Flowgent Labs", Email: "bot@flowgent.ai", Date: ghNow()},
 					Committer: GHGitUser{Name: "Flowgent Labs", Email: "bot@flowgent.ai", Date: ghNow()},
-					Message: req.Message,
-					Tree:    GHTree{SHA: "tree-" + commitSHA, URL: st.repoURL + "/git/trees/tree-" + commitSHA},
-					Parents: []GHParent{{SHA: "abcdef1234567890", URL: st.repoURL + "/commits/abcdef1234567890", HTMLURL: "https://github.com/wl4g/rengine/commit/abcdef1234567890"}},
+					Message:   req.Message,
+					Tree:      GHTree{SHA: "tree-" + commitSHA, URL: st.repoURL + "/git/trees/tree-" + commitSHA},
+					Parents:   []GHParent{{SHA: "abcdef1234567890", URL: st.repoURL + "/commits/abcdef1234567890", HTMLURL: "https://github.com/wl4g/rengine/commit/abcdef1234567890"}},
 				},
 			})
 
@@ -626,25 +626,25 @@ func newGitHubHandler(log *RequestLog) http.HandlerFunc {
 			json.Unmarshal(bodyBytes, &req)
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(GHIssue{
-				ID:            2001,
-				NodeID:        "I_issue_2001",
-				URL:           st.repoURL + "/issues/1",
-				RepositoryURL: st.repoURL,
-				LabelsURL:     st.repoURL + "/issues/1/labels{/name}",
-				CommentsURL:   st.repoURL + "/issues/1/comments",
-				EventsURL:     st.repoURL + "/issues/1/events",
-				HTMLURL:       "https://github.com/wl4g/rengine/issues/1",
-				Number:        1,
-				State:         "open",
-				Title:         req.Title,
-				Body:          req.Body,
-				User:          &ghBotUser,
-				Labels:        req.Labels,
-				Assignee:      &ghBotUser,
-				Locked:        false,
-				Comments:      0,
-				CreatedAt:     ghNow(),
-				UpdatedAt:     ghNow(),
+				ID:                2001,
+				NodeID:            "I_issue_2001",
+				URL:               st.repoURL + "/issues/1",
+				RepositoryURL:     st.repoURL,
+				LabelsURL:         st.repoURL + "/issues/1/labels{/name}",
+				CommentsURL:       st.repoURL + "/issues/1/comments",
+				EventsURL:         st.repoURL + "/issues/1/events",
+				HTMLURL:           "https://github.com/wl4g/rengine/issues/1",
+				Number:            1,
+				State:             "open",
+				Title:             req.Title,
+				Body:              req.Body,
+				User:              &ghBotUser,
+				Labels:            req.Labels,
+				Assignee:          &ghBotUser,
+				Locked:            false,
+				Comments:          0,
+				CreatedAt:         ghNow(),
+				UpdatedAt:         ghNow(),
 				AuthorAssociation: "COLLABORATOR",
 			})
 
@@ -656,32 +656,32 @@ func newGitHubHandler(log *RequestLog) http.HandlerFunc {
 			json.Unmarshal(bodyBytes, &req)
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(GHIssueComment{
-				ID:        99,
-				NodeID:    "IC_comment_99",
-				URL:       st.repoURL + "/issues/comments/99",
-				HTMLURL:   "https://github.com/wl4g/rengine/pull/4#issuecomment-99",
-				Body:      req.Body,
-				BodyText:  req.Body,
-				BodyHTML:  "<p>" + req.Body + "</p>",
-				User:      &ghBotUser,
-				CreatedAt: ghNow(),
-				UpdatedAt: ghNow(),
-				IssueURL:  st.repoURL + "/issues/4",
+				ID:                99,
+				NodeID:            "IC_comment_99",
+				URL:               st.repoURL + "/issues/comments/99",
+				HTMLURL:           "https://github.com/wl4g/rengine/pull/4#issuecomment-99",
+				Body:              req.Body,
+				BodyText:          req.Body,
+				BodyHTML:          "<p>" + req.Body + "</p>",
+				User:              &ghBotUser,
+				CreatedAt:         ghNow(),
+				UpdatedAt:         ghNow(),
+				IssueURL:          st.repoURL + "/issues/4",
 				AuthorAssociation: "COLLABORATOR",
 			})
 
 		// ── GET /repos/{owner}/{repo}/issues/{number}/comments ──
 		case r.Method == http.MethodGet && strings.Contains(path, "/issues/") && strings.Contains(path, "/comments"):
 			json.NewEncoder(w).Encode([]GHIssueComment{{
-				ID:        99,
-				NodeID:    "IC_comment_99",
-				URL:       st.repoURL + "/issues/comments/99",
-				HTMLURL:   "https://github.com/wl4g/rengine/pull/4#issuecomment-99",
-				Body:      "Flowgent security-autonomy-fixer report: 1 BLOCKER fixed.",
-				User:      &ghBotUser,
-				CreatedAt: ghNow(),
-				UpdatedAt: ghNow(),
-				IssueURL:  st.repoURL + "/issues/4",
+				ID:                99,
+				NodeID:            "IC_comment_99",
+				URL:               st.repoURL + "/issues/comments/99",
+				HTMLURL:           "https://github.com/wl4g/rengine/pull/4#issuecomment-99",
+				Body:              "Flowgent security-autonomy-fixer report: 1 BLOCKER fixed.",
+				User:              &ghBotUser,
+				CreatedAt:         ghNow(),
+				UpdatedAt:         ghNow(),
+				IssueURL:          st.repoURL + "/issues/4",
 				AuthorAssociation: "COLLABORATOR",
 			}})
 
@@ -703,7 +703,7 @@ func newGitHubHandler(log *RequestLog) http.HandlerFunc {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			json.NewEncoder(w).Encode(map[string]any{
-				"message":          "Not Found",
+				"message":           "Not Found",
 				"documentation_url": "https://docs.github.com/rest",
 			})
 		}

@@ -25,14 +25,14 @@ func RegisterRESTRoutes(
 	iamHandler *handler.IAMHandler,
 	flowRelease *handler.FlowReleaseHandler,
 	runtimeConfig *handler.RuntimeConfigHandler,
-	resourcePools *handler.ResourcePoolHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// ── Health & Spec ──────────────────────────────────────
 	mux.HandleFunc("GET /_/healthz", health.Healthz)
-	mux.HandleFunc("GET /_/openapi.yaml", swagger.OpenAPIHandler)
-	mux.HandleFunc("GET /_/swagger-ui", swagger.SwaggerUIHandler)
+	swaggerConfig := swagger.DefaultSwaggerConfig()
+	mux.HandleFunc("GET /_/openapi.yaml", swagger.NewOpenAPIHandler(swaggerConfig))
+	mux.HandleFunc("GET /_/swagger-ui", swagger.NewSwaggerUIHandler(swaggerConfig))
 
 	// ── Agents (namespace-scoped) ─────────────────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/agents", agentDef.List)
@@ -60,8 +60,8 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/tasks", flowRun.ListTasks)
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/tasks/{task_id}", flowRun.GetTask)
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.ListRunApprovals)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/approve", human.ApproveRun)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/reject", human.RejectRun)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/{decision}", human.ResolveRunApproval)
 	if traceHandler != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/trace", traceHandler.GetRunTrace)
 	}
@@ -80,14 +80,6 @@ func RegisterRESTRoutes(
 		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/secrets", runtimeConfig.UpdateFlowSecrets)
 		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config/resolved", runtimeConfig.ResolveFlow)
 	}
-	if resourcePools != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/resource-pools", resourcePools.List)
-		mux.HandleFunc("POST /api/v1/{namespace}/resource-pools", resourcePools.Create)
-		mux.HandleFunc("GET /api/v1/{namespace}/resource-pools/{name}", resourcePools.Get)
-		mux.HandleFunc("PUT /api/v1/{namespace}/resource-pools/{name}", resourcePools.Update)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/resource-pools/{name}", resourcePools.Delete)
-	}
-
 	// ── Runtime Skills (kind=skill Flow definitions) ───────────
 	mux.HandleFunc("GET /api/v1/{namespace}/skills", flowDef.ListSkills)
 	mux.HandleFunc("POST /api/v1/{namespace}/skills", flowDef.CreateSkill)
@@ -98,6 +90,7 @@ func RegisterRESTRoutes(
 	// ── Runs (namespace-scoped) ───────────────────────────────
 	mux.HandleFunc("POST /api/v1/{namespace}/runs", flowRun.Create)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs", flowRun.List)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/metrics", flowRun.Metrics)
 	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}", flowRun.Update)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}", flowRun.Get)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/runs/{id}", flowRun.Delete)
@@ -107,17 +100,14 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.GetTask)
 	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.UpdateTask)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/approvals", human.ListRunApprovals)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/approve", human.ApproveRun)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/reject", human.RejectRun)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals", human.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/{decision}", human.ResolveRunApproval)
 	if traceHandler != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/trace", traceHandler.GetRunTrace)
 	}
 
-	// ── Human Approvals ────────────────────────────────────
-	mux.HandleFunc("POST /api/v1/human/approvals", human.CreateApproval)
-	mux.HandleFunc("GET /api/v1/human/approvals", human.ListPendingApprovals)
-	mux.HandleFunc("POST /api/v1/human/{token}/approve", human.Approve)
-	mux.HandleFunc("POST /api/v1/human/{token}/reject", human.Reject)
+	// ── Namespace approval feed for the notifier ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/approvals", human.ListNamespaceApprovals)
 
 	// ── Notification Channels (namespace-scoped) ──────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/notifications/channels", notif.ListChannels)
@@ -126,6 +116,7 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("PUT /api/v1/{namespace}/notifications/channels/{id}", notif.UpdateChannel)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/notifications/channels/{id}", notif.DeleteChannel)
 	mux.HandleFunc("POST /api/v1/{namespace}/notifications/test", notif.TestChannel)
+	mux.HandleFunc("GET /api/v1/{namespace}/notifications/runtime/channels", notif.ListRuntimeChannels)
 
 	// ── LLM Providers (namespace-scoped) ──────────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/llm/providers", llmProvider.List)

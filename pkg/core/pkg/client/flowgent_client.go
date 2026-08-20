@@ -107,12 +107,12 @@ func (c *FlowgentClient) GetAgent(ctx context.Context, namespace, name string) (
 
 // ─── AgentFlow CRUD ──────────────────────────────────────────────
 
-func (c *FlowgentClient) ListFlows(ctx context.Context, namespace string) ([]entities.FlowVersionInfo, error) {
+func (c *FlowgentClient) ListFlows(ctx context.Context, namespace string) ([]entities.FlowInfo, error) {
 	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/flows", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListFlows: %w", err)
 	}
-	var items []entities.FlowVersionInfo
+	var items []entities.FlowInfo
 	if err := readJSON(resp, &items); err != nil {
 		return nil, fmt.Errorf("ListFlows: %w", err)
 	}
@@ -202,41 +202,6 @@ func (c *FlowgentClient) DeleteFlow(ctx context.Context, namespace, flowID strin
 	return nil
 }
 
-// ListResourcePools returns the capacity boundaries available in a namespace.
-func (c *FlowgentClient) ListResourcePools(ctx context.Context, namespace string) ([]*entities.ResourcePoolInfo, error) {
-	resp, err := c.do(ctx, http.MethodGet, "/api/v1/"+url.PathEscape(namespace)+"/resource-pools", nil)
-	if err != nil {
-		return nil, fmt.Errorf("ListResourcePools: %w", err)
-	}
-	var items []*entities.ResourcePoolInfo
-	if err := readJSON(resp, &items); err != nil {
-		return nil, fmt.Errorf("ListResourcePools: %w", err)
-	}
-	return items, nil
-}
-
-func (c *FlowgentClient) GetResourcePool(ctx context.Context, namespace, name string) (*entities.ResourcePoolInfo, error) {
-	path := "/api/v1/" + url.PathEscape(namespace) + "/resource-pools/" + url.PathEscape(name)
-	resp, err := c.do(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, fmt.Errorf("GetResourcePool: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GetResourcePool %d: %s", resp.StatusCode, string(body))
-	}
-	var item entities.ResourcePoolInfo
-	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
-		return nil, err
-	}
-	entities.NormalizeResourcePool(&item)
-	return &item, nil
-}
-
 // ─── FlowRun ─────────────────────────────────────────────────────
 
 // CreateRun creates a run directly with explicit namespace, namespace, and trigger info.
@@ -301,11 +266,14 @@ func (c *FlowgentClient) GetRun(ctx context.Context, namespace, runID string) (*
 	return &run, nil
 }
 
-// ListRuns returns runs with optional filters. status, namespace, and flowID may be empty.
-func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, k8sNamespace, flowID string, page, size int) (*entities.Page[entities.FlowRunInfo], error) {
+// ListRuns returns runs with optional filters. status, runtimeMode, k8sNamespace, and flowID may be empty.
+func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, runtimeMode, k8sNamespace, flowID string, page, size int) (*entities.Page[entities.FlowRunInfo], error) {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
+	}
+	if runtimeMode != "" {
+		q.Set("runtime_mode", runtimeMode)
 	}
 	if k8sNamespace != "" {
 		q.Set("k8s_namespace", k8sNamespace)
@@ -443,9 +411,9 @@ func (c *FlowgentClient) SavePlan(ctx context.Context, namespace, runID string, 
 // ─── Human Approvals ─────────────────────────────────────────────
 
 // CreateApproval creates a pending human approval.
-func (c *FlowgentClient) CreateApproval(ctx context.Context, approval *entities.ApprovalInfo) error {
+func (c *FlowgentClient) CreateApproval(ctx context.Context, namespace string, approval *entities.ApprovalInfo) error {
 	b, _ := json.Marshal(approval)
-	resp, err := c.do(ctx, "POST", "/api/v1/human/approvals", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", fmt.Sprintf("/api/v1/%s/runs/%s/approvals", namespace, approval.AgentFlowRunID), bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("CreateApproval: %w", err)
 	}
@@ -454,12 +422,15 @@ func (c *FlowgentClient) CreateApproval(ctx context.Context, approval *entities.
 		eb, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("CreateApproval %d: %s", resp.StatusCode, string(eb))
 	}
+	if err := json.NewDecoder(resp.Body).Decode(approval); err != nil {
+		return fmt.Errorf("CreateApproval decode: %w", err)
+	}
 	return nil
 }
 
 // ListPendingApprovals returns all pending human approvals.
-func (c *FlowgentClient) ListPendingApprovals(ctx context.Context) ([]entities.ApprovalInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/human/approvals?status=PENDING", nil)
+func (c *FlowgentClient) ListPendingApprovals(ctx context.Context, namespace string) ([]entities.ApprovalInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/approvals", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListPendingApprovals: %w", err)
 	}
@@ -481,6 +452,19 @@ func (c *FlowgentClient) ListChannels(ctx context.Context, namespace string) ([]
 	var page entities.Page[entities.NotifyChannelInfo]
 	if err := readJSON(resp, &page); err != nil {
 		return nil, fmt.Errorf("ListChannels: %w", err)
+	}
+	return dereferenceItems(page.Items), nil
+}
+
+// ListRuntimeChannels returns encrypted channel envelopes to the notifier.
+func (c *FlowgentClient) ListRuntimeChannels(ctx context.Context, namespace string) ([]entities.NotifyChannelInfo, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/notifications/runtime/channels", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ListRuntimeChannels: %w", err)
+	}
+	var page entities.Page[entities.NotifyChannelInfo]
+	if err := readJSON(resp, &page); err != nil {
+		return nil, fmt.Errorf("ListRuntimeChannels: %w", err)
 	}
 	return dereferenceItems(page.Items), nil
 }
@@ -615,30 +599,18 @@ func (c *FlowgentClient) CreateKnowledge(ctx context.Context, namespace string, 
 // ─── Watch (long-poll) ───────────────────────────────────────────
 
 // WatchFlows calls GET /api/v1/{namespace}/flows/watch?since=N (long-poll).
-func (c *FlowgentClient) WatchFlows(ctx context.Context, namespace string, since int64) ([]entities.FlowVersionInfo, int64, error) {
+func (c *FlowgentClient) WatchFlows(ctx context.Context, namespace string, since int64) ([]entities.FlowInfo, int64, error) {
 	raw := fmt.Sprintf("/api/v1/%s/flows/watch?since=%d", namespace, since)
 	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("WatchFlows: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var versions []entities.FlowVersionInfo
-	if err := json.Unmarshal(body, &versions); err == nil {
-		return versions, since, nil
-	}
-	var wrapper struct {
-		Flows   []entities.FlowVersionInfo `json:"flows"`
-		Version int64                      `json:"version"`
-	}
-	if err := json.Unmarshal(body, &wrapper); err != nil {
+	var wrapper entities.FlowWatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 		return nil, 0, fmt.Errorf("decode watch response: %w", err)
 	}
-	if wrapper.Version > 0 {
-		since = wrapper.Version
-	}
-	return wrapper.Flows, since, nil
+	return wrapper.Flows, wrapper.Version, nil
 }
 
 // ─── Client-backed state adapters ─────────────────────────────────
@@ -675,11 +647,12 @@ func (a *TaskStateClient) SaveTask(ctx context.Context, task *entities.TaskRunIn
 
 // HumanApprovalClient adapts FlowgentClient for HumanExecutor approval creation.
 type HumanApprovalClient struct {
-	Client *FlowgentClient
+	Client    *FlowgentClient
+	Namespace string
 }
 
 func (a *HumanApprovalClient) CreateApproval(ctx context.Context, approval *entities.ApprovalInfo) error {
-	return a.Client.CreateApproval(ctx, approval)
+	return a.Client.CreateApproval(ctx, a.Namespace, approval)
 }
 
 // NotifierClient is the client-side adapter for the notifier server's API calls.
@@ -699,14 +672,14 @@ func NewNotifierClient(c *FlowgentClient, namespace string) *NotifierClient {
 }
 
 func (a *NotifierClient) ListPendingApprovals(ctx context.Context) ([]entities.ApprovalInfo, error) {
-	return a.Client.ListPendingApprovals(ctx)
+	return a.Client.ListPendingApprovals(ctx, a.Namespace)
 }
 
 func (a *NotifierClient) ListChannels(ctx context.Context, namespaceID string) ([]entities.NotifyChannelInfo, error) {
 	if namespaceID == "" {
 		namespaceID = a.Namespace
 	}
-	return a.Client.ListChannels(ctx, namespaceID)
+	return a.Client.ListRuntimeChannels(ctx, namespaceID)
 }
 
 func dereferenceItems[T any](items []*T) []T {

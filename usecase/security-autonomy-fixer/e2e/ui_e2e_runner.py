@@ -26,7 +26,7 @@ from verifier import _common as verifier_common
 E2E_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = E2E_DIR.parents[2]
 UI_DIR = PROJECT_ROOT / "flowgent-ui"
-ROUND_REPORTS = E2E_DIR / "reports" / "ui-rounds-phase5-resource-pools"
+ROUND_REPORTS = E2E_DIR / "reports" / "ui-rounds-phase6-runtime-clusters"
 LAST_RUN_ID = E2E_DIR / ".last_run_id"
 UI_EVIDENCE = E2E_DIR / ".last_ui_provision.json"
 NOTIFICATION_URL = (
@@ -292,7 +292,7 @@ def main():
     parser.add_argument("--skip-first-build", action="store_true")
     args = parser.parse_args()
     if args.rounds < 5:
-        raise SystemExit("The resource-pool acceptance gate requires at least 5 successful rounds")
+        raise SystemExit("The runtime-cluster acceptance gate requires at least 5 successful rounds")
 
     os.environ.setdefault("FLOWGENT_E2E_NOTIFICATION_TOKEN", secrets.token_urlsafe(32))
     os.environ.setdefault("FLOWGENT_E2E_NOTIFICATION_URL", NOTIFICATION_URL)

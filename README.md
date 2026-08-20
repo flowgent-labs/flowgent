@@ -2,7 +2,7 @@
 
 **Predictable, auditable, distributed enterprise AI agent orchestration — with native economic layer (x402/MPP).**
 
-Flowgent is an AI-native universal orchestration engine with namespace-scoped Resource Pools for explicit capacity and SLA isolation. It deeply integrates LLM agent intelligence with deterministic DAG execution — preserving the predictability, reliability, and auditability of traditional workflows while empowering distributed enterprise super-agents with bounded, governable autonomy.
+Flowgent is an AI-native universal orchestration engine with Flink-style runtime clusters for explicit execution isolation. It deeply integrates LLM agent intelligence with deterministic DAG execution — preserving the predictability, reliability, and auditability of traditional workflows while empowering distributed enterprise super-agents with bounded, governable autonomy.
 
 ---
 
@@ -13,7 +13,7 @@ Flowgent is an AI-native universal orchestration engine with namespace-scoped Re
 - **Controlled Autonomy** — supervisor constrained to `continue|retry|inject|abort` with configurable quotas.
 - **State-Machine Persistence** — every run and task is durable. Pause at `human` gates, resume via API, replay idempotently.
 - **Multi-Namespace API** — namespace-scoped REST paths (`/api/v1/{namespace}/...`), JWT/OIDC/GitHub OAuth, A2A protocol server (Google Agent-to-Agent).
-- **Resource Pools** — every Flow binds a namespace-scoped TM/Sandbox capacity pool while retaining a dedicated active-run JobManager; pool slots, resources, PriorityClass, and NodeSelector provide explicit SLA isolation.
+- **Runtime Clusters** — application-mode runs get isolated per-run JM/TM/Sandbox clusters, while session-mode runs share the Helm-deployed session cluster. Runtime cluster IDs keep JobManager ownership, workers, MQTT dispatch, and Kubernetes labels isolated.
 - **Dual-Mode Deployment** — All-in-One (SQLite + memory queue) or Production (PostgreSQL + MQTT/EMQX + Redis + K8s).
 - **OTEL Tracing Per Node** — every node span records input, output, and internal state for Jaeger debugging.
 - **Cron + Webhook Triggers** — schedule-based and event-driven (GitHub/GitLab webhook) per agentflow.

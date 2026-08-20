@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -175,9 +177,10 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	if !ok {
 		t.Fatalf("store.DB() is %T, want *pgxpool.Pool — is PostgreSQL running? (cd deploy/docker/pgvector && docker compose up -d)", storeImpl.DB())
 	}
+	resetITDatabase(t, pool)
 
 	// ── apiserver (no auth) ──
-	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", namespace, nil)
+	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", namespace, "default", nil)
 	if err := flowHandler.FlowStore().SaveSpec(context.Background(), flow, "integration-test", "integration test fixture"); err != nil {
 		t.Fatalf("persist integration test flow: %v", err)
 	}
@@ -210,7 +213,6 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		nil,
 		nil,
 		runtimeConfigHandler,
-		nil,
 	)
 	srv := httptest.NewServer(restMux)
 	t.Cleanup(srv.Close)
@@ -242,11 +244,12 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		Provider:         engine.ProviderStandalone,
 		PoolSize:         8,
 		TaskState:        &client.TaskStateClient{Client: apiClient, Namespace: namespace},
-		ApprovalInfo:     &client.HumanApprovalClient{Client: apiClient},
+		ApprovalInfo:     &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
 		Logger:           logger,
 		APIServerURL:     srv.URL,
 		Namespace:        namespace,
 		Messager:         inMemQ,
+		RuntimeClusterID: "local",
 		SandboxWorkspace: sbWorkspace,
 		SandboxPolicy:    &model.SandboxPolicy{},
 	})
@@ -256,7 +259,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	jm, err := jobmanager.NewJobManager(
 		&client.RunStateClient{Client: apiClient, Namespace: namespace},
 		rm, logger,
-		&jobmanager.JobManagerConfig{FlowExecutionTimeout: 120 * time.Second, MaxNodeRetries: 2, MaxConcurrentFlows: 8},
+		&jobmanager.JobManagerConfig{FlowExecutionTimeout: 120 * time.Second, MaxNodeRetries: 2, MaxConcurrentFlows: 8, RuntimeClusterID: "local"},
 	)
 	if err != nil {
 		t.Fatalf("create job manager: %v", err)
@@ -264,13 +267,45 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), "", flow.ID)
+	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), jobmanager.RunPollerConfig{
+		AgentFlowID: flow.ID,
+		RuntimeMode: entities.RuntimeModeApplication,
+	})
 
 	logProgress("[runner] stack ready at %s", srv.URL)
 	return r
 }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+func resetITDatabase(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT tablename
+		FROM pg_catalog.pg_tables
+		WHERE schemaname = 'public' AND tablename <> 'schema_migrations'`)
+	if err != nil {
+		t.Fatalf("list integration-test tables: %v", err)
+	}
+	defer rows.Close()
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatalf("scan integration-test table: %v", err)
+		}
+		tables = append(tables, pgx.Identifier{table}.Sanitize())
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("list integration-test tables: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+	if _, err := pool.Exec(context.Background(), "TRUNCATE TABLE "+strings.Join(tables, ", ")+" RESTART IDENTITY CASCADE"); err != nil {
+		t.Fatalf("reset integration-test database: %v", err)
+	}
+}
 
 // ─── seeding ─────────────────────────────────────────────────────────────────
 
@@ -431,36 +466,38 @@ func (r *ITRunner) RunStatus(runID string) string {
 // apiserver, knowledge, and notifier IT tests. It models the full DevSecOps pipeline.
 func SecurityFixerFlow() *entities.FlowInfo {
 	return &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "security-autonomy-fixer"},
-		Vars:       map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
+		BaseEntity:  entities.BaseEntity{ID: "security-autonomy-fixer"},
+		Kind:        "flow",
+		RuntimeMode: entities.RuntimeModeApplication,
+		Vars:        map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
 		Triggers: []entities.TriggerDef{
 			{Type: "webhook", Provider: "github", Events: []string{"pull_request", "push"}},
 		},
 		Nodes: []entities.Node{
-			{ID: "get-commit", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "get_latest_commit", "repo": "${vars.repo}"}},
-			{ID: "scan-sonarqube", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project_key": "${vars.project_key}", "severities": "BLOCKER,CRITICAL,MAJOR"}},
-			{ID: "aggregate-issues", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
-			{ID: "review-security", Type: entities.AgentNode, Agent: "security-reviewer"},
-			{ID: "review-quality", Type: entities.AgentNode, Agent: "quality-reviewer"},
-			{ID: "review-arch", Type: entities.AgentNode, Agent: "arch-reviewer"},
+			{ID: "get-commit", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "get_latest_commit", "repo": "${vars.repo}"}},
+			{ID: "scan-sonarqube", Kind: entities.ToolNode, Tool: "sonarqube", Args: map[string]any{"action": "get_issues", "project_key": "${vars.project_key}", "severities": "BLOCKER,CRITICAL,MAJOR"}},
+			{ID: "aggregate-issues", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "generate-fixes", Kind: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "review-security", Kind: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "review-quality", Kind: entities.AgentNode, Agent: "quality-reviewer"},
+			{ID: "review-arch", Kind: entities.AgentNode, Agent: "arch-reviewer"},
 			{
-				ID: "committee", Type: entities.CommitteeNode,
+				ID: "committee", Kind: entities.CommitteeNode,
 				Strategy: map[string]any{"type": "majority"},
-				Input:    map[string]any{"votes": []any{"${review-security}", "${review-quality}", "${review-arch}"}},
+				Args:     map[string]any{"votes": []any{"${review-security}", "${review-quality}", "${review-arch}"}},
 			},
 			{
-				ID: "is-approved", Type: entities.ConditionNode,
+				ID: "is-approved", Kind: entities.ConditionNode,
 				Expression: "${input.approved == true}",
-				Input:      map[string]any{"approved": "${committee.decision}"},
+				Args:       map[string]any{"approved": "${committee.decision}"},
 			},
-			{ID: "commit-fixes", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "commit_and_push", "branch": "fix/flowgent_sec_auto_fix"}},
-			{ID: "create-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pull_request", "base": "main", "head": "fix/flowgent_sec_auto_fix"}},
-			{ID: "rescan", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_jobs_by_commit", "repo": "${vars.repo}"}},
-			{ID: "compare-results", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "summary-report", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "notify-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_issue_comment", "pr_number": 4}},
-			{ID: "end", Type: entities.NoopNode},
+			{ID: "commit-fixes", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "commit_and_push", "branch": "fix/flowgent_sec_auto_fix"}},
+			{ID: "create-pr", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "create_pull_request", "base": "main", "head": "fix/flowgent_sec_auto_fix"}},
+			{ID: "rescan", Kind: entities.ToolNode, Tool: "sonarqube", Args: map[string]any{"action": "get_jobs_by_commit", "repo": "${vars.repo}"}},
+			{ID: "compare-results", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "summary-report", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "notify-pr", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "create_issue_comment", "pr_number": 4}},
+			{ID: "end", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "get-commit", To: "scan-sonarqube"},

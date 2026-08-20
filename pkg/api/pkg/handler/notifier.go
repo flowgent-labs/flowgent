@@ -53,14 +53,14 @@ func newDynamicSecretCipher(cfg config.NotifierSecretEncryptionConfig) (secretbo
 }
 
 func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := h.store.Select(r.Context(), entities.PageRequest{Page: 1, Size: 1000})
+	channels, err := h.store.List(r.Context(), r.PathValue("namespace"), entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	filtered := make([]*entities.NotifyChannelInfo, 0, len(channels.Items))
 	for _, channel := range channels.Items {
-		if channel != nil && channel.Namespace == r.PathValue("namespace") {
+		if channel != nil {
 			redacted, redactErr := channel.Redacted()
 			if redactErr != nil {
 				http.Error(w, "notification secret metadata is invalid", http.StatusInternalServerError)
@@ -73,14 +73,44 @@ func (h *NotifierHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(entities.NewPage(filtered, int64(len(filtered)), channels.Request))
 }
 
+// ListRuntimeChannels exposes encrypted envelopes to the notifier workload.
+// It is protected by a dedicated internal permission and is never used by UI
+// clients.
+func (h *NotifierHandler) ListRuntimeChannels(w http.ResponseWriter, r *http.Request) {
+	channels, err := h.store.List(r.Context(), r.PathValue("namespace"), entities.PageRequest{Page: 1, Size: 1000})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	result := make([]*entities.NotifyChannelInfo, 0, len(channels.Items))
+	for _, channel := range channels.Items {
+		if channel == nil {
+			continue
+		}
+		view, viewErr := channel.RuntimeView()
+		if viewErr != nil {
+			http.Error(w, "notification secret metadata is invalid", http.StatusInternalServerError)
+			return
+		}
+		result = append(result, view)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(entities.NewPage(result, int64(len(result)), channels.Request))
+}
+
 func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
 	var ch entities.NotifyChannelInfo
-	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
+	if err := decodeStrictJSON(r, &ch); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
+	if ch.Namespace != "" && ch.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
+		return
+	}
 	ch.ID = uuid.New().String()
-	ch.Namespace = r.PathValue("namespace")
+	ch.Namespace = namespace
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = time.Now()
 	if err := validateNotifyChannel(&ch); err != nil {
@@ -102,7 +132,7 @@ func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
-	ch, err := h.store.Get(r.Context(), r.PathValue("id"))
+	ch, err := h.store.Get(r.Context(), r.PathValue("namespace"), r.PathValue("id"))
 	if err != nil {
 		if isNotFoundError(err) {
 			http.Error(w, "not found", 404)
@@ -111,7 +141,7 @@ func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if ch == nil || ch.Namespace != r.PathValue("namespace") {
+	if ch == nil {
 		http.Error(w, "not found", 404)
 		return
 	}
@@ -125,14 +155,19 @@ func (h *NotifierHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
-	existing, err := h.store.Get(r.Context(), r.PathValue("id"))
-	if err != nil || existing == nil || existing.Namespace != r.PathValue("namespace") {
+	namespace, id := r.PathValue("namespace"), r.PathValue("id")
+	existing, err := h.store.Get(r.Context(), namespace, id)
+	if err != nil || existing == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	var updates entities.NotifyChannelInfo
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	if err := decodeStrictJSON(r, &updates); err != nil {
 		http.Error(w, "invalid body", 400)
+		return
+	}
+	if (updates.ID != "" && updates.ID != id) || (updates.Namespace != "" && updates.Namespace != namespace) {
+		http.Error(w, "resource identity mismatch", http.StatusBadRequest)
 		return
 	}
 	resolved, err := existing.ResolveSecrets(r.Context(), h.secretCipher)
@@ -140,62 +175,53 @@ func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "notification secrets cannot be decrypted", http.StatusInternalServerError)
 		return
 	}
-	if updates.Name != "" {
-		resolved.Name = updates.Name
+	next := &entities.NotifyChannelInfo{
+		BaseEntity:  existing.BaseEntity,
+		Name:        updates.Name,
+		ChannelType: updates.ChannelType,
+		Config:      make(map[string]any),
+		Enabled:     updates.Enabled,
+		Labels:      updates.Labels,
 	}
-	if updates.ChannelType != "" {
-		if updates.ChannelType != existing.ChannelType {
-			resolved.Config = make(map[string]any)
-		}
-		resolved.ChannelType = updates.ChannelType
+	for key, value := range updates.Config {
+		next.Config[key] = value
 	}
-	if updates.Config != nil {
-		if resolved.Config == nil {
-			resolved.Config = make(map[string]any)
-		}
-		secretFields := make(map[string]struct{})
-		for _, field := range entities.NotifyChannelSecretFields(resolved.ChannelType) {
-			secretFields[field] = struct{}{}
-		}
-		for key, value := range updates.Config {
-			if _, secret := secretFields[key]; secret && !notifySecretValuePresent(value) {
-				continue
+	if next.ChannelType == existing.ChannelType {
+		for _, field := range entities.NotifyChannelSecretFields(next.ChannelType) {
+			if !notifySecretValuePresent(next.Config[field]) && notifySecretValuePresent(resolved.Config[field]) {
+				next.Config[field] = resolved.Config[field]
 			}
-			resolved.Config[key] = value
 		}
 	}
 	for _, field := range updates.ClearSecretFields {
-		delete(resolved.Config, field)
+		delete(next.Config, field)
 	}
-	if updates.Labels != nil {
-		resolved.Labels = updates.Labels
-	}
-	resolved.Enabled = updates.Enabled
-	resolved.UpdatedAt = time.Now()
-	if err := validateNotifyChannel(resolved); err != nil {
+	next.UpdatedAt = time.Now()
+	if err := validateNotifyChannel(next); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := resolved.ProtectSecrets(r.Context(), h.secretCipher); err != nil {
+	if err := next.ProtectSecrets(r.Context(), h.secretCipher); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	if err := h.store.Save(r.Context(), resolved); err != nil {
+	if err := h.store.Save(r.Context(), next); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	redacted, _ := resolved.Redacted()
+	redacted, _ := next.Redacted()
 	json.NewEncoder(w).Encode(redacted)
 }
 
 func (h *NotifierHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
-	channel, err := h.store.Get(r.Context(), r.PathValue("id"))
-	if err != nil || channel == nil || channel.Namespace != r.PathValue("namespace") {
+	namespace, id := r.PathValue("namespace"), r.PathValue("id")
+	channel, err := h.store.Get(r.Context(), namespace, id)
+	if err != nil || channel == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if err := h.store.Delete(r.Context(), r.PathValue("id")); err != nil {
+	if err := h.store.Delete(r.Context(), namespace, id); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -210,12 +236,12 @@ func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
 		Title      string `json:"title"`
 		Message    string `json:"message"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ChannelID == "" {
+	if err := decodeStrictJSON(r, &req); err != nil || req.ChannelID == "" {
 		http.Error(w, "channel_id is required", http.StatusBadRequest)
 		return
 	}
-	channel, err := h.store.Get(r.Context(), req.ChannelID)
-	if err != nil || channel == nil || channel.Namespace != r.PathValue("namespace") {
+	channel, err := h.store.Get(r.Context(), r.PathValue("namespace"), req.ChannelID)
+	if err != nil || channel == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}

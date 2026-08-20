@@ -8,218 +8,166 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// KnowledgePostgresStore wraps store.PostgresGenericStore[entities.KnowledgeEntry]
-// and adds custom search and upsert methods.
 type KnowledgePostgresStore struct {
 	inner *store.PostgresGenericStore[entities.KnowledgeEntry]
 	pool  *pgxpool.Pool
 }
 
-// NewKnowledgePostgresStore creates a new PG-backed knowledge store.
 func NewKnowledgePostgresStore(pool *pgxpool.Pool) *KnowledgePostgresStore {
 	return &KnowledgePostgresStore{
-		inner: &store.PostgresGenericStore[entities.KnowledgeEntry]{
-			Pool: pool, Table: "knowledge_entries", IDCol: "id",
-		},
-		pool: pool,
+		inner: &store.PostgresGenericStore[entities.KnowledgeEntry]{Pool: pool, Table: "knowledge_entries", IDCol: "id"},
+		pool:  pool,
 	}
 }
 
-// ── Generic CRUD (delegated to inner store) ─────────────────────────
+func (s *KnowledgePostgresStore) Get(ctx context.Context, namespace, id string) (*entities.KnowledgeEntry, error) {
+	row := s.pool.QueryRow(ctx, fmt.Sprintf(
+		"SELECT %s FROM knowledge_entries WHERE namespace_id=$1 AND id=$2 AND del_flag=false LIMIT 1",
+		utils.Columns[entities.KnowledgeEntry]()), namespace, id)
+	entry := new(entities.KnowledgeEntry)
+	if err := utils.ScanStruct(row, entry); err != nil {
+		return nil, fmt.Errorf("knowledge entry: %w", err)
+	}
+	return entry, nil
+}
 
-func (s *KnowledgePostgresStore) Get(ctx context.Context, id string) (*entities.KnowledgeEntry, error) {
-	if err := utils.ValidateIdent("knowledge_entries"); err != nil {
+func (s *KnowledgePostgresStore) List(ctx context.Context, filter ListFilter) (*entities.Page[entities.KnowledgeEntry], error) {
+	page := normalizePage(filter.Page)
+	clauses := []string{"namespace_id=$1", "del_flag=false"}
+	args := []any{filter.Namespace}
+	if filter.Scope != "" {
+		args = append(args, filter.Scope)
+		clauses = append(clauses, fmt.Sprintf("metadata->>'scope'=$%d", len(args)))
+	}
+	if len(filter.Tags) > 0 {
+		placeholders := make([]string, len(filter.Tags))
+		for i, tag := range filter.Tags {
+			args = append(args, tag)
+			placeholders[i] = fmt.Sprintf("$%d", len(args))
+		}
+		clauses = append(clauses, "tags ?| ARRAY["+strings.Join(placeholders, ",")+"]")
+	}
+	where := strings.Join(clauses, " AND ")
+	var total int64
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(1) FROM knowledge_entries WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, err
 	}
-	cols := utils.Columns[entities.KnowledgeEntry]()
-	row := s.pool.QueryRow(ctx,
-		fmt.Sprintf("SELECT %s FROM knowledge_entries WHERE id=$1 AND del_flag=false LIMIT 1", cols), id)
-	var entity entities.KnowledgeEntry
-	if err := utils.ScanStruct(row, &entity); err != nil {
-		return nil, fmt.Errorf("knowledge_entries: %w", err)
-	}
-	return &entity, nil
-}
-
-func (s *KnowledgePostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.KnowledgeEntry], error) {
-	return s.inner.Select(ctx, req)
-}
-
-func (s *KnowledgePostgresStore) Save(ctx context.Context, e *entities.KnowledgeEntry) error {
-	return s.inner.Save(ctx, e)
-}
-
-func (s *KnowledgePostgresStore) Delete(ctx context.Context, id string) error {
-	return s.inner.Delete(ctx, id)
-}
-
-// ── Custom methods ──────────────────────────────────────────────────
-
-// Search performs keyword search on title and content with optional tag filter.
-func (s *KnowledgePostgresStore) Search(ctx context.Context, req entities.KnowledgeSearchRequest) ([]*entities.KnowledgeEntry, error) {
-	if err := utils.ValidateIdent("knowledge_entries"); err != nil {
+	args = append(args, page.Size, (page.Page-1)*page.Size)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(
+		"SELECT %s FROM knowledge_entries WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
+		utils.Columns[entities.KnowledgeEntry](), where, len(args)-1, len(args)), args...)
+	if err != nil {
 		return nil, err
 	}
-	cols := utils.Columns[entities.KnowledgeEntry]()
-
-	topK := req.TopK
-	if topK <= 0 {
-		topK = 20
+	defer rows.Close()
+	items, err := scanPostgresEntries(rows)
+	if err != nil {
+		return nil, err
 	}
+	return entities.NewPage(items, total, page), nil
+}
+
+func (s *KnowledgePostgresStore) Save(ctx context.Context, entry *entities.KnowledgeEntry) error {
+	return s.inner.Save(ctx, entry)
+}
+
+func (s *KnowledgePostgresStore) Delete(ctx context.Context, namespace, id string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE knowledge_entries SET del_flag=true,status='DELETED',updated_at=NOW()
+		WHERE namespace_id=$1 AND id=$2 AND del_flag=false`, namespace, id)
+	return err
+}
+
+func (s *KnowledgePostgresStore) Search(ctx context.Context, namespace string, req entities.KnowledgeSearchRequest) ([]*entities.KnowledgeEntry, error) {
 	terms := searchTerms(req.Query)
 	if len(terms) == 0 {
 		return []*entities.KnowledgeEntry{}, nil
 	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`SELECT %s FROM knowledge_entries WHERE del_flag = false AND (`, cols))
-
-	args := make([]any, 0, len(terms)+len(req.Tags)+1)
-	termClauses := make([]string, len(terms))
-	argIdx := 1
-	for i, term := range terms {
-		termClauses[i] = fmt.Sprintf(`(title ILIKE '%%' || $%d || '%%' OR content::text ILIKE '%%' || $%d || '%%')`, argIdx, argIdx)
-		args = append(args, term)
-		argIdx++
+	topK := req.TopK
+	if topK <= 0 {
+		topK = 20
 	}
-	sb.WriteString(strings.Join(termClauses, " OR "))
-	sb.WriteString(")")
-
+	clauses := []string{"namespace_id=$1", "del_flag=false"}
+	args := []any{namespace}
+	if req.Scope != "" {
+		args = append(args, req.Scope)
+		clauses = append(clauses, fmt.Sprintf("metadata->>'scope'=$%d", len(args)))
+	}
+	termClauses := make([]string, len(terms))
+	for i, term := range terms {
+		args = append(args, term)
+		termClauses[i] = fmt.Sprintf("(title ILIKE '%%' || $%d || '%%' OR content ILIKE '%%' || $%d || '%%')", len(args), len(args))
+	}
+	clauses = append(clauses, "("+strings.Join(termClauses, " OR ")+")")
 	if len(req.Tags) > 0 {
 		placeholders := make([]string, len(req.Tags))
 		for i, tag := range req.Tags {
-			placeholders[i] = fmt.Sprintf("$%d", argIdx)
 			args = append(args, tag)
-			argIdx++
+			placeholders[i] = fmt.Sprintf("$%d", len(args))
 		}
-		sb.WriteString(fmt.Sprintf(` AND tags ?| ARRAY[%s]`, strings.Join(placeholders, ",")))
+		clauses = append(clauses, "tags ?| ARRAY["+strings.Join(placeholders, ",")+"]")
 	}
-
-	sb.WriteString(fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, argIdx))
 	args = append(args, topK)
-
-	rows, err := s.pool.Query(ctx, sb.String(), args...)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(
+		"SELECT %s FROM knowledge_entries WHERE %s ORDER BY created_at DESC LIMIT $%d",
+		utils.Columns[entities.KnowledgeEntry](), strings.Join(clauses, " AND "), len(args)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge search: %w", err)
 	}
 	defer rows.Close()
-
-	var items []*entities.KnowledgeEntry
-	for rows.Next() {
-		entity := new(entities.KnowledgeEntry)
-		if err := utils.ScanStruct(rows, entity); err != nil {
-			return nil, fmt.Errorf("knowledge search scan: %w", err)
-		}
-		items = append(items, entity)
-	}
-	return items, nil
+	return scanPostgresEntries(rows)
 }
 
-// SearchByTags returns entries matching any of the given tags.
-func (s *KnowledgePostgresStore) SearchByTags(ctx context.Context, tags []string) ([]*entities.KnowledgeEntry, error) {
-	if err := utils.ValidateIdent("knowledge_entries"); err != nil {
-		return nil, err
+func (s *KnowledgePostgresStore) ListTags(ctx context.Context, namespace, scope string) ([]string, error) {
+	query := `SELECT DISTINCT tag.value FROM knowledge_entries
+		CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(tags, '[]'::jsonb)) AS tag(value)
+		WHERE namespace_id=$1 AND del_flag=false`
+	args := []any{namespace}
+	if scope != "" {
+		query += " AND metadata->>'scope'=$2"
+		args = append(args, scope)
 	}
-	cols := utils.Columns[entities.KnowledgeEntry]()
-
-	if len(tags) == 0 {
-		return nil, nil
-	}
-
-	placeholders := make([]string, len(tags))
-	args := make([]any, len(tags))
-	for i, tag := range tags {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = tag
-	}
-
-	query := fmt.Sprintf(`SELECT %s FROM knowledge_entries WHERE del_flag = false AND tags ?| ARRAY[%s] ORDER BY created_at DESC`,
-		cols, strings.Join(placeholders, ","))
-
+	query += " ORDER BY tag.value"
 	rows, err := s.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("knowledge search by tags: %w", err)
-	}
-	defer rows.Close()
-
-	var items []*entities.KnowledgeEntry
-	for rows.Next() {
-		entity := new(entities.KnowledgeEntry)
-		if err := utils.ScanStruct(rows, entity); err != nil {
-			return nil, fmt.Errorf("knowledge search by tags scan: %w", err)
-		}
-		items = append(items, entity)
-	}
-	return items, nil
-}
-
-// UpsertBySourceRef creates or updates an entry matched by the source column.
-// If an entry with the same source exists it is updated; otherwise a new entry is inserted.
-func (s *KnowledgePostgresStore) UpsertBySourceRef(ctx context.Context, entity *entities.KnowledgeEntry) error {
-	if err := utils.ValidateIdent("knowledge_entries"); err != nil {
-		return err
-	}
-
-	// Check for existing record by source
-	var existingID string
-	err := s.pool.QueryRow(ctx,
-		`SELECT id FROM knowledge_entries WHERE source = $1 AND del_flag = false LIMIT 1`,
-		entity.Source).Scan(&existingID)
-
-	if err == nil {
-		// Preserve original audit fields from the existing record
-		var existingCreatedAt, existingUpdatedAt any
-		var existingCreatedBy, existingUpdatedBy string
-		err = s.pool.QueryRow(ctx,
-			`SELECT created_at, created_by, updated_at, updated_by FROM knowledge_entries WHERE id = $1`,
-			existingID).Scan(&existingCreatedAt, &existingCreatedBy, &existingUpdatedAt, &existingUpdatedBy)
-		if err == nil {
-			entity.ID = existingID
-			// Preserve original creation timestamp
-			entity.MarkUpdated("")
-		} else {
-			entity.ID = existingID
-		}
-	} else if err == pgx.ErrNoRows {
-		// New entry — set audit fields
-		entity.MarkCreated("")
-	} else {
-		return fmt.Errorf("upsert lookup: %w", err)
-	}
-
-	return s.inner.Save(ctx, entity)
-}
-
-// ListTags returns all distinct tag values across non-deleted entries.
-// Uses jsonb_array_elements_text to extract individual tag strings from the JSONB array.
-func (s *KnowledgePostgresStore) ListTags(ctx context.Context) ([]string, error) {
-	if err := utils.ValidateIdent("knowledge_entries"); err != nil {
-		return nil, err
-	}
-
-	rows, err := s.pool.Query(ctx,
-		`SELECT DISTINCT jsonb_array_elements_text(tags) AS tag FROM knowledge_entries WHERE del_flag = false ORDER BY tag`)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge list tags: %w", err)
 	}
 	defer rows.Close()
-
-	var tags []string
+	result := make([]string, 0)
 	for rows.Next() {
 		var tag string
 		if err := rows.Scan(&tag); err != nil {
-			return nil, fmt.Errorf("knowledge list tags scan: %w", err)
+			return nil, err
 		}
-		if tag != "" {
-			tags = append(tags, tag)
+		result = append(result, tag)
+	}
+	return result, rows.Err()
+}
+
+func scanPostgresEntries(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}) ([]*entities.KnowledgeEntry, error) {
+	items := make([]*entities.KnowledgeEntry, 0)
+	for rows.Next() {
+		entry := new(entities.KnowledgeEntry)
+		if err := utils.ScanStruct(rows, entry); err != nil {
+			return nil, fmt.Errorf("scan knowledge entry: %w", err)
 		}
+		items = append(items, entry)
 	}
-	if tags == nil {
-		tags = []string{}
+	return items, rows.Err()
+}
+
+func normalizePage(page entities.PageRequest) entities.PageRequest {
+	if page.Page < 1 {
+		page.Page = 1
 	}
-	return tags, nil
+	if page.Size < 1 {
+		page.Size = 20
+	}
+	return page
 }

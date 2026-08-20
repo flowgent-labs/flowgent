@@ -33,9 +33,22 @@ func marshalSpec(spec *entities.FlowInfo) ([]byte, error) {
 			return nil, fmt.Errorf("invalid flow name: %w", err)
 		}
 	}
-	b, err := json.Marshal(spec)
+	persisted := *spec
+	persisted.Version = 0
+	b, err := json.Marshal(&persisted)
 	if err != nil {
 		return nil, fmt.Errorf("marshal flow definition: %w", err)
 	}
 	return b, nil
+}
+
+func hydrateSpec(spec *entities.FlowInfo, version *entities.FlowVersionInfo) {
+	spec.Version = version.Version
+	spec.Namespace = version.Namespace
+	spec.Status = version.Status
+	spec.CreatedAt = version.CreatedAt
+	spec.CreatedBy = version.CreatedBy
+	spec.UpdatedAt = version.UpdatedAt
+	spec.UpdatedBy = version.UpdatedBy
+	spec.DelFlag = version.DelFlag
 }

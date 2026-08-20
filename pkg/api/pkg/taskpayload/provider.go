@@ -66,9 +66,8 @@ type ArtifactReference struct {
 	SHA256          string `json:"sha256"`
 }
 
-// DefaultTaskPayloadProvider keeps the complete JSON value inline in the
-// existing TaskRun database columns. It is backward-compatible and requires no
-// external service.
+// DefaultTaskPayloadProvider keeps the complete JSON value inline in TaskRun
+// database columns and requires no external service.
 type DefaultTaskPayloadProvider struct {
 	maxPayloadBytes int64
 }

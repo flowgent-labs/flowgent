@@ -19,4 +19,5 @@ type KnowledgeSearchRequest struct {
 	Query string   `json:"query"`
 	TopK  int      `json:"top_k"`
 	Tags  []string `json:"tags,omitempty"`
+	Scope string   `json:"scope,omitempty"`
 }

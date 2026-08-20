@@ -55,31 +55,3 @@ func CollectDirFiles(dirPath string, files *[]string, seen *map[string]bool) {
 		}
 	}
 }
-
-func toString(v any) string {
-	if v == nil {
-		return ""
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return fmt.Sprint(v)
-}
-
-func toStringMap(v any) map[string]string {
-	if v == nil {
-		return nil
-	}
-	m, ok := v.(map[string]any)
-	if !ok {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, val := range m {
-		if val == nil {
-			continue
-		}
-		out[k] = fmt.Sprint(val)
-	}
-	return out
-}

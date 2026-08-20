@@ -6,56 +6,187 @@ info:
 servers:
   - url: /api/v1
 paths:
-  /flows:
+  /{namespace}/flows:
     get:
       summary: List agentflow definitions
       operationId: listAgentFlows
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
       responses:
-        '200': { description: AgentFlow definitions }
-  /flows/trigger:
+        '200':
+          description: Full AgentFlow specifications; storage wrappers are never exposed
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Flow' }
+  /{namespace}/flows/{flow_id}/trigger:
     post:
       summary: Trigger an agentflow
       operationId: triggerAgentFlow
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/FlowID'
       requestBody:
         content:
           application/json:
             schema:
               type: object
-              required: [agentflow_id]
               properties:
-                agentflow_id: { type: string }
                 vars: { type: object }
       responses:
         '200': { description: AgentFlow triggered }
-  /runs:
+  /{namespace}/runs:
     get:
       summary: List agentflow runs
+      operationId: listRuns
       parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, default: 50 }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: k8s_namespace
+          in: query
+          schema: { type: string }
         - name: agentflow_id
           in: query
           schema: { type: string }
       responses:
-        '200': { description: List of agentflow runs }
-  /runs/{id}:
+        '200':
+          description: Database-filtered and paginated runs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunPage' }
+  /{namespace}/runs/metrics:
+    get:
+      summary: Aggregate run metrics over a UTC time window
+      operationId: getRunMetrics
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - name: hours
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 720, default: 24 }
+        - name: buckets
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 120, default: 12 }
+      responses:
+        '200':
+          description: Namespace-wide run aggregates computed by the database
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunMetrics' }
+  /{namespace}/runs/{id}:
     get:
       summary: Get agentflow run
       parameters:
+        - $ref: '#/components/parameters/Namespace'
         - name: id
           in: path
           required: true
           schema: { type: string }
       responses:
         '200': { description: AgentFlow run details }
-  /runs/{run_id}/tasks:
+  /{namespace}/runs/{run_id}/tasks:
     get:
       summary: Get task runs for an agentflow run
       parameters:
+        - $ref: '#/components/parameters/Namespace'
         - name: run_id
           in: path
           required: true
           schema: { type: string }
       responses:
         '200': { description: Task runs }
+  /{namespace}/runs/{run_id}/approvals:
+    get:
+      summary: List pending approvals for one owned run
+      operationId: listRunApprovals
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/RunID'
+      responses:
+        '200':
+          description: Pending approvals for the run
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HumanApproval' }
+    post:
+      summary: Create an internal approval for one owned run
+      operationId: createRunApproval
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/RunID'
+      responses:
+        '201':
+          description: Approval created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HumanApproval' }
+  /{namespace}/runs/{run_id}/approvals/{token}/{decision}:
+    post:
+      summary: Resolve one run approval
+      operationId: resolveRunApproval
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/RunID'
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+        - name: decision
+          in: path
+          required: true
+          schema: { type: string, enum: [approve, reject] }
+      responses:
+        '200': { description: Approval resolved }
+        '404': { description: Approval does not belong to this run }
+  /{namespace}/approvals:
+    get:
+      summary: List pending namespace approvals for the notifier
+      description: Workload-only endpoint protected by approval.platform.read.
+      operationId: listNamespaceApprovals
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+      responses:
+        '200':
+          description: Namespace-scoped pending approvals
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HumanApproval' }
+  /{namespace}/knowledge:
+    get:
+      summary: List namespace-scoped knowledge entries
+      operationId: listKnowledge
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - name: scope
+          in: query
+          schema: { type: string, enum: [run, flow, share] }
+        - name: tags
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, default: 20 }
+      responses:
+        '200':
+          description: Database-filtered knowledge page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KnowledgePage' }
   /{namespace}/runtime-config:
     get:
       summary: Read redacted namespace runtime configuration
@@ -165,77 +296,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ResolvedRuntimeConfig' }
-  /{namespace}/resource-pools:
-    get:
-      summary: List namespace resource pools
-      operationId: listResourcePools
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-      responses:
-        '200':
-          description: Resource pools available to Flows in this namespace
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/ResourcePool' }
-    post:
-      summary: Create a namespace resource pool
-      operationId: createResourcePool
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ResourcePool' }
-      responses:
-        '201':
-          description: Resource pool created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ResourcePool' }
-        '409': { description: A case-insensitive name collision exists }
-  /{namespace}/resource-pools/{pool_name}:
-    get:
-      summary: Get a namespace resource pool
-      operationId: getResourcePool
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-        - $ref: '#/components/parameters/ResourcePoolName'
-      responses:
-        '200':
-          description: Resource pool
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ResourcePool' }
-        '404': { description: Resource pool not found }
-    put:
-      summary: Update resource-pool capacity and placement
-      operationId: updateResourcePool
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-        - $ref: '#/components/parameters/ResourcePoolName'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ResourcePool' }
-      responses:
-        '200':
-          description: Resource pool updated
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ResourcePool' }
-    delete:
-      summary: Delete an unused resource pool
-      operationId: deleteResourcePool
-      parameters:
-        - $ref: '#/components/parameters/Namespace'
-        - $ref: '#/components/parameters/ResourcePoolName'
-      responses:
-        '204': { description: Resource pool deleted }
-        '409': { description: A Flow or active run still references the pool }
   /webhook/{provider}:
     post:
       summary: Receive an SCM (GitHub/GitLab/Gitea) webhook and trigger matching flows
@@ -260,26 +320,6 @@ paths:
       responses:
         '202': { description: Webhook accepted; body contains triggered run IDs }
         '400': { description: Unsupported provider or unparseable body }
-  /human/{token}/approve:
-    post:
-      summary: Approve human task
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: Approved }
-  /human/{token}/reject:
-    post:
-      summary: Reject human task
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: Rejected }
 components:
   parameters:
     Namespace:
@@ -292,34 +332,112 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
-    ResourcePoolName:
-      name: pool_name
+    RunID:
+      name: run_id
       in: path
       required: true
-      schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
+      schema: { type: string }
   schemas:
+    Flow:
+      type: object
+      required: [id, kind, runtime_mode, nodes, edges]
+      properties:
+        id: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
+        namespace_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [flow, skill] }
+        description: { type: string }
+        runtime_mode: { type: string, enum: [application, session] }
+        resources: { $ref: '#/components/schemas/RuntimeResources' }
+        nodes: { type: array, items: { type: object } }
+        edges: { type: array, items: { type: object } }
+        vars: { type: object }
+    FlowRun:
+      type: object
+      required: [id, namespace_id, agentflow_id, version, status, runtime_mode]
+      properties:
+        id: { type: string }
+        namespace_id: { type: string }
+        agentflow_id: { type: string }
+        version: { type: integer }
+        status: { type: string }
+        runtime_mode: { type: string, enum: [application, session] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+    HumanApproval:
+      type: object
+      required: [id, namespace_id, task_run_id, agentflow_run_id, token, status]
+      properties:
+        id: { type: string }
+        namespace_id: { type: string }
+        task_run_id: { type: string }
+        agentflow_run_id: { type: string }
+        token: { type: string }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+    RunPage:
+      type: object
+      required: [items, total_count, request, total_pages]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/FlowRun' } }
+        total_count: { type: integer }
+        request: { type: object }
+        total_pages: { type: integer }
+    RunMetricBucket:
+      type: object
+      required: [start_time, end_time, running, completed, failed]
+      properties:
+        start_time: { type: string, format: date-time }
+        end_time: { type: string, format: date-time }
+        running: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+    RunMetrics:
+      type: object
+      required: [total, running, completed, failed, cancelled, success_rate, failure_rate, buckets]
+      properties:
+        total: { type: integer }
+        running: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        success_rate: { type: number, minimum: 0, maximum: 1 }
+        failure_rate: { type: number, minimum: 0, maximum: 1 }
+        buckets: { type: array, items: { $ref: '#/components/schemas/RunMetricBucket' } }
+    KnowledgeEntry:
+      type: object
+      required: [id, namespace_id, title, content, content_type, tags, metadata]
+      properties:
+        id: { type: string }
+        namespace_id: { type: string }
+        title: { type: string }
+        content: { type: string }
+        content_type: { type: string }
+        source: { type: string }
+        source_ref: { type: string }
+        tags: { type: array, items: { type: string } }
+        metadata: { type: object }
+    KnowledgePage:
+      type: object
+      required: [items, total_count, request, total_pages]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/KnowledgeEntry' } }
+        total_count: { type: integer }
+        request: { type: object }
+        total_pages: { type: integer }
     ResourceQuantity:
       type: object
       additionalProperties: false
       properties:
         cpu: { type: string, example: 500m }
         memory: { type: string, example: 512Mi }
-    ResourcePool:
+    RuntimeResources:
       type: object
-      required: [name, replicas, slots_per_pod, sandbox_replicas, sandbox_slots_per_pod]
+      additionalProperties: false
       properties:
-        name: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$' }
-        description: { type: string }
-        replicas: { type: integer, minimum: 1, maximum: 100 }
-        slots_per_pod: { type: integer, minimum: 1, maximum: 256 }
-        resources: { $ref: '#/components/schemas/ResourceQuantity' }
-        sandbox_replicas: { type: integer, minimum: 0, maximum: 100 }
-        sandbox_slots_per_pod: { type: integer, minimum: 1, maximum: 256 }
-        sandbox_resources: { $ref: '#/components/schemas/ResourceQuantity' }
-        priority_class_name: { type: string }
-        node_selector:
-          type: object
-          additionalProperties: { type: string }
+        jobmanager: { $ref: '#/components/schemas/ResourceQuantity' }
+        taskmanager: { $ref: '#/components/schemas/ResourceQuantity' }
+        sandbox: { $ref: '#/components/schemas/ResourceQuantity' }
     RuntimeConfigLayer:
       type: object
       required: [environment, secret_keys]

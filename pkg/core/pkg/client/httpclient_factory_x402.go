@@ -23,10 +23,10 @@ import (
 // When wallet.enabled is true, returns an X402PaymentHttpClient with
 // policy evaluation and external Wallet signing. The resource server owns
 // facilitator verification and settlement.
-// When payments are disabled, falls back to GenericHttpClient.
-func NewHttpClient(cfg *config.FlowgentConfig, _ messager.IMessager) model.IFlowgentAPIClient {
+// When payments are disabled, it returns the standard HTTP client.
+func NewHttpClient(cfg *config.FlowgentConfig, _ messager.IMessager) (model.IFlowgentAPIClient, error) {
 	if cfg == nil || cfg.Wallet == nil || !cfg.Wallet.Enabled {
-		return NewGenericHttpClient(30 * time.Second)
+		return NewGenericHttpClient(30 * time.Second), nil
 	}
 
 	payCfg := cfg.Wallet
@@ -37,8 +37,7 @@ func NewHttpClient(cfg *config.FlowgentConfig, _ messager.IMessager) model.IFlow
 	eng := policy.NewEngine(&payCfg.Policies, nil)
 
 	if payCfg.KeyID == "" || payCfg.PublicAddress == "" {
-		slog.Warn("wallet client identity is incomplete, falling back to GenericHttpClient")
-		return NewGenericHttpClient(30 * time.Second)
+		return nil, fmt.Errorf("wallet client identity requires key_id and public_address")
 	}
 
 	signTimeout := resolveSignTimeout(payCfg)
@@ -48,8 +47,7 @@ func NewHttpClient(cfg *config.FlowgentConfig, _ messager.IMessager) model.IFlow
 	}
 	clientID := clientIDPrefix + uuid.NewString()
 	if err := signclient.ValidateIdentity(clientID, payCfg.KeyID, payCfg.PublicAddress); err != nil {
-		slog.Warn("external wallet client identity is invalid, falling back to GenericHttpClient", "err", err)
-		return NewGenericHttpClient(30 * time.Second)
+		return nil, fmt.Errorf("validate external wallet identity: %w", err)
 	}
 	var transport signclient.Transport
 	var transportErr error
@@ -74,18 +72,15 @@ func NewHttpClient(cfg *config.FlowgentConfig, _ messager.IMessager) model.IFlow
 		transportErr = fmt.Errorf("unsupported wallet transport %q", payCfg.Transport)
 	}
 	if transportErr != nil {
-		slog.Warn("external wallet transport unavailable, falling back to GenericHttpClient", "err", transportErr)
-		return NewGenericHttpClient(30 * time.Second)
+		return nil, fmt.Errorf("create external wallet transport: %w", transportErr)
 	}
 	digestClient, err := signclient.NewDigestClient(transport, clientID, payCfg.KeyID, payCfg.PublicAddress, signTimeout)
 	if err != nil {
-		slog.Warn("external wallet client is invalid, falling back to GenericHttpClient", "err", err)
-		return NewGenericHttpClient(30 * time.Second)
+		return nil, fmt.Errorf("create external wallet client: %w", err)
 	}
 	evmSigner, err := signclient.NewRemoteEVMSigner(digestClient)
 	if err != nil {
-		slog.Warn("external EVM signer is invalid, falling back to GenericHttpClient", "err", err)
-		return NewGenericHttpClient(30 * time.Second)
+		return nil, fmt.Errorf("create external EVM signer: %w", err)
 	}
 	paymentClient := x402.Newx402Client().Register("eip155:*", exactevm.NewExactEvmScheme(evmSigner, nil))
 	headerEncoder := x402http.Newx402HTTPClient(paymentClient)
@@ -94,13 +89,12 @@ func NewHttpClient(cfg *config.FlowgentConfig, _ messager.IMessager) model.IFlow
 		PayerAddress: payCfg.PublicAddress,
 	}, eng, paymentClient, headerEncoder, nil)
 	if err != nil {
-		slog.Warn("x402 HTTP client is invalid, falling back to GenericHttpClient", "err", err)
-		return NewGenericHttpClient(30 * time.Second)
+		return nil, fmt.Errorf("create x402 HTTP client: %w", err)
 	}
 
 	slog.Info("X402PaymentHttpClient created", "timeout", timeout, "wallet_transport", payCfg.Transport)
 
-	return client
+	return client, nil
 }
 
 func resolveSignTimeout(payCfg *config.WalletConfig) time.Duration {

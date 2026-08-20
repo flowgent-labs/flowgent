@@ -15,11 +15,12 @@ func boolPtr(b bool) *bool { return &b }
 func TestJM_LinearChain(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-linear", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "get-commit", Type: entities.NoopNode},
-			{ID: "scan", Type: entities.NoopNode},
-			{ID: "aggregate", Type: entities.NoopNode},
-			{ID: "report", Type: entities.NoopNode},
+			{ID: "get-commit", Kind: entities.NoopNode},
+			{ID: "scan", Kind: entities.NoopNode},
+			{ID: "aggregate", Kind: entities.NoopNode},
+			{ID: "report", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "get-commit", To: "scan"},
@@ -43,11 +44,12 @@ func TestJM_LinearChain(t *testing.T) {
 func TestJM_ParallelFanOutFanIn(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-diamond", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "generate-fixes", Type: entities.NoopNode},
-			{ID: "review-security", Type: entities.NoopNode},
-			{ID: "review-quality", Type: entities.NoopNode},
-			{ID: "committee", Type: entities.NoopNode},
+			{ID: "generate-fixes", Kind: entities.NoopNode},
+			{ID: "review-security", Kind: entities.NoopNode},
+			{ID: "review-quality", Kind: entities.NoopNode},
+			{ID: "committee", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "generate-fixes", To: "review-security"},
@@ -81,12 +83,13 @@ func TestJM_ConditionRouting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
 				BaseEntity: entities.BaseEntity{ID: "it-condition", Namespace: "test"},
+				Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 				Nodes: []entities.Node{
-					{ID: "committee", Type: entities.NoopNode},
-					{ID: "is-approved", Type: entities.ConditionNode, Expression: "${input.approved == true}", Input: map[string]any{"approved": "${vars.approved}"}},
-					{ID: "commit-fixes", Type: entities.NoopNode},
-					{ID: "loop-back", Type: entities.NoopNode},
-					{ID: "end", Type: entities.NoopNode},
+					{ID: "committee", Kind: entities.NoopNode},
+					{ID: "is-approved", Kind: entities.ConditionNode, Expression: "${input.approved == true}", Args: map[string]any{"approved": "${vars.approved}"}},
+					{ID: "commit-fixes", Kind: entities.NoopNode},
+					{ID: "loop-back", Kind: entities.NoopNode},
+					{ID: "end", Kind: entities.NoopNode},
 				},
 				Edges: []entities.Edge{
 					{From: "committee", To: "is-approved"},
@@ -124,9 +127,10 @@ func TestJM_CommitteeMajority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
 				BaseEntity: entities.BaseEntity{ID: "it-committee", Namespace: "test"},
+				Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 				Nodes: []entities.Node{
-					{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "majority"}, Input: map[string]any{"votes": tc.votes}},
-					{ID: "end", Type: entities.NoopNode},
+					{ID: "committee", Kind: entities.CommitteeNode, Strategy: map[string]any{"type": "majority"}, Args: map[string]any{"votes": tc.votes}},
+					{ID: "end", Kind: entities.NoopNode},
 				},
 				Edges: []entities.Edge{{From: "committee", To: "end"}},
 			}
@@ -148,9 +152,10 @@ func TestJM_CommitteeMajority(t *testing.T) {
 func TestJM_MapIteration(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-map", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "iterate", Type: entities.MapNode, Input: map[string]any{"items": []any{"x", "y", "z"}}},
-			{ID: "done", Type: entities.NoopNode},
+			{ID: "iterate", Kind: entities.MapNode, Args: map[string]any{"items": []any{"x", "y", "z"}}},
+			{ID: "done", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{{From: "iterate", To: "done"}},
 	}
@@ -170,10 +175,11 @@ func TestJM_MapIteration(t *testing.T) {
 func TestJM_JoinAggregation(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-map-join", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "fanout", Type: entities.MapNode, Input: map[string]any{"items": []any{"a", "b"}}},
-			{ID: "collect", Type: entities.JoinNode},
-			{ID: "done", Type: entities.NoopNode},
+			{ID: "fanout", Kind: entities.MapNode, Args: map[string]any{"items": []any{"a", "b"}}},
+			{ID: "collect", Kind: entities.JoinNode},
+			{ID: "done", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "fanout", To: "collect"},
@@ -197,10 +203,11 @@ func TestJM_JoinAggregation(t *testing.T) {
 func TestJM_SkillExecution(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-skill", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "start", Type: entities.NoopNode},
-			{ID: "skill-step", Type: entities.SkillNode, Skill: "nexus3-retrieval"},
-			{ID: "done", Type: entities.NoopNode},
+			{ID: "start", Kind: entities.NoopNode},
+			{ID: "skill-step", Kind: entities.SkillNode, Skill: "nexus3-retrieval"},
+			{ID: "done", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "start", To: "skill-step"},
@@ -223,12 +230,13 @@ func TestJM_SkillExecution(t *testing.T) {
 func TestJM_SubFlowNesting(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-nesting", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
-			{ID: "parent-start", Type: entities.NoopNode},
-			{ID: "subflow", Type: entities.AgentFlowNode, AgentFlowID: "it-nesting-child"},
-			{ID: "parent-end", Type: entities.NoopNode},
+			{ID: "parent-start", Kind: entities.NoopNode},
+			{ID: "subflow", Kind: entities.AgentFlowNode, AgentFlowID: "it-nesting-child"},
+			{ID: "parent-end", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "parent-start", To: "subflow"},
@@ -251,18 +259,19 @@ func TestJM_SubFlowNesting(t *testing.T) {
 func TestJM_SupervisorGate(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-supervisor", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
-			{ID: "start", Type: entities.NoopNode},
-			{ID: "gate", Type: entities.SupervisorNode, Agent: "supervisor-agent",
-				Input: map[string]any{"task": "review changes"},
+			{ID: "start", Kind: entities.NoopNode},
+			{ID: "gate", Kind: entities.SupervisorNode, Agent: "supervisor-agent",
+				Args: map[string]any{"task": "review changes"},
 				SupervisorConfig: &entities.SupervisorConfig{
 					MaxRetries: 1, MaxNodes: 3,
 					AllowedActions: []string{"continue", "rework"},
 				},
 			},
-			{ID: "end", Type: entities.NoopNode},
+			{ID: "end", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "start", To: "gate"},
@@ -298,9 +307,10 @@ func TestJM_CommitteeUnanimous(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
 				BaseEntity: entities.BaseEntity{ID: "it-committee-unanimous", Namespace: "test"},
+				Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 				Nodes: []entities.Node{
-					{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "unanimous"}, Input: map[string]any{"votes": tc.votes}},
-					{ID: "end", Type: entities.NoopNode},
+					{ID: "committee", Kind: entities.CommitteeNode, Strategy: map[string]any{"type": "unanimous"}, Args: map[string]any{"votes": tc.votes}},
+					{ID: "end", Kind: entities.NoopNode},
 				},
 				Edges: []entities.Edge{{From: "committee", To: "end"}},
 			}
@@ -320,15 +330,16 @@ func TestJM_CommitteeUnanimous(t *testing.T) {
 func TestJM_CommitteeVeto(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-committee-veto", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "unanimous"},
-				Input: map[string]any{"votes": []any{
+			{ID: "committee", Kind: entities.CommitteeNode, Strategy: map[string]any{"type": "unanimous"},
+				Args: map[string]any{"votes": []any{
 					map[string]any{"decision": true},
 					map[string]any{"decision": true},
 					map[string]any{"decision": false},
 				}},
 			},
-			{ID: "end", Type: entities.NoopNode},
+			{ID: "end", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{{From: "committee", To: "end"}},
 	}
@@ -356,9 +367,10 @@ func TestJM_CommitteeWeighted(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			flow := &entities.FlowInfo{
 				BaseEntity: entities.BaseEntity{ID: "it-committee-weighted", Namespace: "test"},
+				Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 				Nodes: []entities.Node{
-					{ID: "committee", Type: entities.CommitteeNode, Strategy: map[string]any{"type": "majority_strict"}, Input: map[string]any{"votes": tc.votes}},
-					{ID: "end", Type: entities.NoopNode},
+					{ID: "committee", Kind: entities.CommitteeNode, Strategy: map[string]any{"type": "majority_strict"}, Args: map[string]any{"votes": tc.votes}},
+					{ID: "end", Kind: entities.NoopNode},
 				},
 				Edges: []entities.Edge{{From: "committee", To: "end"}},
 			}
@@ -378,8 +390,9 @@ func TestJM_CommitteeWeighted(t *testing.T) {
 func TestJM_CancelRun(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-cancel", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "step", Type: entities.NoopNode},
+			{ID: "step", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{},
 	}
@@ -409,8 +422,9 @@ func TestJM_CancelRun(t *testing.T) {
 func TestJM_DeadEndDAG(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "it-deadend", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
 		Nodes: []entities.Node{
-			{ID: "start", Type: entities.NoopNode},
+			{ID: "start", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{},
 	}

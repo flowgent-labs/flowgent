@@ -40,7 +40,9 @@ func (s *ApprovalSQLiteStore) Delete(ctx context.Context, token string) error {
 // CreateApproval generates id/token and sets timestamps before inserting.
 func (s *ApprovalSQLiteStore) CreateApproval(ctx context.Context, e *entities.ApprovalInfo) error {
 	e.ID = uuid.New().String()
-	e.Token = uuid.New().String()
+	if e.Token == "" {
+		e.Token = uuid.New().String()
+	}
 	now := time.Now().UTC()
 	e.CreatedAt = now
 	e.UpdatedAt = now
@@ -56,9 +58,9 @@ func (s *ApprovalSQLiteStore) UpdateApproval(ctx context.Context, e *entities.Ap
 }
 
 // ListPending returns all approvals with status 'PENDING'.
-func (s *ApprovalSQLiteStore) ListPending(ctx context.Context) ([]*entities.ApprovalInfo, error) {
+func (s *ApprovalSQLiteStore) ListPending(ctx context.Context, namespace string) ([]*entities.ApprovalInfo, error) {
 	rows, err := s.inner.Conn.QueryContext(ctx,
-		"SELECT * FROM human_approvals WHERE status='PENDING' ORDER BY created_at DESC")
+		"SELECT * FROM human_approvals WHERE namespace_id=?1 AND status='PENDING' AND del_flag=0 ORDER BY created_at DESC", namespace)
 	if err != nil {
 		return nil, err
 	}

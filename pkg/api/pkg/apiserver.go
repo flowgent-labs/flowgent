@@ -29,7 +29,6 @@ import (
 	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
 	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
-	resourcepoolstore "github.com/flowgent-labs/flowgent/store/pkg/resourcepool"
 )
 
 // FlowgentApiServer is the sole DB client and REST API server. It serves
@@ -115,7 +114,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 
 	// ── Handlers ──
 	healthHandler := &handler.HealthHandler{}
-	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
+	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, runtimeSessionNamespace(cfg), mqttPub)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
 	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
 	runHandler := handler.NewFlowRunHandler(storeImpl, payloadProvider, mqttPub, logger)
@@ -140,7 +139,6 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		return nil, fmt.Errorf("IAM repository: %w", err)
 	}
 	authorizer := authz.NewService(cfg.Auth.Authorization, iamRepository)
-	agentFlowHandler.SetPoolAuthorizer(authorizer)
 	iamHandler := handler.NewIAMHandler(iamRepository, authorizer)
 	flowReleaseRepository, err := flowreleasestore.NewRepository(storeImpl)
 	if err != nil {
@@ -153,18 +151,11 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		cleanupConstruction()
 		return nil, fmt.Errorf("runtime configuration secrets: %w", err)
 	}
-	resourcePoolRepository, err := resourcepoolstore.NewRepository(storeImpl)
-	if err != nil {
-		cleanupConstruction()
-		return nil, fmt.Errorf("resource pool repository: %w", err)
-	}
-	resourcePoolHandler := handler.NewResourcePoolHandler(resourcePoolRepository, agentFlowHandler.FlowStore(), agentFlowHandler.FlowRunStore())
-
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Routes ──
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler, resourcePoolHandler)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler)
 	var restHandler http.Handler = restMux
 	authSvc, err := auth.NewService(cfg.Auth)
 	if err != nil {
@@ -348,4 +339,19 @@ func uniqueRawMQTTClientID(base string) string {
 		return base
 	}
 	return fmt.Sprintf("%s-%s", base, host)
+}
+
+func runtimeSessionNamespace(cfg *config.FlowgentConfig) string {
+	if cfg != nil {
+		if cfg.Runtime.K8sNamespace != "" {
+			return cfg.Runtime.K8sNamespace
+		}
+		if cfg.Runtime.SystemNamespace != "" {
+			return cfg.Runtime.SystemNamespace
+		}
+	}
+	if podNS := os.Getenv("POD_NAMESPACE"); podNS != "" {
+		return podNS
+	}
+	return "default"
 }

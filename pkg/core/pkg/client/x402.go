@@ -3,11 +3,9 @@
 package client
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -21,9 +19,8 @@ const (
 	maxPaymentRequiredSize = 64 << 10
 )
 
-// Parse extracts and validates a V2 PaymentRequired response. The canonical V2
-// representation is the base64-encoded PAYMENT-REQUIRED header; a JSON body is
-// accepted for compatibility with resource servers that have not migrated yet.
+// Parse extracts and validates a V2 PaymentRequired response from the standard
+// base64-encoded PAYMENT-REQUIRED header.
 func Parse(resp *http.Response) (*types.PaymentRequired, error) {
 	if resp == nil {
 		return nil, fmt.Errorf("x402: response is required")
@@ -51,29 +48,16 @@ func Parse(resp *http.Response) (*types.PaymentRequired, error) {
 }
 
 func paymentRequiredBytes(resp *http.Response) ([]byte, error) {
-	if encoded := strings.TrimSpace(resp.Header.Get(HeaderPaymentRequired)); encoded != "" {
-		if base64.StdEncoding.DecodedLen(len(encoded)) > maxPaymentRequiredSize {
-			return nil, fmt.Errorf("x402: %s header exceeds %d bytes", HeaderPaymentRequired, maxPaymentRequiredSize)
-		}
-		raw, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			return nil, fmt.Errorf("x402: decode %s header: %w", HeaderPaymentRequired, err)
-		}
-		return raw, nil
+	encoded := strings.TrimSpace(resp.Header.Get(HeaderPaymentRequired))
+	if encoded == "" {
+		return nil, fmt.Errorf("x402: missing %s header", HeaderPaymentRequired)
 	}
-
-	if resp.Body == nil {
-		return nil, fmt.Errorf("x402: missing %s header and response body", HeaderPaymentRequired)
+	if base64.StdEncoding.DecodedLen(len(encoded)) > maxPaymentRequiredSize {
+		return nil, fmt.Errorf("x402: %s header exceeds %d bytes", HeaderPaymentRequired, maxPaymentRequiredSize)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPaymentRequiredSize+1))
+	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("x402: read payment requirements: %w", err)
-	}
-	if len(raw) > maxPaymentRequiredSize {
-		return nil, fmt.Errorf("x402: payment requirements body exceeds %d bytes", maxPaymentRequiredSize)
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, fmt.Errorf("x402: missing %s header and response body", HeaderPaymentRequired)
+		return nil, fmt.Errorf("x402: decode %s header: %w", HeaderPaymentRequired, err)
 	}
 	return raw, nil
 }

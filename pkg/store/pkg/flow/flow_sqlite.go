@@ -116,5 +116,6 @@ func (s *FlowSQLiteStore) GetSpec(ctx context.Context, namespace, id string) (*e
 	if err := json.Unmarshal(v.Definition, &spec); err != nil {
 		return nil, err
 	}
+	hydrateSpec(&spec, v)
 	return &spec, nil
 }

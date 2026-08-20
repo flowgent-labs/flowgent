@@ -56,7 +56,10 @@ func TestNotifier_ChannelCRUD(t *testing.T) {
 		t.Fatalf("get status = %d", resp.StatusCode)
 	}
 
-	update := map[string]any{"enabled": false}
+	update := map[string]any{
+		"name": "test-telegram", "provider": "telegram",
+		"config": map[string]any{"chat_id": "-1001234567890"}, "enabled": false,
+	}
 	b, _ = json.Marshal(update)
 	req, _ := http.NewRequest(http.MethodPut, base+"/"+created.ID, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -83,10 +86,11 @@ func TestNotifier_ChannelCRUD(t *testing.T) {
 func TestNotifier_FlowCompletionNotification(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "nfy-complete", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "start", Type: entities.NoopNode}, {ID: "end", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{{From: "start", To: "end"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{{ID: "start", Kind: entities.NoopNode}, {ID: "end", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{{From: "start", To: "end"}},
 	}
 
 	fs := it.New(t, flow)
@@ -114,10 +118,11 @@ func TestNotifier_FlowCompletionNotification(t *testing.T) {
 func TestNotifier_HumanApprovalNotification(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "nfy-human", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "needs-approval", Type: entities.HumanNode, Timeout: "1s"}},
-		Edges:      []entities.Edge{},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{{ID: "needs-approval", Kind: entities.HumanNode, Timeout: "1s"}},
+		Edges:    []entities.Edge{},
 	}
 
 	fs := it.New(t, flow)
@@ -130,7 +135,7 @@ func TestNotifier_HumanApprovalNotification(t *testing.T) {
 	}
 
 	// Verify the approval record was persisted.
-	resp, err := http.Get(fs.APIURL + "/api/v1/human/approvals")
+	resp, err := http.Get(fs.APIURL + "/api/v1/" + fs.Namespace + "/approvals")
 	if err != nil {
 		t.Fatalf("get approvals: %v", err)
 	}

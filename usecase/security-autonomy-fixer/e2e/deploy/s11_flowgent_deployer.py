@@ -104,7 +104,7 @@ def _helm(args, timeout=300):
 
 
 def _cleanup_runtime_resources():
-    print("\n-- Cleaning Flow and resource-pool runtime resources --")
+    print("\n-- Cleaning runtime-cluster resources --")
     for ns in sorted({DEFAULT_NAMESPACE, "default", _workload_namespace()}):
         _kubectl([
             "delete", "deployment", "-n", ns,
@@ -290,7 +290,7 @@ def _runtime_env(namespace, release):
         "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE": TENANT_NAMESPACE,
         "FLOWGENT__RUNTIME__JM_IMAGE": FLOWGENT_IMAGE,
         "FLOWGENT__RUNTIME__TM_IMAGE": FLOWGENT_IMAGE,
-        "FLOWGENT__RUNTIME__SANDBOX_IMAGE": FLOWGENT_IMAGE,
+        "FLOWGENT__SANDBOX__DEPLOYMENT__IMAGE": FLOWGENT_IMAGE,
         "FLOWGENT__MGMT__OTEL__ENDPOINT": jaeger_endpoint,
     }
 
@@ -744,7 +744,12 @@ def helm_install_or_upgrade(release, namespace):
         return False
 
     print("\n-- Applying runtime env to dependent Helm deployments --")
-    if not _set_runtime_env(namespace, release, [f"{release}-controller", f"{release}-notifier", f"{release}-a2a"]):
+    if not _set_runtime_env(namespace, release, [
+        f"{release}-controller",
+        f"{release}-notifier",
+        f"{release}-a2a",
+        f"{release}-session-jobmanager",
+    ]):
         return False
     if not _ensure_workload_configmap(namespace, release):
         return False
@@ -763,7 +768,15 @@ def _wait_rollout(namespace, deploy, timeout):
 def wait_for_rollouts(namespace, release, timeout):
     print(f"\n-- Waiting for deployment rollouts (timeout={timeout}s) --")
     ok = True
-    for deploy in (f"{release}-apiserver", f"{release}-controller", f"{release}-notifier", f"{release}-a2a", f"{release}-emqx", f"{release}-jaeger"):
+    for deploy in (
+        f"{release}-apiserver",
+        f"{release}-controller",
+        f"{release}-notifier",
+        f"{release}-a2a",
+        f"{release}-session-jobmanager",
+        f"{release}-emqx",
+        f"{release}-jaeger",
+    ):
         ok = _wait_rollout(namespace, deploy, timeout) and ok
     return ok
 

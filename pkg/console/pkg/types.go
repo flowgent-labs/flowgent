@@ -6,6 +6,8 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
+const ConsoleAPIVersion = "core.flowgent.io/v1"
+
 // ExportData is the root structure for import/export of all resources.
 type ExportData struct {
 	LLMs       []entities.LlmProviderInfo   `json:"llms" yaml:"llms"`
@@ -17,7 +19,7 @@ type ExportData struct {
 	FlowRuns   []entities.FlowRunInfo       `json:"flowRuns" yaml:"flowRuns"`
 }
 
-// ResourceMetadata holds the metadata block common to all K8s-style resources.
+// ResourceMetadata holds the metadata block common to all console resources.
 type ResourceMetadata struct {
 	Name        string            `json:"name" yaml:"name"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -26,17 +28,17 @@ type ResourceMetadata struct {
 	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
-// ResourceImport is a K8s-style single-resource wrapper:
+// ResourceImport is the canonical single-resource envelope:
 //
-//	apiVersion: console.flowgent.io/v1
+//	consoleVersion: core.flowgent.io/v1
 //	kind: Agent|Flow|FlowRun|MCP|LLMProvider|NotifyChannel|Skill
 //	metadata:
 //	  name: xxx
 //	  namespace: default
-//	spec: {...}
+//	data: {...}
 type ResourceImport struct {
-	APIVersion string            `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
-	Kind       string            `json:"kind" yaml:"kind"`
-	Metadata   *ResourceMetadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
-	Spec       json.RawMessage   `json:"spec" yaml:"spec"`
+	ConsoleVersion string            `json:"consoleVersion" yaml:"consoleVersion"`
+	Kind           string            `json:"kind" yaml:"kind"`
+	Metadata       *ResourceMetadata `json:"metadata" yaml:"metadata"`
+	Data           json.RawMessage   `json:"data" yaml:"data"`
 }

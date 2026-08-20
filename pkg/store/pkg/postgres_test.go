@@ -45,6 +45,7 @@ func TestPostgresStore_FlowRunCRUD(t *testing.T) {
 	s := flowrun.NewFlowRunPostgresStore(pool)
 
 	run := &entities.FlowRunInfo{
+		BaseEntity:  entities.BaseEntity{Namespace: "default"},
 		AgentFlowID: "pg-test-flow", Version: 1, Status: entities.RunPending,
 	}
 	run.SetTrigger(entities.TriggerInfo{Type: "manual", Source: "pg-ut"})
@@ -65,7 +66,7 @@ func TestPostgresStore_FlowRunCRUD(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	page, err := s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	page, err := s.List(ctx, flowrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
 	if err != nil {
 		t.Fatalf("Select: %v", err)
 	}

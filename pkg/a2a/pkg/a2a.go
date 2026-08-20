@@ -279,7 +279,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		return string(b), nil
 
 	case "list_runs":
-		runs, err := apiClient.ListRuns(ctx, req.Namespace, "", "", req.AgentFlowID, 1, 50)
+		runs, err := apiClient.ListRuns(ctx, req.Namespace, "", "", "", req.AgentFlowID, 1, 50)
 		if err != nil {
 			return "", err
 		}

@@ -16,20 +16,24 @@ type AgentPostgresStore struct {
 func NewAgentPostgresStore(pool *pgxpool.Pool) *AgentPostgresStore {
 	return &AgentPostgresStore{
 		inner: &store.PostgresGenericStore[entities.AgentInfo]{
-			Pool: pool, Table: "llm_agent", IDCol: "name",
+			Pool: pool, Table: "llm_agent", IDCol: "id",
 		},
 	}
 }
 
-func (s *AgentPostgresStore) Get(ctx context.Context, name string) (*entities.AgentInfo, error) {
-	return s.inner.Get(ctx, name)
+func (s *AgentPostgresStore) Get(ctx context.Context, namespace, name string) (*entities.AgentInfo, error) {
+	lookup := *s.inner
+	lookup.IDCol = "name"
+	return lookup.GetScoped(ctx, namespace, name)
 }
-func (s *AgentPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.AgentInfo], error) {
-	return s.inner.Select(ctx, req)
+func (s *AgentPostgresStore) List(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[entities.AgentInfo], error) {
+	return s.inner.SelectScoped(ctx, namespace, req)
 }
 func (s *AgentPostgresStore) Save(ctx context.Context, e *entities.AgentInfo) error {
 	return s.inner.Save(ctx, e)
 }
-func (s *AgentPostgresStore) Delete(ctx context.Context, name string) error {
-	return s.inner.Delete(ctx, name)
+func (s *AgentPostgresStore) Delete(ctx context.Context, namespace, name string) error {
+	lookup := *s.inner
+	lookup.IDCol = "name"
+	return lookup.DeleteScoped(ctx, namespace, name)
 }

@@ -12,7 +12,7 @@
 | L1 引擎 | [引擎总览](architecture/overview_ZH.md) | 跨组件调用、状态与消息契约、部署及共享模块 |
 | L1 引擎 | [API Server](architecture/engine/apiserver_ZH.md) | 外部网关与唯一 durable-state client |
 | L1 引擎 | [Controller](architecture/engine/controller_ZH.md) | 活跃 Run 的 JobManager 协调 |
-| L1 引擎 | [资源池](architecture/engine/resource-pools_ZH.md) | Namespace 范围 Worker 容量与 SLA 隔离 |
+| L1 引擎 | [Runtime Clusters](architecture/engine/runtime-clusters_ZH.md) | Flink 风格 application/session 运行时隔离 |
 | L1 引擎 | [JobManager](architecture/engine/jobmanager_ZH.md) | DAG scheduling 与 runtime ownership |
 | L1 引擎 | [TaskManager](architecture/engine/taskmanager_ZH.md) | Slot execution 与 executor routing |
 | L1 引擎 | [Sandbox](architecture/engine/sandbox_ZH.md) | 隔离脚本执行 |

@@ -1,13 +1,12 @@
 {
   "provisioning_mode": "ui",
-  "run_id": "2b2c7ae8-ecfe-4157-af74-377519419da9",
+  "run_id": "e14e61c1-d9cd-42d7-865c-50326105588c",
   "configured": {
     "llm_providers": 1,
     "notification_channels": 1,
     "mcps": 2,
     "agents": 7,
     "runtime_skills": 2,
-    "resource_pools": 1,
     "flows": 1,
     "namespace_principals": 1,
     "flow_access_bindings": 1,
@@ -218,11 +217,6 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/default/resource-pools",
-      "status": 201
-    },
-    {
-      "method": "POST",
       "path": "/api/v1/default/flows",
       "status": 201
     },
@@ -263,14 +257,19 @@
     },
     {
       "method": "DELETE",
-      "path": "/api/v1/default/iam/api-keys/f40eb081-5447-4f32-a40c-077993a475d9",
+      "path": "/api/v1/default/iam/api-keys/9c24d271-0c8d-4809-b8dd-5beeca73d0bb",
       "status": 204
     },
     {
       "method": "POST",
       "path": "/api/v1/default/flows/security-autonomy-fixer/trigger",
       "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/default/flows/security-autonomy-fixer/runs/e14e61c1-d9cd-42d7-865c-50326105588c/approvals/3a12fd53-be78-4470-a7f3-fe781d882a94/approve",
+      "status": 200
     }
   ],
-  "completed_at": "2026-08-16T20:36:02.659Z"
+  "completed_at": "2026-08-18T03:37:53.481Z"
 }

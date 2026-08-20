@@ -75,7 +75,15 @@ def get_knowledge(kid: str):
 
 def update_knowledge(kid: str):
     """Phase 1: Update a knowledge entry."""
-    resp = SESSION.put(_kw_path(kid), json={"content": "Updated: Always use parameterized queries."}, timeout=10)
+    resp = SESSION.put(_kw_path(kid), json={
+        "title": SEED_TITLE,
+        "content": "Updated: Always use parameterized queries.",
+        "content_type": "markdown",
+        "source": "manual",
+        "source_ref": "e2e:36",
+        "tags": ["security", "java", "sql-injection"],
+        "metadata": {},
+    }, timeout=10)
     assert resp.status_code == 200, f"Update knowledge failed: {resp.status_code}"
     updated = resp.json()
     assert "Updated" in updated.get("content", ""), f"Content not updated: {updated}"

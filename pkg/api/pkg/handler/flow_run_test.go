@@ -12,12 +12,14 @@ import (
 
 	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
 type flowRunStoreStub struct {
 	runs    map[string]*entities.FlowRunInfo
 	page    *entities.Page[entities.FlowRunInfo]
 	updated *entities.FlowRunInfo
+	filter  flowrun.ListFilter
 }
 
 func (s *flowRunStoreStub) Get(_ context.Context, id string) (*entities.FlowRunInfo, error) {
@@ -26,13 +28,14 @@ func (s *flowRunStoreStub) Get(_ context.Context, id string) (*entities.FlowRunI
 	}
 	return nil, sql.ErrNoRows
 }
-func (s *flowRunStoreStub) Select(context.Context, entities.PageRequest) (*entities.Page[entities.FlowRunInfo], error) {
+func (s *flowRunStoreStub) List(_ context.Context, filter flowrun.ListFilter) (*entities.Page[entities.FlowRunInfo], error) {
+	s.filter = filter
 	return s.page, nil
 }
-func (s *flowRunStoreStub) HasActiveForFlow(context.Context, string, string) (bool, error) {
-	return false, nil
+func (s *flowRunStoreStub) Metrics(context.Context, flowrun.MetricRequest) (*entities.RunMetrics, error) {
+	return &entities.RunMetrics{Buckets: []entities.RunMetricBucket{}}, nil
 }
-func (s *flowRunStoreStub) HasActiveForPool(context.Context, string, string) (bool, error) {
+func (s *flowRunStoreStub) HasActiveForFlow(context.Context, string, string) (bool, error) {
 	return false, nil
 }
 func (s *flowRunStoreStub) Save(context.Context, *entities.FlowRunInfo) error   { return nil }
@@ -79,10 +82,10 @@ func (s *taskStoreStub) ListByFlowRun(context.Context, string) ([]*entities.Task
 func TestFlowRunListDoesNotDiscloseOtherNamespaces(t *testing.T) {
 	t.Parallel()
 	tenantA := &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "run-a", Namespace: "tenant-a"}}
-	tenantB := &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "run-b", Namespace: "tenant-b"}}
-	handler := &FlowRunHandler{runStore: &flowRunStoreStub{page: &entities.Page[entities.FlowRunInfo]{
-		Items: []*entities.FlowRunInfo{tenantA, tenantB}, TotalCount: 2,
-	}}}
+	store := &flowRunStoreStub{page: &entities.Page[entities.FlowRunInfo]{
+		Items: []*entities.FlowRunInfo{tenantA}, TotalCount: 1,
+	}}
+	handler := &FlowRunHandler{runStore: store}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/{namespace}/runs", handler.List)
 
@@ -97,6 +100,9 @@ func TestFlowRunListDoesNotDiscloseOtherNamespaces(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].ID != "run-a" {
 		t.Fatalf("items = %+v", page.Items)
+	}
+	if store.filter.Namespace != "tenant-a" {
+		t.Fatalf("database filter namespace = %q", store.filter.Namespace)
 	}
 }
 

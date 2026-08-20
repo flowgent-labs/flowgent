@@ -1,0 +1,159 @@
+{{- if .Values.session.enabled }}
+{{- $sessionSA := .Values.session.serviceAccount.name | default (printf "%s-session-runtime" (include "flowgent.fullname" .)) -}}
+{{- $runtimeNS := .Values.runtime.k8sNamespace | default .Release.Namespace -}}
+{{- $clusterID := .Values.session.clusterId | default "session" -}}
+{{- if .Values.session.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sessionSA }}
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-jobmanager
+    flowgent.io/runtime-mode: session
+    flowgent.io/runtime-cluster: {{ $clusterID | quote }}
+  annotations:
+    {{- include "flowgent.credentialServiceAccountAnnotations" . | nindent 4 }}
+---
+{{- end }}
+{{- if .Values.session.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $sessionSA }}
+  namespace: {{ $runtimeNS }}
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-jobmanager
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $sessionSA }}
+  namespace: {{ $runtimeNS }}
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-jobmanager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $sessionSA }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sessionSA }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowgent.fullname" . }}-session-jobmanager
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-jobmanager
+    flowgent.io/runtime-mode: session
+    flowgent.io/runtime-cluster: {{ $clusterID | quote }}
+spec:
+  replicas: {{ .Values.session.jobmanager.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "flowgent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: session-jobmanager
+      flowgent.io/runtime-mode: session
+      flowgent.io/runtime-cluster: {{ $clusterID | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "flowgent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: session-jobmanager
+        flowgent.io/runtime-mode: session
+        flowgent.io/runtime-cluster: {{ $clusterID | quote }}
+{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+      annotations:
+        {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
+{{ end }}
+    spec:
+      serviceAccountName: {{ $sessionSA }}
+      containers:
+        - name: jobmanager
+          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/app/flowgent"]
+          args: ["jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+          env:
+            {{- include "flowgent.internalEnv" . | nindent 12 }}
+            {{- include "flowgent.workloadTokenEnv" (dict "root" . "component" "jobmanager") | nindent 12 }}
+            - name: FLOWGENT__CONFIG__FILE
+              value: /etc/flowgent/flowgent.yaml
+            - name: FLOWGENT__RUNTIME__MODE
+              value: "session"
+            - name: FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID
+              value: {{ $clusterID | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION_CLUSTER_ID
+              value: {{ $clusterID | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__CLUSTER_ID
+              value: {{ $clusterID | quote }}
+            - name: FLOWGENT__RUNTIME__K8S_NAMESPACE
+              value: {{ $runtimeNS | quote }}
+            - name: FLOWGENT__RUNTIME__SYSTEM_NAMESPACE
+              value: {{ .Values.runtime.systemNamespace | default .Release.Namespace | quote }}
+            - name: FLOWGENT__RUNTIME__JM_CONFIG_MAP
+              value: "{{ include "flowgent.fullname" . }}-config"
+            - name: FLOWGENT__RUNTIME__JM_IMAGE
+              value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+            - name: FLOWGENT__RUNTIME__TM_IMAGE
+              value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+            - name: FLOWGENT__SANDBOX__DEPLOYMENT__IMAGE
+              value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+            - name: FLOWGENT__RUNTIME__TM_DEPLOY
+              value: "{{ include "flowgent.fullname" . }}-session-taskmanager"
+            - name: FLOWGENT__RUNTIME__SANDBOX_DEPLOY
+              value: "{{ include "flowgent.fullname" . }}-session-sandbox"
+            - name: FLOWGENT__RUNTIME__SESSION__TASKMANAGER__REPLICAS
+              value: {{ .Values.session.taskmanager.replicas | default 1 | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__TASKMANAGER__SLOTS
+              value: {{ .Values.session.taskmanager.slots | default 4 | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__TASKMANAGER__RESOURCES__CPU
+              value: {{ .Values.session.taskmanager.resources.limits.cpu | default "2" | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__TASKMANAGER__RESOURCES__MEMORY
+              value: {{ .Values.session.taskmanager.resources.limits.memory | default "2Gi" | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__SANDBOX__MIN_REPLICAS
+              value: {{ .Values.session.sandbox.minReplicas | default 0 | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__SANDBOX__MAX_REPLICAS
+              value: {{ .Values.session.sandbox.maxReplicas | default 10 | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__SANDBOX__SLOTS
+              value: {{ .Values.session.sandbox.slots | default 4 | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__SANDBOX__RESOURCES__CPU
+              value: {{ .Values.session.sandbox.resources.limits.cpu | default "2" | quote }}
+            - name: FLOWGENT__RUNTIME__SESSION__SANDBOX__RESOURCES__MEMORY
+              value: {{ .Values.session.sandbox.resources.limits.memory | default "2Gi" | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: config
+              mountPath: /etc/flowgent
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+            {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
+{{ end }}
+          resources:
+            {{- toYaml .Values.session.jobmanager.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flowgent.fullname" . }}-config
+{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+        {{- include "flowgent.credentialVolumes" . | nindent 8 }}
+{{ end }}
+{{- end }}

@@ -1,14 +1,14 @@
 // Package messager defines the inter-component messaging contract for Flowgent.
 //
 // All inter-component communication uses MQTT topics under the flowgent/v1/ prefix
-// with a hierarchical namespace/pool/flow/run structure for work dispatch and a
+// with a hierarchical namespace/cluster/flow/run structure for work dispatch and a
 // namespace/flow/run structure for point-to-point callbacks and control events.
 //
 // Topic hierarchy:
 //
-//	flowgent/v1/{namespaceId}/pools/{poolId}/flows/{flowId}/runs/{runId}/
-//	  ├── exec/plans          ← JM→TM: pool-routed dispatch       ($share/tm-{namespaceId}-{poolId})
-//	  └── sandbox/trigger     ← TM→Sandbox: pool-routed trigger   ($share/sandbox-{namespaceId}-{poolId})
+//	flowgent/v1/{namespaceId}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/
+//	  ├── exec/plans          ← JM→TM: cluster-routed dispatch       ($share/tm-{namespaceId}-{clusterId})
+//	  └── sandbox/trigger     ← TM→Sandbox: cluster-routed trigger   ($share/sandbox-{namespaceId}-{clusterId})
 //
 //	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/
 //	  ├── exec/results        ← TM→JM: execution results          (point-to-point)
@@ -44,16 +44,16 @@ const (
 // Shared-subscription variants prepend $share/{group}/ for load-balanced
 // consumption across multiple pods.
 
-// ExecPlansTopic builds the pool-routed JM→TM dispatch topic. Flow and Run
-// remain in the path for observability while pool is the consumer boundary.
-func ExecPlansTopic(namespaceID, poolID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/pools/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, namespaceID, poolID, flowID, runID)
+// ExecPlansTopic builds the cluster-routed JM→TM dispatch topic. Flow and Run
+// remain in the path for observability while cluster is the consumer boundary.
+func ExecPlansTopic(namespaceID, clusterID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, namespaceID, clusterID, flowID, runID)
 }
 
-// SharedExecPlans load-balances only within one namespace Resource Pool.
-func SharedExecPlans(namespaceID, poolID string) string {
-	group := fmt.Sprintf("tm-%s-%s", namespaceID, poolID)
-	return fmt.Sprintf("$share/%s/%s/%s/pools/%s/flows/+/runs/+/exec/plans", group, TopicPrefix, namespaceID, poolID)
+// SharedExecPlans load-balances only within one runtime cluster.
+func SharedExecPlans(namespaceID, clusterID string) string {
+	group := fmt.Sprintf("tm-%s-%s", namespaceID, clusterID)
+	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/flows/+/runs/+/exec/plans", group, TopicPrefix, namespaceID, clusterID)
 }
 
 // ExecResultsTopic builds the topic for TM→JM execution result callback.
@@ -63,14 +63,14 @@ func ExecResultsTopic(namespaceID, flowID, runID string) string {
 
 // SandboxTriggerTopic builds the topic for TM→Sandbox script trigger dispatch.
 // Sandbox pods subscribe with SharedSandboxTrigger() for load-balanced consumption.
-func SandboxTriggerTopic(namespaceID, poolID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/pools/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, namespaceID, poolID, flowID, runID)
+func SandboxTriggerTopic(namespaceID, clusterID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, namespaceID, clusterID, flowID, runID)
 }
 
-// SharedSandboxTrigger load-balances only within one namespace Resource Pool.
-func SharedSandboxTrigger(namespaceID, poolID string) string {
-	group := fmt.Sprintf("sandbox-%s-%s", namespaceID, poolID)
-	return fmt.Sprintf("$share/%s/%s/%s/pools/%s/flows/+/runs/+/sandbox/trigger", group, TopicPrefix, namespaceID, poolID)
+// SharedSandboxTrigger load-balances only within one runtime cluster.
+func SharedSandboxTrigger(namespaceID, clusterID string) string {
+	group := fmt.Sprintf("sandbox-%s-%s", namespaceID, clusterID)
+	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/flows/+/runs/+/sandbox/trigger", group, TopicPrefix, namespaceID, clusterID)
 }
 
 // SandboxResultTopic builds the topic for Sandbox→TM result callback.
@@ -91,13 +91,13 @@ func HeartbeatWildcard() string {
 // RuntimeReadyTopic is published by a runtime worker only after its work
 // subscription is active. JobManager subscribes before scaling from zero, so
 // the first execution plan cannot race ahead of its consumer.
-func RuntimeReadyTopic(namespaceID, poolID, role, workerID string) string {
-	return fmt.Sprintf("%s/%s/pools/%s/runtime/%s/%s/ready", TopicPrefix, namespaceID, poolID, role, workerID)
+func RuntimeReadyTopic(namespaceID, clusterID, role, workerID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/runtime/%s/%s/ready", TopicPrefix, namespaceID, clusterID, role, workerID)
 }
 
-// RuntimeReadyWildcard matches all workers for one Resource Pool role.
-func RuntimeReadyWildcard(namespaceID, poolID, role string) string {
-	return RuntimeReadyTopic(namespaceID, poolID, role, "+")
+// RuntimeReadyWildcard matches all workers for one runtime cluster role.
+func RuntimeReadyWildcard(namespaceID, clusterID, role string) string {
+	return RuntimeReadyTopic(namespaceID, clusterID, role, "+")
 }
 
 // CtrlJMCreateTopic builds the topic for Controller→JM dedicated JM creation.
@@ -218,7 +218,7 @@ type RuntimeReady struct {
 	WorkerID  string    `json:"worker_id"`
 	Role      string    `json:"role"`
 	Namespace string    `json:"namespace_id"`
-	PoolID    string    `json:"resource_pool_id"`
+	ClusterID string    `json:"runtime_cluster_id"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

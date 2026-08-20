@@ -149,6 +149,66 @@ controller:
     limits:   { cpu: "500m", memory: "512Mi" }
 
 # ═══════════════════════════════════════════════════════════════
+# Session Runtime — Helm-deployed Flink-style shared runtime cluster
+# Flows with runtime_mode=session are consumed by this JobManager and execute
+# only on TM/Sandbox pods carrying this clusterId.
+# ═══════════════════════════════════════════════════════════════
+session:
+  enabled: true
+  clusterId: session
+  serviceAccount:
+    create: true
+    name: ""
+  rbac:
+    create: true
+  jobmanager:
+    replicas: 1
+    resources:
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits:   { cpu: "500m", memory: "512Mi" }
+  taskmanager:
+    replicas: 1
+    slots: 4
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+  sandbox:
+    minReplicas: 0
+    maxReplicas: 10
+    slots: 4
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+# ═══════════════════════════════════════════════════════════════
+# Application Runtime Defaults — per-FlowRun runtime clusters created by the
+# Controller. Flow YAML top-level resources may override only pod sizes.
+# ═══════════════════════════════════════════════════════════════
+application:
+  jobmanager:
+    resources:
+      limits:
+        cpu: ""
+        memory: ""
+  taskmanager:
+    replicas: 1
+    slots: 4
+    resources:
+      limits:
+        cpu: ""
+        memory: ""
+  sandbox:
+    minReplicas: 0
+    maxReplicas: 10
+    slots: 4
+    resources:
+      limits:
+        cpu: ""
+        memory: ""
+
+# ═══════════════════════════════════════════════════════════════
 # Secrets — External K8s Secret references for credentials.
 # extraSecrets injects env vars from K8s Secrets into all engine pods
 # (taskmanager, sandbox, jobmanager). Each mapping extracts a key from
@@ -315,6 +375,7 @@ orchestration:
 # ═══════════════════════════════════════════════════════════════
 runtime:
   systemNamespace: "flowgen-system"
+  k8sNamespace: ""
   tmOrphanTimeout: "3m"
   credentialEnvSecret: ""
   namespace:

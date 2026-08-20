@@ -137,5 +137,6 @@ func (s *FlowPostgresStore) GetSpec(ctx context.Context, namespace, id string) (
 	if err := json.Unmarshal(ver.Definition, &spec); err != nil {
 		return nil, err
 	}
+	hydrateSpec(&spec, ver)
 	return &spec, nil
 }

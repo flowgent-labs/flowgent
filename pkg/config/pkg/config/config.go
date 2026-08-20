@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Top-level config ────────────────────────────────────────
@@ -350,12 +349,6 @@ type RedisLockConfig struct {
 	Password string   `json:"password" yaml:"password"`
 }
 
-// AgentInfo is the DB-backed agent definition type.
-type AgentInfo = entities.AgentInfo
-
-// McpInfo is the DB-backed MCP definition type.
-type McpInfo = entities.McpInfo
-
 // ─── Notifier ─────────────────────────────────────────────────
 
 // NotifierConfig configures the notifier service (always-on daemon like apiserver).
@@ -412,10 +405,17 @@ type RuntimeConfig struct {
 	APIServerURL        string                `json:"api_server_url" yaml:"api_server_url"`
 	K8sNamespace        string                `json:"k8s_namespace" yaml:"k8s_namespace"`
 	SystemNamespace     string                `json:"system_namespace" yaml:"system_namespace"`
+	Mode                string                `json:"mode" yaml:"mode"`
+	RuntimeClusterID    string                `json:"runtime_cluster_id" yaml:"runtime_cluster_id"`
 	AgentFlowID         string                `json:"agent_flow_id" yaml:"agent_flow_id"`
-	ResourcePoolID      string                `json:"resource_pool_id" yaml:"resource_pool_id"`
+	AgentFlowRunID      string                `json:"agent_flow_run_id" yaml:"agent_flow_run_id"`
+	SessionClusterID    string                `json:"session_cluster_id" yaml:"session_cluster_id"`
+	Session             RuntimeClusterConfig  `json:"session" yaml:"session"`
+	Application         RuntimeClusterConfig  `json:"application" yaml:"application"`
 	TMID                string                `json:"tm_id" yaml:"tm_id"`
 	TMDeploy            string                `json:"tm_deploy" yaml:"tm_deploy"`
+	SandboxDeploy       string                `json:"sandbox_deploy" yaml:"sandbox_deploy"`
+	TMReplicas          int                   `json:"tm_replicas" yaml:"tm_replicas"`
 	TMSlots             int                   `json:"tm_slots" yaml:"tm_slots"`
 	TMOrphanTimeout     string                `json:"tm_orphan_timeout" yaml:"tm_orphan_timeout"`
 	CredentialEnvSecret string                `json:"credential_env_secret" yaml:"credential_env_secret"`
@@ -430,6 +430,34 @@ type RuntimeConfig struct {
 	PodTotal            int                   `json:"pod_total" yaml:"pod_total"`
 	Namespace           NamespaceConfig       `json:"namespace" yaml:"namespace"`
 	CredentialPaths     CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
+}
+
+// RuntimeClusterConfig configures one Flink-style runtime cluster topology.
+// Session values are supplied by the Helm release. Application values are
+// defaults; a Flow definition can override only pod resources via its top-level
+// resources block.
+type RuntimeClusterConfig struct {
+	ClusterID   string               `json:"cluster_id,omitempty" yaml:"cluster_id,omitempty"`
+	JobManager  RuntimePodConfig     `json:"jobmanager" yaml:"jobmanager"`
+	TaskManager RuntimeWorkerConfig  `json:"taskmanager" yaml:"taskmanager"`
+	Sandbox     RuntimeSandboxConfig `json:"sandbox" yaml:"sandbox"`
+}
+
+type RuntimePodConfig struct {
+	Resources *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
+
+type RuntimeWorkerConfig struct {
+	Replicas  int                     `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	Slots     int                     `json:"slots,omitempty" yaml:"slots,omitempty"`
+	Resources *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
+
+type RuntimeSandboxConfig struct {
+	MinReplicas int                     `json:"min_replicas,omitempty" yaml:"min_replicas,omitempty"`
+	MaxReplicas int                     `json:"max_replicas,omitempty" yaml:"max_replicas,omitempty"`
+	Slots       int                     `json:"slots,omitempty" yaml:"slots,omitempty"`
+	Resources   *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.
@@ -790,18 +818,6 @@ func expandString(s string) string {
 
 // ── Config display ──────────────────────────────────────────────
 
-// ── Deprecated: static resource loading stubs ───────────────────
-// These exist for backward compatibility. All resources are now DB-backed.
-// New code should load from the management console or REST API.
-
-func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentInfo, error) { return nil, nil }
-func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
-	return nil, make(map[string]entities.FlowInfo), nil
-}
-func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
-	return nil, make(map[string]entities.FlowInfo), nil
-}
-
 // LogConfig prints key configuration details (masks sensitive fields).
 func LogConfig(cfg *FlowgentConfig) {
 	switch cfg.Storage.Type {
@@ -816,11 +832,7 @@ func LogConfig(cfg *FlowgentConfig) {
 		}
 		slog.Info("Storage", "type", "SQLite", "dir", dir)
 	}
-	artifactProvider := cfg.Storage.Artifacts.Provider
-	if artifactProvider == "" {
-		artifactProvider = "default"
-	}
-	slog.Info("Artifact storage", "provider", artifactProvider, "inline_max_bytes", cfg.Storage.Artifacts.InlineMaxBytes, "max_payload_bytes", cfg.Storage.Artifacts.MaxPayloadBytes, "compression", cfg.Storage.Artifacts.Compression)
+	slog.Info("Artifact storage", "provider", cfg.Storage.Artifacts.Provider, "inline_max_bytes", cfg.Storage.Artifacts.InlineMaxBytes, "max_payload_bytes", cfg.Storage.Artifacts.MaxPayloadBytes, "compression", cfg.Storage.Artifacts.Compression)
 
 	slog.Info("Cache", "provider", cfg.Cache.Provider)
 	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "context", cfg.Server.ContextPath)

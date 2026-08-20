@@ -151,12 +151,12 @@ Sandbox 子系统跨两个 Go Module，通过 MQTT 与共享 PVC 通信：
 ```text
 TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
 ─────────────────────────               ─────────────────────────
-  → 构造 Workspace 路径                  → $share/sandbox-pool 订阅
+  → 构造 Workspace 路径                  → $share/sandbox-{namespace}-{cluster} 订阅
   → 向共享 PVC 写 Script                  → 通过 MQTT 获取 Trigger
   → 保存原始文件快照                      → 从共享 PVC 读 Script
   → 发布 Trigger ───MQTT──→             → BuildFilter(network_policy)
     Topic: .../sandbox/trigger            → 安装 seccomp (TSYNC)
-    {namespace}/{flowId}/{runId}           → 启动 Notifier Goroutine
+    {namespace}/{clusterId}/{flowId}/{runId} → 启动 Notifier Goroutine
   → 订阅 Result ←──MQTT──                → 执行 bash/python3/node
     Topic: .../sandbox/result             → 等待 Child Process 退出
     {namespace}/{flowId}/{runId}           → Notifier 自动退出
@@ -164,9 +164,10 @@ TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
                                            → 发布 Result ───MQTT──→
 ```
 
-分布式模式的 Sandbox Pod 通过 `$share/sandbox-pool` 共享订阅负载均衡消费
-Trigger。Trigger Topic 包含 `{namespace}/{flowId}/{runId}`，多个 Run 不会
-互相干扰。Result 使用相同后缀点对点路由，只有来源 TM Slot 订阅。
+分布式模式的 Sandbox Pod 通过 `$share/sandbox-{namespace}-{cluster}` 共享订阅在
+同一 runtime cluster 内负载均衡消费 Trigger。Trigger Topic 包含
+`{namespace}/{clusterId}/{flowId}/{runId}`，多个 Cluster 不会互相干扰。Result
+使用 `{namespace}/{flowId}/{runId}` 后缀点对点路由，只有来源 TM Slot 订阅。
 
 `SandboxTrigger` Struct 定义在 `model`，使双方共享契约而不产生 Go Import
 耦合。Sandbox K8s Deployment 由 JM 的 K8sRM 创建并扩缩，与 TM Pod 使用
@@ -174,7 +175,7 @@ Trigger。Trigger Topic 包含 `{namespace}/{flowId}/{runId}`，多个 Run 不�
 
 ```text
 Sandbox Worker（Sandbox Pod 内，每次执行的生命周期）：
-  → 从 $share/sandbox-pool 取 Trigger
+  → 从 $share/sandbox-{namespace}-{cluster} 取 Trigger
   → 从共享 Workspace PVC 读取 Script
   → 预解析 Allowlist Host → IP
   → 根据解析 IP 与端口列表构造 seccomp-bpf Filter
@@ -190,7 +191,7 @@ Sandbox Worker（Sandbox Pod 内，每次执行的生命周期）：
 ### Workspace——统一 PVC 设计
 
 分布式运行时使用一个 **ReadWriteMany PVC** 作为 Sandbox Workspace；只配置
-一次，由 namespace/pool 范围 Sandbox Pod 共享。
+一次，由 runtime-cluster 范围 Sandbox Pod 共享。
 
 ```text
 /var/flowgent/

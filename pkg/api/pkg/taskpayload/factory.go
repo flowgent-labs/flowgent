@@ -9,13 +9,12 @@ import (
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 )
 
-// NewProvider builds the single TaskRun payload provider owned by the API
-// Server. An empty provider remains backward-compatible with "default"; the
-// checked-in flowgent.yaml names it explicitly so production intent is clear.
+// NewProvider builds the single explicitly configured TaskRun payload provider
+// owned by the API Server.
 func NewProvider(ctx context.Context, cfg config.ArtifactStorageConfig) (ITaskPayloadProvider, error) {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if provider == "" {
-		provider = "default"
+		return nil, fmt.Errorf("storage.artifacts.provider is required (expected default, s3, or gcs)")
 	}
 	if cfg.InlineMaxBytes < 0 {
 		return nil, fmt.Errorf("storage.artifacts.inline_max_bytes must be non-negative")

@@ -19,36 +19,36 @@ func TestLlmProviderUsesWriteOnlyEnvironmentReference(t *testing.T) {
 		t.Fatalf("unsafe public projection: %+v", public)
 	}
 
-	inline := &entities.LlmProviderInfo{ApiKey: "plaintext-secret"}
-	if err := normalizeLlmSecret(inline); err == nil {
-		t.Fatal("inline API key was accepted")
+	invalid := &entities.LlmProviderInfo{ApiKeyEnv: "not valid"}
+	if err := normalizeLlmSecret(invalid); err == nil {
+		t.Fatal("invalid environment name was accepted")
 	}
 }
 
-func TestMcpSensitiveHeadersUseReferencesAndAreRedacted(t *testing.T) {
+func TestMcpAPIUsesOnlySecretReferences(t *testing.T) {
 	mcp := &entities.McpInfo{
-		Headers: map[string]string{
+		HeaderRefs: map[string]string{
 			"Authorization": "Bearer ${GITHUB_TOKEN}",
 			"X-Namespace":   "default",
 		},
-		Env: map[string]string{"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
+		EnvRefs: map[string]string{"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
 	}
-	if err := normalizeMcpSecrets(mcp, nil); err != nil {
+	if err := normalizeMcpSecrets(mcp); err != nil {
 		t.Fatalf("normalize MCP references: %v", err)
 	}
 	public := publicMcp(mcp)
-	if public.Headers["Authorization"] != redactedSecret {
-		t.Fatalf("authorization was not redacted: %+v", public.Headers)
+	if public.Headers != nil || public.Env != nil {
+		t.Fatalf("persisted fields leaked through API: %+v", public)
 	}
 	if public.HeaderRefs["Authorization"] != "Bearer ${GITHUB_TOKEN}" {
 		t.Fatalf("reference projection missing: %+v", public.HeaderRefs)
 	}
-	if public.Env["GITHUB_TOKEN"] != redactedSecret {
-		t.Fatalf("environment value was not redacted: %+v", public.Env)
+	if public.EnvRefs["GITHUB_TOKEN"] != "${GITHUB_TOKEN}" {
+		t.Fatalf("environment reference projection missing: %+v", public.EnvRefs)
 	}
 
-	inline := &entities.McpInfo{Headers: map[string]string{"Authorization": "Bearer plaintext"}}
-	if err := normalizeMcpSecrets(inline, nil); err == nil {
+	inline := &entities.McpInfo{HeaderRefs: map[string]string{"Authorization": "Bearer plaintext"}}
+	if err := normalizeMcpSecrets(inline); err == nil {
 		t.Fatal("inline authorization header was accepted")
 	}
 }

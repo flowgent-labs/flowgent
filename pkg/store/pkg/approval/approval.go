@@ -14,5 +14,5 @@ type IApprovalStore interface {
 	Delete(ctx context.Context, token string) error
 	CreateApproval(ctx context.Context, entity *entities.ApprovalInfo) error
 	UpdateApproval(ctx context.Context, entity *entities.ApprovalInfo) error
-	ListPending(ctx context.Context) ([]*entities.ApprovalInfo, error)
+	ListPending(ctx context.Context, namespace string) ([]*entities.ApprovalInfo, error)
 }

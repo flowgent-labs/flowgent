@@ -54,11 +54,11 @@ func startTaskManager(cfgPath string) error {
 		}
 	}
 
-	poolID := svcCfg.Runtime.ResourcePoolID
-	if poolID == "" {
-		return fmt.Errorf("runtime.resource_pool_id is required")
+	clusterID := svcCfg.Runtime.RuntimeClusterID
+	if clusterID == "" {
+		return fmt.Errorf("runtime.runtime_cluster_id is required")
 	}
-	defaultTMID := "pool-" + svcCfg.Runtime.Namespace.DefaultNamespace + "-" + poolID + "-tm-" + utils.Hostname()
+	defaultTMID := "cluster-" + svcCfg.Runtime.Namespace.DefaultNamespace + "-" + clusterID + "-tm-" + utils.Hostname()
 	tmID := svcCfg.Runtime.TMID
 	if tmID == "" {
 		tmID = defaultTMID
@@ -76,20 +76,24 @@ func startTaskManager(cfgPath string) error {
 	if namespace == "" {
 		namespace = "default"
 	}
+	httpClient, err := client.NewHttpClient(svcCfg, q)
+	if err != nil {
+		return fmt.Errorf("create outbound HTTP client: %w", err)
+	}
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Messager: q,
 		State:                    &client.TaskStateClient{Client: apiClient, Namespace: namespace},
-		ApprovalInfo:             &client.HumanApprovalClient{Client: apiClient},
+		ApprovalInfo:             &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
 		APIServerURL:             svcCfg.Runtime.APIServerURL,
 		Namespace:                namespace,
-		ResourcePoolID:           poolID,
+		RuntimeClusterID:         clusterID,
 		Logger:                   logger,
 		SandboxMessager:          q,
 		SandboxPolicy:            svcCfg.Sandbox.Policy,
 		SandboxWorkspace:         svcCfg.Sandbox.Workspace,
 		SandboxDeploymentEnabled: svcCfg.Sandbox.Deployment.Enabled,
-		HttpClient:               client.NewHttpClient(svcCfg, q),
+		HttpClient:               httpClient,
 	})
 	if err != nil {
 		return fmt.Errorf("create taskmanager: %w", err)
@@ -100,7 +104,7 @@ func startTaskManager(cfgPath string) error {
 	if err := tm.Start(ctx); err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
-	slog.Info("TaskManager started", "tmID", tmID, "resource_pool", poolID, "slots", slotCount)
+	slog.Info("TaskManager started", "tmID", tmID, "runtime_cluster_id", clusterID, "slots", slotCount)
 	utils.WaitSignal()
 	cancel()
 	time.Sleep(2 * time.Second)

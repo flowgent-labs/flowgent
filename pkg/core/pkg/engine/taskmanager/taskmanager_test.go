@@ -20,9 +20,10 @@ func (fakeTaskState) SaveTask(ctx context.Context, task *entities.TaskRunInfo) e
 
 func TestNewTaskManager_Defaults(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		ID:       "test-tm",
-		State:    fakeTaskState{},
-		Messager: messager.NewLocalMessager(10),
+		ID:               "test-tm",
+		State:            fakeTaskState{},
+		Messager:         messager.NewLocalMessager(10),
+		RuntimeClusterID: "default",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,9 +42,10 @@ func TestNewTaskManager_Defaults(t *testing.T) {
 
 func TestNewTaskManager_ZeroSlotCount(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		SlotCount: 0,
-		State:     fakeTaskState{},
-		Messager:  messager.NewLocalMessager(10),
+		SlotCount:        0,
+		State:            fakeTaskState{},
+		Messager:         messager.NewLocalMessager(10),
+		RuntimeClusterID: "default",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,8 +57,11 @@ func TestNewTaskManager_ZeroSlotCount(t *testing.T) {
 
 func TestNewTaskManager_CustomSlots(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		ID: "tm-custom", SlotCount: 3,
-		State: fakeTaskState{}, Messager: messager.NewLocalMessager(10),
+		ID:               "tm-custom",
+		SlotCount:        3,
+		State:            fakeTaskState{},
+		Messager:         messager.NewLocalMessager(10),
+		RuntimeClusterID: "default",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +73,9 @@ func TestNewTaskManager_CustomSlots(t *testing.T) {
 
 func TestNewTaskManager_AutoID(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		State: fakeTaskState{}, Messager: messager.NewLocalMessager(10),
+		State:            fakeTaskState{},
+		Messager:         messager.NewLocalMessager(10),
+		RuntimeClusterID: "default",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,12 +97,13 @@ func TestTaskManager_StartStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	tm, err := NewTaskManager(&TaskManagerConfig{
-		ID: "tm-startstop", SlotCount: 2,
-		State:          fakeTaskState{},
-		Messager:       q,
-		Namespace:      "default",
-		ResourcePoolID: "default",
-		Logger:         utils.NewLogger("JSON", "DEBUG"),
+		ID:               "tm-startstop",
+		SlotCount:        2,
+		State:            fakeTaskState{},
+		Messager:         q,
+		Namespace:        "default",
+		RuntimeClusterID: "default",
+		Logger:           utils.NewLogger("JSON", "DEBUG"),
 	})
 	if err != nil {
 		t.Fatal(err)

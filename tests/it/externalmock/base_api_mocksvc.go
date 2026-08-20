@@ -176,10 +176,10 @@ type MCPBridge struct {
 }
 
 type mcpToolDef struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]any         `json:"inputSchema"`
-	RestAction  string                 // REST path + method, e.g. "GET /repos/{repo}/commits"
+	Name        string                         `json:"name"`
+	Description string                         `json:"description"`
+	InputSchema map[string]any                 `json:"inputSchema"`
+	RestAction  string                         // REST path + method, e.g. "GET /repos/{repo}/commits"
 	RestParser  func(body []byte) (any, error) // extracts useful result from mocked REST response
 }
 

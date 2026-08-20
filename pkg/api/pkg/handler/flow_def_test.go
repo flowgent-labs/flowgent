@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
 )
 
 type capturingFlowRunStore struct {
@@ -14,13 +15,13 @@ type capturingFlowRunStore struct {
 func (s *capturingFlowRunStore) Get(context.Context, string) (*entities.FlowRunInfo, error) {
 	return nil, nil
 }
-func (s *capturingFlowRunStore) Select(context.Context, entities.PageRequest) (*entities.Page[entities.FlowRunInfo], error) {
+func (s *capturingFlowRunStore) List(context.Context, flowrun.ListFilter) (*entities.Page[entities.FlowRunInfo], error) {
+	return nil, nil
+}
+func (s *capturingFlowRunStore) Metrics(context.Context, flowrun.MetricRequest) (*entities.RunMetrics, error) {
 	return nil, nil
 }
 func (s *capturingFlowRunStore) HasActiveForFlow(context.Context, string, string) (bool, error) {
-	return false, nil
-}
-func (s *capturingFlowRunStore) HasActiveForPool(context.Context, string, string) (bool, error) {
 	return false, nil
 }
 func (s *capturingFlowRunStore) Save(context.Context, *entities.FlowRunInfo) error { return nil }
@@ -132,7 +133,10 @@ func TestLogicalAndK8sNamespacesRemainDistinct(t *testing.T) {
 }
 
 func TestCreateRunKeepsTenantAndK8sNamespacesDistinct(t *testing.T) {
-	spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", Namespace: "tenant-a"}}
+	spec := &entities.FlowInfo{
+		BaseEntity:  entities.BaseEntity{ID: "flow-a", Namespace: "tenant-a"},
+		RuntimeMode: entities.RuntimeModeApplication,
+	}
 	runs := &capturingFlowRunStore{}
 	h := &FlowDefHandler{
 		agentFlows:       map[string]*entities.FlowInfo{flowCacheKey("tenant-a", spec.ID): spec},
@@ -154,10 +158,16 @@ func TestCreateRunKeepsTenantAndK8sNamespacesDistinct(t *testing.T) {
 	if runs.created.K8sNamespace != "flowgent-tenant-a" {
 		t.Fatalf("K8s namespace = %q, want flowgent-tenant-a", runs.created.K8sNamespace)
 	}
+	if runs.created.RuntimeMode != entities.RuntimeModeApplication {
+		t.Fatalf("runtime mode = %q, want application", runs.created.RuntimeMode)
+	}
 }
 
 func TestCreateRunRejectsCrossTenantTrigger(t *testing.T) {
-	spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", Namespace: "tenant-a"}}
+	spec := &entities.FlowInfo{
+		BaseEntity:  entities.BaseEntity{ID: "flow-a", Namespace: "tenant-a"},
+		RuntimeMode: entities.RuntimeModeApplication,
+	}
 	runs := &capturingFlowRunStore{}
 	h := &FlowDefHandler{
 		agentFlows:       map[string]*entities.FlowInfo{flowCacheKey("tenant-a", spec.ID): spec},

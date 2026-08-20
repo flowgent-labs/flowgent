@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-08
 
-**Status:** Implemented — dedicated active-run JobManagers with namespace-scoped Resource Pool workers
+**Status:** Implemented — Flink-style application/session runtime clusters with `runtime_cluster_id` isolation
 
 Flowgent is a distributed, multi-namespace AgentFlow engine. This overview is the
 cross-component contract: it explains how the physical services call one
@@ -16,7 +16,7 @@ their owning documents.
 |---|---|---|
 | L1 Engine | [API Server](engine/apiserver.md) | External REST/A2A gateway and sole database client |
 | L1 Engine | [Controller](engine/controller.md) | Flow discovery and active-run JobManager lifecycle |
-| L1 Engine | [Resource Pools](engine/resource-pools.md) | Worker capacity, placement, and SLA isolation |
+| L1 Engine | [Runtime Clusters](engine/runtime-clusters.md) | Application/session runtime lifecycle and isolation |
 | L1 Engine | [JobManager](engine/jobmanager.md) | Per-run DAG readiness, plan creation, and runtime capacity |
 | L1 Engine | [TaskManager](engine/taskmanager.md) | Slot workers and executor routing |
 | L1 Engine | [Sandbox](engine/sandbox.md) | Isolated script execution and shared workspace |
@@ -122,7 +122,7 @@ PHASE 3 — Execution (Async)                       │
        │                                           │
        ▼                                           │
   TaskManager (N pods × M slots)                   │
-  • $share/tm-pool: consume ExecutionPlans         │
+  • $share/tm-{namespace}-{cluster}: consume ExecutionPlans │
   • ExecutorRouter: 12 node types                  │
   • Skill/sandbox nodes → dispatch via MQTT to SB  │
   • MQTT: .../exec/results ────────────────────────┤  → status to JM
@@ -130,7 +130,7 @@ PHASE 3 — Execution (Async)                       │
        │                                           │
        ▼                                           │
   Sandbox (N pods, independent Deployment)         │
-  • $share/sandbox-pool: consume triggers from TM  │
+  • $share/sandbox-{namespace}-{cluster}: consume triggers from TM │
   • Separate K8s pods — pod-level + seccomp-bpf    │
   • Shares workspace PVC with TM pods              │
   • MQTT: .../sandbox/result → TM                  │
@@ -156,25 +156,29 @@ PHASE 3 — Execution (Async)                       │
 | **Real-time dispatch via MQTT** | ExecutionPlan distribution, sandbox triggers, notifier events |
 | **Internal communication: MQTT only** | No SSE/WS between components; WS is notifier→UI only |
 
-### Resource Pool Runtime Model
+### Runtime Cluster Model
 
-Distributed execution has one topology. Helm deploys the API Server,
-Controller, Notifier, and optional A2A gateway. The Controller creates one
-dedicated JobManager for each Flow with an active run. TaskManager and Sandbox
-workers belong to a namespace-scoped Resource Pool and are shared only by Flows
-that explicitly bind that pool.
+Distributed execution follows a Flink-style topology with two lifecycle modes.
+Helm deploys the API Server, Controller, Notifier, optional A2A gateway, and the
+optional session JobManager. For `runtime_mode=application`, the Controller
+creates one JobManager for each active FlowRun; that JobManager's ResourceManager
+creates TM/Sandbox Deployments isolated by `runtime_cluster_id`. For
+`runtime_mode=session`, the Helm-deployed session JobManager consumes session
+runs and manages only workers carrying its own cluster id.
 
 | Component | Owner | Scope |
 |---|---|---|
 | API Server / Controller / Notifier / A2A | Helm | platform |
-| JobManager | Controller | namespace + Flow; active runs only |
-| TaskManager | Resource Pool, reconciled by active JMs | namespace + pool |
-| Sandbox | Resource Pool, reconciled by active JMs | namespace + pool |
+| Session JobManager | Helm | namespace + session runtime cluster |
+| Application JobManager | Controller | namespace + Flow + Run; active application runs only |
+| TaskManager | JobManager ResourceManager | namespace + runtime_cluster_id |
+| Sandbox | JobManager ResourceManager | namespace + runtime_cluster_id |
 
-Every Flow requires `resource_pool_id`; FlowRun snapshots it. Pool replicas,
-slots, resources, PriorityClass, and NodeSelector provide explicit SLA capacity.
-ExecutionPlan and SandboxTrigger topics include namespace and pool, and workers
-subscribe only to their matching scope. See [Resource Pools](engine/resource-pools.md).
+Every Flow requires `runtime_mode`. Application-mode Flow definitions may set
+top-level pod-size overrides under `resources.jobmanager`, `resources.taskmanager`,
+and `resources.sandbox`; replicas and slots remain platform defaults. ExecutionPlan
+and SandboxTrigger topics include namespace and cluster id, and workers subscribe
+only to their matching runtime cluster. See [Runtime Clusters](engine/runtime-clusters.md).
 
 ### Controller ≈ Flink Operator (Key Differences)
 
@@ -201,7 +205,7 @@ Namespace isolation uses two K8s layers:
 - **Workload namespace**: `{runtime.namespace.namespace_prefix}{namespaceId}`
   (default `flowgent-{namespaceId}`). Runtime workers live here:
   jobmanager, taskmanager, and sandbox. A namespace's flows share the same
-  workload namespace; Flow and Pool ownership is expressed by deployment names
+  workload namespace; Flow and runtime-cluster ownership is expressed by deployment names
   and labels.
 
 Pod names and labels carry `namespace_id` + `flow_id` for observability:
@@ -213,8 +217,8 @@ Pod names and labels carry `namespace_id` + `flow_id` for observability:
 | apiserver | yes | System namespace | REST API gateway, auth, triggers |
 | controller | yes | System namespace | Flow discovery, run dispatch, hash-mod sharding |
 | jobmanager | yes | Workload namespace | DAG orchestration, task scheduling |
-| taskmanager | yes | Workload namespace | Resource Pool task execution via router (12 node types) |
-| sandbox | yes | Workload namespace | Resource Pool isolated script execution |
+| taskmanager | yes | Workload namespace | Runtime-cluster task execution via router (12 node types) |
+| sandbox | yes | Workload namespace | Runtime-cluster isolated script execution |
 | notifier | yes | System namespace | Multi-channel push + WebSocket SSE |
 | a2a | **optional** | System namespace | Google Agent-to-Agent protocol endpoint |
 | walletd | **optional external** | Wallet release ownership | secp256k1 EOA custody and EIP-712 digest signing |
@@ -227,11 +231,11 @@ Pod names and labels carry `namespace_id` + `flow_id` for observability:
 System services (Helm release in flowgen-system, {hash}=K8s suffix):
   flowgent-{component}-{hash}
 
-Flow JobManager ({hash}=K8s suffix):
-  flowgent-jobmanager-{namespaceId}-{flowId}-{hash}
+Application FlowRun JobManager ({hash}=K8s suffix):
+  flowgent-jobmanager-{namespaceId}-{flowId}-{runId}-{hash}
 
-Resource Pool workers:
-  flowgent-{taskmanager|sandbox}-{namespaceId}-{poolId}-{hash}
+Runtime-cluster workers:
+  flowgent-{taskmanager|sandbox}-{namespaceId}-{clusterId}-{hash}
 ```
 
 **System services:**
@@ -241,18 +245,19 @@ flowgent-controller-ghi789
 flowgent-notifier-stu901
 ```
 
-**Flow and Pool runtime:**
+**Application runtime cluster:**
 ```
-flowgent-jobmanager-default-security-autonomy-fixer-xyz001
-flowgent-taskmanager-default-critical-xyz002
-flowgent-sandbox-default-critical-xyz003
+flowgent-jobmanager-default-security-autonomy-fixer-run123-xyz001
+flowgent-taskmanager-default-app-run123-xyz002
+flowgent-sandbox-default-app-run123-xyz003
 ```
 
 Labels on all pods:
 ```yaml
 flowgent.io/namespace:       "default"
-flowgent.io/resource-pool:   "critical"      # TM/Sandbox
-flowgent.io/managed-by:      "resource-pool" # TM/Sandbox
+flowgent.io/runtime-cluster: "app-run123"    # JM/TM/Sandbox
+flowgent.io/runtime-mode:    "application"   # JM/TM/Sandbox
+flowgent.io/managed-by:      "runtime-cluster" # TM/Sandbox
 flowgent.io/runtime-boundary: "flow-jobmanager" # JM
 ```
 
@@ -264,12 +269,12 @@ flowgent.io/runtime-boundary: "flow-jobmanager" # JM
 |----------|-----------|
 | **Only apiserver connects to DB (K8s-aligned)** | Single PG/SQLite client with caching — all other components (controller, JM, TM, sandbox, notifier) use MQTT or call apiserver REST. Aligns with Kubernetes' single-etcd-access pattern. Eliminates N×M connection pool complexity. |
 | **Controller gets flows via apiserver REST API, not PG scan** | `FlowgentClient.ListFlows()` and subscribes to MQTT lifecycle events for real-time changes. apiserver publishes flow lifecycle events on create/update/delete. Hash-mod sharding still applies. |
-| **Every Flow binds a Resource Pool** | Pool replicas/slots/resources/PriorityClass/NodeSelector provide explicit capacity and placement instead of implicit deployment selectors. Run snapshots preserve scheduling determinism. |
-| **Flow JM → Resource Pool TM/Sandbox chain with Controller GC** | Controller owns per-flow JM Deployments only while a real run is active. Shared workers are identified by namespace/pool labels and removed only after the Pool is deleted. State flows back via MQTT → API Server → PG. |
+| **Every Flow declares `runtime_mode`** | `application` creates a per-run runtime cluster; `session` uses the Helm-deployed session cluster. Run snapshots preserve scheduling determinism. |
+| **JobManager owns TM/Sandbox via `runtime_cluster_id`** | Controller owns application JM Deployments only while a real application run is active. Each JM/RM manages only workers carrying its cluster id. State flows back via MQTT → API Server → PG. |
 | **Runtime credentials enter pods through K8s Secret envFrom** | Host shell env is only a deployer/console-import input. Kubernetes runtime credentials for external MCPs, GitHub, SonarQube, and LLM calls are provided by the Secret named in `runtime.credential_env_secret`. Controller mounts it into per-flow JM pods, and JM's K8sRM mounts it into TM/Sandbox pods via optional `envFrom.secretRef`. |
 | **Resource definitions store credential references, not values** | LLM/MCP APIs accept environment reference names, redact reads, and resolve them only inside runtime pods. Actual values never belong in browser state, TaskRun payloads, OTel attributes, logs, or screenshots. Notification-channel secrets still need the same contract before production UI authoring is enabled. |
 | **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
-| **One JobManager contract** | `jobmanager start --flow-id <id>` polls only its Flow, builds the DAG, and routes every plan using the Run's immutable pool snapshot. |
+| **One JobManager contract** | Session JMs poll session runs; application JMs poll one flow/run. Both build the DAG and route every plan using the Run's immutable runtime mode and cluster id. |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
 | **Sandbox as independent pods managed by JM (defense-in-depth)** | Sandbox runs as separate K8s pods managed by JM's K8sRM (same goroutine pattern as TM scaling). The JM — as the job/flow-level orchestrator — is the natural owner for both TM and sandbox lifecycle. Two-layer isolation: pod-level (K8s NetworkPolicy + seccomp RuntimeDefault profile) blocks broad egress at the CNI/container runtime layer; process-level (seccomp-bpf + userspace notifier) enforces per-flow per-node dynamic allowlists. Independent CPU/mem/volume limits prevent noisy-neighbor resource contention between TM and sandbox. TM and sandbox share a ReadWriteMany PVC organized by flowId directory — TM writes scripts, sandbox executes them, TM reads results from the same volume. |
 | **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-flow per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See the [Sandbox design](engine/sandbox.md) for the full isolation model. |
@@ -282,7 +287,7 @@ flowgent.io/runtime-boundary: "flow-jobmanager" # JM
 
 All inter-component communication flows through MQTT topics under a unified
 namespace. The hierarchy isolates logical namespaces and routes execution by
-Resource Pool.
+runtime cluster.
 
 ### Topic Hierarchy
 
@@ -292,9 +297,9 @@ observability and multi-namespace isolation. Only apiserver touches DB.
 
 ```
 # ── Execution Plan Dispatch: JM → TM ──────────────────────────
-flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/exec/plans
+flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/exec/plans
   JM publishes: serialized ExecutionPlan JSON
-  TM subscribes via $share/tm-{namespace}-{pool}/.../exec/plans
+  TM subscribes via $share/tm-{namespace}-{cluster}/.../exec/plans
   → All routing info visible in topic for debugging
 
 # ── Execution Result: TM → JM ─────────────────────────────────
@@ -303,10 +308,10 @@ flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results
   JM subscribes per-run: JM polls results for active runs
 
 # ── Sandbox Trigger: TM → Sandbox ─────────────────────────────
-flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/sandbox/trigger
+flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger
   TM publishes: model.SandboxTrigger (flowId, runId, scriptPath, ...)
-  Sandbox subscribes via $share/sandbox-{namespace}-{pool}/.../sandbox/trigger
-  (load-balanced only across the selected pool's SandboxSlotWorker slots)
+  Sandbox subscribes via $share/sandbox-{namespace}-{cluster}/.../sandbox/trigger
+  (load-balanced only across the selected runtime cluster's Sandbox slots)
 
 # ── Sandbox Result: Sandbox → TM ──────────────────────────────
 flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
@@ -347,9 +352,9 @@ POST /api/v1/{namespace}/runs/{id}/tasks/{tid}
 
 | Publisher | Topic | Consumer | Mechanism |
 |-----------|-------|----------|-----------|
-| K8sRM.Schedule | `flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/exec/plans` | SlotWorker.Loop | namespace/pool shared consumers |
+| K8sRM.Schedule | `flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/exec/plans` | SlotWorker.Loop | namespace/cluster shared consumers |
 | SlotWorker (result) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results` | JobMaster | Per-run subscription |
-| SandboxExecutor (TM) | `flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/sandbox/trigger` | SandboxRunner (sandbox pod) | namespace/pool shared consumers |
+| SandboxExecutor (TM) | `flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger` | SandboxRunner (sandbox pod) | namespace/cluster shared consumers |
 | SandboxRunner (sandbox pod) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result` | SandboxExecutor (TM) | Per-run subscription |
 | Notifier.Publish | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/event` | Notifier consumer | `$share/notify-pool` per-namespace |
 | TM heartbeat | `flowgent/v1/heartbeat/{tmId}` | HeartbeatMonitor | Wildcard `flowgent/v1/heartbeat/+` for all TMs |
@@ -370,7 +375,7 @@ for iteration=1,2,...:
     ├─Schedule(plan) ──►  Subscribe exec/results
     │                     (once per run, if first call)
     │                     Register chan[nodeID]
-    │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-pool
+    │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-{namespace}-{cluster}
     │                                                                       SlotWorker dequeue
     │                                                                       Executor.Execute()
     │                                                                       PUT /tasks (REST)
@@ -400,8 +405,8 @@ for variable resolution in subsequent nodes). See
 ### Runtime Readiness
 
 Workers publish readiness under
-`flowgent/v1/{namespace}/pools/{poolId}/runtime/{role}/{workerId}/ready`.
-K8sRM accepts a lease only when the payload namespace, pool, and role all match.
+`flowgent/v1/{namespace}/clusters/{clusterId}/runtime/{role}/{workerId}/ready`.
+K8sRM accepts a lease only when the payload namespace, cluster, and role all match.
 
 ### Queue Configuration
 
@@ -476,16 +481,15 @@ cache. For development and small-scale standalone testing only.
 
 Controller detects an active run for a flow (`PENDING`, `RUNNING`, or `PAUSED`)
 → creates a dedicated K8s JM Deployment
-(`flowgent-jobmanager-{namespaceId}-{flowId}` — see `runtimeNamespace` in
+(`flowgent-jobmanager-{namespaceId}-{flowId}-{runId}` — see `runtimeNamespace` in
 `pkg/controller/pkg/controller.go`) in the flow's **namespace** namespace
 (`{namespace_prefix}{namespaceId}`, per
 [Deployment Namespaces and Pod Naming](#deployment-namespaces-and-pod-naming) — every flow of the same namespace
-shares one namespace; Helm does not pre-create it, `ensureFlowJobManager`
-lazily creates it on first active run for any flow in that namespace) → JM
-reconciles the Flow's selected Resource Pool workers. Flow/Skill import alone
-creates no runtime Pods. When no active run remains, Controller cleans up the
-JM; shared Pool workers remain available until the Pool is deleted. The
-namespace itself remains because other Flows and Pools may use it.
+shares one namespace; Helm does not pre-create it) → JM reconciles the run's
+TM/Sandbox workers by `runtime_cluster_id`. Flow/Skill import alone creates no
+application runtime Pods. When no active run remains, Controller GC removes the
+application JM and application TM/Sandbox Deployments. The namespace itself
+remains because other Flows may use it.
 
 ---
 
@@ -505,7 +509,7 @@ There are two paths to trigger a run:
        → for each flow whose triggers match {provider, event}: one run
    → all paths converge on FlowDefHandler.CreateRunFromTrigger:
        → validate spec exists
-       → persist PENDING run with logical/Kubernetes namespaces and pool snapshot
+       → persist PENDING run with logical/Kubernetes namespaces and runtime_mode snapshot
        → publish ctrl/run/created lifecycle event on MQTT
        → return run_id(s) to caller    ← sync ends here
 
@@ -522,8 +526,8 @@ There are two paths to trigger a run:
    → Hash-mod shard: only processes owned flows (peer snapshot fetched once/tick)
    → Registers cron / interval triggers for owned flow definitions
    → Flow definition import/update alone is metadata only; no JM/TM allocation
-   → API/webhook/A2A/cron creates FlowRun (PENDING) with resource_pool_id snapshot
-   → Active-run reconcile ensures K8s Deployment flowgent-jobmanager-{namespaceId}-{flowId}
+   → API/webhook/A2A/cron creates FlowRun (PENDING) with runtime_mode snapshot
+   → Active application-run reconcile ensures K8s Deployment flowgent-jobmanager-{namespaceId}-{flowId}-{runId}
 
 2. JM POLL
    → Dedicated JM picks up its own namespace runs
@@ -552,7 +556,7 @@ There are two paths to trigger a run:
    → Evaluates pending plans vs free slots
    → StandaloneRM: goroutine pool, returns INSUFFICIENT_RESOURCES if full
    → K8sRM: publishes plan to MQTT topic, TM pods consume;
-     reconciles fixed Resource Pool replicas and slot capacity
+     reconciles runtime-cluster replicas and slot capacity from platform defaults
 
 6. TM EXECUTION
    → SlotWorker dequeues ExecutionPlan from MQTT / channel
@@ -631,7 +635,7 @@ a key-management library.
 | sandbox | `pkg/sandbox/` | Isolated execution, policy, and seccomp controls |
 | notifier | `pkg/notifier/` | Delivery channels and UI event push |
 | core | `pkg/core/` | Executors, JM/TM/RM, LLM/MCP clients, x402 policy and external Wallet client |
-| controller | `pkg/controller/` | Flow JM and Resource Pool lifecycle reconciliation |
+| controller | `pkg/controller/` | Application JM and runtime-cluster lifecycle reconciliation |
 | api | `pkg/api/` | REST handlers and the sole durable-state gateway |
 | a2a | `pkg/a2a/` | Optional Agent-to-Agent protocol endpoint |
 | console | `pkg/console/` | Flowgent resource CRUD and import/export; no private-key operations |
@@ -658,8 +662,8 @@ build.
    persisted `PENDING` run and its lifecycle event MUST be observable before
    asynchronous execution begins.
 3. **Given** an active run, **when** Controller reconciles it,
-   **then** exactly one owned JobManager runtime MUST exist for that flow, and
-   TaskManager/Sandbox capacity MUST match the run's namespace and Resource Pool.
+   **then** exactly one owned runtime MUST exist in its selected mode, and
+   TaskManager/Sandbox capacity MUST match the run's namespace and runtime cluster.
 4. **Given** a runnable DAG node, **when** JobManager dispatches it, **then** the
    `exec/plans` subscription path MUST be ready before publication and the node
    MUST advance only after its matching result is received.
@@ -670,5 +674,5 @@ build.
    **then** they MUST use REST, MQTT, Kubernetes API, or the shared workspace as
    assigned here; WebSocket MUST remain a Notifier-to-UI boundary.
 7. **Given** no active run for a Flow, **when** lifecycle cleanup completes,
-   **then** its per-Flow JobManager must disappear; shared Pool workers remain
-   until their Pool is deleted.
+   **then** its application JobManager and application TM/Sandbox Deployments
+   MUST disappear after the orphan observation window.

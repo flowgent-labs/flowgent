@@ -155,7 +155,7 @@ The sandbox subsystem spans two Go modules communicating via MQTT and a shared P
 ```
 TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
 ─────────────────────────               ─────────────────────────
-  → Build workspace path                  → $share/sandbox-pool subscribe
+  → Build workspace path                  → $share/sandbox-{namespace}-{cluster} subscribe
   → Write script to shared PVC            → Dequeue trigger via MQTT
   → Snapshot originals                    → Read script from shared PVC
   → Publish trigger ───MQTT──→           → BuildFilter(network_policy)
@@ -168,10 +168,11 @@ TM Pod (SandboxExecutor)                Sandbox Pod (SandboxRunner)
                                            → Publish result ───MQTT──→
 ```
 
-In distributed mode, sandbox pods use `$share/sandbox-pool` shared subscription for
-load-balanced trigger consumption. The trigger topic contains `{namespace}/{flowId}/{runId}`
-so multiple runs don't interfere. Results use point-to-point routing via the same
-`{namespace}/{flowId}/{runId}` suffix — only the originating TM slot subscribes.
+In distributed mode, sandbox pods use `$share/sandbox-{namespace}-{cluster}`
+shared subscriptions for load-balanced trigger consumption inside one runtime
+cluster. The trigger topic contains `{namespace}/{clusterId}/{flowId}/{runId}`
+so multiple clusters do not interfere. Results use point-to-point routing via
+the `{namespace}/{flowId}/{runId}` suffix — only the originating TM slot subscribes.
 
 The `SandboxTrigger` struct is defined in `model` so both sides share the contract
 without Go import coupling. The sandbox pod's K8s Deployment is created and scaled
@@ -179,7 +180,7 @@ by JM's K8sRM — the same goroutine pattern used for TM pods.
 
 ```
 Sandbox Worker (per-execution lifecycle, running in sandbox pod):
-  → $share/sandbox-pool dequeue trigger
+  → $share/sandbox-{namespace}-{cluster} dequeue trigger
   → Read script from shared workspace PVC
   → Pre-resolve allowlist hosts → IPs
   → Build seccomp-bpf filter from resolved IPs + port list
@@ -196,7 +197,7 @@ Sandbox Worker (per-execution lifecycle, running in sandbox pod):
 ### Workspace — Unified PVC Design
 
 Distributed execution uses a **ReadWriteMany PVC** for the sandbox workspace,
-provisioned once and shared across namespace/pool Sandbox pods.
+provisioned once and shared across runtime-cluster Sandbox pods.
 
 ```tree
 /var/flowgent/

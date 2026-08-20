@@ -8,8 +8,8 @@ import (
 
 // INotifierStore is the notification channel entity store interface.
 type INotifierStore interface {
-	Get(ctx context.Context, id string) (*entities.NotifyChannelInfo, error)
-	Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.NotifyChannelInfo], error)
+	Get(ctx context.Context, namespace, id string) (*entities.NotifyChannelInfo, error)
+	List(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[entities.NotifyChannelInfo], error)
 	Save(ctx context.Context, entity *entities.NotifyChannelInfo) error
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, namespace, id string) error
 }

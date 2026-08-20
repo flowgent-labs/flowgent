@@ -195,7 +195,7 @@ POST /api/v1/{namespace}/flows/trigger
 ```text
 Controller 每 10 秒轮询 API Server ListFlows：
   → Hash-mod 分片：只处理本副本拥有的 Flow
-  → 触发入口创建带 namespace + resource_pool_id 快照的 PENDING FlowRun
+  → 触发入口创建带 namespace + runtime_mode 快照的 PENDING FlowRun
   → 活跃 Run 协调创建专用 K8s JM Deployment
   ...（稍后异步执行）...
   → 专属 JM 只获取自己的 Flow Run

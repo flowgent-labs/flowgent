@@ -50,6 +50,7 @@ type JobMaster struct {
 	timeout   time.Duration
 	nodeLimit int
 	maxNodes  int
+	clusterID string
 
 	knowledgeWriter KnowledgePostWriter
 
@@ -74,6 +75,9 @@ type JobMaster struct {
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
 func NewJobMaster(state RunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
+	if cfg == nil {
+		cfg = &JobManagerConfig{}
+	}
 	timeout := cfg.FlowExecutionTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute
@@ -82,6 +86,7 @@ func NewJobMaster(state RunStateStore, rm resourcemanager.ResourceManager, logge
 	return &JobMaster{
 		state: state, rm: rm, logger: logger,
 		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
+		clusterID:   cfg.RuntimeClusterID,
 		nodeOutputs: make(map[string]map[string]any),
 	}
 }
@@ -315,7 +320,10 @@ func (jm *JobMaster) dependencyStateLocked(n string) (resolved, active bool) {
 
 // ─── buildExecutionGraph — single pass: DAG state + ExecutionPlans ─
 
-func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) {
+func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) error {
+	if err := spec.ValidateDAG(); err != nil {
+		return err
+	}
 	nodeIDs := make([]string, len(spec.Nodes))
 	for i, n := range spec.Nodes {
 		nodeIDs[i] = n.ID
@@ -363,18 +371,24 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
 		nodeSpec := entities.NodeSpecFromNode(n)
+		taskType, err := NodeToTaskType(nodeSpec.Kind)
+		if err != nil {
+			return err
+		}
 		jm.planMap[n.ID] = &entities.ExecutionPlan{
 			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
 			AgentFlowRunID:        runID,
 			AgentFlowDefinitionID: spec.ID,
 			Namespace:             spec.Namespace,
-			ResourcePoolID:        spec.ResourcePoolID,
+			RuntimeMode:           spec.RuntimeMode,
+			RuntimeClusterID:      jm.clusterID,
 			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
-			TaskType:              NodeToTaskType(nodeSpec.Kind), NodeID: n.ID,
+			TaskType:              taskType, NodeID: n.ID,
 			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
 			NodeSpec: nodeSpec, CreatedAt: time.Now(),
 		}
 	}
+	return nil
 }
 
 // ─── Execute ─────────────────────────────────────────────
@@ -384,7 +398,9 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		jm.tracer = tracing.Tracer("flowgent/jobmaster")
 	}
 
-	jm.buildExecutionGraph(spec, run.ID)
+	if err := jm.buildExecutionGraph(spec, run.ID); err != nil {
+		return fmt.Errorf("build execution graph: %w", err)
+	}
 	jm.applySupervisorConfig(spec)
 
 	// Merge flow vars with run vars and inject built-in variables.
@@ -482,19 +498,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 				),
 			)
 
-			// Merge Args into RawInput first so ${vars.x} / ${node.field} references
-			// are resolved together with the node's own input map.
-			if plan.NodeSpec.Args != nil {
-				if plan.NodeSpec.RawInput == nil {
-					plan.NodeSpec.RawInput = make(map[string]any)
-				}
-				for k, v := range plan.NodeSpec.Args {
-					if _, ok := plan.NodeSpec.RawInput[k]; !ok {
-						plan.NodeSpec.RawInput[k] = v
-					}
-				}
-			}
-			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.RawInput)
+			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.Args)
 
 			slog.Debug("jobmaster execute scheduling node", "node", nodeID, "type", plan.TaskType, "planID", plan.PlanID)
 			result, err := jm.scheduleNodeWithRetry(nodeCtx, plan)
@@ -778,7 +782,7 @@ func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowIn
 
 func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 	for _, n := range spec.Nodes {
-		if n.Type == entities.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
+		if n.Kind == entities.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
 			jm.maxNodes = n.SupervisorConfig.MaxNodes
 		}
 	}
@@ -823,32 +827,34 @@ func taskAttemptID(baseTaskID string, attempt int) string {
 	return fmt.Sprintf("task-%x", sum[:16])
 }
 
-func NodeToTaskType(nt entities.NodeType) entities.TaskType {
+func NodeToTaskType(nt entities.NodeType) (entities.TaskType, error) {
 	switch nt {
 	case entities.AgentNode:
-		return entities.TaskAgent
+		return entities.TaskAgent, nil
 	case entities.ToolNode:
-		return entities.TaskTool
+		return entities.TaskTool, nil
 	case entities.ConditionNode:
-		return entities.TaskCondition
+		return entities.TaskCondition, nil
 	case entities.CommitteeNode:
-		return entities.TaskCommittee
+		return entities.TaskCommittee, nil
 	case entities.SupervisorNode:
-		return entities.TaskSupervisor
+		return entities.TaskSupervisor, nil
 	case entities.MapNode:
-		return entities.TaskMap
+		return entities.TaskMap, nil
 	case entities.HumanNode:
-		return entities.TaskHuman
+		return entities.TaskHuman, nil
 	case entities.AgentFlowNode:
-		return entities.TaskSubflow
+		return entities.TaskSubflow, nil
 	case entities.SandboxNode:
-		return entities.TaskSandbox
+		return entities.TaskSandbox, nil
 	case entities.SkillNode:
-		return entities.TaskSkill
+		return entities.TaskSkill, nil
 	case entities.JoinNode:
-		return entities.TaskJoin
+		return entities.TaskJoin, nil
+	case entities.NoopNode:
+		return entities.TaskNoop, nil
 	default:
-		return entities.TaskNoop
+		return "", fmt.Errorf("unsupported node kind %q", nt)
 	}
 }
 

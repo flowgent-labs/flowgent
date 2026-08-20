@@ -20,7 +20,6 @@ import (
 	"github.com/flowgent-labs/flowgent/store/pkg"
 	"github.com/flowgent-labs/flowgent/store/pkg/flow"
 	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/resourcepool"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -28,36 +27,31 @@ import (
 
 var flowDefTracer = tracing.Tracer("flowgent/api/flowdef")
 
-type ResourceAuthorizer interface {
-	AuthorizeAdditional(*http.Request, string, string, string, string) (bool, error)
-}
-
 // FlowDefHandler manages flow definition CRUD, watch API, and in-memory cache.
 type FlowDefHandler struct {
 	store            store.IStore
 	afStore          flow.IFlowInfoStore
 	frStore          flowrun.IFlowRunStore
-	poolStore        resourcepool.IRepository
 	mqtt             MQTTPublisher
 	logger           *utils.Logger
 	agentFlows       map[string]*entities.FlowInfo
 	namespacePrefix  string
 	defaultNamespace string
+	sessionNamespace string
 	mu               sync.RWMutex
 	watchVersion     int64
 	watchChs         []chan struct{}
-	poolAuthorizer   ResourceAuthorizer
 }
 
 // NewFlowDefHandler creates a FlowDefHandler. namespacePrefix is used to
 // compute the default per-namespace K8s namespace for flows that don't set an
 // explicit Namespace — it must match namespace.namespace_prefix so that Trigger
 // (Path A) routes runs into the same namespace the Controller uses when
-// creating the dedicated JM Deployment (see
-// pkg/controller/pkg/controller.go runtimeNamespace). defaultNamespace is
-// the fallback namespace ID (namespace.default_namespace) used when a flow spec
-// doesn't carry its own Namespace.
-func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultNamespace string, mqtt MQTTPublisher) *FlowDefHandler {
+// creating the application JM Deployment. defaultNamespace is the fallback
+// namespace ID (namespace.default_namespace) used when a flow spec doesn't
+// carry its own Namespace. sessionNamespace is the physical K8s namespace of
+// the Helm-deployed session runtime cluster.
+func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultNamespace string, sessionNamespace string, mqtt MQTTPublisher) *FlowDefHandler {
 	afMap := make(map[string]*entities.FlowInfo)
 	for i := range agentFlows {
 		namespace := agentFlows[i].Namespace
@@ -84,33 +78,21 @@ func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entiti
 		afStore = flow.NewFlowSQLiteStore(db)
 		frStore = flowrun.NewFlowRunSQLiteStore(db)
 	}
-	poolStore, _ := resourcepool.NewRepository(s)
-	return &FlowDefHandler{store: s, afStore: afStore, frStore: frStore, poolStore: poolStore, logger: logger, agentFlows: afMap, namespacePrefix: defaultNamespacePrefix(namespacePrefix), defaultNamespace: coalesceNamespace(defaultNamespace), watchVersion: 1, mqtt: mqtt}
+	return &FlowDefHandler{
+		store:            s,
+		afStore:          afStore,
+		frStore:          frStore,
+		logger:           logger,
+		agentFlows:       afMap,
+		namespacePrefix:  defaultNamespacePrefix(namespacePrefix),
+		defaultNamespace: coalesceNamespace(defaultNamespace),
+		sessionNamespace: coalesceNamespace(sessionNamespace),
+		watchVersion:     1,
+		mqtt:             mqtt,
+	}
 }
 
 func flowCacheKey(namespace, id string) string { return namespace + "\x00" + id }
-
-// SetPoolAuthorizer composes body-derived Resource Pool authorization without
-// making Flow handlers depend on the IAM repository implementation.
-func (h *FlowDefHandler) SetPoolAuthorizer(authorizer ResourceAuthorizer) {
-	h.poolAuthorizer = authorizer
-}
-
-func (h *FlowDefHandler) authorizePoolUse(w http.ResponseWriter, r *http.Request, namespace, poolID string) bool {
-	if h.poolAuthorizer == nil {
-		return true
-	}
-	allowed, err := h.poolAuthorizer.AuthorizeAdditional(r, namespace, "resource_pool.use", "resource_pool", poolID)
-	if err != nil {
-		http.Error(w, "authorization service unavailable", http.StatusServiceUnavailable)
-		return false
-	}
-	if !allowed {
-		http.Error(w, "access denied for resource pool", http.StatusForbidden)
-		return false
-	}
-	return true
-}
 
 // defaultNamespacePrefix falls back to "flowgent-" when unset, so
 // Runtime routing never derives an unprefixed (and potentially colliding)
@@ -170,7 +152,7 @@ func (h *FlowDefHandler) Watch(w http.ResponseWriter, r *http.Request) {
 	cur := h.watchVersion
 	h.mu.RUnlock()
 	if cur > since {
-		h.List(w, r)
+		h.writeWatchResponse(w, r, cur)
 		return
 	}
 	ch := make(chan struct{})
@@ -179,10 +161,13 @@ func (h *FlowDefHandler) Watch(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	select {
 	case <-ch:
-		h.List(w, r)
+		h.mu.RLock()
+		version := h.watchVersion
+		h.mu.RUnlock()
+		h.writeWatchResponse(w, r, version)
 	case <-time.After(30 * time.Second):
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"flows": []entities.FlowInfo{}, "version": cur})
+		json.NewEncoder(w).Encode(entities.FlowWatchResponse{Flows: []entities.FlowInfo{}, Version: cur})
 	case <-r.Context().Done():
 	}
 }
@@ -247,30 +232,57 @@ func (h *FlowDefHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowDefHandler) listDefinitions(w http.ResponseWriter, r *http.Request, skills bool) {
-	namespace := r.PathValue("namespace")
-	defs, err := h.afStore.Select(r.Context(), namespace, entities.PageRequest{Page: 1, Size: 1000})
+	items, err := h.listSpecs(r.Context(), r.PathValue("namespace"), skills)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	items := defs.Items
-	if items == nil {
-		items = []*entities.FlowVersionInfo{}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+func (h *FlowDefHandler) writeWatchResponse(w http.ResponseWriter, r *http.Request, version int64) {
+	items, err := h.listSpecs(r.Context(), r.PathValue("namespace"), false)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	filtered := make([]*entities.FlowVersionInfo, 0, len(items))
-	for _, item := range items {
-		if item == nil || item.Namespace != namespace {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entities.FlowWatchResponse{Flows: items, Version: version})
+}
+
+func (h *FlowDefHandler) listSpecs(ctx context.Context, namespace string, skills bool) ([]entities.FlowInfo, error) {
+	defs, err := h.afStore.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 1000})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]entities.FlowInfo, 0, len(defs.Items))
+	seen := make(map[string]struct{}, len(defs.Items))
+	for _, definition := range defs.Items {
+		if definition == nil || definition.Namespace != namespace {
+			continue
+		}
+		if _, ok := seen[definition.FlowID]; ok {
 			continue
 		}
 		var spec entities.FlowInfo
-		isSkill := len(item.Definition) > 0 && json.Unmarshal(item.Definition, &spec) == nil && strings.EqualFold(spec.Kind, "skill")
-		if isSkill != skills {
+		if err := json.Unmarshal(definition.Definition, &spec); err != nil {
+			return nil, fmt.Errorf("decode flow %q: %w", definition.FlowID, err)
+		}
+		if (spec.Kind == "skill") != skills {
 			continue
 		}
-		filtered = append(filtered, item)
+		spec.Namespace = namespace
+		spec.Version = definition.Version
+		spec.Status = definition.Status
+		spec.CreatedAt = definition.CreatedAt
+		spec.CreatedBy = definition.CreatedBy
+		spec.UpdatedAt = definition.UpdatedAt
+		spec.UpdatedBy = definition.UpdatedBy
+		items = append(items, spec)
+		seen[definition.FlowID] = struct{}{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(filtered)
+	return items, nil
 }
 
 func (h *FlowDefHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -284,8 +296,12 @@ func (h *FlowDefHandler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 func (h *FlowDefHandler) createDefinition(w http.ResponseWriter, r *http.Request, forceKind string) {
 	namespace := r.PathValue("namespace")
 	var spec entities.FlowInfo
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+	if err := decodeStrictJSON(r, &spec); err != nil {
 		http.Error(w, "invalid body", 400)
+		return
+	}
+	if spec.Namespace != "" && spec.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
 	if forceKind == "" {
@@ -298,24 +314,29 @@ func (h *FlowDefHandler) createDefinition(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if forceKind != "" {
-		if spec.Kind != "" && !strings.EqualFold(spec.Kind, forceKind) {
+		if spec.Kind != forceKind {
 			http.Error(w, "runtime skill kind must be skill", http.StatusBadRequest)
 			return
 		}
-		spec.Kind = forceKind
-	} else if spec.Kind == "" {
-		spec.Kind = "flow"
+	} else if spec.Kind != "flow" {
+		http.Error(w, "flow kind must be flow", http.StatusBadRequest)
+		return
 	}
 	spec.Namespace = namespace
+	spec.Version = 1
+	if err := spec.ValidateDAG(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	if spec.Status == "" {
+		spec.Status = "ACTIVE"
+	}
+	spec.CreatedAt = now
+	spec.UpdatedAt = now
 	if forceKind == "" {
-		if spec.ResourcePoolID == "" {
-			spec.ResourcePoolID = "default"
-		}
-		if _, err := h.poolStore.Get(r.Context(), namespace, spec.ResourcePoolID); err != nil {
-			http.Error(w, "resource_pool_id must reference an active pool in this namespace", http.StatusBadRequest)
-			return
-		}
-		if !h.authorizePoolUse(w, r, namespace, spec.ResourcePoolID) {
+		if err := entities.ValidateRuntimeMode(spec.RuntimeMode); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -379,7 +400,7 @@ func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *FlowDefHandler) GetSkill(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 	spec, err := h.afStore.GetSpec(r.Context(), namespace, r.PathValue("id"))
-	if err != nil || spec == nil || spec.Namespace != r.PathValue("namespace") || !strings.EqualFold(spec.Kind, "skill") {
+	if err != nil || spec == nil || spec.Namespace != r.PathValue("namespace") || spec.Kind != "skill" {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -400,85 +421,78 @@ func (h *FlowDefHandler) updateDefinition(w http.ResponseWriter, r *http.Request
 
 	existing, err := h.afStore.GetSpec(r.Context(), namespace, id)
 	if err != nil || existing == nil || existing.Namespace != namespace ||
-		(requiredKind != "" && !strings.EqualFold(existing.Kind, requiredKind)) {
+		(requiredKind != "" && existing.Kind != requiredKind) {
 		http.Error(w, "not found", 404)
 		return
 	}
 
 	var updates entities.FlowInfo
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	if err := decodeStrictJSON(r, &updates); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
 
-	if updates.Description != "" {
-		existing.Description = updates.Description
+	if updates.ID != "" && updates.ID != id {
+		http.Error(w, "id mismatch", http.StatusBadRequest)
+		return
 	}
-	if updates.Nodes != nil {
-		existing.Nodes = updates.Nodes
+	if updates.Namespace != "" && updates.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
+		return
 	}
-	if updates.Edges != nil {
-		existing.Edges = updates.Edges
-	}
-	if updates.ResourcePoolID != "" && requiredKind == "" {
-		if _, err := h.poolStore.Get(r.Context(), namespace, updates.ResourcePoolID); err != nil {
-			http.Error(w, "resource_pool_id must reference an active pool in this namespace", http.StatusBadRequest)
+	if requiredKind == "" {
+		if updates.Kind != "flow" {
+			http.Error(w, "flow kind must be flow", http.StatusBadRequest)
 			return
 		}
-		if !h.authorizePoolUse(w, r, namespace, updates.ResourcePoolID) {
+		updates.Kind = "flow"
+		if err := entities.ValidateRuntimeMode(updates.RuntimeMode); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if updates.ResourcePoolID != existing.ResourcePoolID {
+		if updates.RuntimeMode != existing.RuntimeMode {
 			active, err := h.frStore.HasActiveForFlow(r.Context(), namespace, id)
 			if err != nil {
 				http.Error(w, "unable to verify active runs", http.StatusInternalServerError)
 				return
 			}
 			if active {
-				http.Error(w, "resource pool cannot change while the flow has active runs", http.StatusConflict)
+				http.Error(w, "runtime_mode cannot change while the flow has active runs", http.StatusConflict)
 				return
 			}
 		}
-		existing.ResourcePoolID = updates.ResourcePoolID
+	} else {
+		if updates.Kind != requiredKind {
+			http.Error(w, "runtime skill kind must be skill", http.StatusBadRequest)
+			return
+		}
 	}
-	if updates.Vars != nil {
-		existing.Vars = updates.Vars
+	updates.ID = id
+	updates.Namespace = namespace
+	updates.Version = existing.Version
+	updates.Status = existing.Status
+	updates.CreatedAt = existing.CreatedAt
+	updates.CreatedBy = existing.CreatedBy
+	updates.UpdatedAt = time.Now()
+	updates.UpdatedBy = existing.UpdatedBy
+	updates.DelFlag = false
+	if err := updates.ValidateDAG(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	if updates.Summary != "" {
-		existing.Summary = updates.Summary
-	}
-	if updates.InputSchema != nil {
-		existing.InputSchema = updates.InputSchema
-	}
-	if updates.OutputSchema != nil {
-		existing.OutputSchema = updates.OutputSchema
-	}
-	if updates.Triggers != nil {
-		existing.Triggers = updates.Triggers
-	}
-	if updates.SandboxPolicy != nil {
-		existing.SandboxPolicy = updates.SandboxPolicy
-	}
-	if updates.Labels != nil {
-		existing.Labels = updates.Labels
-	}
-	if updates.Credentials != nil {
-		existing.Credentials = updates.Credentials
-	}
-	existing.UpdatedAt = time.Now()
 
 	createdBy := authenticatedUserID(r.Context())
-	if err := h.afStore.SaveSpec(r.Context(), existing, createdBy, "API update"); err != nil {
+	if err := h.afStore.SaveSpec(r.Context(), &updates, createdBy, "API update"); err != nil {
 		http.Error(w, "internal", 500)
 		return
 	}
 	h.mu.Lock()
-	h.agentFlows[flowCacheKey(namespace, id)] = existing
+	h.agentFlows[flowCacheKey(namespace, id)] = &updates
 	h.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(existing)
+	json.NewEncoder(w).Encode(updates)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "UPDATED", id, existing.Namespace)
+	h.publishFlowEvent(r.Context(), "UPDATED", id, updates.Namespace)
 }
 
 func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -494,7 +508,7 @@ func (h *FlowDefHandler) deleteDefinition(w http.ResponseWriter, r *http.Request
 	namespace := r.PathValue("namespace")
 	existing, err := h.afStore.GetSpec(r.Context(), namespace, id)
 	if err != nil || existing == nil || existing.Namespace != r.PathValue("namespace") ||
-		(requiredKind != "" && !strings.EqualFold(existing.Kind, requiredKind)) {
+		(requiredKind != "" && existing.Kind != requiredKind) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -561,19 +575,19 @@ func (h *FlowDefHandler) CreateRunFromTrigger(ctx context.Context, agentFlowID, 
 		// rest of the namespaced resource API and without disclosing IDs.
 		return "", errFlowNotFound
 	}
-	if spec.ResourcePoolID == "" {
-		spec.ResourcePoolID = "default"
+	if err := entities.ValidateRuntimeMode(spec.RuntimeMode); err != nil {
+		return "", fmt.Errorf("flow %q has invalid runtime_mode: %w", agentFlowID, err)
 	}
-	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars, ResourcePoolID: spec.ResourcePoolID}
-	// Every flow has a dedicated per-flow JM Deployment that only polls its
-	// own namespace (see pkg/controller/pkg/controller.go
-	// ensureFlowJobManager / runtimeNamespace).
+	run := &entities.FlowRunInfo{AgentFlowID: agentFlowID, Version: 1, Status: entities.RunPending, Vars: vars, RuntimeMode: spec.RuntimeMode}
+	// Application mode routes to the workload namespace where the Controller
+	// creates the per-run JM. Session mode routes to the Helm-deployed session
+	// runtime namespace.
 	// BaseEntity.Namespace is the logical tenant boundary used by every
 	// namespaced REST route. K8sNamespace is the physical dispatch target used
-	// only by the dedicated JM poller. Conflating these fields makes a run
+	// only by the JM poller. Conflating these fields makes a run
 	// invisible to the tenant immediately after a successful trigger.
 	run.Namespace = namespaceID
-	run.K8sNamespace = h.runtimeNamespace(spec)
+	run.K8sNamespace = h.runK8sNamespace(spec)
 	run.SetTrigger(trigger)
 	if err := h.frStore.Create(ctx, run); err != nil {
 		return "", err
@@ -621,6 +635,13 @@ func (h *FlowDefHandler) runtimeNamespace(spec *entities.FlowInfo) string {
 	return resourceid.KubernetesName(strings.TrimSuffix(h.namespacePrefix, "-"), h.logicalNamespace(spec))
 }
 
+func (h *FlowDefHandler) runK8sNamespace(spec *entities.FlowInfo) string {
+	if spec != nil && spec.RuntimeMode == entities.RuntimeModeSession {
+		return h.sessionNamespace
+	}
+	return h.runtimeNamespace(spec)
+}
+
 // logicalNamespace resolves the stable tenant namespace stored in
 // BaseEntity.Namespace and used by namespaced REST authorization/filtering.
 // It must never return the physical Kubernetes namespace.
@@ -637,7 +658,7 @@ func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		Vars        map[string]any       `json:"vars"`
 		Trigger     entities.TriggerInfo `json:"trigger"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r, &req); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
@@ -649,6 +670,9 @@ func (h *FlowDefHandler) TriggerByID(w http.ResponseWriter, r *http.Request) {
 		Vars    map[string]any       `json:"vars"`
 		Trigger entities.TriggerInfo `json:"trigger"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := decodeStrictJSON(r, &req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
 	h.TriggerWithVars(w, r, r.PathValue("id"), req.Vars, req.Trigger)
 }

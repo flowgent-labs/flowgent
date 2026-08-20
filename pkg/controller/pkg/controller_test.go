@@ -66,11 +66,16 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 	})
 
 	spec := &entities.FlowInfo{
-		BaseEntity:     entities.BaseEntity{ID: "my-flow"},
-		ResourcePoolID: "default",
+		BaseEntity:  entities.BaseEntity{ID: "my-flow"},
+		RuntimeMode: entities.RuntimeModeApplication,
+	}
+	run := &entities.FlowRunInfo{
+		BaseEntity:  entities.BaseEntity{ID: "run-1", Namespace: "default"},
+		AgentFlowID: spec.ID,
+		RuntimeMode: entities.RuntimeModeApplication,
 	}
 
-	dep := c.buildJMDeployment("flowgent-jobmanager-default-my-flow", "flowgent-default", "default", spec, "runtime-env", "runtime-secret", "checksum")
+	dep := c.buildJMDeployment("flowgent-jobmanager-default-my-flow-run-1", "flowgent-default", "default", spec, run, "app-run-1", "runtime-env", "runtime-secret", "checksum")
 
 	if len(dep.Spec.Template.Spec.Containers) != 1 {
 		t.Fatalf("expected 1 container, got %d", len(dep.Spec.Template.Spec.Containers))
@@ -103,9 +108,12 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 	}
 	wantEnv := map[string]string{
 		"FLOWGENT__RUNTIME__AGENT_FLOW_ID":                "my-flow",
+		"FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID":            "run-1",
+		"FLOWGENT__RUNTIME__MODE":                         "application",
+		"FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID":           "app-run-1",
 		"FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE": "default",
-		"FLOWGENT__RUNTIME__RESOURCE_POOL_ID":             "default",
-		"FLOWGENT__RUNTIME__TM_DEPLOY":                    "flowgent-taskmanager-default-default",
+		"FLOWGENT__RUNTIME__TM_DEPLOY":                    "flowgent-taskmanager-default-app-run-1",
+		"FLOWGENT__RUNTIME__SANDBOX_DEPLOY":               "flowgent-sandbox-default-app-run-1",
 		"FLOWGENT__MESSAGER__MQTT__BROKER":                "tcp://emqx:1883",
 		"FLOWGENT__RUNTIME__API_SERVER_URL":               "http://apiserver:9999",
 	}
@@ -195,7 +203,7 @@ func TestEnsureRuntimeAuthSecretCopiesOnlyRuntimeKeysAndRotates(t *testing.T) {
 	}
 }
 
-func TestEnsureRuntimeRBACAllowsPoolDeploymentReconciliation(t *testing.T) {
+func TestEnsureRuntimeRBACAllowsDeploymentReconciliation(t *testing.T) {
 	ctx := context.Background()
 	clientset := fake.NewSimpleClientset()
 	c := testController(&config.FlowgentConfig{})
@@ -210,7 +218,7 @@ func TestEnsureRuntimeRBACAllowsPoolDeploymentReconciliation(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("runtime Role cannot reconcile pool Deployments: %#v", role.Rules)
+	t.Fatalf("runtime Role cannot reconcile Deployments: %#v", role.Rules)
 }
 
 func containsString(values []string, target string) bool {

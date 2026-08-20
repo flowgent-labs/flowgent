@@ -72,7 +72,7 @@ func TestQueueMessageDecryptsAndDeliversWebhook(t *testing.T) {
 	if err := channel.ProtectSecrets(context.Background(), cipher); err != nil {
 		t.Fatal(err)
 	}
-	public, err := channel.Redacted()
+	public, err := channel.RuntimeView()
 	if err != nil {
 		t.Fatal(err)
 	}

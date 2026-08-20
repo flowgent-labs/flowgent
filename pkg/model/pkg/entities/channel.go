@@ -124,12 +124,11 @@ func (n *NotifyChannelInfo) ResolveSecrets(ctx context.Context, cipher secretbox
 	return resolved, nil
 }
 
-// Redacted returns the management/API representation: secret values and the
-// storage-reserved envelope key are absent, while configured field names and
-// the opaque runtime envelope remain available.
+// Redacted returns the management/API representation. Secret values and the
+// encrypted storage envelope never cross the management API boundary.
 func (n *NotifyChannelInfo) Redacted() (*NotifyChannelInfo, error) {
 	redacted := n.clone()
-	envelope, fields, err := redacted.envelope()
+	_, fields, err := redacted.envelope()
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +136,31 @@ func (n *NotifyChannelInfo) Redacted() (*NotifyChannelInfo, error) {
 	for _, field := range NotifyChannelSecretFields(redacted.ChannelType) {
 		delete(redacted.Config, field)
 	}
-	redacted.SealedSecrets = envelope
+	redacted.SealedSecrets = nil
 	redacted.ClearSecretFields = nil
 	redacted.ConfiguredSecretFields = fields
 	sort.Strings(redacted.ConfiguredSecretFields)
 	return redacted, nil
+}
+
+// RuntimeView returns the encrypted channel representation consumed only by
+// the notifier workload. Plaintext is absent; the notifier decrypts the
+// envelope with its deployment-provided key.
+func (n *NotifyChannelInfo) RuntimeView() (*NotifyChannelInfo, error) {
+	runtime := n.clone()
+	envelope, fields, err := runtime.envelope()
+	if err != nil {
+		return nil, err
+	}
+	delete(runtime.Config, notifySealedSecretsKey)
+	for _, field := range NotifyChannelSecretFields(runtime.ChannelType) {
+		delete(runtime.Config, field)
+	}
+	runtime.SealedSecrets = envelope
+	runtime.ClearSecretFields = nil
+	runtime.ConfiguredSecretFields = fields
+	sort.Strings(runtime.ConfiguredSecretFields)
+	return runtime, nil
 }
 
 func (n *NotifyChannelInfo) clone() *NotifyChannelInfo {
@@ -171,12 +190,7 @@ func (n *NotifyChannelInfo) envelope() (*secretbox.Envelope, []string, error) {
 	if err := json.Unmarshal(encoded, &record); err == nil && record.Envelope != nil {
 		return record.Envelope, append([]string(nil), record.Fields...), nil
 	}
-	// Accept the initial envelope-only form for forward migration.
-	var envelope secretbox.Envelope
-	if err := json.Unmarshal(encoded, &envelope); err != nil || envelope.Ciphertext == "" {
-		return nil, nil, fmt.Errorf("decode notification secret envelope")
-	}
-	return &envelope, NotifyChannelSecretFields(n.ChannelType), nil
+	return nil, nil, fmt.Errorf("decode notification secret envelope")
 }
 
 func (n *NotifyChannelInfo) secretAAD() []byte {

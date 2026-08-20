@@ -62,19 +62,21 @@ type SQIssue struct {
 // SQIssuesResponse matches GET /api/issues/search and GET /api/issues/list.
 // Pagination fields p/ps/total are referenced by the SonarQube API spec.
 type SQIssuesResponse struct {
-	Total    int       `json:"total"`
-	P        int       `json:"p"`
-	PS       int       `json:"ps"`
-	Issues   []SQIssue `json:"issues"`
-	EffortTotal int    `json:"effortTotal,omitempty"`
-	DebtTotal   int    `json:"debtTotal,omitempty"`
+	Total       int       `json:"total"`
+	P           int       `json:"p"`
+	PS          int       `json:"ps"`
+	Issues      []SQIssue `json:"issues"`
+	EffortTotal int       `json:"effortTotal,omitempty"`
+	DebtTotal   int       `json:"debtTotal,omitempty"`
 }
 
 // ─── GetSourcesIssueSnippets ───────────────────────────────────────────
 
 // SQSnippetCodeLine is a single line of source code in a snippet block.
 // The jq expression ($snippet | .[] | .sources[]?) pipes into
-//   { lineNumber: .line, code: (.code | gsub(...)) }
+//
+//	{ lineNumber: .line, code: (.code | gsub(...)) }
+//
 // so each element needs .line and .code.
 type SQSnippetCodeLine struct {
 	Line int    `json:"line"`
@@ -113,7 +115,7 @@ type SQAncestor struct {
 
 // SQComponentsShowResponse matches GET /api/components/show.
 type SQComponentsShowResponse struct {
-	Component SQComponent `json:"component"`
+	Component SQComponent  `json:"component"`
 	Ancestors []SQAncestor `json:"ancestors,omitempty"`
 }
 
@@ -121,11 +123,11 @@ type SQComponentsShowResponse struct {
 
 // SQExportFindingsResponse matches GET /api/projects/export_findings.
 type SQExportFindingsResponse struct {
-	ExportedAt string     `json:"exported_at"`
+	ExportedAt string      `json:"exported_at"`
 	Project    SQComponent `json:"project"`
-	Branch     string     `json:"branch,omitempty"`
-	Issues     []SQIssue  `json:"issues"`
-	Hotspots   []any      `json:"hotspots,omitempty"`
+	Branch     string      `json:"branch,omitempty"`
+	Issues     []SQIssue   `json:"issues"`
+	Hotspots   []any       `json:"hotspots,omitempty"`
 }
 
 // ─── GetQualityProfilesSearch / Show ────────────────────────────────────
@@ -155,11 +157,11 @@ type SQQualityProfilesSearchResponse struct {
 
 // SQQualityProfileShowResponse matches GET /api/qualityprofiles/show.
 type SQQualityProfileShowResponse struct {
-	Profile            SQQualityProfile `json:"profile"`
-	CompareToSonarWay  *struct {
-		Profile         string `json:"profile"`
-		ProfileName     string `json:"profileName"`
-		MissingRuleCount int   `json:"missingRuleCount"`
+	Profile           SQQualityProfile `json:"profile"`
+	CompareToSonarWay *struct {
+		Profile          string `json:"profile"`
+		ProfileName      string `json:"profileName"`
+		MissingRuleCount int    `json:"missingRuleCount"`
 	} `json:"compareToSonarWay,omitempty"`
 }
 

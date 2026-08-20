@@ -322,20 +322,63 @@ runtime:
   api_server_url: "http://apiserver:9999"
   system_namespace: "flowgen-system"
   k8s_namespace: "flowgen-system"
+  mode: "session"
+  runtime_cluster_id: "session"
+  session_cluster_id: "session"
   tm_orphan_timeout: "3m"
   credential_env_secret: ""
   internal_auth_secret: "flowgent-runtime-auth"
   jobmanager_auth_key: "jobmanager-token"
   taskmanager_auth_key: "taskmanager-token"
-  # agentFlowId: ""              # set by JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
-  # tmId: ""                     # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
+  # agent_flow_id: ""            # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
+  # agent_flow_run_id: ""        # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID)
+  # tm_id: ""                    # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
   tm_deploy: "flowgent-taskmanager"
+  sandbox_deploy: "flowgent-sandbox"
+  tm_replicas: 1
   tm_slots: 4
-  # controllerLabel: ""          # set per controller pod (FLOWGENT__RUNTIME__CONTROLLER_LABEL)
-  # jmImage: ""                  # JM container image (FLOWGENT__RUNTIME__JM_IMAGE)
-  # jmConfigMap: ""              # ConfigMap mounted into dedicated per-flow JM pods (FLOWGENT__RUNTIME__JM_CONFIG_MAP)
-  # podIndex: 0                  # set by K8s downward API (FLOWGENT__RUNTIME__POD_INDEX)
-  # podTotal: 1                  # set by K8s downward API (FLOWGENT__RUNTIME__POD_TOTAL)
+  # controller_label: ""         # set per controller pod (FLOWGENT__RUNTIME__CONTROLLER_LABEL)
+  # jm_image: ""                 # JM container image (FLOWGENT__RUNTIME__JM_IMAGE)
+  # jm_config_map: ""            # ConfigMap mounted into runtime pods (FLOWGENT__RUNTIME__JM_CONFIG_MAP)
+  # pod_index: 0                 # set by K8s downward API (FLOWGENT__RUNTIME__POD_INDEX)
+  # pod_total: 1                 # set by K8s downward API (FLOWGENT__RUNTIME__POD_TOTAL)
+  session:
+    cluster_id: "session"
+    jobmanager:
+      resources:
+        cpu: "500m"
+        memory: "512Mi"
+    taskmanager:
+      replicas: 1
+      slots: 4
+      resources:
+        cpu: "500m"
+        memory: "512Mi"
+    sandbox:
+      min_replicas: 0
+      max_replicas: 10
+      slots: 4
+      resources:
+        cpu: "500m"
+        memory: "512Mi"
+  application:
+    jobmanager:
+      resources:
+        cpu: ""
+        memory: ""
+    taskmanager:
+      replicas: 1
+      slots: 4
+      resources:
+        cpu: ""
+        memory: ""
+    sandbox:
+      min_replicas: 0
+      max_replicas: 10
+      slots: 4
+      resources:
+        cpu: ""
+        memory: ""
 
 # ── External Wallet client (optional x402) ──────────────────────────────────
 #    Flowgent owns payment policy and x402 orchestration. The independently

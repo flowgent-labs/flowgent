@@ -291,7 +291,6 @@ func portableFlowSnapshot(source *entities.FlowInfo) (*entities.FlowInfo, error)
 		ID: source.ID, Description: source.Description, Status: "ACTIVE",
 	}
 	snapshot.K8sNamespace = ""
-	snapshot.Credentials = nil
 	return &snapshot, nil
 }
 

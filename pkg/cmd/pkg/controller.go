@@ -62,16 +62,17 @@ func startController(cfgPath string) error {
 	}
 
 	stateClient := &client.TaskStateClient{Client: apiClient, Namespace: namespace}
-	humanClient := &client.HumanApprovalClient{Client: apiClient}
+	humanClient := &client.HumanApprovalClient{Client: apiClient, Namespace: namespace}
 
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:     engine.ProviderStandalone,
-		PoolSize:     svcCfg.Orchestration.MaxConcurrentFlows,
-		TaskState:    stateClient,
-		ApprovalInfo: humanClient,
-		Logger:       logger,
-		APIServerURL: svcCfg.Runtime.APIServerURL,
-		Namespace:    namespace,
+		Provider:         engine.ProviderStandalone,
+		PoolSize:         svcCfg.Orchestration.MaxConcurrentFlows,
+		TaskState:        stateClient,
+		ApprovalInfo:     humanClient,
+		Logger:           logger,
+		APIServerURL:     svcCfg.Runtime.APIServerURL,
+		Namespace:        namespace,
+		RuntimeClusterID: "controller-local",
 	})
 	if err != nil {
 		return fmt.Errorf("create resource manager: %w", err)

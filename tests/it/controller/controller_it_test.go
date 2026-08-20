@@ -13,10 +13,11 @@ import (
 func TestController_DeployAndRunLifecycle(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "ctrl-lifecycle", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{entities.Node{ID: "init", Type: entities.NoopNode}, entities.Node{ID: "process", Type: entities.NoopNode}, entities.Node{ID: "finalize", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{entities.Edge{From: "init", To: "process"}, entities.Edge{From: "process", To: "finalize"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{entities.Node{ID: "init", Kind: entities.NoopNode}, entities.Node{ID: "process", Kind: entities.NoopNode}, entities.Node{ID: "finalize", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{entities.Edge{From: "init", To: "process"}, entities.Edge{From: "process", To: "finalize"}},
 	}
 
 	fs := it.New(t, flow)
@@ -32,10 +33,11 @@ func TestController_DeployAndRunLifecycle(t *testing.T) {
 func TestController_MultipleRunsSameFlow(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "ctrl-concurrent", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{entities.Node{ID: "step1", Type: entities.NoopNode}, entities.Node{ID: "step2", Type: entities.NoopNode}, entities.Node{ID: "step3", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{entities.Edge{From: "step1", To: "step2"}, entities.Edge{From: "step2", To: "step3"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{entities.Node{ID: "step1", Kind: entities.NoopNode}, entities.Node{ID: "step2", Kind: entities.NoopNode}, entities.Node{ID: "step3", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{entities.Edge{From: "step1", To: "step2"}, entities.Edge{From: "step2", To: "step3"}},
 	}
 
 	fs := it.New(t, flow)
@@ -55,10 +57,11 @@ func TestController_MultipleRunsSameFlow(t *testing.T) {
 func TestController_FlowReRegistration(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "ctrl-reregister", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{entities.Node{ID: "start", Type: entities.NoopNode}, entities.Node{ID: "intermediate", Type: entities.NoopNode}, entities.Node{ID: "finish", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{entities.Edge{From: "start", To: "intermediate"}, entities.Edge{From: "intermediate", To: "finish"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{entities.Node{ID: "start", Kind: entities.NoopNode}, entities.Node{ID: "intermediate", Kind: entities.NoopNode}, entities.Node{ID: "finish", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{entities.Edge{From: "start", To: "intermediate"}, entities.Edge{From: "intermediate", To: "finish"}},
 	}
 
 	fs := it.New(t, flow)

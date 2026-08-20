@@ -216,7 +216,7 @@ POST /api/v1/{namespace}/flows/trigger
 ```
 Controller polls apiserver ListFlows every 10s:
   → Hash-mod shard: only processes owned flows
-  → trigger sources create PENDING FlowRun with namespace + resource_pool_id snapshot
+  → trigger sources create PENDING FlowRun with namespace + runtime_mode snapshot
   → active-run reconciliation creates the dedicated K8s JM Deployment
   ... (later, asynchronously) ...
   → Dedicated JM picks up only its Flow's namespace runs

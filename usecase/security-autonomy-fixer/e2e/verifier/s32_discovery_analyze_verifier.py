@@ -152,7 +152,7 @@ def run():
     print("\n-- [32 Runtime Pods] Verify JM-created TM/Sandbox pods --")
     c.ensure_global_mqtt_audit(run_id)
     try:
-        c.wait_for_workload_components(c.FLOW_ID, timeout=240)
+        c.wait_for_workload_components(c.FLOW_ID, run_id=run_id, timeout=240)
 
         # Poll run until task data is available
         print(f"\n-- Polling run {run_id} for task availability --")

@@ -59,8 +59,7 @@ type Service struct {
 }
 
 // AuthorizeAdditional evaluates and audits a handler-level permission whose
-// target is discovered only after decoding the request body (for example the
-// Resource Pool selected by a Flow definition). Primary route authorization
+// target is discovered only after decoding the request body. Primary route authorization
 // remains in Middleware; this method composes a second, independently scoped
 // decision without coupling handlers to role storage.
 func (s *Service) AuthorizeAdditional(r *http.Request, namespace, permission, resourceType, resourceID string) (bool, error) {

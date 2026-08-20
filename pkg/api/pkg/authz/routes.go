@@ -20,9 +20,6 @@ func PolicyForRequest(r *http.Request) (RoutePolicy, bool) {
 	if len(parts) < 3 || parts[0] != "api" || parts[1] != "v1" {
 		return RoutePolicy{}, false
 	}
-	if parts[2] == "human" {
-		return humanPolicy(r.Method, parts)
-	}
 	if parts[2] == "webhook" {
 		return RoutePolicy{}, false
 	}
@@ -77,7 +74,11 @@ func PolicyForRequest(r *http.Request) (RoutePolicy, bool) {
 		}
 	case "runs":
 		policy.ResourceType = "run"
-		policy.ResourceID = pathID(rest)
+		if len(rest) == 1 && rest[0] == "metrics" {
+			policy.ResourceID = "*"
+		} else {
+			policy.ResourceID = pathID(rest)
+		}
 		policy.Permission = runPermission(r.Method, rest)
 		if len(rest) >= 2 {
 			switch rest[1] {
@@ -92,8 +93,18 @@ func PolicyForRequest(r *http.Request) (RoutePolicy, bool) {
 				policy.ResourceType = "trace"
 			}
 		}
+	case "approvals":
+		policy.ResourceType = "approval"
+		policy.ResourceID = "*"
+		if r.Method == http.MethodGet {
+			policy.Permission = "approval.platform.read"
+		}
 	case "notifications":
 		policy.ResourceType = "notification"
+		if len(rest) == 2 && rest[0] == "runtime" && rest[1] == "channels" && r.Method == http.MethodGet {
+			policy.Permission = "notification.internal.deliver"
+			break
+		}
 		if len(rest) >= 2 && rest[0] == "channels" {
 			policy.ResourceID = rest[1]
 		}
@@ -135,14 +146,6 @@ func PolicyForRequest(r *http.Request) (RoutePolicy, bool) {
 		policy.ResourceType = "namespace"
 		policy.ResourceID = namespace
 		policy.Permission = runtimeConfigPermission("namespace", r.Method, rest)
-	case "resource-pools":
-		policy.ResourceType = "resource_pool"
-		policy.ResourceID = pathID(rest)
-		if r.Method == http.MethodGet {
-			policy.Permission = "resource_pool.read"
-		} else {
-			policy.Permission = "resource_pool.manage"
-		}
 	default:
 		return RoutePolicy{}, false
 	}
@@ -185,6 +188,9 @@ func flowScopedRunPermission(method string, rest []string) string {
 		case "tasks":
 			return "task.read"
 		case "approvals":
+			if method == http.MethodPost && len(rest) == 2 {
+				return "approval.internal.create"
+			}
 			if method == http.MethodGet {
 				return "approval.read"
 			}
@@ -265,6 +271,9 @@ func runPermission(method string, rest []string) string {
 			}
 			return "task.internal.write"
 		case "approvals":
+			if method == http.MethodPost && len(rest) == 2 {
+				return "approval.internal.create"
+			}
 			if method == http.MethodGet {
 				return "approval.read"
 			}
@@ -320,16 +329,4 @@ func iamPolicy(method, namespace string, rest []string) (RoutePolicy, bool) {
 		}
 	}
 	return policy, policy.Permission != ""
-}
-
-func humanPolicy(method string, parts []string) (RoutePolicy, bool) {
-	policy := RoutePolicy{Namespace: "*", ResourceType: "approval", ResourceID: "*"}
-	if method == http.MethodPost && len(parts) > 3 && parts[3] == "approvals" {
-		policy.Permission = "approval.internal.create"
-	} else if method == http.MethodGet {
-		policy.Permission = "approval.platform.read"
-	} else {
-		policy.Permission = "approval.resolve"
-	}
-	return policy, true
 }

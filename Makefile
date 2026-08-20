@@ -1,4 +1,4 @@
-.PHONY: help build build-core build-image build-image-core clean test-ut test-x402 test-it fmt
+.PHONY: help build build-core build-image build-image-core clean test-ut test-x402 test-it test-it-deps fmt
 
 BIN_DIR  ?= bin
 GO       ?= go
@@ -109,7 +109,22 @@ test-x402:
 # (apiserver + JobManager + TaskManager + executors) backed by PostgreSQL, with
 # external SaaS services (GitHub, SonarQube, LLM) replaced by in-process mocks.
 # Keep packages serial because the harness shares PostgreSQL and fixed ports.
-test-it:
+test-it-deps:
+	@if [ -S /run/podman/podman.sock ]; then \
+		DOCKER_HOST=unix:///run/podman/podman.sock docker-compose -f deploy/docker/pgvector/docker-compose.yml up -d; \
+	else \
+		docker compose -f deploy/docker/pgvector/docker-compose.yml up -d; \
+	fi
+	@for _attempt in $$(seq 1 60); do \
+		_status=$$(docker inspect --format='{{.State.Health.Status}}' flowgent-test-pgvector 2>/dev/null); \
+		if [ "$$_status" = "healthy" ]; then exit 0; fi; \
+		sleep 1; \
+	done; \
+	docker logs --tail 80 flowgent-test-pgvector; \
+	echo "ERROR: flowgent-test-pgvector did not become healthy"; \
+	exit 1
+
+test-it: test-it-deps
 	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -v -count=1 -timeout 300s -p 1 ./probe ./apiserver ./controller ./engine ./externalmock ./knowledge ./notifier ./sandbox .
 
 # Auth integration tests need a live LDAP (GLAuth) / OIDC (Keycloak) container:
@@ -135,6 +150,7 @@ fmt:
 	cd pkg/sandbox   && $(GOENV) $(GO) fmt ./...
 	cd pkg/core      && $(GOENV) $(GO) fmt ./...
 	cd pkg/cmd       && $(GOENV) $(GO) fmt ./...
+	cd tests         && $(GOENV) $(GO) fmt ./...
 
 # ── Secrets ───────────────────────────────────────────────────
 # K8s Secret management for Flowgent microservices.

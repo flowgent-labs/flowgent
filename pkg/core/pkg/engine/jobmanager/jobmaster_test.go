@@ -39,17 +39,19 @@ func TestJobManager_BasicTopology(t *testing.T) {
 	}
 }
 
-func TestBuildExecutionGraphSupportsLegacyNodeType(t *testing.T) {
+func TestBuildExecutionGraphUsesCanonicalNodeKind(t *testing.T) {
 	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: time.Minute})
 	flow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "legacy-node-type", Namespace: "test"},
-		Nodes:      []entities.Node{{ID: "condition", Type: entities.ConditionNode}},
+		BaseEntity: entities.BaseEntity{ID: "canonical-node-kind", Namespace: "test"},
+		Nodes:      []entities.Node{{ID: "condition", Kind: entities.ConditionNode}},
 	}
 
-	jm.buildExecutionGraph(flow, "run-1")
+	if err := jm.buildExecutionGraph(flow, "run-1"); err != nil {
+		t.Fatal(err)
+	}
 	plan := jm.planMap["condition"]
 	if plan == nil || plan.TaskType != entities.TaskCondition || plan.NodeSpec.Kind != entities.ConditionNode {
-		t.Fatalf("legacy node type was not normalized: %#v", plan)
+		t.Fatalf("canonical node kind was not preserved: %#v", plan)
 	}
 }
 

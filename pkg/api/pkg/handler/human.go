@@ -44,14 +44,13 @@ func NewHumanHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger) *
 }
 
 // ListRunApprovals returns pending approvals only after the URL namespace and
-// run identity have been verified. The legacy global list remains available
-// for runtime compatibility, but browser clients must use this scoped route.
+// run identity have been verified.
 func (h *HumanHandler) ListRunApprovals(w http.ResponseWriter, r *http.Request) {
 	run, ok := h.authorizedRun(w, r)
 	if !ok {
 		return
 	}
-	items, err := h.store.ListPending(r.Context())
+	items, err := h.store.ListPending(r.Context(), r.PathValue("namespace"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -66,14 +65,48 @@ func (h *HumanHandler) ListRunApprovals(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(filtered)
 }
 
-// ApproveRun resolves an approval through a namespace/run-scoped URL.
-func (h *HumanHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
-	h.resolveRunApproval(w, r, true)
+// CreateRunApproval is the only approval creation endpoint. The URL owns both
+// namespace and run identity; body values cannot redirect the record.
+func (h *HumanHandler) CreateRunApproval(w http.ResponseWriter, r *http.Request) {
+	run, ok := h.authorizedRun(w, r)
+	if !ok {
+		return
+	}
+	var approval entities.ApprovalInfo
+	if err := decodeStrictJSON(r, &approval); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	approval.AgentFlowRunID = run.ID
+	approval.Namespace = run.Namespace
+	approval.Status = "PENDING"
+	if err := h.store.CreateApproval(r.Context(), &approval); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(approval)
 }
 
-// RejectRun rejects an approval through a namespace/run-scoped URL.
-func (h *HumanHandler) RejectRun(w http.ResponseWriter, r *http.Request) {
-	h.resolveRunApproval(w, r, false)
+func (h *HumanHandler) ListNamespaceApprovals(w http.ResponseWriter, r *http.Request) {
+	items, err := h.store.ListPending(r.Context(), r.PathValue("namespace"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// ResolveRunApproval resolves an approval through a namespace/run-scoped URL.
+func (h *HumanHandler) ResolveRunApproval(w http.ResponseWriter, r *http.Request) {
+	decision := r.PathValue("decision")
+	if decision != "approve" && decision != "reject" {
+		http.Error(w, "decision must be approve or reject", http.StatusBadRequest)
+		return
+	}
+	h.resolveRunApproval(w, r, decision == "approve")
 }
 
 func (h *HumanHandler) resolveRunApproval(w http.ResponseWriter, r *http.Request, approved bool) {
@@ -115,70 +148,4 @@ func (h *HumanHandler) authorizedRun(w http.ResponseWriter, r *http.Request) (*e
 		return nil, false
 	}
 	return run, true
-}
-
-// Approve approves a human task by token.
-func (h *HumanHandler) Approve(w http.ResponseWriter, r *http.Request) {
-	token := r.PathValue("token")
-	approval, err := h.store.Get(r.Context(), token)
-	if err != nil || approval == nil {
-		http.Error(w, "approval not found", http.StatusNotFound)
-		return
-	}
-	approved := true
-	approval.Approved = &approved
-	approval.Status = "APPROVED"
-	if err := h.store.UpdateApproval(r.Context(), approval); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"status": "approved"})
-}
-
-// CreateApproval creates a new human approval record.
-func (h *HumanHandler) CreateApproval(w http.ResponseWriter, r *http.Request) {
-	var approval entities.ApprovalInfo
-	if err := json.NewDecoder(r.Body).Decode(&approval); err != nil {
-		http.Error(w, "invalid body", 400)
-		return
-	}
-	approval.Status = "PENDING"
-	if err := h.store.CreateApproval(r.Context(), &approval); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	json.NewEncoder(w).Encode(approval)
-}
-
-// ListPendingApprovals returns all pending human approvals.
-func (h *HumanHandler) ListPendingApprovals(w http.ResponseWriter, r *http.Request) {
-	items, err := h.store.ListPending(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
-}
-
-// Reject rejects a human task by token.
-func (h *HumanHandler) Reject(w http.ResponseWriter, r *http.Request) {
-	token := r.PathValue("token")
-	approval, err := h.store.Get(r.Context(), token)
-	if err != nil || approval == nil {
-		http.Error(w, "approval not found", http.StatusNotFound)
-		return
-	}
-	approved := false
-	approval.Approved = &approved
-	approval.Status = "REJECTED"
-	if err := h.store.UpdateApproval(r.Context(), approval); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"status": "rejected"})
 }

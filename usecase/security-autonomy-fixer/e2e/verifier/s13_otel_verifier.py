@@ -332,7 +332,7 @@ def ensure_security_fixer_flow_exists():
     resp = FLOWGENT_SESSION.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=flow_def, timeout=10)
     if resp.status_code not in (200, 201):
         raise Exception(f"Flow upsert failed: {resp.status_code} {resp.text}")
-    print(f"  OK Flow definition ready: {flow_def.get('id')} (resource_pool={flow_def.get('resource_pool_id')})")
+    print(f"  OK Flow definition ready: {flow_def.get('id')} (runtime_mode={flow_def.get('runtime_mode')})")
 
 
 def trigger_security_fixer() -> str:

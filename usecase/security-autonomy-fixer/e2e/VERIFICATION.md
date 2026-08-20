@@ -10,27 +10,30 @@
 > The deployer also injects cross-namespace FQDNs for MQTT, API server, and
 > Jaeger, plus JM/TM/Sandbox images, before workload pods start. Full
 > redeploy installs system services in `flowgen-system`, clears stale
-> controller-created Flow JM and Resource Pool Deployments/pods in `flowgent-{namespace}`,
-> and removes legacy workers from `default`, so no worker pod survives across DB resets.
+> controller-created application runtime-cluster Deployments/pods in
+> `flowgent-{namespace}`, and removes legacy workers from `default`, so no
+> worker pod survives across DB resets.
 > Classic `runner.py` runs are verifier-triggered. UI system acceptance runs are
 > browser-triggered and browser-approved; their verifiers must reuse that run
 > and must not seed resources or create a replacement run. Importing flow
 > definitions is metadata registration and must not create idle JM/TM/Sandbox
-> Deployments; Controller starts a per-flow JM only while a real run is
-> `PENDING`, `RUNNING`, or `PAUSED`.
+> Deployments; Controller starts a per-run application JM only while a real
+> application run is `PENDING`, `RUNNING`, or `PAUSED`.
 > Flow definitions are imported idempotently as version `1`; repeated runner or
 > verifier imports must not create additional flow versions.
 > MQTT topic namespace segments use the tenant namespace such as `default`, not
-> the K8s workload namespace `flowgent-default`. Active-run JM and Pool-owned
-> TM/Sandbox pods run in the workload namespace and are verified there.
+> the K8s workload namespace `flowgent-default`. Active-run application JM and
+> runtime-cluster TM/Sandbox pods run in the workload namespace and are verified
+> there.
 > The controller ClusterRole must hold every permission it grants to the
 > application-namespace `flowgent-runtime` Role; otherwise Kubernetes rejects
 > Role creation as RBAC privilege escalation and JM can start without being able
 > to scale TM/Sandbox workers.
-> A completed Flow JM is retained for the configured `runtime.tm_orphan_timeout`
-> observation window (default `3m`) so final verifiers can inspect Pool worker
-> workspace state; deleting the Flow removes its JM immediately, while Pool
-> workers remain owned by their Resource Pool until that Pool is deleted.
+> A completed application runtime cluster is retained for the configured
+> `runtime.tm_orphan_timeout` observation window (default `3m`) so final
+> verifiers can inspect worker workspace state. Deleting the Flow removes the
+> application runtime cluster immediately. Session-mode worker deployments are
+> Helm-owned and intentionally excluded from per-run garbage collection.
 > Runtime `$share/*` subscriptions are load-balanced both by the broker and by
 > any local multi-handler dispatcher inside a component process. Verifier
 > subscribers must remain ordinary non-`$share` subscriptions so they observe
@@ -102,8 +105,8 @@
 > as `SUCCESS` without a delivered `exec/results` message is not a valid DAG
 > progression signal.
 > When `sandbox.deployment.enabled=true`, TM pods must not start embedded
-> sandbox runners. Dedicated Pool-owned Sandbox pods consume Pool-scoped
-> `sandbox/trigger` messages through `$share/sandbox-{namespace}-{pool}`;
+> sandbox runners. Dedicated Sandbox pods consume runtime-cluster-scoped
+> `sandbox/trigger` messages through `$share/sandbox-{namespace}-{clusterId}`;
 > each pod runs `SandboxSlotWorker` slots. Verifiers observe the same messages
 > with ordinary non-`$share` subscriptions only.
 
@@ -218,7 +221,7 @@ verified:
   metadata-only and did not create independent JM/TM/Sandbox runtime.
 - JM ResourceManager scaled TM and Sandbox Deployments from zero only after
   active task demand. Sandbox pods subscribed with
-  `$share/sandbox-pool-{namespace}-{flow}` and executed work through
+  `$share/sandbox-{namespace}-{clusterId}` and executed work through
   `SandboxSlotWorker` slots.
 - `s31` through `s34` used ordinary non-`$share` MQTT audit subscriptions and
   observed `exec/plans`, `exec/results`, `sandbox/trigger`, and
@@ -348,11 +351,11 @@ export DEEPSEEK_API_KEY_FLOWGENT="${DEEPSEEK_API_KEY_FLOWGENT:-${DEEPSEEK_API_KE
 # 1. Tear down Helm release
 sudo helm uninstall flowgent -n default --kubeconfig ~/.kube/config
 
-# 2. Delete leftover Flow JM / Resource Pool workloads and workload namespaces
+# 2. Delete leftover runtime-cluster workloads and workload namespaces
 sudo kubectl delete deployment -A -l flowgent.io/runtime-boundary=flow-jobmanager --force --grace-period=0
-sudo kubectl delete deployment -A -l flowgent.io/managed-by=resource-pool --force --grace-period=0
+sudo kubectl delete deployment -A -l flowgent.io/managed-by=runtime-cluster --force --grace-period=0
 sudo kubectl delete pod -A -l flowgent.io/runtime-boundary=flow-jobmanager --force --grace-period=0 --wait=false
-sudo kubectl delete pod -A -l flowgent.io/managed-by=resource-pool --force --grace-period=0 --wait=false
+sudo kubectl delete pod -A -l flowgent.io/managed-by=runtime-cluster --force --grace-period=0 --wait=false
 sudo kubectl delete pod -n default -l 'flowgent/role in (worker,sandbox-worker)' --force --grace-period=0 --wait=false
 sudo kubectl delete ns -l 'flowgent.io/runtime-boundary=namespace' --force --grace-period=0
 
@@ -377,7 +380,7 @@ sudo docker save localhost/flowgent-core:latest | sudo k3s ctr images import -
 ./bin/flowgent-core --config etc/flowgent.yaml console import \
   usecase/security-autonomy-fixer/config
 
-# 6. Fresh Helm install (Flow JM + Resource Pools)
+# 6. Fresh Helm install (system services + session runtime cluster)
 sudo helm install flowgent deploy/helm/flowgent \
   --kubeconfig ~/.kube/config \
   --set global.image.repository=localhost/flowgent-core \
@@ -440,10 +443,10 @@ for dep in $(sudo kubectl get deploy -n flowgent-default -o name); do
     "FLOWGENT__MESSAGER__MQTT__BROKER=tcp://${EMQX_IP}:1883" \
     FLOWGENT__RUNTIME__TM_IMAGE=localhost/flowgent-core:latest \
     FLOWGENT__RUNTIME__JM_IMAGE=localhost/flowgent-core:latest \
-    FLOWGENT__RUNTIME__SANDBOX_IMAGE=localhost/flowgent-core:latest
+    FLOWGENT__SANDBOX__DEPLOYMENT__IMAGE=localhost/flowgent-core:latest
 done
 
-# 7e. Create sandbox deployment manually (BUG: sandbox.image missing, PVC RWX)
+# 7e. Historical manual sandbox deployment patch point.
 sudo kubectl apply -f - << 'SBOXEOF'
 apiVersion: apps/v1
 kind: Deployment
@@ -639,7 +642,7 @@ numbered prefix:
 | 13  | `s13_otel_verifier.py`              | L0    | OTEL infrastructure + Jaeger span coverage           |
 | 21  | `s21_apiserver_verifier.py`         | L1    | REST CRUD + lifecycle events                         |
 | 22  | `s22_notifier_verifier.py`          | L1    | Multi-channel delivery                               |
-| 23  | `s23_controller_verifier.py`        | L1    | Flow JM and Resource Pool lifecycle                  |
+| 23  | `s23_controller_verifier.py`        | L1    | Application runtime cluster lifecycle                |
 | 24  | `s24_messager_verifier.py`          | L1    | MQTT topics + sandbox chain                          |
 | 25  | `s25_a2a_protocol_verifier.py`      | L1    | Agent card discovery, task submit                    |
 | 31  | `s31_seed_trigger_verifier.py`      | L2    | E2E: agent/MCP registration, flow creation, trigger  |
@@ -843,9 +846,11 @@ Validate EMQX broker connectivity and notification topic subscription.
 
 ### 4.6.1 Purpose
 
-Validate the Flow JM and Resource Pool lifecycle: Controller treats Flow CRUD as
-metadata registration, creates a JM only for active runs, realizes workers from
-the bound Pool, and cleans resources according to their explicit owner.
+Validate the application runtime-cluster lifecycle: Controller treats Flow CRUD
+as metadata registration, creates a per-run application JM only for active
+application runs, and garbage-collects the JM/TM/Sandbox cluster according to
+its runtime-cluster owner labels. Session runs are consumed by the Helm session
+JM and are outside this Controller create/delete path.
 
 ### 4.6.2 Prerequisites
 
@@ -855,19 +860,19 @@ the bound Pool, and cleans resources according to their explicit owner.
 
 | Step | Action                                        | Expected Input                                              | Expected Output                                                                                                                                                                                                                                        |
 | ---- | --------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 4.1  | `POST /api/v1/{namespace}/resource-pools`, then `POST .../flows` | Dedicated Pool and `{id, nodes: [short sandbox], edges: [], resource_pool_id}` | HTTP 200/201; no JM or Pool Worker Deployment exists before trigger |
+| 4.1  | `POST .../flows` | `{id, runtime_mode: application, nodes: [short sandbox], edges: [], resources: {...}}` | HTTP 200/201; no application JM/TM/Sandbox Deployment exists before trigger |
 | 4.2  | `POST /api/v1/{namespace}/flows/{id}/trigger` | Empty/manual trigger payload                                | `run_id` returned                                                                                                                                                                                                                                      |
-| 4.3  | Wait for Deployments                          | —                                                           | `flowgent-jobmanager-{namespace}-{flow_id}`, `flowgent-taskmanager-{namespace}-{pool_id}`, and `flowgent-sandbox-{namespace}-{pool_id}` exist in `flowgent-{namespace}` with Pool-configured replicas/slots |
+| 4.3  | Wait for Deployments                          | Runtime cluster ID derived from the Run ID                   | `flowgent-jobmanager-{namespace}-{flow_id}-{run_id}`, `flowgent-taskmanager-{namespace}-{cluster_id}`, and `flowgent-sandbox-{namespace}-{cluster_id}` exist in `flowgent-{namespace}` with `runtime-cluster` labels |
 | 4.4  | Verify JM Deployment spec                     | Deployment name                                             | Container env includes `FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}` and `envFrom.secretRef=flowgent-e2e-runtime-env`; when host proxy env is present, the Secret contains pod-reachable `HTTP_PROXY`/`HTTPS_PROXY` and merged `NO_PROXY`               |
-| 4.5  | Wait for JM/TM/Sandbox Pods                   | Flow label for JM; Namespace/Pool labels for Workers        | Flow JM and Pool-owned TM/Sandbox pods reach `Running` |
-| 4.6  | Cancel Run; delete Flow; delete Pool          | Run ID, Flow ID, Pool ID                                    | HTTP 200/204 and subsequent Flow/Pool `GET` returns 404 |
-| 4.7  | Wait for GC                                   | —                                                           | Flow JM/config and Pool-owned TM/Sandbox Deployments deleted |
+| 4.5  | Wait for JM/TM/Sandbox Pods                   | Flow/run labels for JM; namespace/runtime-cluster labels for workers | Application JM and runtime-cluster TM/Sandbox pods reach `Running` |
+| 4.6  | Cancel Run; delete Flow                       | Run ID, Flow ID                                             | HTTP 200/204 and subsequent Flow `GET` returns 404 |
+| 4.7  | Wait for GC                                   | —                                                           | Application JM/config and runtime-cluster TM/Sandbox Deployments deleted |
 
 ### 4.6.4 Steps — Flow UPDATE Lifecycle
 
 | Step | Action                               | Expected Input                                     | Expected Output                                         |
 | ---- | ------------------------------------ | -------------------------------------------------- | ------------------------------------------------------- |
-| 5.1  | Create metadata-only Flow            | `{id, nodes: [noop], edges: [], resource_pool_id: "default"}` | HTTP 200/201 and no idle Flow JM Deployment |
+| 5.1  | Create metadata-only Flow            | `{id, runtime_mode: application, nodes: [noop], edges: []}` | HTTP 200/201 and no idle application JM Deployment |
 | 5.2  | `PUT /api/v1/{namespace}/flows/{id}` | `{description: "updated", version: 2}`             | HTTP 200                                                |
 | 5.3  | Re-check idle resources              | Flow-scoped JM name                                | Still no Flow JM Deployment without an active Run |
 
@@ -906,16 +911,16 @@ topics.
 ### 4.7.3 Topic Verification Steps
 
 Dispatch topics use
-`flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/` so only
-workers in the bound Pool compete for work. Point-to-point callbacks and
-notification topics use
+`flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/`
+so only workers in the runtime cluster compete for work. Point-to-point
+callbacks and notification topics use
 `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/`.
 
 | Step | Topic Suffix      | Publisher | Subscriber                    | Expected Payload                                    |
 | ---- | ----------------- | --------- | ----------------------------- | --------------------------------------------------- |
-| 7.1  | `exec/plans`      | JM        | TM ($share/tm-{ns}-{pool})    | `{plan_id, node_id, input, task_type}`              |
+| 7.1  | `exec/plans`      | JM        | TM ($share/tm-{ns}-{clusterId}) | `{plan_id, node_id, input, task_type}`             |
 | 7.2  | `exec/results`    | TM        | JM                            | `{plan_id, node_id, state}` (state only, NO output) |
-| 7.3  | `sandbox/trigger` | TM        | Sandbox ($share/sandbox-{ns}-{pool}) | `{plan_id, runtime, script}`                  |
+| 7.3  | `sandbox/trigger` | TM        | Sandbox ($share/sandbox-{ns}-{clusterId}) | `{plan_id, runtime, script}`            |
 | 7.4  | `sandbox/result`  | Sandbox   | TM                            | `{plan_id, exit_code, stdout}`                      |
 | 7.5  | `notify/event`    | Publisher | Notifier ($share/notify-pool) | `{event_type, channel, payload}`                    |
 | 7.6  | `notify/result`   | Notifier  | Publisher                     | `{event_id, status, error}`                         |
@@ -1297,15 +1302,17 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
   `ctrl/run/created`, `ctrl/run/status`)
 - TM and JM do NOT publish lifecycle events
 
-### 7.1.3 Flow JM and Resource Pools
+### 7.1.3 Runtime Clusters
 
-- A Flow definition alone does not allocate a JM or Pool Worker pods.
-- While a Flow has at least one `PENDING`, `RUNNING`, or `PAUSED` Run, Controller
-  owns one dedicated JM Deployment in `{prefix}{namespace}` named
-  `flowgent-jobmanager-{namespace}-{flow_id}`.
-- The JM realizes TM/Sandbox capacity from the Run's immutable Resource Pool
-  snapshot. Pool workers are Namespace/Pool scoped and are removed when their
-  Pool is deleted. Scheduled/webhook/API triggers create Runs; imports do not.
+- A Flow definition alone does not allocate runtime compute.
+- Application-mode runs create one isolated runtime cluster per Run. The
+  Controller starts the per-run JM in `{prefix}{namespace}` and passes
+  `runtime_cluster_id=app-{run_id}`; that JM's ResourceManager owns only
+  TM/Sandbox Deployments carrying the same runtime-cluster label.
+- Session-mode runs are consumed by the Helm-deployed session JM. Session
+  TM/Sandbox worker deployments are Helm-owned and remain scoped by
+  `runtime_cluster_id=session`.
+- Scheduled/webhook/API triggers create Runs; imports do not.
 
 ### 7.1.4 DAG Dependency Coordination
 
@@ -1330,20 +1337,20 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
   provisioning evidence, and resource counts fail the suite on mismatch.
   Classic mode verifies console import; UI-provisioned mode verifies the
   browser-created inventory and explicitly forbids console import.
-- `s11` must fail if a full redeploy/import leaves verifier-created Flow JM or
-  Resource Pool workloads behind, or if metadata-only imports allocate idle
-  Flow JM/Pool Worker resources.
+- `s11` must fail if a full redeploy/import leaves verifier-created application
+  runtime-cluster workloads behind, or if metadata-only imports allocate idle
+  application runtime resources.
 - Runner-owned localhost tunnels must repeatedly pass apiserver health, EMQX TCP,
   and Jaeger Query probes before any scenario starts.
 - MQTT audit subscribers used by `s31` through `s34` are ordinary non-`$share`
   subscriptions. They observe real `ctrl/run/created`, `exec/plans`,
   `exec/results`, `sandbox/trigger`, and `sandbox/result` topics without
-  joining the L1 worker consumer groups. The observer uses a `pools/+` wildcard
-  for Pool-routed `exec/plans` and `sandbox/trigger`; callbacks remain on the
-  Flow/Run path.
+  joining the L1 worker consumer groups. The observer uses a `clusters/+`
+  wildcard for cluster-routed `exec/plans` and `sandbox/trigger`; callbacks
+  remain on the Flow/Run path.
 - Runtime checks require controller-created JM pods only after a real Run exists.
-  TM and Sandbox readiness must be Namespace/Pool scoped in
-  `flowgent-{namespace}` and match the Pool's declared replicas and slots.
+  Application TM and Sandbox readiness must be namespace/runtime-cluster scoped
+  in `flowgent-{namespace}` and match the declared replicas and slots.
 - Runtime credential checks require `flowgent-e2e-runtime-env` in both the
   system namespace and the workload namespace, and `envFrom.secretRef` on
   Controller-created JM plus JM-created TM/Sandbox pod templates. When host
@@ -1355,16 +1362,17 @@ Expected execution times (K8S single-node, 4 CPU, 8GB RAM):
 - API CRUD checks must treat soft-delete visibility as a hard contract:
   after DELETE, the resource may remain in PG with `del_flag=true`, but API
   `GET` must return 404 and API `LIST` must not include it.
-- With Sandbox workers enabled, only the selected Pool's Sandbox pods should
-  subscribe to its shared `.../sandbox/trigger` consumer group; TM embedded sandbox
-  runners are disabled.
+- With Sandbox workers enabled, only Sandbox pods in the selected runtime
+  cluster should subscribe to its shared `.../sandbox/trigger` consumer group;
+  TM embedded sandbox runners are disabled.
 - The security-autonomy-fixer DAG currently has 29 nodes and 33 edges. The existing PR path is
   `check-existing-pr -> pr-exists -> commit-to-existing -> trigger-rescan`; the
   new-PR path is `create-branch -> commit-fixes -> create-pr -> trigger-rescan`.
-- In Kubernetes, each active Flow JM is labelled with its Resource Pool, while
-  TM/Sandbox Deployments are labelled as Pool-owned. Controller deletes the JM
-  when the Flow is deleted or no active Run remains, and garbage-collects Pool
-  workers after their Resource Pool is deleted.
+- In Kubernetes, each active application JM is labelled with its Flow, Run,
+  runtime mode, and runtime cluster. TM/Sandbox Deployments are labelled as
+  runtime-cluster-owned. Controller deletes the application JM and its
+  TM/Sandbox deployments when the Flow is deleted or after the completed Run
+  exceeds the observation window. Session deployments are Helm-owned.
 - JM pollers must claim a run through the configured distributed lock before
   starting a JobMaster. Helm renders `lock.provider=postgres` when
   `storage.type=POSTGRE`, otherwise `memory` for local SQLite deployments.

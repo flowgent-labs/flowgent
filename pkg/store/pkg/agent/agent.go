@@ -8,8 +8,8 @@ import (
 
 // IAgentInfoStore is the agent info entity store interface.
 type IAgentInfoStore interface {
-	Get(ctx context.Context, name string) (*entities.AgentInfo, error)
-	Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.AgentInfo], error)
+	Get(ctx context.Context, namespace, name string) (*entities.AgentInfo, error)
+	List(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[entities.AgentInfo], error)
 	Save(ctx context.Context, entity *entities.AgentInfo) error
-	Delete(ctx context.Context, name string) error
+	Delete(ctx context.Context, namespace, name string) error
 }

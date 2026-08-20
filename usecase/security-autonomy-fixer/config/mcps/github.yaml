@@ -9,7 +9,7 @@ metadata:
   status: active
   description: Official GitHub MCP server for branch management, commits, pull requests, and PR comments via Streamable HTTP
 data:
-  type: http
+  type: streamable-http
   url: https://api.githubcopilot.com/mcp/
-  headers:
+  header_refs:
     Authorization: Bearer ${GITHUB_TOKEN}

@@ -61,6 +61,7 @@ var (
 	pidController  string
 	pidJobManager  string
 	jmFlowID       string
+	jmRunID        string
 	pidTaskManager string
 	pidSandbox     string
 	pidNotifier    string
@@ -220,6 +221,9 @@ var jobmanagerStartCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if jmFlowID != "" {
 			os.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_ID", jmFlowID)
+		}
+		if jmRunID != "" {
+			os.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID", jmRunID)
 		}
 		return StartJobManager(cfgPath, pidJobManager)
 	},
@@ -422,6 +426,7 @@ func main() {
 	jobmanagerCmd.AddCommand(jobmanagerStopCmd)
 	jobmanagerCmd.AddCommand(jobmanagerRestartCmd)
 	jobmanagerStartCmd.Flags().StringVar(&jmFlowID, "flow-id", "", "Flow ID owned by this JobManager")
+	jobmanagerStartCmd.Flags().StringVar(&jmRunID, "run-id", "", "FlowRun ID owned by this application JobManager")
 
 	// 6. taskmanager
 	rootCmd.AddCommand(taskmanagerCmd)

@@ -32,7 +32,7 @@ security-autonomy-fixer/
 | Subflow   | [`sub-fix.yaml`](config/flows/sub-fix.yaml)                                 | Three-node analyze → patch → validate flow; currently a separate reusable definition |
 | Agents    | [`config/agents/`](config/agents/)                                          | Supervisor, detector, fixer, and three reviewers plus Git role                       |
 | MCPs      | [`config/mcps/`](config/mcps/)                                              | GitHub delivery and SonarQube issue/scan access                                      |
-| E2E       | [`e2e/VERIFICATION.md`](e2e/VERIFICATION.md)                                | Flow JM/Resource Pool deployment and white-box assertions                            |
+| E2E       | [`e2e/VERIFICATION.md`](e2e/VERIFICATION.md)                                | Runtime cluster deployment and white-box assertions                                  |
 
 The YAML manifest is the executable source of truth. This README explains its
 intent and current behavior; when they differ, the manifest and observed E2E
@@ -203,7 +203,7 @@ MUST use a bounded node retry or an explicit subflow/run boundary.
 ## Verification
 
 [`e2e/VERIFICATION.md`](e2e/VERIFICATION.md) is the canonical operational guide
-for the Kubernetes Flow JM and Resource Pool environment. Its verifiers cover infrastructure,
+for the Kubernetes runtime-cluster environment. Its verifiers cover infrastructure,
 resource import, telemetry, API Server, Notifier, Controller, MQTT, A2A,
 the remediation stages, PR commits, knowledge, and shared workspace.
 

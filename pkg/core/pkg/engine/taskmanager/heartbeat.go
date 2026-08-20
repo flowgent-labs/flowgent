@@ -17,7 +17,7 @@ const (
 
 // ─── TM-side heartbeat ─────────────────────────────────
 
-func startHeartbeat(ctx context.Context, tmID, namespace, poolID string, q messager.IMessager, interval time.Duration) {
+func startHeartbeat(ctx context.Context, tmID, namespace, clusterID string, q messager.IMessager, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
 	}
@@ -31,13 +31,13 @@ func startHeartbeat(ctx context.Context, tmID, namespace, poolID string, q messa
 				ID:      fmt.Sprintf("hb-%s-%d", tmID, time.Now().UnixNano()),
 				Payload: data,
 			})
-			if namespace != "" && poolID != "" {
+			if namespace != "" && clusterID != "" {
 				ready := &messager.RuntimeReady{
 					WorkerID: tmID, Role: "taskmanager", Namespace: namespace,
-					PoolID: poolID, Timestamp: time.Now(),
+					ClusterID: clusterID, Timestamp: time.Now(),
 				}
 				readyData, _ := json.Marshal(ready)
-				_ = q.Publish(ctx, messager.RuntimeReadyTopic(namespace, poolID, ready.Role, tmID), &messager.InterMessage{
+				_ = q.Publish(ctx, messager.RuntimeReadyTopic(namespace, clusterID, ready.Role, tmID), &messager.InterMessage{
 					ID: fmt.Sprintf("ready-%s-%d", tmID, time.Now().UnixNano()), Payload: readyData,
 				})
 			}

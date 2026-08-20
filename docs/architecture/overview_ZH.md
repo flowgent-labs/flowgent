@@ -2,7 +2,7 @@
 
 **日期：** 2026-06-08
 
-**状态：** 已实现——活跃 Flow 专用 JobManager + Namespace 范围资源池 Worker
+**状态：** 已实现——Flink 风格 application/session runtime cluster，并以 `runtime_cluster_id` 隔离
 
 [English](overview.md)
 
@@ -14,7 +14,7 @@ Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义
 |---|---|---|
 | L1 Engine | [API Server](engine/apiserver_ZH.md) | 外部 REST/A2A 网关及唯一数据库客户端 |
 | L1 Engine | [Controller](engine/controller_ZH.md) | Flow 发现与活跃 Run 的 JobManager 生命周期 |
-| L1 Engine | [资源池](engine/resource-pools_ZH.md) | Worker 容量、放置与 SLA 隔离 |
+| L1 Engine | [Runtime Clusters](engine/runtime-clusters_ZH.md) | application/session 运行时生命周期与隔离 |
 | L1 Engine | [JobManager](engine/jobmanager_ZH.md) | 单次运行的 DAG 就绪判断、计划创建与运行时容量 |
 | L1 Engine | [TaskManager](engine/taskmanager_ZH.md) | Slot worker 与执行器路由 |
 | L1 Engine | [Sandbox](engine/sandbox_ZH.md) | 隔离脚本执行与共享工作区 |
@@ -115,7 +115,7 @@ flowchart LR
        │                                           │
        ▼                                           │
   TaskManager（N pods × M slots）                  │
-  • $share/tm-pool：消费 ExecutionPlan              │
+  • $share/tm-{namespace}-{cluster}：消费 ExecutionPlan │
   • ExecutorRouter：12 种节点类型                    │
   • Skill/sandbox 节点经 MQTT 分派给 SB              │
   • MQTT: .../exec/results ────────────────────────┤ → JM 状态
@@ -123,7 +123,7 @@ flowchart LR
        │                                           │
        ▼                                           │
   Sandbox（N pods，独立 Deployment）                │
-  • $share/sandbox-pool：消费 TM trigger            │
+  • $share/sandbox-{namespace}-{cluster}：消费 TM trigger │
   • 独立 K8s pod：pod 级 + seccomp-bpf 隔离          │
   • 与 TM 共享 workspace PVC                        │
   • MQTT: .../sandbox/result → TM                  │
@@ -149,22 +149,25 @@ flowchart LR
 | **实时分派经 MQTT** | ExecutionPlan、沙箱 trigger 与通知事件 |
 | **内部通信只用 MQTT** | 组件间不使用 SSE/WS；WS 仅 Notifier→UI |
 
-### 资源池运行时模型
+### Runtime Cluster 运行时模型
 
-分布式执行只有一种拓扑：Helm 部署 API Server、Controller、Notifier 与可选
-A2A；Controller 只为有活跃 Run 的 Flow 创建专用 JobManager；TM/Sandbox 属于
-Namespace 范围资源池，只在明确绑定同一 Pool 的 Flow 之间共享。
+分布式执行使用 Flink 风格两种生命周期模式：Helm 部署 API Server、Controller、
+Notifier、可选 A2A，以及可选 session JobManager。`runtime_mode=application`
+时，Controller 为每个活跃 FlowRun 创建一个 JobManager，该 JM 的 RM 创建以
+`runtime_cluster_id` 隔离的 TM/Sandbox Deployment。`runtime_mode=session` 时，
+Helm 部署的 session JM 消费 session Run，并只管理相同 cluster id 的 Worker。
 
 | 组件 | 所有者 | 范围 |
 |---|---|---|
 | API Server / Controller / Notifier / A2A | Helm | 平台 |
-| JobManager | Controller | namespace + Flow；仅活跃 Run |
-| TaskManager / Sandbox | Resource Pool，由活跃 JM 协调 | namespace + pool |
+| Session JobManager | Helm | namespace + session runtime cluster |
+| Application JobManager | Controller | namespace + Flow + Run；仅活跃 application Run |
+| TaskManager / Sandbox | JobManager ResourceManager | namespace + runtime_cluster_id |
 
-每个 Flow 必须指定 `resource_pool_id`，FlowRun 创建时固化该快照。Pool 的副本、
-slot、资源、PriorityClass 与 NodeSelector 提供 SLA 容量；ExecutionPlan 与
-SandboxTrigger topic 均包含 namespace/pool，Worker 只订阅并校验自己的范围。
-详见[资源池](engine/resource-pools_ZH.md)。
+每个 Flow 必须指定 `runtime_mode`。Application 模式可在顶层
+`resources.jobmanager/taskmanager/sandbox` 覆盖 Pod size；副本数和 slot 保持平台
+默认值。ExecutionPlan 与 SandboxTrigger topic 均包含 namespace/cluster，Worker
+只订阅并校验自己的范围。详见 [Runtime Clusters](engine/runtime-clusters_ZH.md)。
 
 ### Controller 与 Flink Operator 的对应关系
 
@@ -179,15 +182,15 @@ API 轮询避免 CRD 复杂度，并让流程目录始终位于唯一 DB 网关 
 ### 部署命名空间与 Pod 命名
 
 - **系统命名空间：** 默认 `flowgen-system`，可用 `runtime.system_namespace` 或 `FLOWGENT__RUNTIME__SYSTEM_NAMESPACE` 配置。Helm 部署的 apiserver、controller、notifier、a2a 与中间件长期驻留于此。
-- **工作负载命名空间：** `{runtime.namespace.namespace_prefix}{namespaceId}`，默认 `flowgent-{namespaceId}`。JobManager、TaskManager 与 Sandbox 位于此处。同一业务 Namespace 的 Flow 共享 K8s namespace；JM 按 Flow 隔离，Worker 按 Resource Pool 隔离。
+- **工作负载命名空间：** `{runtime.namespace.namespace_prefix}{namespaceId}`，默认 `flowgent-{namespaceId}`。JobManager、TaskManager 与 Sandbox 位于此处。同一业务 Namespace 的 Flow 共享 K8s namespace；运行时隔离由 `runtime_cluster_id` 表达。
 
 | 组件 | 必需 | K8s namespace | 职责 |
 |---|---|---|---|
 | apiserver | 是 | 系统 | REST 网关、认证与触发 |
 | controller | 是 | 系统 | 流程发现、run 分派与 hash-mod 分片 |
 | jobmanager | 是 | 工作负载 | DAG 编排与任务调度 |
-| taskmanager | 是 | 工作负载 | 只消费匹配 Namespace/Pool 的任务 |
-| sandbox | 是 | 工作负载 | 只消费匹配 Namespace/Pool 的隔离脚本任务 |
+| taskmanager | 是 | 工作负载 | 只消费匹配 Namespace/Cluster 的任务 |
+| sandbox | 是 | 工作负载 | 只消费匹配 Namespace/Cluster 的隔离脚本任务 |
 | notifier | 是 | 系统 | 多渠道推送与 WebSocket SSE |
 | a2a | 可选 | 系统 | Google Agent-to-Agent 协议入口 |
 | walletd | 可选外部服务 | Wallet release 自主管理 | secp256k1 EOA custody 与 EIP-712 digest 签名 |
@@ -200,11 +203,11 @@ custody。
 系统服务（flowgen-system 中的 Helm release，{hash}=K8s 后缀）：
   flowgent-{component}-{hash}
 
-Flow JM（{hash}=K8s 后缀）：
-  flowgent-jobmanager-{namespaceId}-{flowId}-{hash}
+Application FlowRun JM（{hash}=K8s 后缀）：
+  flowgent-jobmanager-{namespaceId}-{flowId}-{runId}-{hash}
 
-Resource Pool Worker（{hash}=K8s 后缀）：
-  flowgent-{taskmanager|sandbox}-{namespaceId}-{poolId}-{hash}
+Runtime Cluster Worker（{hash}=K8s 后缀）：
+  flowgent-{taskmanager|sandbox}-{namespaceId}-{clusterId}-{hash}
 ```
 
 示例：
@@ -213,9 +216,9 @@ Resource Pool Worker（{hash}=K8s 后缀）：
 flowgent-apiserver-abc123
 flowgent-controller-ghi789
 flowgent-notifier-stu901
-flowgent-jobmanager-default-security-autonomy-fixer-xyz001
-flowgent-taskmanager-default-security-critical-xyz002
-flowgent-sandbox-default-security-critical-xyz003
+flowgent-jobmanager-default-security-autonomy-fixer-run123-xyz001
+flowgent-taskmanager-default-app-run123-xyz002
+flowgent-sandbox-default-app-run123-xyz003
 ```
 
 Flow JobManager 的关键 labels：
@@ -223,16 +226,19 @@ Flow JobManager 的关键 labels：
 ```yaml
 flowgent.io/namespace:       "default"
 flowgent.io/flow:            "security-autonomy-fixer"
-flowgent.io/resource-pool:   "security-critical"
+flowgent.io/run:             "run123"
+flowgent.io/runtime-cluster: "app-run123"
+flowgent.io/runtime-mode:    "application"
 flowgent.io/runtime-boundary: "flow-jobmanager"
 ```
 
-Pool Worker 的关键 labels：
+Runtime Worker 的关键 labels：
 
 ```yaml
 flowgent.io/namespace:       "default"
-flowgent.io/resource-pool:   "security-critical"
-flowgent.io/managed-by:      "resource-pool"
+flowgent.io/runtime-cluster: "app-run123"
+flowgent.io/runtime-mode:    "application"
+flowgent.io/managed-by:      "runtime-cluster"
 ```
 
 ### 关键设计决策
@@ -241,12 +247,12 @@ flowgent.io/managed-by:      "resource-pool"
 |---|---|
 | **只有 apiserver 连接 DB** | 以单一 PG/SQLite 客户端和缓存消除 N×M 连接池复杂度；其余组件使用 MQTT 或 REST。 |
 | **Controller 经 REST 取流程，而非扫描 PG** | `ListFlows()` 配合 MQTT 生命周期事件实现实时更新，仍保留 hash-mod 分片。 |
-| **每个 Flow 绑定 Resource Pool** | Pool 的副本、Slot、资源、PriorityClass 与 NodeSelector 将 SLA 容量和放置从编排语义中解耦；Run 快照保证调度确定性。 |
-| **JM 管理 TM/Sandbox，Controller 回收孤儿** | 仅 `PENDING`/`RUNNING`/`PAUSED` 的真实运行令 Controller 保留 JM；导入流程/skill 仅登记元数据。JM 管理带标签的 TM/Sandbox；无活动运行或流程删除时回收。活动运行期间 JM 意外消失时，先观察 `runtime.tm_orphan_timeout`（默认 `3m`）再清理。 |
+| **每个 Flow 声明 `runtime_mode`** | `application` 为每次 Run 创建独立 runtime cluster；`session` 使用 Helm 部署的共享 session cluster；Run 快照保证调度确定性。 |
+| **JM 通过 `runtime_cluster_id` 管理 TM/Sandbox** | 仅 `PENDING`/`RUNNING`/`PAUSED` 的 application 运行令 Controller 保留 JM；导入流程/skill 仅登记元数据。JM 只管理匹配 cluster id 的 TM/Sandbox；无活动运行或流程删除时回收。活动运行期间 JM 意外消失时，先观察 `runtime.tm_orphan_timeout`（默认 `3m`）再清理。 |
 | **运行时凭据通过 K8s Secret `envFrom` 进入 pod** | 主机 shell 环境只作为部署器/console import 输入；`runtime.credential_env_secret` 指定的 Secret 由 Controller 注入 JM，再由 JM K8sRM 可选注入 TM/Sandbox。 |
 | **资源定义只保存凭据引用，不保存值** | LLM/MCP API 接受环境变量引用名、读取时脱敏，并只在运行时 Pod 内解析。实际值不得进入浏览器状态、TaskRun payload、OTel attributes、日志或截图。Notification Channel Secret 仍需同等契约后才能开放生产 UI 配置。 |
 | **Agent memory 以 `(flow_id, node_id)` 为作用域** | 跨 run 与重启保留；流程间不共享；内容单调累积以供 RAG 召回。 |
-| **一个活跃 Flow 一个 JM** | 同一二进制与 DAG 引擎；Controller 只在 Flow 有活跃 Run 时创建专用 JM，Worker 则按 Namespace/Pool 共享。 |
+| **一个 JobManager 控制线** | Session JM 轮询 session Run；application JM 轮询单个 FlowRun。两者使用同一 DAG 引擎，并按 `runtime_cluster_id` 路由计划。 |
 | **A2A 直接使用 `a2aproject/a2a-go` 类型** | ADK `adka2a` 绑定其 session、genai 与内部类型，不兼容 Flowgent DAG；官方 SDK 提供无框架耦合的协议类型。 |
 | **Sandbox 是 JM 管理的独立 pod** | K8s NetworkPolicy + RuntimeDefault 提供 pod 级边界，seccomp-bpf + userspace notifier 提供每流程/节点动态 allowlist；独立资源限制避免 TM 与 Sandbox 相互干扰；二者通过按 flowId 组织的 ReadWriteMany PVC 交换脚本与结果。 |
 | **网络隔离使用 seccomp-bpf + userspace notifier，而非 iptables** | iptables/Istio 只能给出 pod 级静态策略；`SECCOMP_RET_USER_NOTIF` 可在每次执行前动态安装、随子进程销毁。notifier 解析 host/IP，并通过 `/proc/<pid>/mem` 检查 `connect()`/`sendto()`/`sendmsg()` 目标。BPF 无条件允许 DNS 53 端口、无条件阻止 `SOCK_RAW`。详见 [Sandbox](engine/sandbox_ZH.md)。 |
@@ -258,17 +264,17 @@ flowgent.io/managed-by:      "resource-pool"
 
 ```text
 # ExecutionPlan：JM → TM
-flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/exec/plans
-  JM 发布序列化 ExecutionPlan；TM 只在同一 namespace/pool 共享订阅中负载均衡消费
+flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/exec/plans
+  JM 发布序列化 ExecutionPlan；TM 只在同一 namespace/cluster 共享订阅中负载均衡消费
 
 # 执行结果：TM → JM
 flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results
   TM 发布 TaskResult；JM 按 run 订阅
 
 # 沙箱触发与结果
-flowgent/v1/{namespace}/pools/{poolId}/flows/{flowId}/runs/{runId}/sandbox/trigger
+flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger
 flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
-  TM 发布 SandboxTrigger；Sandbox 只在同一 namespace/pool 共享订阅中竞争消费
+  TM 发布 SandboxTrigger；Sandbox 只在同一 namespace/cluster 共享订阅中竞争消费
   Sandbox 发布 stdout/stderr/exit_code；发起任务的 TM slot 订阅结果
 
 # Controller → JM 创建请求
@@ -291,9 +297,9 @@ POST /api/v1/{namespace}/runs/{id}/tasks/{tid}
 
 | 发布者 | Topic | 消费者 | 机制 |
 |---|---|---|---|
-| K8sRM.Schedule | `.../pools/{poolId}/.../exec/plans` | SlotWorker.Loop | Namespace/Pool 范围共享消费 |
+| K8sRM.Schedule | `.../clusters/{clusterId}/.../exec/plans` | SlotWorker.Loop | Namespace/Cluster 范围共享消费 |
 | SlotWorker | `.../exec/results` | JobMaster | 按 run 订阅 |
-| SandboxExecutor | `.../pools/{poolId}/.../sandbox/trigger` | SandboxRunner | Namespace/Pool 范围共享消费 |
+| SandboxExecutor | `.../clusters/{clusterId}/.../sandbox/trigger` | SandboxRunner | Namespace/Cluster 范围共享消费 |
 | SandboxRunner | `.../sandbox/result` | SandboxExecutor | 按 run 订阅 |
 | Notifier.Publish | `.../notify/event` | Notifier consumer | 每命名空间 `$share/notify-pool` |
 | TM heartbeat | `flowgent/v1/heartbeat/{tmId}` | HeartbeatMonitor | 通配订阅全部 TM |
@@ -310,7 +316,7 @@ for iteration=1,2,...:
   for each nodeID:
     ├─Schedule(plan) ──►  Subscribe exec/results
     │                     Register chan[nodeID]
-    │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-pool
+    │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-{namespace}-{cluster}
     │                                                                       Executor.Execute()
     │                                                                       PUT /tasks (REST)
     │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_id,state}
@@ -321,15 +327,15 @@ for iteration=1,2,...:
 
 `K8sRM.Schedule()` MUST 在发布 `exec/plans` 前注册 `exec/results` 的节点 channel，否则快速 TM 可能先返回结果，令调用一直等待到 `planTimeout`。结果 topic 只携带 `{plan_id,node_id,state}`；TM MUST 先通过 `PUT /api/v1/{namespace}/runs/{id}/tasks/{tid}` 持久化实际输出，再发布状态。JM 之后从 task record 或 `Schedule` 返回值填充的 `nodeOutputs` 读取数据，供后继节点解析变量。
 
-### Pool 标识与队列配置
+### Runtime Cluster 标识与队列配置
 
 | Worker | ID 格式 | 示例 |
 |---|---|---|
-| TaskManager | `pool-{namespace}-{poolId}-tm-{hostname}` | `pool-default-security-critical-tm-k8sm1` |
-| Sandbox | K8s `POD_NAME` | `flowgent-sandbox-default-security-critical-e5f6g7h8` |
+| TaskManager | `{namespace}-{clusterId}-tm-{hostname}` | `default-app-run123-tm-k8sm1` |
+| Sandbox | K8s `POD_NAME` | `flowgent-sandbox-default-app-run123-e5f6g7h8` |
 
-Worker 身份与 Topic 同时包含 Namespace/Pool；消费者还必须校验 payload 中的
-`namespace_id` 与 `resource_pool_id`，避免错误订阅导致跨 Pool 执行。
+Worker 身份与 Topic 同时包含 Namespace/Cluster；消费者还必须校验 payload 中的
+`namespace_id` 与 `runtime_cluster_id`，避免错误订阅导致跨 Cluster 执行。
 
 ```yaml
 messaging:
@@ -338,7 +344,7 @@ messaging:
     broker: "tcp://<host>:1883"
 ```
 
-`flowgent/v1/` 是 messager 包中的常量；`messager.ExecPlansTopic(namespace, pool, flow, run)` 等 builder 用路由键生成完整路径。分布式部署 MUST 配置 `messaging.mqtt.broker` 或 `FLOWGENT_MQTT_BROKER`，连接失败或未配置均立即失败。本地 All-in-One 可使用 `StandaloneMessager`。
+`flowgent/v1/` 是 messager 包中的常量；`messager.ExecPlansTopic(namespace, cluster, flow, run)` 等 builder 用路由键生成完整路径。分布式部署 MUST 配置 `messaging.mqtt.broker` 或 `FLOWGENT_MQTT_BROKER`，连接失败或未配置均立即失败。本地 All-in-One 可使用 `StandaloneMessager`。
 
 ## ExecutionPlan 与 Checkpoint 契约
 
@@ -366,13 +372,14 @@ flowgent all-in-one start -c etc/flowgent.yaml
 
 ### 分布式 Kubernetes
 
-Controller 发现 Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run 后，在工作负载
-命名空间 `{namespace_prefix}{namespaceId}` 中确保专用
-`flowgent-jobmanager-{namespaceId}-{flowId}` Deployment。JM 读取该 Run 快照的
-Resource Pool，通过 K8sRM 协调 `flowgent-taskmanager-{namespaceId}-{poolId}` 与
-`flowgent-sandbox-{namespaceId}-{poolId}` 的固定副本、Slot、资源和放置约束。
-导入或更新 Flow/Skill 不创建运行资源；没有活跃 Run 时 Controller 删除 Flow JM，
-Pool Worker 可供同 Pool 的其他活跃 Flow 继续使用，Pool 删除后由 Controller 回收。
+Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run 后，
+在工作负载命名空间 `{namespace_prefix}{namespaceId}` 中确保专用
+`flowgent-jobmanager-{namespaceId}-{flowId}-{runId}` Deployment。JM 读取该 Run
+快照的 runtime mode/cluster id，通过 K8sRM 协调
+`flowgent-taskmanager-{namespaceId}-{clusterId}` 与
+`flowgent-sandbox-{namespaceId}-{clusterId}` 的副本、Slot 和资源。Session Run
+由 Helm 部署的 session JM 消费。导入或更新 Flow/Skill 不创建 application 运行资源；
+没有活跃 Run 时 Controller GC 删除 application JM/TM/Sandbox。
 
 ## 端到端执行路径
 
@@ -431,7 +438,7 @@ Pool Worker 可供同 Pool 的其他活跃 Flow 继续使用，Pool 删除后由
 
 5. RM DISPATCH
    → StandaloneRM 使用 goroutine pool，容量满返回 INSUFFICIENT_RESOURCES
-   → K8sRM 通过 namespace/pool MQTT topic 发布并协调 Pool 固定容量
+   → K8sRM 通过 namespace/cluster MQTT topic 发布并协调 runtime cluster 容量
 
 6. TM EXECUTION
    → SlotWorker 取出 plan
@@ -489,7 +496,7 @@ Flowgent 只依赖 wire contract，不依赖 Wallet source 或 key-management li
 | sandbox | `pkg/sandbox/` | 隔离执行、policy 与 seccomp 控制 |
 | notifier | `pkg/notifier/` | Delivery channels 与 UI event push |
 | core | `pkg/core/` | Executors、JM/TM/RM、LLM/MCP client、x402 policy 与外部 Wallet client |
-| controller | `pkg/controller/` | Flow JM、Resource Pool reconciliation 与 lifecycle |
+| controller | `pkg/controller/` | Application JM 与 runtime cluster reconciliation/lifecycle |
 | api | `pkg/api/` | REST handlers 与唯一 durable-state gateway |
 | a2a | `pkg/a2a/` | 可选 Agent-to-Agent protocol endpoint |
 | console | `pkg/console/` | Flowgent resource CRUD/import/export；不操作 private key |
@@ -510,7 +517,7 @@ Deployment、master-key Secret 或 image build。
 
 1. **Given** 任一非 API 组件，**when** 它读取或写入持久引擎状态，**then** 请求 MUST 经过 API Server REST，MUST NOT 建立数据库直连。
 2. **Given** 一个被接受的触发，**when** run 创建成功，**then** 异步执行开始前 MUST 可观察到一个持久化的 `PENDING` run 及其生命周期事件。
-3. **Given** 存在活动 Run，**when** Controller 完成 reconcile，**then** 该 Flow MUST 恰好存在一个受管 JobManager，且 TaskManager/Sandbox 容量 MUST 匹配 Run 的资源池。
+3. **Given** 存在活动 Run，**when** Controller/JM 完成 reconcile，**then** 该 Run MUST 存在所选模式的受管 runtime，且 TaskManager/Sandbox 容量 MUST 匹配 Run 的 runtime cluster。
 4. **Given** 一个可运行 DAG 节点，**when** JobManager 分派它，**then** `exec/results` 订阅路径 MUST 先于 `exec/plans` 发布就绪；只有收到匹配结果后节点才能推进。
 5. **Given** 带输出的任务结果，**when** TaskManager 报告完成，**then** 状态型 MQTT 结果解除 JobManager 等待前，实际输出 MUST 已经由 API Server 持久化。
 6. **Given** 任一内部引擎交互，**when** 组件通信，**then** MUST 按本文边界使用 REST、MQTT、Kubernetes API 或共享工作区；WebSocket MUST 只存在于 Notifier 到 UI 的边界。

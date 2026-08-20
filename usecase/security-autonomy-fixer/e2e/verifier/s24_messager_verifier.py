@@ -6,9 +6,9 @@ Validates MQTT topic connectivity and message routing for all 14 topics,
 plus complete Skill/Sandbox execution chain (TM → Sandbox → TM → JM).
 
 Topic Coverage (14 topics, all prefixed flowgent/v1/):
-1.  exec/plans           - JM → TM ($share/tm-pool)
+1.  exec/plans           - JM → TM ($share/tm-cluster)
 2.  exec/results         - TM → JM (state callback)
-3.  sandbox/trigger      - TM → Sandbox ($share/sandbox-pool)
+3.  sandbox/trigger      - TM → Sandbox ($share/sandbox-cluster)
 4.  sandbox/result       - Sandbox → TM
 5.  notify/event         - Publisher → Notifier ($share/notify-pool)
 6.  notify/result        - Notifier → Publisher
@@ -204,17 +204,17 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
     run_id = "run-" + rand_id()
     plan_id = "plan-" + rand_id()
     task_id = "task-" + rand_id()
-    pool_id = "test-pool"
+    cluster_id = "test-cluster"
     
     try:
         # Step 1: Subscribe to all relevant topics
         print(f"    • Step 1: Setting up subscriptions...")
         
-        # Shared subscription for TM (simulating TM pool, unique group to avoid real TM)
-        tester.subscribe("flowgent/v1/+/pools/+/flows/+/runs/+/exec/plans")
+        # Shared subscription for TM (simulating one runtime cluster)
+        tester.subscribe("flowgent/v1/+/clusters/+/flows/+/runs/+/exec/plans")
 
-        # Shared subscription for Sandbox (simulating sandbox pool, unique group)
-        tester.subscribe("flowgent/v1/+/pools/+/flows/+/runs/+/sandbox/trigger")
+        # Shared subscription for Sandbox (simulating one runtime cluster)
+        tester.subscribe("flowgent/v1/+/clusters/+/flows/+/runs/+/sandbox/trigger")
         
         # Point-to-point for sandbox result (TM receives)
         tester.subscribe(f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result")
@@ -233,6 +233,8 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
             "agentflow_run_id": run_id,
             "agentflow_definition_id": flow_id,
             "namespace_id": namespace,
+            "runtime_mode": "application",
+            "runtime_cluster_id": cluster_id,
             "task_id": task_id,
             "node_id": "sandbox-node",
             "task_type": "sandbox",
@@ -246,13 +248,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
+            f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
             {"id": plan_id, "payload": json.dumps(exec_plan)}
         )
         
         # Step 3: TM receives ExecutionPlan
         print(f"    • Step 3: TM receives exec/plans...")
-        exec_plans_topic = f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/exec/plans"
+        exec_plans_topic = f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans"
         msg = tester.wait_for_message(exec_plans_topic, timeout=3)
         if not msg:
             raise AssertionError("TM did not receive ExecutionPlan")
@@ -264,6 +266,7 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         
         sandbox_req = {
             "plan_id": plan_id,
+            "runtime_cluster_id": cluster_id,
             "runtime": "python3",
             "script": "print('Hello from sandbox')",
             "timeout": "5s",
@@ -271,13 +274,13 @@ def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
         }
         
         tester.publish(
-            f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
+            f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
             {"id": plan_id, "payload": json.dumps(sandbox_req)}
         )
         
         # Step 5: Sandbox receives trigger
         print(f"    • Step 5: Sandbox receives trigger...")
-        sb_trigger_topic = f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
+        sb_trigger_topic = f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
         msg = tester.wait_for_message(sb_trigger_topic, timeout=3)
         if not msg:
             raise AssertionError("Sandbox did not receive trigger")
@@ -369,15 +372,15 @@ def run():
     flow_id = "test-flow-" + rand_id()
     run_id = "run-" + rand_id()
     tm_id = "tm-" + rand_id()
-    pool_id = "test-pool"
+    cluster_id = "test-cluster"
 
     # Test topic pairs
     topic_tests = [
         {
             "name": "exec/plans (JM → TM)",
-            "publish": f"flowgent/v1/{namespace}/pools/{pool_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
-            "subscribe": "flowgent/v1/+/pools/+/flows/+/runs/+/exec/plans",
-            "payload": {"plan_id": rand_id(), "task_type": "agent"},
+            "publish": f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
+            "subscribe": "flowgent/v1/+/clusters/+/flows/+/runs/+/exec/plans",
+            "payload": {"plan_id": rand_id(), "task_type": "agent", "runtime_cluster_id": cluster_id},
         },
         {
             "name": "exec/results (TM → JM, state-only)",

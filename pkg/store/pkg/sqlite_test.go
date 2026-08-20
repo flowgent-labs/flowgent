@@ -42,6 +42,7 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	s := flowrun.NewFlowRunSQLiteStore(conn)
 
 	run := &entities.FlowRunInfo{
+		BaseEntity:  entities.BaseEntity{Namespace: "default"},
 		AgentFlowID: "test-flow", Version: 1, Status: entities.RunPending,
 	}
 	run.SetTrigger(entities.TriggerInfo{Type: "manual", Source: "ut"})
@@ -69,7 +70,7 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 		t.Errorf("expected RUNNING after update, got %s", got.Status)
 	}
 
-	page, err := s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	page, err := s.List(ctx, flowrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
 	if err != nil {
 		t.Fatalf("Select: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	if _, err := s.Get(ctx, run.ID); err == nil {
 		t.Fatalf("Get returned soft-deleted run")
 	}
-	page, err = s.Select(ctx, entities.PageRequest{Page: 1, Size: 100})
+	page, err = s.List(ctx, flowrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
 	if err != nil {
 		t.Fatalf("Select after delete: %v", err)
 	}
@@ -191,7 +192,7 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 		t.Errorf("expected PENDING, got %s", got.Status)
 	}
 
-	pendingBefore, err := apStore.ListPending(ctx)
+	pendingBefore, err := apStore.ListPending(ctx, appr.Namespace)
 	if err != nil {
 		t.Fatalf("ListPending (before approve): %v", err)
 	}
@@ -206,7 +207,7 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 		t.Fatalf("UpdateApproval: %v", err)
 	}
 
-	pending, err := apStore.ListPending(ctx)
+	pending, err := apStore.ListPending(ctx, appr.Namespace)
 	if err != nil {
 		t.Fatalf("ListPending: %v", err)
 	}

@@ -4,7 +4,7 @@
 
 **Layer:** L2 application orchestration above the L1 engine components
 
-**Runtime placement:** one required namespace-scoped `resource_pool_id`
+**Runtime placement:** one required `runtime_mode` (`application` or `session`)
 
 AgentFlow is the application-facing DAG model. It defines which work is
 deterministic, which work may use an LLM, how outputs move between nodes, where
@@ -35,7 +35,7 @@ Flow manifest + Agent/MCP/Skill definitions
 
 | Part | Purpose |
 |---|---|
-| [DAG model and patterns](#manifest-and-dag-model) | Manifest compatibility, data flow, composition, and 12 node types |
+| [DAG model and patterns](#manifest-and-dag-model) | Canonical manifest, data flow, composition, and 12 node types |
 | [Limits and practices](#flexibility-and-current-limits) | Current execution boundaries and safe authoring rules |
 | [Application resources](#agent-node-memory) | Memory, skills, agents, static manifests, and console lifecycle |
 
@@ -52,17 +52,20 @@ metadata:
   status: active
 data:
   id: example-flow
-  resource_pool_id: default
+  runtime_mode: application
+  resources:
+    jobmanager: { cpu: "500m", memory: "512Mi" }
+    taskmanager: { cpu: "2", memory: "2Gi" }
+    sandbox: { cpu: "2", memory: "2Gi" }
   vars: {}
   triggers: []
   nodes: []
   edges: []
 ```
 
-The importer also accepts `apiVersion` as the version key and `spec` as the
-payload key. Flow parsing retains compatibility with legacy nested
-`flow`/`agentflow` and flat payloads. Nodes accept the current flat
-`kind: ...` form, the nested `kind + spec` form, and legacy `type`.
+The importer accepts exactly this envelope version and `data` payload. Every DAG
+node is one flat object with a required `kind`; node parameters use `args`.
+Unknown envelope and API request fields are rejected.
 
 | Flow field | Purpose | Flexibility / boundary |
 |---|---|---|
@@ -73,7 +76,8 @@ payload key. Flow parsing retains compatibility with legacy nested
 | `triggers` | Schedule or webhook registration | REST and A2A can also create runs outside manifest trigger declarations |
 | `input_schema`, `output_schema` | Discovery and validation contracts | Optional; node-level `output_schema` is strongly recommended for LLM output |
 | `sandbox_policy` | Flow-level sandbox defaults | A node may narrow or override policy within the configured security boundary |
-| `resource_pool_id` | Namespace-scoped worker capacity and placement | Required; the API validates the pool and each run snapshots the binding |
+| `runtime_mode` | Flink-style runtime lifecycle | Required; `application` creates a per-run runtime cluster, `session` uses the Helm-deployed shared runtime |
+| `resources` | Application-mode pod-size overrides | Optional; may set `jobmanager`, `taskmanager`, and `sandbox` CPU/memory only. Replicas and slots remain platform defaults |
 
 Inputs are resolved recursively immediately before execution. Exact references
 such as `${node.field}` preserve arrays and objects as typed values; embedded
@@ -140,7 +144,7 @@ behavior remain explicit in the graph.
 
 | Area | Flexible configuration | Current limit |
 |---|---|---|
-| Runtime topology | Same flow model across standalone and distributed execution | Distributed Flows use dedicated JobManagers and share only the workers in their selected Resource Pool |
+| Runtime topology | Same flow model across standalone and distributed execution | Distributed Flows choose `application` per-run isolation or `session` shared runtime |
 | Scheduling | Dependencies, conditional branches, retries, map concurrency | JobManager blocks on each `Schedule()`; ready siblings do not execute concurrently yet |
 | Cycles | Back-edges can be parsed | Node state is one-shot; back-edges do not rerun a completed node |
 | Conditions | True/false edges from a condition result | Edge conditions are booleans, not arbitrary expressions; put expressions in the condition node |
@@ -286,38 +290,35 @@ type AgentFlowSpec struct {
 
 `input_schema` and `output_schema` are entirely optional. Schemas are purely for A2A discovery and optional validation.
 
-### Migration — Zero Friction
+### Canonical Skill Flow
 
 ```yaml
 # etc/skills/01-dependency-scan.yaml
-apiVersion: core.flowgent.io/v1
+consoleVersion: core.flowgent.io/v1
 kind: Flow
 metadata:
   name: dependency-scan
-spec:
+data:
   id: dependency-scan
   kind: skill
   summary: "Scan project dependencies for known CVEs"
   nodes:
     - id: clone
       kind: tool
-      spec:
-        tool: github
-        args:
-          action: clone_repo
-          url: ${vars.repo_url}
+      tool: github
+      args:
+        action: clone_repo
+        url: ${vars.repo_url}
     - id: scan
       kind: tool
-      spec:
-        tool: dependency-checker
-        args:
-          path: ${clone.output.path}
+      tool: dependency-checker
+      args:
+        path: ${clone.output.path}
     - id: normalize
       kind: agent
-      spec:
-        agent: issue-detector
-        args:
-          raw_output: ${scan.output}
+      agent: issue-detector
+      args:
+        raw_output: ${scan.output}
   edges:
     - { from: clone, to: scan }
     - { from: scan, to: normalize }

@@ -43,10 +43,6 @@ type RMState struct {
 	SandboxPendingTriggers int64     `json:"sandbox_pending_triggers,omitempty"`
 }
 
-// RMTMState is the legacy alias kept for backward compatibility.
-// Deprecated: use RMState.
-type RMTMState = RMState
-
 // KubernetesResourceManager dispatches plans to TM pods via MQTT with elastic
 // scaling. The JM auto-scales TMs based on pending plan load.
 //
@@ -108,15 +104,19 @@ type KubernetesResourceManager struct {
 	mqttBroker               string
 	postgresDSN              string
 	apiServerURL             string
+	configMapName            string
 	tmImage                  string
 	tmResources              *model.SandboxResources
 	priorityClassName        string
 	nodeSelector             map[string]string
 	ownerNamespaceID         string
-	resourcePoolID           string
+	runtimeClusterID         string
 	ownerFlowID              string
+	ownerRunID               string
+	runtimeMode              entities.RuntimeMode
 	ownerJobManagerName      string
 	ownerJobManagerNamespace string
+	deleteOnShutdown         bool
 	credentialEnvSecret      string
 	internalAuthSecret       string
 	taskManagerAuthKey       string
@@ -127,14 +127,16 @@ type KubernetesResourceManager struct {
 
 const (
 	LabelNamespaceID               = "flowgent.io/namespace"
-	LabelResourcePoolID            = "flowgent.io/resource-pool"
+	LabelRuntimeClusterID          = "flowgent.io/runtime-cluster"
 	LabelFlowID                    = "flowgent.io/flow"
+	LabelRunID                     = "flowgent.io/run"
+	LabelRuntimeMode               = "flowgent.io/runtime-mode"
 	LabelManagedBy                 = "flowgent.io/managed-by"
 	LabelParentJobManager          = "flowgent.io/parent-jobmanager"
 	LabelParentJobManagerNamespace = "flowgent.io/parent-jobmanager-namespace"
 
-	LabelValueResourcePool = "resource-pool"
-	runtimeReadyLease      = 15 * time.Second
+	LabelValueRuntimeCluster = "runtime-cluster"
+	runtimeReadyLease        = 15 * time.Second
 )
 
 func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResourceManager, error) {
@@ -161,6 +163,9 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	}
 	if cfg.SandboxDeploymentName == "" {
 		cfg.SandboxDeploymentName = "flowgent-sandbox"
+	}
+	if cfg.ConfigMapName == "" {
+		cfg.ConfigMapName = "flowgent-config"
 	}
 	if cfg.SandboxMinReplicas < 0 {
 		cfg.SandboxMinReplicas = 0
@@ -216,15 +221,19 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		mqttBroker:               cfg.MQTTBroker,
 		postgresDSN:              cfg.PostgresDSN,
 		apiServerURL:             cfg.APIServerURL,
+		configMapName:            cfg.ConfigMapName,
 		tmImage:                  cfg.TMImage,
 		tmResources:              cfg.TMResources,
 		priorityClassName:        cfg.PriorityClassName,
 		nodeSelector:             cfg.NodeSelector,
 		ownerNamespaceID:         cfg.OwnerNamespaceID,
-		resourcePoolID:           cfg.ResourcePoolID,
+		runtimeClusterID:         cfg.RuntimeClusterID,
 		ownerFlowID:              cfg.OwnerFlowID,
+		ownerRunID:               cfg.OwnerRunID,
+		runtimeMode:              cfg.RuntimeMode,
 		ownerJobManagerName:      cfg.OwnerJobManagerName,
 		ownerJobManagerNamespace: cfg.OwnerJobManagerNamespace,
+		deleteOnShutdown:         cfg.DeleteOnShutdown,
 		credentialEnvSecret:      cfg.CredentialEnvSecret,
 		internalAuthSecret:       cfg.InternalAuthSecret,
 		taskManagerAuthKey:       defaultIfEmpty(cfg.TaskManagerAuthKey, "taskmanager-token"),
@@ -270,7 +279,7 @@ func (s *KubernetesResourceManager) Provider() engine.Provider {
 }
 
 func (s *KubernetesResourceManager) ensureRuntimeReadySubscription(ctx context.Context, role string) error {
-	if s.resourcePoolID == "" {
+	if s.runtimeClusterID == "" {
 		return nil
 	}
 	s.runtimeReadyMu.Lock()
@@ -287,11 +296,11 @@ func (s *KubernetesResourceManager) ensureRuntimeReadySubscription(ctx context.C
 		s.runtimeReadySignal[role] = make(chan struct{}, 1)
 	}
 	namespaceID := defaultIfEmpty(s.ownerNamespaceID, "default")
-	topic := messager.RuntimeReadyWildcard(namespaceID, s.resourcePoolID, role)
+	topic := messager.RuntimeReadyWildcard(namespaceID, s.runtimeClusterID, role)
 	if err := s.q.Subscribe(ctx, topic, func(_ string, payload []byte) {
 		var ready messager.RuntimeReady
 		if err := json.Unmarshal(payload, &ready); err != nil || ready.Role != role ||
-			ready.Namespace != namespaceID || ready.PoolID != s.resourcePoolID {
+			ready.Namespace != namespaceID || ready.ClusterID != s.runtimeClusterID {
 			return
 		}
 		s.runtimeReadyMu.Lock()
@@ -310,7 +319,7 @@ func (s *KubernetesResourceManager) ensureRuntimeReadySubscription(ctx context.C
 }
 
 func (s *KubernetesResourceManager) waitForRuntimeReady(ctx context.Context, role string) error {
-	if s.resourcePoolID == "" {
+	if s.runtimeClusterID == "" {
 		return nil
 	}
 	deadline := time.NewTimer(2 * time.Minute)
@@ -417,7 +426,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	plan.TraceContext = make(map[string]string)
 	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(plan.TraceContext))
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.ResourcePoolID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
+	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
 		ID: plan.PlanID,
 		Headers: map[string]string{
 			"task_run_id": plan.AgentFlowRunID,
@@ -824,7 +833,8 @@ func (s *KubernetesResourceManager) desiredTMDeployment() *appsv1.Deployment {
 							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: s.postgresDSN},
 							{Name: "FLOWGENT__RUNTIME__API_SERVER_URL", Value: s.apiServerURL},
 							{Name: "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE", Value: defaultIfEmpty(s.ownerNamespaceID, "default")},
-							{Name: "FLOWGENT__RUNTIME__RESOURCE_POOL_ID", Value: s.resourcePoolID},
+							{Name: "FLOWGENT__RUNTIME__MODE", Value: string(s.runtimeMode)},
+							{Name: "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID", Value: s.runtimeClusterID},
 							{Name: "FLOWGENT__RUNTIME__TM_SLOTS", Value: fmt.Sprintf("%d", s.slotsPerTM)},
 							workloadTokenEnv(s.internalAuthSecret, s.taskManagerAuthKey),
 						},
@@ -838,7 +848,7 @@ func (s *KubernetesResourceManager) desiredTMDeployment() *appsv1.Deployment {
 					Volumes: []corev1.Volume{
 						{Name: "config", VolumeSource: corev1.VolumeSource{
 							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "flowgent-config"},
+								LocalObjectReference: corev1.LocalObjectReference{Name: s.configMapName},
 							},
 						}},
 						{Name: "workspace", VolumeSource: corev1.VolumeSource{
@@ -897,7 +907,7 @@ func (s *KubernetesResourceManager) tmLabels() map[string]string {
 		"app.kubernetes.io/component": "taskmanager",
 		"flowgent/role":               "worker",
 	}
-	if s.resourcePoolID == "" {
+	if s.runtimeClusterID == "" {
 		return labels
 	}
 	namespaceID := s.ownerNamespaceID
@@ -905,8 +915,17 @@ func (s *KubernetesResourceManager) tmLabels() map[string]string {
 		namespaceID = "default"
 	}
 	labels[LabelNamespaceID] = namespaceID
-	labels[LabelResourcePoolID] = s.resourcePoolID
-	labels[LabelManagedBy] = LabelValueResourcePool
+	labels[LabelRuntimeClusterID] = s.runtimeClusterID
+	if s.runtimeMode != "" {
+		labels[LabelRuntimeMode] = string(s.runtimeMode)
+	}
+	if s.ownerFlowID != "" {
+		labels[LabelFlowID] = s.ownerFlowID
+	}
+	if s.ownerRunID != "" {
+		labels[LabelRunID] = s.ownerRunID
+	}
+	labels[LabelManagedBy] = LabelValueRuntimeCluster
 	return labels
 }
 
@@ -915,7 +934,7 @@ func (s *KubernetesResourceManager) sandboxLabels() map[string]string {
 		"app.kubernetes.io/component": "sandbox",
 		"flowgent/role":               "sandbox-worker",
 	}
-	if s.resourcePoolID == "" {
+	if s.runtimeClusterID == "" {
 		return labels
 	}
 	namespaceID := s.ownerNamespaceID
@@ -923,8 +942,17 @@ func (s *KubernetesResourceManager) sandboxLabels() map[string]string {
 		namespaceID = "default"
 	}
 	labels[LabelNamespaceID] = namespaceID
-	labels[LabelResourcePoolID] = s.resourcePoolID
-	labels[LabelManagedBy] = LabelValueResourcePool
+	labels[LabelRuntimeClusterID] = s.runtimeClusterID
+	if s.runtimeMode != "" {
+		labels[LabelRuntimeMode] = string(s.runtimeMode)
+	}
+	if s.ownerFlowID != "" {
+		labels[LabelFlowID] = s.ownerFlowID
+	}
+	if s.ownerRunID != "" {
+		labels[LabelRunID] = s.ownerRunID
+	}
+	labels[LabelManagedBy] = LabelValueRuntimeCluster
 	return labels
 }
 
@@ -977,7 +1005,8 @@ func (s *KubernetesResourceManager) desiredSandboxDeployment() *appsv1.Deploymen
 							{Name: "FLOWGENT__SANDBOX__WORKSPACE", Value: s.sandboxWorkspace},
 							{Name: "FLOWGENT__SANDBOX__DEPLOYMENT__SLOTS_PER_POD", Value: fmt.Sprintf("%d", s.sandboxSlotsPerPod)},
 							{Name: "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE", Value: defaultIfEmpty(s.ownerNamespaceID, "default")},
-							{Name: "FLOWGENT__RUNTIME__RESOURCE_POOL_ID", Value: s.resourcePoolID},
+							{Name: "FLOWGENT__RUNTIME__MODE", Value: string(s.runtimeMode)},
+							{Name: "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID", Value: s.runtimeClusterID},
 							{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
 						},
 						Command: []string{"/app/flowgent", "sandbox", "start"},
@@ -990,7 +1019,7 @@ func (s *KubernetesResourceManager) desiredSandboxDeployment() *appsv1.Deploymen
 					Volumes: []corev1.Volume{
 						{Name: "config", VolumeSource: corev1.VolumeSource{
 							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "flowgent-config"},
+								LocalObjectReference: corev1.LocalObjectReference{Name: s.configMapName},
 							},
 						}},
 						{Name: "sandbox-workspace", VolumeSource: corev1.VolumeSource{
@@ -1086,9 +1115,25 @@ func buildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 }
 
 func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
-	slog.Info("kubernetes rm shutdown, scaling to min",
-		"tm_replicas", s.minTMs, "sandbox_replicas", s.sandboxMinReplicas)
+	slog.Info("kubernetes rm shutdown",
+		"runtime_mode", s.runtimeMode,
+		"runtime_cluster_id", s.runtimeClusterID,
+		"delete_on_shutdown", s.deleteOnShutdown,
+		"tm_replicas", s.minTMs,
+		"sandbox_replicas", s.sandboxMinReplicas,
+	)
 	s.cancel()
+	if s.deleteOnShutdown {
+		if err := s.kubeClient.AppsV1().Deployments(s.namespace).Delete(ctx, s.deployName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			slog.Warn("kubernetes rm tm shutdown delete failed", "deployment", s.deployName, "namespace", s.namespace, "err", err)
+		}
+		if s.sandboxEnabled {
+			if err := s.kubeClient.AppsV1().Deployments(s.namespace).Delete(ctx, s.sandboxDeployName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				slog.Warn("kubernetes rm sandbox shutdown delete failed", "deployment", s.sandboxDeployName, "namespace", s.namespace, "err", err)
+			}
+		}
+		return nil
+	}
 	if err := s.scaleDeployment(ctx, int32(s.minTMs)); err != nil {
 		slog.Warn("kubernetes rm tm shutdown scale failed", "err", err)
 	}

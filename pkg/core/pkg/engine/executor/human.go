@@ -32,9 +32,10 @@ func (e *HumanExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 	}
 
 	approval := &entities.ApprovalInfo{
-		TaskRunID: plan.TaskID,
-		Timeout:   timeout,
-		Status:    "PENDING",
+		TaskRunID:      plan.TaskID,
+		AgentFlowRunID: plan.AgentFlowRunID,
+		Timeout:        timeout,
+		Status:         "PENDING",
 	}
 	if err := e.store.CreateApproval(ctx, approval); err != nil {
 		return nil, fmt.Errorf("create human approval: %w", err)

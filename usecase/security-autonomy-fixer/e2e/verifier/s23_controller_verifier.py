@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Scenario 23 — Controller Module: Flow JobManager and Resource Pool Lifecycle.
+Scenario 23 — Controller Module: Application Runtime Cluster Lifecycle.
 
-Validates Controller's run-driven JobManager and resource-pool lifecycle.
+Validates Controller's run-driven application JobManager and per-run runtime
+cluster lifecycle.
 
 Prerequisites: K8s/K8S cluster, Helm release, Controller pod running.
 
 Steps with Expected I/O — Flow CREATE + TRIGGER Lifecycle:
-  Step 1. Create a dedicated Resource Pool and AgentFlow via API
+  Step 1. Create an application-mode AgentFlow via API
     Action:  POST /api/v1/{namespace}/flows
-    Input:   {id: "test-flow-{uuid}", nodes: [short sandbox], edges: [], resource_pool_id: "test-pool-{uuid}"}
+    Input:   {id: "test-flow-{uuid}", nodes: [short sandbox], edges: [], runtime_mode: "application"}
     Output:  HTTP 200/201, flow ID returned
 
   Step 1b. Verify MQTT ctrl/flow/updated event (best-effort)
@@ -17,35 +18,35 @@ Steps with Expected I/O — Flow CREATE + TRIGGER Lifecycle:
     Input:   MQTT broker reachable
     Output:  Event with matching agentflow_id (WARN if not received — Controller may poll)
 
-  Step 2. Verify metadata-only creation does not create JM/Pool workers
-    Action:  kubectl get deployment {jm_name}; kubectl get deployment {tm_name}
-    Output:  Both absent before a run is triggered
+  Step 2. Verify metadata-only creation does not create runtime Deployments
+    Action:  kubectl get deployments with flow labels
+    Output:  No JM/TM/Sandbox exists before a run is triggered
 
   Step 3. Trigger flow run
     Action:  POST /api/v1/{namespace}/flows/{id}/trigger
     Output:  run_id returned
 
-  Step 4. Wait for Flow JM and Pool-owned TM/Sandbox Deployments
+  Step 4. Wait for FlowRun JM and cluster-owned TM/Sandbox Deployments
     Action:  kubectl get deployment {jm_name}; kubectl get deployment {tm_name}
-    Output:  JM exists; Pool workers match the Pool's fixed replicas and slots
+    Output:  JM exists; runtime workers are scoped by runtime_cluster_id
 
   Step 5. Verify Deployment Spec
     Action:  kubectl get deployment {name} -n {namespace_ns} -o json
     Input:   Deployment name
     Output:  Container env includes FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}
 
-  Step 6. Wait for Flow JM and Pool worker Pods Running
-    Action:  kubectl get pods -l app=flowgent-jobmanager,flowgent.io/flow={flow_id}
+  Step 6. Wait for FlowRun JM and runtime worker Pods Running
+    Action:  kubectl get pods -l flowgent.io/runtime-cluster={cluster_id}
     Input:   Label selector
-    Output:  JM pod and Pool-owned TM/Sandbox pods reach Running
+    Output:  JM pod and cluster-owned TM/Sandbox pods reach Running
 
   Step 7. Cancel Run and delete Flow
     Action:  POST .../runs/{run_id}/cancel; DELETE .../flows/{id}
     Output:  Run becomes CANCELLED and Flow DELETE returns HTTP 200/204
 
-  Step 8. Delete Pool and verify ownership-aware cleanup
-    Action:  DELETE resource pool; wait for Deployments and per-Flow configuration deletion
-    Output:  Flow JM/config and Pool-owned TM/Sandbox resources are deleted by Controller GC
+  Step 8. Verify application runtime cleanup
+    Action:  wait for per-run Deployments and per-Flow configuration deletion
+    Output:  Flow JM/config and application TM/Sandbox resources are deleted by Controller GC
 
 Steps with Expected I/O — Flow UPDATE Lifecycle:
   Step 9. Create metadata-only flow
@@ -62,6 +63,8 @@ import uuid
 import base64
 import requests
 import subprocess
+import hashlib
+import re
 from typing import Dict, Any, Optional, List
 
 from common import config
@@ -95,6 +98,63 @@ def workload_namespace(namespace_id: str = NAMESPACE) -> str:
     NAMESPACE (tenant namespace ID, typically "default") — system pods run in
     config.SYSTEM_NAMESPACE."""
     return f"{config.K8S_WORKLOAD_NAMESPACE_PREFIX}{namespace_id}"
+
+
+def kubernetes_name(*parts: str) -> str:
+    """Mirror common/pkg/resourceid.KubernetesName for test-side assertions."""
+    raw = "-".join(parts)
+    lower = raw.lower()
+    normalized = []
+    previous_hyphen = False
+    needs_hash = False
+    for char in lower:
+        if "a" <= char <= "z" or "0" <= char <= "9":
+            normalized.append(char)
+            previous_hyphen = False
+            continue
+        if char != "-":
+            needs_hash = True
+        if not previous_hyphen:
+            normalized.append("-")
+            previous_hyphen = True
+    base = re.sub(r"^-+|-+$", "", "".join(normalized))
+    if not base:
+        base = "flowgent"
+        needs_hash = True
+    if len(base) > 63:
+        needs_hash = True
+    if not needs_hash:
+        return base
+    digest = hashlib.sha256(raw.lower().encode()).hexdigest()[:10]
+    max_base = 63 - 1 - len(digest)
+    return base[:max_base].rstrip("-") + "-" + digest
+
+
+def application_runtime_cluster_id(run_id: str) -> str:
+    return kubernetes_name("app", run_id)
+
+
+def application_jobmanager_deployment_name(flow_id: str, run_id: str) -> str:
+    return kubernetes_name("flowgent-jobmanager", NAMESPACE, flow_id, run_id)
+
+
+def taskmanager_deployment_name(cluster_id: str) -> str:
+    return kubernetes_name("flowgent-taskmanager", NAMESPACE, cluster_id)
+
+
+def sandbox_deployment_name(cluster_id: str) -> str:
+    return kubernetes_name("flowgent-sandbox", NAMESPACE, cluster_id)
+
+
+def deployment_with_labels(namespace: str, required: Dict[str, str]) -> Optional[Dict]:
+    deployments = kubectl_get("deployments", namespace=namespace)
+    if not deployments:
+        return None
+    for item in deployments.get("items", []):
+        labels = item.get("metadata", {}).get("labels", {})
+        if all(labels.get(key) == value for key, value in required.items()):
+            return item
+    return None
 
 
 def kubectl_get(resource: str, name: str = None, namespace: str = WORKLOAD_NAMESPACE,
@@ -248,21 +308,20 @@ def wait_for_resource_deleted(resource: str, name: str, namespace: str = WORKLOA
 
 
 def test_flow_create_lifecycle() -> bool:
-    """Test metadata-only Flow, trigger-driven Pool workers, and cleanup."""
-    print(f"\n  → Testing Flow JM and Resource Pool lifecycle...")
+    """Test metadata-only Flow, trigger-driven application runtime, and cleanup."""
+    print(f"\n  → Testing FlowRun JM and application runtime cluster lifecycle...")
 
     suffix = rand_id()
     flow_id = "test-flow-" + suffix
-    pool_id = "test-pool-" + suffix
-    jm_deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
-    tm_deployment_name = f"flowgent-taskmanager-{NAMESPACE}-{pool_id}"
-    sandbox_deployment_name = f"flowgent-sandbox-{NAMESPACE}-{pool_id}"
     runtime_config_map_name = f"flowgent-runtime-env-{NAMESPACE}-{flow_id}"
     runtime_secret_name = f"flowgent-runtime-secrets-{NAMESPACE}-{flow_id}"
     jm_namespace = workload_namespace()
     created_id = None
     run_id = None
-    pool_created = False
+    cluster_id = None
+    jm_deployment_name = None
+    tm_deployment_name = None
+    sb_deployment_name = None
 
     # Set up MQTT listener for ctrl events (best-effort)
     mqtt_client = None
@@ -284,29 +343,20 @@ def test_flow_create_lifecycle() -> bool:
             mqtt_client = None
 
     try:
-        # Step 1: Create a dedicated Pool and AgentFlow via API.
-        print(f"    • Step 1: Creating Resource Pool ({pool_id}) and AgentFlow ({flow_id})...")
-        pool_payload = {
-            "name": pool_id,
-            "replicas": 1,
-            "slots_per_pod": 4,
-            "sandbox_replicas": 1,
-            "sandbox_slots_per_pod": 2,
-            "resources": {"cpu": "100m", "memory": "128Mi"},
-            "sandbox_resources": {"cpu": "100m", "memory": "128Mi"},
-        }
-        resp = FLOWGENT_SESSION.post(
-            f"{API_BASE}/api/v1/{NAMESPACE}/resource-pools", json=pool_payload, timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            raise AssertionError(f"Resource Pool creation failed: {resp.status_code} {resp.text}")
-        pool_created = True
-
+        # Step 1: Create an application-mode AgentFlow via API.
+        print(f"    • Step 1: Creating application-mode AgentFlow ({flow_id})...")
         # POST /flows decodes the body directly into entities.FlowInfo —
-        # a flat shape ("id"/"nodes"/"edges"/"resource_pool_id" at top level), not a
+        # a flat shape ("id"/"nodes"/"edges"/"runtime_mode" at top level), not a
         # nested "definition" object (see pkg/api/pkg/handler/flow_def.go Create).
         payload = {
             "id": flow_id,
+            "kind": "flow",
+            "runtime_mode": "application",
+            "resources": {
+                "jobmanager": {"cpu": "200m", "memory": "256Mi"},
+                "taskmanager": {"cpu": "200m", "memory": "256Mi"},
+                "sandbox": {"cpu": "200m", "memory": "256Mi"},
+            },
             "nodes": [{
                 "id": "hold",
                 "kind": "sandbox",
@@ -315,7 +365,6 @@ def test_flow_create_lifecycle() -> bool:
                 "script": "#!/bin/bash\nset -euo pipefail\nsleep 20\nprintf '{\"ok\":true}\\n'\n",
             }],
             "edges": [],
-            "resource_pool_id": pool_id,
         }
 
         resp = FLOWGENT_SESSION.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10)
@@ -348,15 +397,11 @@ def test_flow_create_lifecycle() -> bool:
             else:
                 print(f"      ⚠ No ctrl/flow/updated MQTT event (Controller may use polling)")
 
-        # Step 2: Metadata creation must not allocate a Flow JM or Pool workers.
+        # Step 2: Metadata creation must not allocate runtime components.
         print(f"    • Step 2: Verifying metadata-only import creates no JM/TM/Sandbox...")
         time.sleep(15)
-        if kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace):
-            raise AssertionError(f"JM Deployment created before trigger: {jm_namespace}/{jm_deployment_name}")
-        if kubectl_get("deployment", tm_deployment_name, namespace=jm_namespace):
-            raise AssertionError(f"TM Deployment created before trigger: {jm_namespace}/{tm_deployment_name}")
-        if kubectl_get("deployment", sandbox_deployment_name, namespace=jm_namespace):
-            raise AssertionError(f"Sandbox Deployment created before trigger: {jm_namespace}/{sandbox_deployment_name}")
+        if deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
+            raise AssertionError(f"Runtime Deployment created before trigger for flow={flow_id}")
         print(f"      ✓ No idle JM/TM/Sandbox created before trigger")
 
         # Step 3: Trigger a real run. Controller should create JM for the active run.
@@ -369,7 +414,12 @@ def test_flow_create_lifecycle() -> bool:
             raise AssertionError(f"Trigger response missing run_id: {resp.text}")
         print(f"      ✓ FlowRun triggered: run_id={run_id}")
 
-        # Step 4: Wait for Controller/JM/RM to realize the Pool contract.
+        cluster_id = application_runtime_cluster_id(run_id)
+        jm_deployment_name = application_jobmanager_deployment_name(flow_id, run_id)
+        tm_deployment_name = taskmanager_deployment_name(cluster_id)
+        sb_deployment_name = sandbox_deployment_name(cluster_id)
+
+        # Step 4: Wait for Controller/JM/RM to realize the application runtime contract.
         print(f"    • Step 4: Waiting for active-run JM/TM/Sandbox Deployments...")
         if not wait_for_deployment(jm_deployment_name, namespace=jm_namespace, timeout=120):
             raise AssertionError(f"JM Deployment not created after trigger: {jm_namespace}/{jm_deployment_name}")
@@ -377,9 +427,9 @@ def test_flow_create_lifecycle() -> bool:
             raise AssertionError(f"TM Deployment not created after trigger: {jm_namespace}/{tm_deployment_name}")
         if not wait_for_deployment_replicas(tm_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
             raise AssertionError(f"TM Deployment did not scale to exactly one replica for one pending plan")
-        if not wait_for_deployment(sandbox_deployment_name, namespace=jm_namespace, timeout=180):
-            raise AssertionError(f"Sandbox Deployment not created after sandbox task: {jm_namespace}/{sandbox_deployment_name}")
-        if not wait_for_deployment_replicas(sandbox_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
+        if not wait_for_deployment(sb_deployment_name, namespace=jm_namespace, timeout=180):
+            raise AssertionError(f"Sandbox Deployment not created after sandbox task: {jm_namespace}/{sb_deployment_name}")
+        if not wait_for_deployment_replicas(sb_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
             raise AssertionError("Sandbox Deployment did not scale to exactly one replica for one pending sandbox task")
 
         # Step 5: Verify JM Deployment spec
@@ -408,6 +458,9 @@ def test_flow_create_lifecycle() -> bool:
         # binds to runtime.agentFlowId via FLOWGENT__RUNTIME__AGENT_FLOW_ID.
         expected_env = {
             "FLOWGENT__RUNTIME__AGENT_FLOW_ID": flow_id,
+            "FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID": run_id,
+            "FLOWGENT__RUNTIME__MODE": "application",
+            "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID": cluster_id,
         }
         
         for key, expected_value in expected_env.items():
@@ -432,21 +485,20 @@ def test_flow_create_lifecycle() -> bool:
         
         print(f"      ✓ Deployment spec verified")
         
-        # Step 6: Wait for Flow JM and Pool-owned worker Pods to reach Running.
+        # Step 6: Wait for Flow JM and cluster-owned worker Pods to reach Running.
         print(f"    • Step 6: Waiting for JM/TM/Sandbox Pods to reach Running...")
         
-        label_selector = f"app=flowgent-jobmanager,flowgent.io/flow={flow_id}"
+        label_selector = f"app=flowgent-jobmanager,flowgent.io/flow={flow_id},flowgent.io/run={run_id},flowgent.io/runtime-cluster={cluster_id}"
         if not wait_for_pod_running(label_selector, namespace=jm_namespace, timeout=120):
             raise AssertionError("JM Pod did not reach Running")
-        tm_selector = f"flowgent/role=worker,flowgent.io/resource-pool={pool_id}"
+        tm_selector = f"flowgent/role=worker,flowgent.io/runtime-cluster={cluster_id}"
         if not wait_for_pod_running(tm_selector, namespace=jm_namespace, timeout=180):
-            raise AssertionError("Pool-owned TM Pod did not reach Running")
-        sandbox_selector = f"flowgent/role=sandbox-worker,flowgent.io/resource-pool={pool_id}"
+            raise AssertionError("Application TM Pod did not reach Running")
+        sandbox_selector = f"flowgent/role=sandbox-worker,flowgent.io/runtime-cluster={cluster_id}"
         if not wait_for_pod_running(sandbox_selector, namespace=jm_namespace, timeout=180):
-            raise AssertionError("Pool-owned Sandbox Pod did not reach Running")
+            raise AssertionError("Application Sandbox Pod did not reach Running")
         
-        # Step 7: Cancel the active Run before deleting the Flow. Pool deletion
-        # is deliberately blocked while either an active Run or Flow binding exists.
+        # Step 7: Cancel the active Run before deleting the Flow.
         print(f"    • Step 7: Cancelling FlowRun and deleting AgentFlow...")
         resp = FLOWGENT_SESSION.post(
             f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/cancel",
@@ -462,22 +514,15 @@ def test_flow_create_lifecycle() -> bool:
         if resp.status_code != 404:
             raise AssertionError(f"Deleted flow still readable from API: HTTP {resp.status_code}")
         
-        # Step 8: Flow deletion removes the JM/config; Pool deletion removes its
-        # shared workers. Each owner has one unambiguous cleanup responsibility.
-        print(f"    • Step 8: Deleting Resource Pool and verifying runtime cleanup...")
-        resp = FLOWGENT_SESSION.delete(
-            f"{API_BASE}/api/v1/{NAMESPACE}/resource-pools/{pool_id}", timeout=10
-        )
-        if resp.status_code not in [200, 204]:
-            raise AssertionError(f"Resource Pool deletion failed: {resp.status_code} {resp.text}")
-        pool_created = False
-        
+        # Step 8: Controller GC removes per-run application runtime and deleted
+        # Flow configuration. There is no second runtime ownership plane.
+        print(f"    • Step 8: Verifying application runtime cleanup...")
         if not wait_for_deployment_deleted(jm_deployment_name, namespace=jm_namespace, timeout=90):
             raise AssertionError(f"Controller did not delete JM Deployment: {jm_namespace}/{jm_deployment_name}")
         if not wait_for_deployment_deleted(tm_deployment_name, namespace=jm_namespace, timeout=90):
             raise AssertionError(f"Controller did not delete TM Deployment: {jm_namespace}/{tm_deployment_name}")
-        if not wait_for_deployment_deleted(sandbox_deployment_name, namespace=jm_namespace, timeout=90):
-            raise AssertionError(f"Controller did not delete Sandbox Deployment: {jm_namespace}/{sandbox_deployment_name}")
+        if not wait_for_deployment_deleted(sb_deployment_name, namespace=jm_namespace, timeout=90):
+            raise AssertionError(f"Controller did not delete Sandbox Deployment: {jm_namespace}/{sb_deployment_name}")
         if not wait_for_resource_deleted("configmap", runtime_config_map_name, namespace=jm_namespace, timeout=90):
             raise AssertionError(f"Controller did not delete runtime ConfigMap: {jm_namespace}/{runtime_config_map_name}")
         if not wait_for_resource_deleted("secret", runtime_secret_name, namespace=jm_namespace, timeout=90):
@@ -510,19 +555,14 @@ def test_flow_create_lifecycle() -> bool:
             except Exception:
                 pass
 
-        if pool_created:
-            try:
-                FLOWGENT_SESSION.delete(
-                    f"{API_BASE}/api/v1/{NAMESPACE}/resource-pools/{pool_id}", timeout=5
-                )
-            except Exception:
-                pass
-
         # Cleanup on failure
         try:
-            kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
-            kubectl_delete("deployment", tm_deployment_name, namespace=jm_namespace)
-            kubectl_delete("deployment", sandbox_deployment_name, namespace=jm_namespace)
+            if jm_deployment_name:
+                kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
+            if tm_deployment_name:
+                kubectl_delete("deployment", tm_deployment_name, namespace=jm_namespace)
+            if sb_deployment_name:
+                kubectl_delete("deployment", sb_deployment_name, namespace=jm_namespace)
         except:
             pass
         
@@ -562,16 +602,16 @@ def test_flow_update_lifecycle() -> bool:
     print(f"\n  → Testing Flow UPDATE → no idle JM/TM allocation...")
 
     flow_id = "test-flow-" + rand_id()
-    jm_deployment_name = f"flowgent-jobmanager-{NAMESPACE}-{flow_id}"
     jm_namespace = workload_namespace()
     created_id = None
 
     try:
         payload = {
             "id": flow_id,
-            "nodes": [{"id": "n1", "type": "noop"}],
+            "kind": "flow",
+            "runtime_mode": "application",
+            "nodes": [{"id": "n1", "kind": "noop"}],
             "edges": [],
-            "resource_pool_id": "default",
         }
         resp = FLOWGENT_SESSION.post(f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10)
         if resp.status_code not in [200, 201]:
@@ -579,20 +619,26 @@ def test_flow_update_lifecycle() -> bool:
         created_id = resp.json().get("id")
 
         time.sleep(15)
-        if kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace):
-            raise AssertionError(f"JM Deployment created before trigger: {jm_namespace}/{jm_deployment_name}")
+        if deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
+            raise AssertionError(f"Runtime Deployment created before trigger for flow={flow_id}")
 
         resp = FLOWGENT_SESSION.put(
             f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}",
-            json={"description": "updated by e2e verifier", "version": 2},
+            json={
+                "kind": "flow",
+                "description": "updated by e2e verifier",
+                "runtime_mode": "application",
+                "nodes": [{"id": "n1", "kind": "noop"}],
+                "edges": [],
+            },
             timeout=10,
         )
         if resp.status_code != 200:
             raise AssertionError(f"Flow update failed: {resp.status_code} {resp.text}")
 
         time.sleep(15)
-        if kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace):
-            raise AssertionError(f"JM Deployment created by metadata-only update: {jm_namespace}/{jm_deployment_name}")
+        if deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
+            raise AssertionError(f"Runtime Deployment created by metadata-only update for flow={flow_id}")
         print(f"      ✓ Flow update did not allocate an idle Flow JM")
 
         resp = FLOWGENT_SESSION.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10)
@@ -611,14 +657,13 @@ def test_flow_update_lifecycle() -> bool:
                 FLOWGENT_SESSION.delete(f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
             except Exception:
                 pass
-        kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
         return False
 
 
 def run():
     """Main test runner"""
     print("\n" + "="*60)
-    print("  Scenario 23: Controller — Flow JM and Resource Pool Lifecycle")
+    print("  Scenario 23: Controller — Application Runtime Cluster Lifecycle")
     print("="*60)
     
     results = {}

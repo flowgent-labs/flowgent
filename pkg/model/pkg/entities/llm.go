@@ -11,12 +11,11 @@ type LlmProviderInfo struct {
 	Timeout       string            `json:"timeout" yaml:"timeout" db:"-"`
 	TimeoutMs     int               `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty" db:"timeout_ms"`
 	Endpoint      string            `json:"endpoint" yaml:"endpoint" db:"endpoint"`
-	Credentials   map[string]any    `json:"credentials" yaml:"credentials" db:"-"`
 	Proxy         string            `json:"proxy,omitempty" yaml:"proxy,omitempty" db:"-"`
 	RateLimit     int               `json:"rate_limit" yaml:"rate_limit" db:"-"`
 	DefaultModel  string            `json:"defaultModel" yaml:"defaultModel" db:"model"`
 	Models        []LlmModelInfo    `json:"models" yaml:"models" db:"models"`
-	ApiKey        string            `json:"apikey" yaml:"apikey" db:"apikey"`
+	ApiKey        string            `json:"-" yaml:"-" db:"apikey"`
 	ApiKeyEnv     string            `json:"api_key_env,omitempty" yaml:"api_key_env,omitempty" db:"-"`
 	KeyConfigured bool              `json:"key_configured" yaml:"-" db:"-"`
 	Labels        map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`

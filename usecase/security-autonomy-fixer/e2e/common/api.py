@@ -145,7 +145,7 @@ def node_task(tasks_by_node, node_id):
     return tasks_by_node.get(node_id)
 
 
-def try_approve_pending_human(s, api_base, run_id, conn=None):
+def try_approve_pending_human(s, api_base, namespace, run_id, conn=None):
     """Auto-approve a pending human-approval gate for the given run.
 
     Checks the DB first (if conn is provided), falls back to the API.
@@ -161,14 +161,14 @@ def try_approve_pending_human(s, api_base, run_id, conn=None):
         if row:
             token = row[0]
     if not token:
-        r = s.get(f"{api_base}/api/v1/human/approvals")
+        r = s.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals")
         if r.status_code == 200:
             for item in r.json() or []:
                 if item.get("agentflow_run_id") == run_id and item.get("status") == "PENDING":
                     token = item.get("token")
                     break
     if token:
-        r = s.post(f"{api_base}/api/v1/human/{token}/approve",
+        r = s.post(f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals/{token}/approve",
                    json={"comment": "Approved by e2e verifier"})
         print(f"  OK auto-approved human gate (token={token[:12]}...) status={r.status_code}")
         return r.status_code == 200

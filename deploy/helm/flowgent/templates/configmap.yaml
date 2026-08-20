@@ -126,12 +126,59 @@ data:
           {{ .Values.notifier.secretEncryption.activeKeyId }}: "${FLOWGENT_NOTIFICATION_KEY_V1}"
     runtime:
       system_namespace: {{ .Values.runtime.systemNamespace | default "flowgen-system" | quote }}
-      k8s_namespace: {{ .Values.runtime.systemNamespace | default .Release.Namespace | quote }}
+      k8s_namespace: {{ .Values.runtime.k8sNamespace | default .Release.Namespace | quote }}
+      mode: "session"
+      runtime_cluster_id: {{ .Values.session.clusterId | default "session" | quote }}
+      session_cluster_id: {{ .Values.session.clusterId | default "session" | quote }}
       tm_orphan_timeout: {{ .Values.runtime.tmOrphanTimeout | default "3m" | quote }}
       credential_env_secret: {{ .Values.runtime.credentialEnvSecret | default "" | quote }}
       internal_auth_secret: {{ include "flowgent.runtimeAuthorizationSecretName" . | quote }}
       jobmanager_auth_key: {{ .Values.authorization.jobmanagerKey | quote }}
       taskmanager_auth_key: {{ .Values.authorization.taskmanagerKey | quote }}
+      jm_image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+      tm_image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+      tm_deploy: {{ printf "%s-session-taskmanager" (include "flowgent.fullname" .) | quote }}
+      sandbox_deploy: {{ printf "%s-session-sandbox" (include "flowgent.fullname" .) | quote }}
+      tm_replicas: {{ .Values.session.taskmanager.replicas | default 1 }}
+      tm_slots: {{ .Values.session.taskmanager.slots | default 4 }}
+      jm_config_map: {{ printf "%s-config" (include "flowgent.fullname" .) | quote }}
+      session:
+        cluster_id: {{ .Values.session.clusterId | default "session" | quote }}
+        jobmanager:
+          resources:
+            cpu: {{ .Values.session.jobmanager.resources.limits.cpu | default "500m" | quote }}
+            memory: {{ .Values.session.jobmanager.resources.limits.memory | default "512Mi" | quote }}
+        taskmanager:
+          replicas: {{ .Values.session.taskmanager.replicas | default 1 }}
+          slots: {{ .Values.session.taskmanager.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.session.taskmanager.resources.limits.cpu | default "2" | quote }}
+            memory: {{ .Values.session.taskmanager.resources.limits.memory | default "2Gi" | quote }}
+        sandbox:
+          min_replicas: {{ .Values.session.sandbox.minReplicas | default 0 }}
+          max_replicas: {{ .Values.session.sandbox.maxReplicas | default 10 }}
+          slots: {{ .Values.session.sandbox.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.session.sandbox.resources.limits.cpu | default "2" | quote }}
+            memory: {{ .Values.session.sandbox.resources.limits.memory | default "2Gi" | quote }}
+      application:
+        jobmanager:
+          resources:
+            cpu: {{ .Values.application.jobmanager.resources.limits.cpu | default "" | quote }}
+            memory: {{ .Values.application.jobmanager.resources.limits.memory | default "" | quote }}
+        taskmanager:
+          replicas: {{ .Values.application.taskmanager.replicas | default 1 }}
+          slots: {{ .Values.application.taskmanager.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.application.taskmanager.resources.limits.cpu | default "" | quote }}
+            memory: {{ .Values.application.taskmanager.resources.limits.memory | default "" | quote }}
+        sandbox:
+          min_replicas: {{ .Values.application.sandbox.minReplicas | default 0 }}
+          max_replicas: {{ .Values.application.sandbox.maxReplicas | default 10 }}
+          slots: {{ .Values.application.sandbox.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.application.sandbox.resources.limits.cpu | default "" | quote }}
+            memory: {{ .Values.application.sandbox.resources.limits.memory | default "" | quote }}
       namespace:
         default_namespace: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
         namespace_prefix: {{ .Values.runtime.namespace.namespacePrefix | default "flowgent-" | quote }}
@@ -167,6 +214,7 @@ data:
         max_timeout: {{ .Values.sandbox.policy.maxTimeout | default "600s" | quote }}
       deployment:
         enabled: true
+        image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
         min_replicas: {{ .Values.sandbox.minReplicas | default 0 }}
         max_replicas: {{ .Values.sandbox.maxReplicas | default 10 }}
         resources:

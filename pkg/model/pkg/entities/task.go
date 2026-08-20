@@ -30,7 +30,8 @@ type ExecutionPlan struct {
 	AgentFlowRunID        string            `json:"agentflow_run_id"`
 	AgentFlowDefinitionID string            `json:"agentflow_definition_id"`
 	Namespace             string            `json:"namespace_id,omitempty"`
-	ResourcePoolID        string            `json:"resource_pool_id"`
+	RuntimeMode           RuntimeMode       `json:"runtime_mode"`
+	RuntimeClusterID      string            `json:"runtime_cluster_id"`
 	TaskID                string            `json:"task_id"`
 	ParentTaskRunID       string            `json:"parent_task_run_id,omitempty"`
 	TaskType              TaskType          `json:"task_type"`
@@ -58,8 +59,7 @@ type ExecutionPlan struct {
 // NodeSpec is the simplified node definition embedded in an ExecutionPlan.
 type NodeSpec struct {
 	ID               string                  `json:"id"`
-	Kind             NodeType                `json:"kind,omitempty"`
-	Type             NodeType                `json:"type"`
+	Kind             NodeType                `json:"kind"`
 	Solution         string                  `json:"solution,omitempty"`
 	Agent            string                  `json:"agent,omitempty"`
 	Skill            string                  `json:"skill,omitempty"`
@@ -74,7 +74,6 @@ type NodeSpec struct {
 	Approval         *HumanApprovalConfig    `json:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig       `json:"supervisor_config,omitempty"`
 	ChildNode        *NodeSpec               `json:"child_node,omitempty"`
-	RawInput         map[string]any          `json:"raw_input,omitempty"`
 	Args             map[string]any          `json:"args,omitempty"`
 	OutputSchema     map[string]any          `json:"output_schema,omitempty"`
 	Runtime          string                  `json:"runtime,omitempty"`
@@ -149,7 +148,6 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 	spec := &NodeSpec{
 		ID:               n.ID,
 		Kind:             n.Kind,
-		Type:             n.Type,
 		Solution:         n.Solution,
 		Agent:            n.Agent,
 		Skill:            n.Skill,
@@ -169,15 +167,11 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Resources:        n.Resources,
 		NetworkPolicy:    n.NetworkPolicy,
 		Workspace:        n.Workspace,
-		RawInput:         n.Input,
 		Args:             n.Args,
 		OutputSchema:     n.OutputSchema,
 	}
 	if n.Node != nil {
 		spec.ChildNode = NodeSpecFromNode(n.Node)
-	}
-	if spec.Kind == "" {
-		spec.Kind = spec.Type
 	}
 	return spec
 }

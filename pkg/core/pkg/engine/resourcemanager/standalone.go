@@ -23,12 +23,22 @@ func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResour
 	if poolSize <= 0 {
 		poolSize = 10
 	}
+	runtimeClusterID := cfg.RuntimeClusterID
+	if runtimeClusterID == "" {
+		runtimeClusterID = "local"
+	}
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
-		ID: "tm-local", SlotCount: poolSize,
-		Messager: cfg.Messager, State: cfg.TaskState, ApprovalInfo: cfg.ApprovalInfo,
-		APIServerURL: cfg.APIServerURL, Namespace: cfg.Namespace, Logger: cfg.Logger,
-		ResourcePoolID:           cfg.ResourcePoolID,
+		ID:           "tm-local",
+		SlotCount:    poolSize,
+		Messager:     cfg.Messager,
+		State:        cfg.TaskState,
+		ApprovalInfo: cfg.ApprovalInfo,
+		APIServerURL: cfg.APIServerURL,
+		Namespace:    cfg.Namespace,
+		Logger:       cfg.Logger,
+
+		RuntimeClusterID:         runtimeClusterID,
 		SandboxMessager:          cfg.Messager,
 		SandboxPolicy:            cfg.SandboxPolicy,
 		SandboxWorkspace:         cfg.SandboxWorkspace,

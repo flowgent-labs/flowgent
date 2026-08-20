@@ -17,9 +17,9 @@ JobManager ──ExecutionPlan/MQTT──► SlotWorker ──► TaskExecutorRo
 
 ## Worker Execution
 
-Kubernetes uses namespace/pool-scoped shared Deployments; all-in-one uses
-in-process workers. A Pool worker subscribes only to its own scoped plan topic
-and rejects mismatched payload metadata.
+Kubernetes uses runtime-cluster-scoped shared Deployments; all-in-one uses
+in-process workers. A TaskManager worker subscribes only to its own scoped plan
+topic and rejects mismatched namespace or `runtime_cluster_id` metadata.
 Each TM pod runs N `SlotWorker` goroutines (default 4). Each slot independently dequeues one
 `ExecutionPlan` from the MQTT queue (or channel), executes it via the
 `TaskExecutorRouter`, persists task status via the apiserver REST API

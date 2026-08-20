@@ -8,7 +8,17 @@ metadata:
   description: End-to-end SonarQube SAST security remediation pipeline — discovery, analyze, fix, review, vote, approve, commit
 data:
   id: security-autonomy-fixer
-  resource_pool_id: default
+  runtime_mode: application
+  resources:
+    jobmanager:
+      cpu: "500m"
+      memory: "512Mi"
+    taskmanager:
+      cpu: "500m"
+      memory: "512Mi"
+    sandbox:
+      cpu: "500m"
+      memory: "512Mi"
   description: "SonarQube-only developer remediation agentflow for security vulnerabilities:\n\n1. DISCOVERY — Fetch latest\
     \ commit; query SonarQube SAST issues via MCP.\n2. ANALYZE — issue-detector agent parses, normalizes, deduplicates, and\n\
     \   assigns severity to all SonarQube findings.\n3. FIX — fixer-agent analyzes root cause and generates minimal secure\

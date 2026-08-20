@@ -5,7 +5,6 @@ package authz
 var PermissionCatalog = []string{
 	"platform.namespace.manage",
 	"namespace.read", "namespace.runtime.manage", "namespace.config.read", "namespace.config.manage", "namespace.secret.manage",
-	"resource_pool.read", "resource_pool.use", "resource_pool.manage",
 	"agent.read", "agent.use", "agent.write", "agent.delete",
 	"skill.read", "skill.use", "skill.write", "skill.delete",
 	"flow.read", "flow.use", "flow.write", "flow.delete", "flow.access.manage", "flow.config.read", "flow.config.manage", "flow.secret.manage", "flow.runtime.use",

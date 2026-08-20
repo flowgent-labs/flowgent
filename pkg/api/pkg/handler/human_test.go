@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -13,6 +14,7 @@ import (
 
 type approvalStoreStub struct {
 	items   map[string]*entities.ApprovalInfo
+	created *entities.ApprovalInfo
 	updated *entities.ApprovalInfo
 }
 
@@ -27,7 +29,11 @@ func (s *approvalStoreStub) Select(context.Context, entities.PageRequest) (*enti
 }
 func (s *approvalStoreStub) Save(context.Context, *entities.ApprovalInfo) error { return nil }
 func (s *approvalStoreStub) Delete(context.Context, string) error               { return nil }
-func (s *approvalStoreStub) CreateApproval(context.Context, *entities.ApprovalInfo) error {
+func (s *approvalStoreStub) CreateApproval(_ context.Context, item *entities.ApprovalInfo) error {
+	item.ID = "approval-created"
+	item.Token = "token-created"
+	copy := *item
+	s.created = &copy
 	return nil
 }
 func (s *approvalStoreStub) UpdateApproval(_ context.Context, item *entities.ApprovalInfo) error {
@@ -35,7 +41,7 @@ func (s *approvalStoreStub) UpdateApproval(_ context.Context, item *entities.App
 	s.updated = &copy
 	return nil
 }
-func (s *approvalStoreStub) ListPending(context.Context) ([]*entities.ApprovalInfo, error) {
+func (s *approvalStoreStub) ListPending(context.Context, string) ([]*entities.ApprovalInfo, error) {
 	result := make([]*entities.ApprovalInfo, 0, len(s.items))
 	for _, item := range s.items {
 		if item.Status == "PENDING" {
@@ -60,7 +66,8 @@ func TestHumanRunApprovalsAreNamespaceAndRunScoped(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/approvals", handler.ListRunApprovals)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/approve", handler.ApproveRun)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals", handler.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/{decision}", handler.ResolveRunApproval)
 
 	listResponse := httptest.NewRecorder()
 	mux.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/api/v1/tenant-a/runs/run-a/approvals", nil))
@@ -73,6 +80,15 @@ func TestHumanRunApprovalsAreNamespaceAndRunScoped(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Token != "token-a" {
 		t.Fatalf("listed approvals = %+v", listed)
+	}
+
+	created := httptest.NewRecorder()
+	createBody := `{"namespace_id":"tenant-b","agentflow_run_id":"run-b","task_run_id":"task-a"}`
+	mux.ServeHTTP(created, httptest.NewRequest(http.MethodPost, "/api/v1/tenant-a/runs/run-a/approvals", strings.NewReader(createBody)))
+	if created.Code != http.StatusCreated || store.created == nil ||
+		store.created.Namespace != "tenant-a" || store.created.AgentFlowRunID != "run-a" ||
+		store.created.Token != "token-created" {
+		t.Fatalf("created approval status=%d item=%+v", created.Code, store.created)
 	}
 
 	wrongRun := httptest.NewRecorder()

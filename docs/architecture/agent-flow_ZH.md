@@ -4,7 +4,7 @@
 
 **层级：** L1 引擎组件之上的 L2 应用编排
 
-**运行时绑定：** 每个 Flow 必须绑定一个 Namespace 范围的 Resource Pool
+**运行时绑定：** 每个 Flow 必须声明一个 `runtime_mode`（`application` 或 `session`）
 
 AgentFlow 是面向应用的 DAG 模型：它定义哪些工作是确定性的、哪些可使用 LLM、输出如何在节点间流动、何处需要审批，以及允许哪些副作用。L1 引擎负责持久化、调度、分派、隔离和观测这张图。具体应用的 Nodes、Edges、Integrations 与 E2E 证据归属 `usecase/{use-case}/README.md`，并由文档索引统一索引。
 
@@ -30,7 +30,7 @@ Flow manifest + Agent/MCP/Skill definitions
 
 | 部分 | 目的 |
 |---|---|
-| [Manifest 与 DAG](#manifest-与-dag-模型) | 兼容性、数据流、组合方式与 12 种节点 |
+| [Manifest 与 DAG](#manifest-与-dag-模型) | 规范 Manifest、数据流、组合方式与 12 种节点 |
 | [灵活性与限制](#灵活性与当前限制) | 当前执行边界与安全编写规则 |
 | [应用资源](#agent-节点记忆) | Memory、Skill、Agent、静态 manifest 与 console 生命周期 |
 
@@ -47,14 +47,20 @@ metadata:
   status: active
 data:
   id: example-flow
-  resource_pool_id: default
+  runtime_mode: application
+  resources:
+    jobmanager: { cpu: "500m", memory: "512Mi" }
+    taskmanager: { cpu: "2", memory: "2Gi" }
+    sandbox: { cpu: "2", memory: "2Gi" }
   vars: {}
   triggers: []
   nodes: []
   edges: []
 ```
 
-Importer 同时接受 `apiVersion` 版本键与 `spec` 载荷键。流程解析兼容旧的 `flow`/`agentflow` 嵌套载荷和扁平载荷；节点兼容当前扁平 `kind: ...`、`kind + spec` 嵌套形式和旧 `type` 字段。
+Importer 仅接受这一 envelope 版本与 `data` 载荷。每个 DAG 节点都是一个
+扁平对象，必须声明 `kind`，节点参数统一使用 `args`。未知 envelope 与 API
+请求字段会被拒绝。
 
 | Flow 字段 | 目的 | 灵活性与边界 |
 |---|---|---|
@@ -65,7 +71,8 @@ Importer 同时接受 `apiVersion` 版本键与 `spec` 载荷键。流程解析�
 | `triggers` | schedule/webhook 注册 | REST 与 A2A 也可在 manifest trigger 之外创建 run |
 | `input_schema`, `output_schema` | 发现与校验契约 | 可选；强烈建议 LLM 节点声明 `output_schema` |
 | `sandbox_policy` | 流程级沙箱默认策略 | 节点可在既定安全边界内收紧或覆盖 |
-| `resource_pool_id` | Namespace 范围容量与放置 | 必填；API 校验 Pool，Run 创建时固化绑定 |
+| `runtime_mode` | Flink 风格运行时生命周期 | 必填；`application` 创建每 Run runtime cluster，`session` 使用 Helm 部署的共享 runtime |
+| `resources` | Application 模式 Pod size 覆盖 | 可选；只能设置 `jobmanager`、`taskmanager` 和 `sandbox` 的 CPU/Memory。副本数和 slot 由平台默认值控制 |
 
 输入在执行前递归解析。`${node.field}` 这类完整引用保留数组和对象的类型；嵌入其他字符串的引用执行字符串插值。节点可引用任一已完成节点输出，但只依赖声明的祖先节点可令图保持可审计。
 
@@ -126,7 +133,7 @@ flowchart LR
 
 | 领域 | 可配置能力 | 当前限制 |
 |---|---|---|
-| 运行时拓扑 | standalone 与 distributed 使用同一 Flow 模型；分布式运行由专用 Flow JM 与 Namespace 范围 Pool Worker 组成 | 每个 Flow 必须显式绑定一个 Resource Pool；Run 创建后不会迁移 Pool |
+| 运行时拓扑 | standalone 与 distributed 使用同一 Flow 模型 | 分布式 Flow 选择 `application` 每 Run 隔离或 `session` 共享 runtime |
 | 调度 | 依赖、条件分支、retry、map concurrency | JobManager 对每个 `Schedule()` 阻塞；ready siblings 尚未并发执行 |
 | 循环 | 可解析 back-edge | 节点状态是 one-shot；back-edge 不会重跑 completed 节点 |
 | 条件 | condition 结果的 true/false edges | edge condition 仅为 boolean；复杂表达式放入 condition 节点 |
@@ -237,30 +244,27 @@ type AgentFlowSpec struct {
 `input_schema` 与 `output_schema` 完全可选，只用于 A2A 发现与可选校验。
 
 ```yaml
-apiVersion: core.flowgent.io/v1
+consoleVersion: core.flowgent.io/v1
 kind: Flow
 metadata:
   name: dependency-scan
-spec:
+data:
   id: dependency-scan
   kind: skill
   summary: "Scan project dependencies for known CVEs"
   nodes:
     - id: clone
       kind: tool
-      spec:
-        tool: github
-        args: { action: clone_repo, url: "${vars.repo_url}" }
+      tool: github
+      args: { action: clone_repo, url: "${vars.repo_url}" }
     - id: scan
       kind: tool
-      spec:
-        tool: dependency-checker
-        args: { path: "${clone.output.path}" }
+      tool: dependency-checker
+      args: { path: "${clone.output.path}" }
     - id: normalize
       kind: agent
-      spec:
-        agent: issue-detector
-        args: { raw_output: "${scan.output}" }
+      agent: issue-detector
+      args: { raw_output: "${scan.output}" }
   edges:
     - { from: clone, to: scan }
     - { from: scan, to: normalize }

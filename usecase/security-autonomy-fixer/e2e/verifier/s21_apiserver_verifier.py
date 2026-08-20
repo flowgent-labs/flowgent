@@ -13,18 +13,18 @@ Entity → Table → REST Path:
   5. Skill       → llm_skill        → /api/v1/{namespace}/llm/skills
   6. MCP         → llm_mcp          → /api/v1/{namespace}/mcp
   7. Provider    → llm_providers     → /api/v1/{namespace}/llm/providers
-  8. Approval    → human_approvals   → /api/v1/human/approvals
+  8. Approval    → human_approvals   → /api/v1/{namespace}/runs/{run_id}/approvals
   9. Channel     → nfy_channel      → /api/v1/{namespace}/notifications/channels
 
 Steps with Expected I/O:
   Step 1. Flow CRUD
     Action:  POST → GET → PUT → DELETE /api/v1/{namespace}/flows
-    Input:   {id, nodes, edges, resource_pool_id}
+    Input:   {id, nodes, edges, runtime_mode}
     Output:  Create→201, Read→flow object, Update→version++, Delete→200/204
 
   Step 2. Run Lifecycle
     Action:  POST /api/v1/{namespace}/runs → GET → trigger
-    Input:   {agentflow_id, resource_pool_id}
+    Input:   {agentflow_id, runtime_mode}
     Output:  Create→201 (status=PENDING), Trigger→200 (run_id)
 
   Step 3. Task Query
@@ -96,6 +96,18 @@ NAMESPACE = config.NAMESPACE_ID
 def rand_id() -> str:
     """Generate random ID"""
     return str(uuid.uuid4())[:8]
+
+
+def canonical_flow(flow_id: str, description: str = "") -> Dict[str, Any]:
+    """Return the one supported Flow definition contract."""
+    return {
+        "id": flow_id,
+        "kind": "flow",
+        "description": description,
+        "nodes": [{"id": "n1", "kind": "noop"}],
+        "edges": [],
+        "runtime_mode": "session",
+    }
 
 
 def http_request(method: str, path: str, payload: Optional[Dict] = None, timeout: int = 10) -> Dict[str, Any]:
@@ -361,11 +373,7 @@ def test_flow_lifecycle_events() -> bool:
         print(f"    • Testing CREATE event...")
         flow_id = "test-flow-" + rand_id()
         # Flat FlowInfo shape — see test_crud_entity's AgentFlow comment above.
-        payload = {
-            "id": flow_id,
-            "nodes": [{"id": "n1", "type": "noop"}],
-            "edges": [],
-        }
+        payload = canonical_flow(flow_id)
         
         resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", payload)
         if resp["status_code"] not in [200, 201]:
@@ -388,9 +396,7 @@ def test_flow_lifecycle_events() -> bool:
         
         # Test 2: UPDATE → ctrl/flow/updated (action=updated, version++)
         print(f"    • Testing UPDATE event...")
-        update_payload = {
-            "description": "updated description",
-        }
+        update_payload = canonical_flow(flow_id, "updated description")
         
         resp = http_request("PUT", f"/api/v1/{NAMESPACE}/flows/{created_id}", update_payload)
         if resp["status_code"] != 200:
@@ -434,17 +440,14 @@ def test_flow_run_crud() -> bool:
     created_run_id = None
     pg_conn = get_pg_connection()
     try:
-        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", {
-            "id": flow_id,
-            "nodes": [{"id": "n1", "type": "noop"}],
-            "edges": [],
-        })
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", canonical_flow(flow_id))
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"setup flow failed: {resp['status_code']}")
 
         resp = http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
             "agentflow_id": flow_id,
             "status": "PENDING",
+            "runtime_mode": "session",
             "vars": {"test": True},
         })
         if resp["status_code"] not in [200, 201]:
@@ -490,17 +493,14 @@ def test_task_run_nested() -> bool:
     run_id = None
     task_id = None
     try:
-        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", {
-            "id": flow_id,
-            "nodes": [{"id": "n1", "type": "noop"}],
-            "edges": [],
-        })
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", canonical_flow(flow_id))
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"setup flow failed: {resp['status_code']}")
 
         resp = http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
             "agentflow_id": flow_id,
             "status": "PENDING",
+            "runtime_mode": "session",
         })
         run_id = resp["data"].get("id")
         if not run_id:
@@ -574,23 +574,49 @@ def test_approval_lifecycle() -> bool:
     token = f"test-token-{rand_id()}"
     run_id = str(uuid.uuid4())
     task_id = str(uuid.uuid4())
+    flow_id = f"test-flow-{rand_id()}"
     try:
-        resp = http_request("POST", "/api/v1/human/approvals", {
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/flows", canonical_flow(flow_id))
+        if resp["status_code"] not in [200, 201]:
+            raise AssertionError(f"setup flow failed: {resp['status_code']} {resp.get('text')}")
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
+            "id": run_id,
+            "agentflow_id": flow_id,
+            "status": "PENDING",
+            "runtime_mode": "session",
+        })
+        if resp["status_code"] not in [200, 201]:
+            raise AssertionError(f"setup run failed: {resp['status_code']} {resp.get('text')}")
+        run_id = resp["data"].get("id")
+        if not run_id:
+            raise AssertionError(f"setup run omitted id: {resp['data']}")
+        resp = http_request("POST", f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks", {
+            "node_id": "n1",
+            "status": "PENDING",
+            "sequence": 1,
+        })
+        if resp["status_code"] not in [200, 201]:
+            raise AssertionError(f"setup task failed: {resp['status_code']} {resp.get('text')}")
+        task_id = resp["data"].get("id")
+        if not task_id:
+            raise AssertionError(f"setup task omitted id: {resp['data']}")
+
+        approval_path = f"/api/v1/{NAMESPACE}/runs/{run_id}/approvals"
+        resp = http_request("POST", approval_path, {
             "task_run_id": task_id,
-            "agentflow_run_id": run_id,
             "token": token,
         })
         if resp["status_code"] not in [200, 201]:
             raise AssertionError(f"CREATE approval failed: {resp['status_code']} {resp.get('text')}")
 
-        resp = http_request("GET", "/api/v1/human/approvals")
+        resp = http_request("GET", approval_path)
         if resp["status_code"] != 200:
             raise AssertionError(f"LIST approvals failed: {resp['status_code']}")
         items = resp["data"] if isinstance(resp["data"], list) else []
         if not any(a.get("token") == token for a in items):
             print(f"      ⚠ created approval not in pending list (may already be resolved)")
 
-        resp = http_request("POST", f"/api/v1/human/{token}/approve", {"comment": "e2e approved"})
+        resp = http_request("POST", f"{approval_path}/{token}/approve", {"comment": "e2e approved"})
         if resp["status_code"] != 200:
             raise AssertionError(f"APPROVE failed: {resp['status_code']} {resp.get('text')}")
 
@@ -599,6 +625,9 @@ def test_approval_lifecycle() -> bool:
     except Exception as e:
         print(f"    ✗ Approval lifecycle failed: {e}")
         return False
+    finally:
+        http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{run_id}", timeout=5)
+        http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
 
 
 def test_skill_api_availability() -> bool:
@@ -646,10 +675,18 @@ def run():
             "list_search_field": "flow_id",
             "create": {
                 "id": f"test-flow-{rand_id()}",
+                "kind": "flow",
                 "nodes": [],
                 "edges": [],
+                "runtime_mode": "session",
             },
-            "update": {"description": "updated"},
+            "update": {
+                "kind": "flow",
+                "description": "updated",
+                "nodes": [],
+                "edges": [],
+                "runtime_mode": "session",
+            },
             "update_check_sql": (
                 "SELECT COUNT(*) = 1 "
                 "AND COALESCE(MAX(definition->>'description'), '') = 'updated' "
@@ -667,7 +704,12 @@ def run():
                 "soul": "You are a test agent",
                 "instruction": "Test instruction",
             },
-            "update": {"temperature": 0.7},
+            "update": {
+                "model": "gpt-4",
+                "soul": "You are an updated test agent",
+                "instruction": "Updated test instruction",
+                "temperature": 0.7,
+            },
         },
         {
             "name": "MCP",
@@ -680,7 +722,11 @@ def run():
                 "url": "https://example.com/mcp",
                 "enabled": True,
             },
-            "update": {"enabled": False},
+            "update": {
+                "type": "streamable-http",
+                "url": "https://example.com/mcp",
+                "enabled": False,
+            },
         },
         {
             "name": "Provider",
@@ -713,7 +759,12 @@ def run():
                 "config": {"url": "https://example.com/hook"},
                 "enabled": True,
             },
-            "update": {"enabled": False},
+            "update": {
+                "name": "Updated test channel",
+                "provider": "webhook",
+                "config": {"url": "https://example.com/hook"},
+                "enabled": False,
+            },
         },
     ]
     

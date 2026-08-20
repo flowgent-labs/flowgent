@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
@@ -48,7 +49,7 @@ func NewFlowRunHandler(s store.IStore, payloads taskpayload.ITaskPayloadProvider
 func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 	var run entities.FlowRunInfo
-	if err := json.NewDecoder(r.Body).Decode(&run); err != nil {
+	if err := decodeStrictJSON(r, &run); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
@@ -57,6 +58,10 @@ func (h *FlowRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run.Namespace = namespace
+	if err := entities.ValidateRuntimeMode(run.RuntimeMode); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := h.runStore.Create(r.Context(), &run); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -101,44 +106,52 @@ func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 {
 		size = 50
 	}
-	pageReq := entities.PageRequest{Page: page, Size: size}
-
-	runs, err := h.runStore.Select(r.Context(), pageReq)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	status := q.Get("status")
-	namespace := q.Get("k8s_namespace")
 	flowID := r.PathValue("flow_id")
 	if flowID == "" {
 		flowID = q.Get("agentflow_id")
 	}
-	filtered := filterRuns(runs.Items, r.PathValue("namespace"), status, namespace, flowID)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entities.Page[entities.FlowRunInfo]{
-		Items: filtered, TotalCount: int64(len(filtered)), Request: pageReq,
+	runs, err := h.runStore.List(r.Context(), flowrun.ListFilter{
+		Namespace:    r.PathValue("namespace"),
+		Status:       q.Get("status"),
+		RuntimeMode:  q.Get("runtime_mode"),
+		K8sNamespace: q.Get("k8s_namespace"),
+		FlowID:       flowID,
+		Page:         entities.PageRequest{Page: page, Size: size},
 	})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(runs)
 }
 
-func filterRuns(runs []*entities.FlowRunInfo, tenantNamespace, status, k8sNamespace, flowID string) []*entities.FlowRunInfo {
-	var out []*entities.FlowRunInfo
-	for _, r := range runs {
-		if r.Namespace != tenantNamespace {
-			continue
-		}
-		if status != "" && string(r.Status) != status {
-			continue
-		}
-		if k8sNamespace != "" && r.K8sNamespace != k8sNamespace {
-			continue
-		}
-		if flowID != "" && r.AgentFlowID != flowID {
-			continue
-		}
-		out = append(out, r)
+// Metrics aggregates the namespace's complete run population in the database;
+// the dashboard never derives operational totals from a truncated list page.
+func (h *FlowRunHandler) Metrics(w http.ResponseWriter, r *http.Request) {
+	hours := queryInt(r, "hours", 24, 1, 24*30)
+	buckets := queryInt(r, "buckets", min(hours, 12), 1, 120)
+	until := time.Now().UTC()
+	metrics, err := h.runStore.Metrics(r.Context(), flowrun.MetricRequest{
+		Namespace: r.PathValue("namespace"),
+		Since:     until.Add(-time.Duration(hours) * time.Hour),
+		Until:     until,
+		Buckets:   buckets,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	return out
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+func queryInt(r *http.Request, name string, fallback, minimum, maximum int) int {
+	value, err := strconv.Atoi(r.URL.Query().Get(name))
+	if err != nil || value < minimum || value > maximum {
+		return fallback
+	}
+	return value
 }
 
 func (h *FlowRunHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +167,7 @@ func (h *FlowRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update persists the narrow lifecycle transition produced by JobMaster.
 func (h *FlowRunHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req entities.RunLifecycleUpdate
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r, &req); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
@@ -242,7 +255,7 @@ func (h *FlowRunHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var task entities.TaskRunInfo
-	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+	if err := decodeStrictJSON(r, &task); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}
@@ -301,7 +314,7 @@ func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var task entities.TaskRunInfo
-	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+	if err := decodeStrictJSON(r, &task); err != nil {
 		http.Error(w, "invalid body", 400)
 		return
 	}

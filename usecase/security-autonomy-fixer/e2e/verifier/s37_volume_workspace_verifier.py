@@ -25,7 +25,7 @@ import re
 import subprocess
 import sys
 import json
-import requests
+import hashlib
 from common import api as common_api
 from common import config
 
@@ -68,24 +68,44 @@ def exec_in_pod(namespace: str, pod_name: str, container: str, cmd: str) -> tupl
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
-def flow_resource_pool() -> str:
-    session = common_api.flowgent_session()
-    response = session.get(
-        f"{config.K8S_APISERVER_URL}/api/v1/{NAMESPACE}/flows/{FLOW_ID}", timeout=10
-    )
-    if response.status_code != 200:
-        raise AssertionError(f"cannot resolve Resource Pool for {FLOW_ID}: HTTP {response.status_code}")
-    pool_id = response.json().get("resource_pool_id")
-    if not pool_id:
-        raise AssertionError(f"Flow {FLOW_ID} has no resource_pool_id")
-    return pool_id
+def kubernetes_name(*parts: str) -> str:
+    raw = "-".join(parts)
+    lower = raw.lower()
+    normalized = []
+    previous_hyphen = False
+    needs_hash = False
+    for char in lower:
+        if "a" <= char <= "z" or "0" <= char <= "9":
+            normalized.append(char)
+            previous_hyphen = False
+            continue
+        if char != "-":
+            needs_hash = True
+        if not previous_hyphen:
+            normalized.append("-")
+            previous_hyphen = True
+    base = re.sub(r"^-+|-+$", "", "".join(normalized))
+    if not base:
+        base = "flowgent"
+        needs_hash = True
+    if len(base) > 63:
+        needs_hash = True
+    if not needs_hash:
+        return base
+    digest = hashlib.sha256(raw.lower().encode()).hexdigest()[:10]
+    max_base = 63 - 1 - len(digest)
+    return base[:max_base].rstrip("-") + "-" + digest
 
 
-def find_tm_pod(pool_id: str) -> tuple:
-    """Find a running Pool-owned TaskManager pod."""
+def runtime_cluster_for_run(run_id: str) -> str:
+    return kubernetes_name("app", run_id)
+
+
+def find_tm_pod(cluster_id: str) -> tuple:
+    """Find a running application runtime TaskManager pod."""
     pods = kubectl_json([
         "get", "pods", "-n", WORKLOAD_NAMESPACE, "-l",
-        f"flowgent/role=worker,flowgent.io/resource-pool={pool_id}",
+        f"flowgent/role=worker,flowgent.io/runtime-cluster={cluster_id}",
     ])
     if pods:
         for p in pods.get("items", []):
@@ -138,13 +158,13 @@ def run():
     #     volume mount inside the container.
     # ═══════════════════════════════════════════════════════════════
     print("\n── L2: Pod container — /var/flowgent volume mount ──")
-    pool_id = flow_resource_pool()
-    ns, pod_name, container = find_tm_pod(pool_id)
+    cluster_id = runtime_cluster_for_run(run_id)
+    ns, pod_name, container = find_tm_pod(cluster_id)
     if not pod_name:
         print("  [L2] No TM pod found, trying sandbox pod...")
         pods = kubectl_json([
             "get", "pods", "-n", WORKLOAD_NAMESPACE, "-l",
-            f"flowgent/role=sandbox-worker,flowgent.io/resource-pool={pool_id}",
+            f"flowgent/role=sandbox-worker,flowgent.io/runtime-cluster={cluster_id}",
         ])
         if pods:
             for p in pods.get("items", []):

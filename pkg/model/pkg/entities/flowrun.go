@@ -34,9 +34,31 @@ type FlowRunInfo struct {
 	SharedMemory map[string]any            `json:"shared_memory,omitempty" yaml:"shared_memory,omitempty" db:"-"`
 	ExecPlans    map[string]*ExecutionPlan `json:"exec_plans,omitempty" yaml:"exec_plans,omitempty" db:"-"`
 
-	K8sNamespace   string            `json:"namespace,omitempty"`
-	ResourcePoolID string            `json:"resource_pool_id" yaml:"resource_pool_id"`
-	Labels         map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	K8sNamespace string            `json:"namespace,omitempty"`
+	RuntimeMode  RuntimeMode       `json:"runtime_mode" yaml:"runtime_mode"`
+	Labels       map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+}
+
+// RunMetrics is the server-aggregated operational view used by the console.
+// Buckets are ordered, gap-filled UTC windows so clients never aggregate a
+// truncated Run page or guess missing intervals.
+type RunMetrics struct {
+	Total       int64             `json:"total"`
+	Running     int64             `json:"running"`
+	Completed   int64             `json:"completed"`
+	Failed      int64             `json:"failed"`
+	Cancelled   int64             `json:"cancelled"`
+	SuccessRate float64           `json:"success_rate"`
+	FailureRate float64           `json:"failure_rate"`
+	Buckets     []RunMetricBucket `json:"buckets"`
+}
+
+type RunMetricBucket struct {
+	StartTime time.Time `json:"start_time"`
+	EndTime   time.Time `json:"end_time"`
+	Running   int64     `json:"running"`
+	Completed int64     `json:"completed"`
+	Failed    int64     `json:"failed"`
 }
 
 // RunLifecycleUpdate is the narrow JobMaster-owned persistence contract for a

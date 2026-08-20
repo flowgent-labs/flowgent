@@ -271,10 +271,10 @@ SCENARIOS = {
     "36": ("Knowledge — RAG Retrieval & Injection",                       "verifier.s36_knowledge_verifier"),
     "37": ("Volume Workspace — Pod-Container Mount, Git Clone Evidence (kubectl exec only)", "verifier.s37_volume_workspace_verifier"),
     # L1 — Flowgent Engine. These checks are independent of the UI run's
-    # ephemeral Flow and resource-pool runtime resources and can safely run afterward.
+    # ephemeral Flow and runtime-cluster resources and can safely run afterward.
     "21": ("API Server — REST CRUD + Lifecycle Events",                   "verifier.s21_apiserver_verifier"),
     "22": ("Notifier — Multi-Channel Delivery",                           "verifier.s22_notifier_verifier"),
-    "23": ("Controller — Flow JM and Resource Pool Lifecycle",             "verifier.s23_controller_verifier"),
+    "23": ("Controller — Application Runtime Cluster Lifecycle",           "verifier.s23_controller_verifier"),
     "24": ("Messager — MQTT Topics + Sandbox Chain",                      "verifier.s24_messager_verifier"),
     "25": ("A2A Protocol — Agent Card & Task Submit",                     "verifier.s25_a2a_protocol_verifier"),
 }
@@ -551,6 +551,7 @@ def _run_scenario(num, name, module_path):
     start = time.time()
     passed = False
     error_msg = None
+    tee = None
 
     try:
         mod = importlib.import_module(module_path)
@@ -572,6 +573,8 @@ def _run_scenario(num, name, module_path):
         print(f"  PASS ({elapsed:.1f}s)")
         passed = True
     except Exception as e:
+        if tee is not None:
+            output = io.StringIO(tee.getvalue())
         elapsed = time.time() - start
         error_msg = f"{e}\n{traceback.format_exc()}"
         print(f"  FAIL ({elapsed:.1f}s): {e}")

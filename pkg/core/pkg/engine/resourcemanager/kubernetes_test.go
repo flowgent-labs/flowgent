@@ -66,7 +66,7 @@ func TestKubernetesResourceManager_Validate_WithQueue(t *testing.T) {
 func TestKubernetesResourceManagerWaitsForScopedRuntimeReady(t *testing.T) {
 	q := messager.NewLocalMessager(10)
 	rm := &KubernetesResourceManager{
-		q: q, ownerNamespaceID: "default", resourcePoolID: "default",
+		q: q, ownerNamespaceID: "default", runtimeClusterID: "cluster-a",
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -78,10 +78,10 @@ func TestKubernetesResourceManagerWaitsForScopedRuntimeReady(t *testing.T) {
 
 	ready := messager.RuntimeReady{
 		WorkerID: "tm-1", Role: "taskmanager", Namespace: "default",
-		PoolID: "default", Timestamp: time.Now(),
+		ClusterID: "cluster-a", Timestamp: time.Now(),
 	}
 	payload, _ := json.Marshal(ready)
-	if err := q.Publish(ctx, messager.RuntimeReadyTopic("default", "default", "taskmanager", "tm-1"), &messager.InterMessage{Payload: payload}); err != nil {
+	if err := q.Publish(ctx, messager.RuntimeReadyTopic("default", "cluster-a", "taskmanager", "tm-1"), &messager.InterMessage{Payload: payload}); err != nil {
 		t.Fatalf("publish readiness: %v", err)
 	}
 	if err := <-done; err != nil {
@@ -153,9 +153,11 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 		idleTimeout:              5 * time.Minute,
 		planTimeout:              5 * time.Minute,
 		ownerNamespaceID:         "default",
-		resourcePoolID:           "critical",
+		runtimeClusterID:         "app-run-1",
+		ownerRunID:               "run-1",
+		runtimeMode:              "application",
 		ownerFlowID:              "sec-fix",
-		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix",
+		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix-run-1",
 		ownerJobManagerNamespace: "flowgent-default",
 		credentialEnvSecret:      "flowgent-runtime-env",
 		internalAuthSecret:       "flowgent-runtime-auth",
@@ -171,11 +173,14 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get deployment: %v", err)
 	}
-	if got := dep.Labels[LabelManagedBy]; got != LabelValueResourcePool {
-		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueResourcePool)
+	if got := dep.Labels[LabelManagedBy]; got != LabelValueRuntimeCluster {
+		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueRuntimeCluster)
 	}
-	if got := dep.Spec.Selector.MatchLabels[LabelResourcePoolID]; got != "critical" {
-		t.Fatalf("selector resource pool label = %q, want critical", got)
+	if got := dep.Spec.Selector.MatchLabels[LabelRuntimeClusterID]; got != "app-run-1" {
+		t.Fatalf("selector runtime cluster label = %q, want app-run-1", got)
+	}
+	if got := dep.Spec.Selector.MatchLabels[LabelRunID]; got != "run-1" {
+		t.Fatalf("selector run label = %q, want run-1", got)
 	}
 	container := dep.Spec.Template.Spec.Containers[0]
 	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef == nil {
@@ -214,12 +219,12 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 
 }
 
-func TestKubernetesResourceManager_ReconcilesPoolDeploymentTemplate(t *testing.T) {
+func TestKubernetesResourceManager_ReconcilesRuntimeDeploymentTemplate(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	rm := &KubernetesResourceManager{
-		kubeClient: fakeClient, namespace: "runtime", deployName: "pool-critical",
+		kubeClient: fakeClient, namespace: "runtime", deployName: "cluster-a",
 		tmImage: "flowgent:v1", slotsPerTM: 2, minTMs: 1, maxTMs: 1,
-		ownerNamespaceID: "team-a", resourcePoolID: "critical",
+		ownerNamespaceID: "team-a", runtimeClusterID: "cluster-a", runtimeMode: "session",
 	}
 	if err := rm.ensureDeployment(context.Background()); err != nil {
 		t.Fatalf("initial ensureDeployment: %v", err)
@@ -230,7 +235,7 @@ func TestKubernetesResourceManager_ReconcilesPoolDeploymentTemplate(t *testing.T
 	if err := rm.ensureDeployment(context.Background()); err != nil {
 		t.Fatalf("reconcile ensureDeployment: %v", err)
 	}
-	dep, err := fakeClient.AppsV1().Deployments("runtime").Get(context.Background(), "pool-critical", metav1.GetOptions{})
+	dep, err := fakeClient.AppsV1().Deployments("runtime").Get(context.Background(), "cluster-a", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

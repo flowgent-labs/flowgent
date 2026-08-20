@@ -60,10 +60,10 @@ func (s *ApprovalPostgresStore) UpdateApproval(ctx context.Context, e *entities.
 }
 
 // ListPending returns all approvals with status 'PENDING'.
-func (s *ApprovalPostgresStore) ListPending(ctx context.Context) ([]*entities.ApprovalInfo, error) {
+func (s *ApprovalPostgresStore) ListPending(ctx context.Context, namespace string) ([]*entities.ApprovalInfo, error) {
 	cols := utils.Columns[entities.ApprovalInfo]()
 	rows, err := s.inner.Pool.Query(ctx,
-		fmt.Sprintf(`SELECT %s FROM human_approvals WHERE status='PENDING' ORDER BY created_at DESC`, cols))
+		fmt.Sprintf(`SELECT %s FROM human_approvals WHERE namespace_id=$1 AND status='PENDING' AND del_flag=false ORDER BY created_at DESC`, cols), namespace)
 	if err != nil {
 		return nil, err
 	}

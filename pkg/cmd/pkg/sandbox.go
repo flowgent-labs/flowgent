@@ -74,14 +74,14 @@ func startSandboxService() error {
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
-	poolID := svcCfg.Runtime.ResourcePoolID
-	if poolID == "" {
-		return fmt.Errorf("runtime.resource_pool_id is required")
+	clusterID := svcCfg.Runtime.RuntimeClusterID
+	if clusterID == "" {
+		return fmt.Errorf("runtime.runtime_cluster_id is required")
 	}
 
 	runner := sandboxpkg.NewFlowgentSandboxManager(podName, queue, "", workspace, svcCfg.Sandbox.Policy)
 	runner.SetSlots(svcCfg.Sandbox.Deployment.SlotsPerPod)
-	runner.SetScope(namespaceID, poolID)
+	runner.SetScope(namespaceID, clusterID)
 	if svcCfg.Sandbox.Deployment.Enabled {
 		runner.SetDistributed(true)
 	}
@@ -100,6 +100,6 @@ func startSandboxService() error {
 		"pid", os.Getpid(), "pod", podName, "workspace", workspace,
 		"slots", svcCfg.Sandbox.Deployment.SlotsPerPod,
 		"namespace", namespaceID,
-		"resource_pool", poolID)
+		"runtime_cluster_id", clusterID)
 	return runner.Start(ctx)
 }

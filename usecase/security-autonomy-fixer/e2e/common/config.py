@@ -32,11 +32,11 @@ os.environ["KUBECONFIG"] = K8S_KUBECONFIG
 SYSTEM_NAMESPACE  = os.getenv("FLOWGENT_SYSTEM_NAMESPACE", "flowgen-system")
 NAMESPACE_ID      = os.getenv("FLOWGENT_NAMESPACE_ID", "default")
 K8S_NAMESPACE     = SYSTEM_NAMESPACE
-# Must match namespace.namespace_prefix (etc/flowgent.yaml / helm values.yaml
-# namespace.namespacePrefix, both default "flowgent-") — this is the PREFIX of
-# where the Controller places each Flow's dedicated JM and namespace-scoped Pool
-# workers: namespace = "{prefix}{namespace_id}" (per-Namespace, not per-Flow),
-# NOT SYSTEM_NAMESPACE. The old environment name remains a compatibility input.
+# Must match runtime.namespace.namespace_prefix (etc/flowgent.yaml /
+# helm values.yaml runtime.namespace.namespacePrefix, both default "flowgent-").
+# This is the workload namespace prefix where application runtime clusters run:
+# namespace = "{prefix}{namespace_id}" (per namespace, not per Flow), not the
+# system namespace.
 K8S_WORKLOAD_NAMESPACE_PREFIX = os.getenv(
     "FLOWGENT_K8S_WORKLOAD_NAMESPACE_PREFIX",
     "flowgent-",
