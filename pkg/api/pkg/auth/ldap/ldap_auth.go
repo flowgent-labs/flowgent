@@ -66,14 +66,10 @@ func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshToken, _ := p.tokenService.IssueRefreshToken(user)
-
 	slog.Info("ldap: login successful", "user", user.Username, "email", user.Email, "role", user.Role)
 
-	auth.WriteJSON(w, http.StatusOK, fmt.Sprintf(
-		`{"success":true,"access_token":"%s","refresh_token":"%s","user":{"id":"%s","username":"%s","email":"%s","display_name":"%s","role":"%s"}}`,
-		accessToken, refreshToken, user.UserID, user.Username, user.Email, user.DisplayName, user.Role,
-	))
+	auth.SetSessionCookie(w, r, accessToken, p.tokenService.AccessTokenTTL())
+	auth.WriteLoginJSON(w, user)
 }
 
 // ── Authentication logic ──────────────────────────────────────────

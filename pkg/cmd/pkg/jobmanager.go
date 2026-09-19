@@ -144,6 +144,7 @@ func startJobManager(cfgPath string) error {
 			RuntimeMode:              runtimeMode,
 			OwnerJobManagerName:      jobManagerDeploymentName(namespace, agentFlowID, agentFlowRunID),
 			OwnerJobManagerNamespace: runtimeNamespace,
+			ResourceOwner:            svcCfg.Runtime.ResourceOwner,
 			DeleteOnShutdown:         runtimeMode == entities.RuntimeModeApplication,
 			SandboxWorkspace:         svcCfg.Sandbox.Workspace,
 			SandboxHostWorkspace:     svcCfg.Sandbox.HostWorkspace,

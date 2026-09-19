@@ -180,13 +180,22 @@ repository-style boundary. Namespace owners manage membership under namespace
 Settings; Flow owners manage direct grants under that Flow's Settings. The last
 namespace-owner grant and self-removal are protected.
 
-JWT (ES256/RS256/EdDSA), OIDC, and LDAP identities use the same evaluator.
+JWT (ES256/RS256/EdDSA), GitHub browser SSO, generic OIDC, and LDAP identities
+use the same evaluator. GitHub SSO uses the standard OAuth2 authorization-code
+flow; generic OIDC uses provider discovery, ID-token verification, and nonce
+validation. Successful browser callbacks set an HttpOnly `flowgent_session`
+cookie and return `303 /dashboard`; callbacks never write tokens into HTML or
+browser storage, so CSP can keep `script-src 'self'`. Manual Bearer input remains
+only for API keys and break-glass tokens. LDAP password login follows the same
+browser-session cookie contract after successful bind. `POST /auth/logout`
+clears the session cookie.
+
 Internal Controller/JM/TM/Notifier/A2A credentials are distinct rotatable
-workload tokens delivered by Kubernetes Secrets. API keys are one-time
-plaintext credentials whose database rows contain only a SHA-256 digest,
-prefix/suffix metadata, expiry, revocation, namespace attenuation, and explicit
-permission attenuation. Namespace owners may issue them for namespace service
-accounts; the target's role bindings remain authoritative.
+workload tokens delivered by Kubernetes Secrets. API keys are one-time plaintext
+credentials whose database rows contain only a SHA-256 digest, prefix/suffix
+metadata, expiry, revocation, namespace attenuation, and explicit permission
+attenuation. Namespace owners may issue them for namespace service accounts; the
+target's role bindings remain authoritative.
 
 Cross-team reuse publishes an immutable producer-owned `FlowRelease`. A
 consumer with an explicit grant installs a copy into its own namespace and then

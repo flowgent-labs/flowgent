@@ -15,6 +15,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/flowgent-labs/flowgent/api/pkg/auth"
+	githubauth "github.com/flowgent-labs/flowgent/api/pkg/auth/github"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	"github.com/flowgent-labs/flowgent/api/pkg/authz"
@@ -162,6 +163,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		cleanupConstruction()
 		return nil, fmt.Errorf("auth service: %w", err)
 	}
+	authSvc.Register(githubauth.NewService(cfg.Auth.GitHub, authSvc.TokenService()))
 	authSvc.Register(oidc.NewService(cfg.Auth.OIDC, authSvc.TokenService()))
 	authSvc.Register(ldap.NewService(cfg.Auth.LDAP, authSvc.TokenService()))
 	authSvc.SetCredentialAuthenticator(authorizer)

@@ -45,6 +45,20 @@ func TestJmConfigMapName(t *testing.T) {
 	})
 }
 
+func TestApplicationJobManagerAppLabelIsInstallationScoped(t *testing.T) {
+	defaultController := testController(&config.FlowgentConfig{})
+	if got := defaultController.applicationJobManagerAppLabel(); got != "flowgent-jobmanager" {
+		t.Fatalf("default app label = %q", got)
+	}
+
+	isolatedController := testController(&config.FlowgentConfig{
+		Runtime: config.RuntimeConfig{ResourceOwner: "e2e-flowgent"},
+	})
+	if got := isolatedController.applicationJobManagerAppLabel(); got != "e2e-flowgent-jobmanager" {
+		t.Fatalf("isolated app label = %q", got)
+	}
+}
+
 // TestBuildJMDeploymentMountsConfigAndEnv is a regression test for a bug where
 // buildJMDeployment created a JM Deployment that referenced -c /etc/flowgent/flowgent.yaml
 // but never mounted a ConfigMap there, and never propagated the MQTT broker /

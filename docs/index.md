@@ -10,6 +10,7 @@ that owns the subject.
 
 | Layer | Document | Scope |
 |---|---|---|
+| Security / IAM | [Enterprise IAM authorization](architecture/enterprise-iam-authorization.md) | Subject/group/role/grant model, Resource URN, request matchers, and resource-list scoping |
 | L1 Engine | [Engine overview](architecture/overview.md) | Cross-component calls, state and messaging contracts, deployment, and shared modules |
 | L1 Engine | [API Server](architecture/engine/apiserver.md) | External gateway and sole durable-state client |
 | L1 Engine | [Controller](architecture/engine/controller.md) | Active-run JobManager reconciliation |
@@ -24,14 +25,14 @@ that owns the subject.
 ## Applications
 
 Each application owns its nodes, edges, integrations, limits, and verification
-in `usecase/{use-case}/README.md`; executable resources remain beside it.
+in `use-cases/{use-case}/README.md`; executable resources remain beside it.
 Shared DAG semantics belong to the
 [AgentFlow application architecture](architecture/agent-flow.md).
 
 | Application | Scope | Entries |
 |---|---|---|
-| Security Autonomy Fixer | SonarQube-to-GitHub remediation and post-change verification; 27-node/31-edge DAG | [Design](../usecase/security-autonomy-fixer/README.md) · [中文](../usecase/security-autonomy-fixer/README_ZH.md) · [Manifest](../usecase/security-autonomy-fixer/config/flows/security-autonomy-fixer.yaml) · [E2E](../usecase/security-autonomy-fixer/e2e/VERIFICATION.md) |
-| AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../usecase/autotest-generator/README.md) · [中文](../usecase/autotest-generator/README_ZH.md) · [Manifest](../usecase/autotest-generator/config/flows/autotest-generation-v1.yaml) |
+| Security Autonomy Fixer | SonarQube-to-GitHub remediation and post-change verification; 29-node/33-edge DAG | [Design and E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
+| AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/config/flows/autotest-generation-v1.yaml) |
 
 ## Operations
 
@@ -68,10 +69,10 @@ Current active development plan:
 - Current behavior MUST be documented in the owning current-design document.
 - Generic AgentFlow semantics MUST remain in `architecture/`; application-specific
   nodes, edges, integrations, and E2E evidence MUST remain in the owning
-  `usecase/{use-case}/README.md`.
+  `use-cases/{use-case}/README.md`.
 - Every real application MUST provide `README.md` and `README_ZH.md`. Its flows,
   agents, and MCP definitions MUST remain self-contained under
-  `usecase/{use-case}/config/`; runtime credentials MUST remain outside manifests.
+  `use-cases/{use-case}/config/`; runtime credentials MUST remain outside manifests.
 - Each design concept MUST have one canonical location; other documents MUST
   link to it instead of duplicating it.
 - Design documents MUST distinguish implemented behavior, reserved design, and

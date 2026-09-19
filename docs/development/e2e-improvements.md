@@ -66,7 +66,7 @@ standalone/local smoke suite and MUST NOT be described as distributed E2E.
 | `distributed` | Real PostgreSQL + MQTT + API Server + JM + TM + Sandbox/Notifier processes. |
 | `k8s` | Helm/kind/k3s coverage of real runtime clusters, Controller, and K8sRM. |
 | `auth` | Local LDAP/OIDC provider containers. |
-| `usecase` | Real external-system verification under `usecase/`; not part of portable integration tests. |
+| `use-cases` | Real external-system verification under `use-cases/`; not part of portable integration tests. |
 
 ## Implementation Order
 

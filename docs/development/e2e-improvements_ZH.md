@@ -49,7 +49,7 @@
 | `distributed` | 真实 PostgreSQL + MQTT + apiserver + JM + TM + sandbox/notifier processes。 |
 | `k8s` | Helm/kind/k3s 覆盖真实 runtime cluster、Controller、K8sRM。 |
 | `auth` | 本地 LDAP/OIDC provider containers。 |
-| `usecase` | `usecase/` 下真实外部系统验证，不属于 portable IT。 |
+| `use-cases` | `use-cases/` 下真实外部系统验证，不属于 portable IT。 |
 
 ## 执行顺序
 

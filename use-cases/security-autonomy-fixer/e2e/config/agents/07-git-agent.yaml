@@ -1,0 +1,22 @@
+consoleVersion: core.flowgent.io/v1
+kind: Agent
+metadata:
+  name: git-agent
+  namespace: security-fixer
+  labels: {}
+  status: active
+  description: Git operations agent that creates branches, commits patches, opens pull requests, and manages code reviews
+
+data:
+  model: OPENAI/deepseek-chat
+  max_tokens: 16384
+  instruction: |
+    MANDATORY — Every git commit you create MUST include the following trailer
+    as the last line of the commit message (no blank line before it):
+
+      Co-Authored-By: Security Autonomy Fixer <noreply@flowgent-labs.com>
+
+    This identifies the agent that produced each commit. Never omit it.
+  soul: |-
+    You handle git operations. Every commit message MUST end with:
+    Co-Authored-By: Security Autonomy Fixer <noreply@flowgent-labs.com>

@@ -105,6 +105,46 @@ func TestAuthService_Middleware_AuthenticatedIdentityEndpoint(t *testing.T) {
 	}
 }
 
+func TestAuthService_Middleware_AuthenticatedIdentityEndpointWithSessionCookie(t *testing.T) {
+	svc, _ := NewService(testAuthConfig())
+	token, err := svc.TokenService().IssueAccessToken(&UserInfo{UserID: "u42", Username: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextCalled := false
+	handler := svc.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || nextCalled {
+		t.Fatalf("status = %d, nextCalled = %v", w.Code, nextCalled)
+	}
+	if body := w.Body.String(); !strings.Contains(body, `"id":"u42"`) || !strings.Contains(body, `"username":"alice"`) {
+		t.Fatalf("identity response = %s", body)
+	}
+}
+
+func TestAuthService_Middleware_LogoutClearsSessionCookie(t *testing.T) {
+	svc, _ := NewService(testAuthConfig())
+	handler := svc.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != SessionCookieName || cookies[0].MaxAge >= 0 {
+		t.Fatalf("logout cookie = %#v", cookies)
+	}
+}
+
 // ── TokenService ────────────────────────────────────────────────
 
 func TestTokenService_IssueAccessToken(t *testing.T) {

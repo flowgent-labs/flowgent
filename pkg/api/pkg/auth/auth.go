@@ -24,6 +24,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
 )
 
 // ── Context keys ──────────────────────────────────────────────────
@@ -53,6 +54,7 @@ type UserInfo struct {
 	DirectPermissions []string               `json:"permissions,omitempty"`
 	AllowedNamespaces []string               `json:"namespaces,omitempty"`
 	CredentialID      string                 `json:"credential_id,omitempty"`
+	flowgentSqlScope  *storepkg.FlowgentSqlScope
 }
 
 // UserFromContext returns the fully normalized authenticated principal.
@@ -118,6 +120,20 @@ func (s *AuthService) Register(p AuthProviderService) {
 func (s *AuthService) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/auth/providers" && r.Method == http.MethodGet {
+				s.writeProviders(w)
+				return
+			}
+			if r.URL.Path == "/auth/logout" {
+				if r.Method != http.MethodPost {
+					w.Header().Set("Allow", http.MethodPost)
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				Logout(w, r)
+				return
+			}
+
 			// Step 1: Route to auth backend if the request matches one
 			for _, p := range s.providers {
 				if p.Enabled() && p.CanHandle(r) {
@@ -134,36 +150,58 @@ func (s *AuthService) Middleware() func(http.Handler) http.Handler {
 				}
 			}
 
-			// Step 3: JWT validation
+			// A signed AuthGuard access context is both the proof that the edge
+			// authorized this exact request and the source of its canonical
+			// Principal. Invalid contexts fail closed; absent contexts continue to
+			// the native Flowgent credentials used by internal components.
+			if s.cfg.AuthGuard.Enabled {
+				user, present, contextErr := authenticateAuthGuardContext(
+					r.Header.Get(authGuardContextHeader),
+					s.cfg.AuthGuard.AccessContextHMACKey,
+					time.Now(),
+				)
+				if contextErr != nil {
+					writeAuthError(w, "Invalid AuthGuard access context")
+					return
+				}
+				if present {
+					if serveAuthenticatedIdentity(w, r, user) {
+						return
+					}
+					requestContext := contextWithUser(r.Context(), user, nil)
+					if user.flowgentSqlScope != nil {
+						requestContext = storepkg.WithFlowgentSqlScope(requestContext, *user.flowgentSqlScope)
+					}
+					next.ServeHTTP(w, r.WithContext(requestContext))
+					return
+				}
+			}
+
+			// Step 3: bearer credential or browser session-cookie validation
 			alg := s.tokenService.Algorithm()
 			publicKey := s.tokenService.PublicKey()
 
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				writeAuthError(w, "Authorization header is required")
-				return
-			}
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				writeAuthError(w, "Invalid Authorization header format")
+			rawCredential, bearerCredential := requestCredential(r)
+			if rawCredential == "" {
+				writeAuthError(w, "Authentication credential is required")
 				return
 			}
 
-			if s.credentials != nil {
-				if user, credentialErr := s.credentials.AuthenticateCredential(r.Context(), parts[1]); credentialErr == nil {
+			if bearerCredential && s.credentials != nil {
+				if user, credentialErr := s.credentials.AuthenticateCredential(r.Context(), rawCredential); credentialErr == nil {
 					if serveAuthenticatedIdentity(w, r, user) {
 						return
 					}
 					next.ServeHTTP(w, r.WithContext(contextWithUser(r.Context(), user, nil)))
 					return
-				} else if strings.HasPrefix(parts[1], "fgk_") {
+				} else if strings.HasPrefix(rawCredential, "fgk_") {
 					writeAuthError(w, "Invalid or expired credential")
 					return
 				}
 			}
 
 			claims := &Claims{}
-			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (any, error) {
+			token, err := jwt.ParseWithClaims(rawCredential, claims, func(t *jwt.Token) (any, error) {
 				if t.Method.Alg() != alg {
 					return nil, fmt.Errorf("unexpected signing algorithm: %s", t.Method.Alg())
 				}
@@ -190,6 +228,43 @@ func (s *AuthService) Middleware() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(contextWithUser(r.Context(), user, claims)))
 		})
 	}
+}
+
+func requestCredential(r *http.Request) (raw string, bearer bool) {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			return "", true
+		}
+		return strings.TrimSpace(parts[1]), true
+	}
+	return SessionToken(r), false
+}
+
+func (s *AuthService) writeProviders(w http.ResponseWriter) {
+	providers := make([]LoginProvider, 0, len(s.providers))
+	for _, p := range s.providers {
+		if !p.Enabled() {
+			continue
+		}
+		switch p.Name() {
+		case "github":
+			providers = append(providers, LoginProvider{Type: "github", Label: "GitHub", LoginURL: "/auth/login/github"})
+		case "oidc":
+			providers = append(providers, LoginProvider{Type: "oidc", Label: "OIDC", LoginURL: "/auth/login/oidc"})
+		case "ldap":
+			providers = append(providers, LoginProvider{Type: "ldap", Label: "LDAP"})
+		default:
+			providers = append(providers, LoginProvider{Type: p.Name(), Label: p.Name()})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"providers": providers,
+		"token":     true,
+	})
 }
 
 func serveAuthenticatedIdentity(w http.ResponseWriter, r *http.Request, user *UserInfo) bool {
@@ -264,6 +339,8 @@ func (s *TokenService) IssueRefreshToken(user *UserInfo) (string, error) {
 	return s.issueToken(user, s.rkValidity)
 }
 
+func (s *TokenService) AccessTokenTTL() time.Duration { return s.akValidity }
+
 func (s *TokenService) issueToken(user *UserInfo, ttl time.Duration) (string, error) {
 	now := time.Now()
 	principalType := user.Type
@@ -331,19 +408,14 @@ func Middleware(cfg config.AuthConfig, tokenService *TokenService) func(http.Han
 				}
 			}
 
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				writeAuthError(w, "Authorization header is required")
-				return
-			}
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				writeAuthError(w, "Invalid Authorization header format")
+			rawCredential, _ := requestCredential(r)
+			if rawCredential == "" {
+				writeAuthError(w, "Authentication credential is required")
 				return
 			}
 
 			claims := &Claims{}
-			token, err := jwt.ParseWithClaims(parts[1], claims, func(t *jwt.Token) (any, error) {
+			token, err := jwt.ParseWithClaims(rawCredential, claims, func(t *jwt.Token) (any, error) {
 				if t.Method.Alg() != alg {
 					return nil, fmt.Errorf("unexpected signing algorithm: %s", t.Method.Alg())
 				}

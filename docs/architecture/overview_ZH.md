@@ -12,6 +12,7 @@ Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义
 
 | 层级 | 文档 | 物理或逻辑职责 |
 |---|---|---|
+| Security / IAM | [企业级 IAM 授权](enterprise-iam-authorization_ZH.md) | Subject/group/role/grant 模型、Resource URN、请求匹配与资源列表范围 |
 | L1 Engine | [API Server](engine/apiserver_ZH.md) | 外部 REST/A2A 网关及唯一数据库客户端 |
 | L1 Engine | [Controller](engine/controller_ZH.md) | Flow 发现与活跃 Run 的 JobManager 生命周期 |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters_ZH.md) | application/session 运行时生命周期与隔离 |
@@ -181,7 +182,7 @@ API 轮询避免 CRD 复杂度，并让流程目录始终位于唯一 DB 网关 
 
 ### 部署命名空间与 Pod 命名
 
-- **系统命名空间：** 默认 `flowgen-system`，可用 `runtime.system_namespace` 或 `FLOWGENT__RUNTIME__SYSTEM_NAMESPACE` 配置。Helm 部署的 apiserver、controller、notifier、a2a 与中间件长期驻留于此。
+- **系统命名空间：** 默认 `flowgent-system`，可用 `runtime.system_namespace` 或 `FLOWGENT__RUNTIME__SYSTEM_NAMESPACE` 配置。Helm 部署的 apiserver、controller、notifier、a2a 与中间件长期驻留于此。
 - **工作负载命名空间：** `{runtime.namespace.namespace_prefix}{namespaceId}`，默认 `flowgent-{namespaceId}`。JobManager、TaskManager 与 Sandbox 位于此处。同一业务 Namespace 的 Flow 共享 K8s namespace；运行时隔离由 `runtime_cluster_id` 表达。
 
 | 组件 | 必需 | K8s namespace | 职责 |
@@ -200,7 +201,7 @@ API 轮询避免 CRD 复杂度，并让流程目录始终位于唯一 DB 网关 
 custody。
 
 ```
-系统服务（flowgen-system 中的 Helm release，{hash}=K8s 后缀）：
+系统服务（flowgent-system 中的 Helm release，{hash}=K8s 后缀）：
   flowgent-{component}-{hash}
 
 Application FlowRun JM（{hash}=K8s 后缀）：

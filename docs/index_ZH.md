@@ -9,6 +9,7 @@
 
 | 层次 | 文档 | 范围 |
 |---|---|---|
+| Security / IAM | [企业级 IAM 授权](architecture/enterprise-iam-authorization_ZH.md) | Subject/group/role/grant 模型、Resource URN、请求匹配与资源列表范围 |
 | L1 引擎 | [引擎总览](architecture/overview_ZH.md) | 跨组件调用、状态与消息契约、部署及共享模块 |
 | L1 引擎 | [API Server](architecture/engine/apiserver_ZH.md) | 外部网关与唯一 durable-state client |
 | L1 引擎 | [Controller](architecture/engine/controller_ZH.md) | 活跃 Run 的 JobManager 协调 |
@@ -22,14 +23,14 @@
 
 ## 应用
 
-每个应用在 `usecase/{use-case}/README.md` 中归口自己的 Nodes、Edges、
+每个应用在 `use-cases/{use-case}/README.md` 中归口自己的 Nodes、Edges、
 Integrations、Limits 与 Verification；可执行资源与其放在同一用例目录。
 共享 DAG 语义归属 [AgentFlow 应用架构](architecture/agent-flow_ZH.md)。
 
 | 应用 | 范围 | 入口 |
 |---|---|---|
-| Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；27 Nodes/31 Edges DAG | [设计](../usecase/security-autonomy-fixer/README.md) · [中文](../usecase/security-autonomy-fixer/README_ZH.md) · [Manifest](../usecase/security-autonomy-fixer/config/flows/security-autonomy-fixer.yaml) · [E2E](../usecase/security-autonomy-fixer/e2e/VERIFICATION.md) |
-| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../usecase/autotest-generator/README.md) · [中文](../usecase/autotest-generator/README_ZH.md) · [Manifest](../usecase/autotest-generator/config/flows/autotest-generation-v1.yaml) |
+| Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
+| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/config/flows/autotest-generation-v1.yaml) |
 
 ## 运维
 
@@ -63,9 +64,9 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 - 当前行为 **MUST** 写入拥有该行为的现行设计文档。
 - 通用 AgentFlow 语义 **MUST** 保留在 `architecture/`；应用专属 Nodes、Edges、
   Integrations 与 E2E 证据 **MUST** 保留在所属的
-  `usecase/{use-case}/README.md`。
+  `use-cases/{use-case}/README.md`。
 - 每个真实应用 **MUST** 提供 `README.md` 和 `README_ZH.md`；其 Flow、Agent 与
-  MCP Definition **MUST** 在 `usecase/{use-case}/config/` 下保持自包含，运行凭据
+  MCP Definition **MUST** 在 `use-cases/{use-case}/config/` 下保持自包含，运行凭据
   **MUST** 保留在 Manifest 之外。
 - 每个设计概念 **MUST** 只有一个规范归属位置；其他文档 **MUST** 通过链接引用，禁止复制。
 - 设计文档 **MUST** 明确区分已实现行为、保留设计和已知限制。

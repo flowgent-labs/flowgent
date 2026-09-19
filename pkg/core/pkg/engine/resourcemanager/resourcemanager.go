@@ -63,6 +63,7 @@ type ResourceManagerConfig struct {
 	RuntimeMode              entities.RuntimeMode
 	OwnerJobManagerName      string
 	OwnerJobManagerNamespace string
+	ResourceOwner            string
 	DeleteOnShutdown         bool
 
 	// Sandbox deployment settings (for K8sRM in distributed mode)

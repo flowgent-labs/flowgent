@@ -14,6 +14,7 @@ their owning documents.
 
 | Layer | Document | Physical or logical ownership |
 |---|---|---|
+| Security / IAM | [Enterprise IAM authorization](enterprise-iam-authorization.md) | Subject/group/role/grant model, Resource URN, request matchers, and resource-list scoping |
 | L1 Engine | [API Server](engine/apiserver.md) | External REST/A2A gateway and sole database client |
 | L1 Engine | [Controller](engine/controller.md) | Flow discovery and active-run JobManager lifecycle |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters.md) | Application/session runtime lifecycle and isolation |
@@ -198,7 +199,7 @@ behind the apiserver as the single DB gateway.
 
 Namespace isolation uses two K8s layers:
 
-- **System namespace**: `flowgen-system` by default, configurable via
+- **System namespace**: `flowgent-system` by default, configurable via
   `runtime.system_namespace` or `FLOWGENT__RUNTIME__SYSTEM_NAMESPACE`.
   Long-running platform services live here: apiserver, controller, notifier,
   a2a, and middleware deployed by Helm.
@@ -228,7 +229,7 @@ Pod names and labels carry `namespace_id` + `flow_id` for observability:
 > All-in-one mode does not embed private-key custody.
 
 ```
-System services (Helm release in flowgen-system, {hash}=K8s suffix):
+System services (Helm release in flowgent-system, {hash}=K8s suffix):
   flowgent-{component}-{hash}
 
 Application FlowRun JobManager ({hash}=K8s suffix):

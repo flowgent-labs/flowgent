@@ -1,0 +1,21 @@
+consoleVersion: core.flowgent.io/v1
+kind: LLMProvider
+metadata:
+  name: deepseek
+  namespace: security-fixer
+  labels:
+    provider: deepseek
+    catalog: llm
+  status: active
+  description: DeepSeek LLM API provider — used by all AI agents in the security-autonomy-fixer pipeline
+
+data:
+  provider: OPENAI
+  endpoint: https://api.deepseek.com/v1
+  api_key_env: DEEPSEEK_API_KEY_FLOWGENT
+  defaultModel: deepseek-chat
+  timeout: 120s
+  models:
+    - name: deepseek-chat
+      temperature: 0.2
+      topk: 1

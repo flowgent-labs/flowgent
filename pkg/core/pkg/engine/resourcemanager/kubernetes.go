@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/cache/pkg"
+	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
@@ -29,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 // RMState is the persisted state of TM and sandbox scaling for JM failover.
@@ -116,6 +118,7 @@ type KubernetesResourceManager struct {
 	runtimeMode              entities.RuntimeMode
 	ownerJobManagerName      string
 	ownerJobManagerNamespace string
+	managedByLabelValue      string
 	deleteOnShutdown         bool
 	credentialEnvSecret      string
 	internalAuthSecret       string
@@ -138,6 +141,16 @@ const (
 	LabelValueRuntimeCluster = "runtime-cluster"
 	runtimeReadyLease        = 15 * time.Second
 )
+
+// ManagedByLabelValue returns the installation-scoped runtime owner label.
+// The historical default remains stable, while named installations avoid
+// cross-controller garbage collection on shared clusters.
+func ManagedByLabelValue(resourceOwner string) string {
+	if resourceOwner == "" || resourceOwner == "flowgent" {
+		return LabelValueRuntimeCluster
+	}
+	return resourceid.KubernetesName(resourceOwner, LabelValueRuntimeCluster)
+}
 
 func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResourceManager, error) {
 	if cfg.SlotsPerTM <= 0 {
@@ -233,6 +246,7 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		runtimeMode:              cfg.RuntimeMode,
 		ownerJobManagerName:      cfg.OwnerJobManagerName,
 		ownerJobManagerNamespace: cfg.OwnerJobManagerNamespace,
+		managedByLabelValue:      ManagedByLabelValue(cfg.ResourceOwner),
 		deleteOnShutdown:         cfg.DeleteOnShutdown,
 		credentialEnvSecret:      cfg.CredentialEnvSecret,
 		internalAuthSecret:       cfg.InternalAuthSecret,
@@ -896,10 +910,31 @@ func (s *KubernetesResourceManager) reconcileDeployment(ctx context.Context, exi
 		reflect.DeepEqual(existing.Spec.Template, desired.Spec.Template) {
 		return nil
 	}
-	existing.Labels = desired.Labels
-	existing.Spec.Template = desired.Spec.Template
-	_, err := s.kubeClient.AppsV1().Deployments(s.namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	return err
+	deploymentName := existing.Name
+	deploymentNamespace := existing.Namespace
+	if deploymentNamespace == "" {
+		deploymentNamespace = s.namespace
+	}
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		latest, getErr := s.kubeClient.AppsV1().Deployments(deploymentNamespace).
+			Get(ctx, deploymentName, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		if reflect.DeepEqual(latest.Labels, desired.Labels) &&
+			reflect.DeepEqual(latest.Spec.Template, desired.Spec.Template) {
+			return nil
+		}
+		latest.Labels = desired.Labels
+		latest.Spec.Template = desired.Spec.Template
+		_, updateErr := s.kubeClient.AppsV1().Deployments(deploymentNamespace).
+			Update(ctx, latest, metav1.UpdateOptions{})
+		return updateErr
+	})
+	if err != nil {
+		return fmt.Errorf("reconcile deployment %s/%s: %w", deploymentNamespace, deploymentName, err)
+	}
+	return nil
 }
 
 func (s *KubernetesResourceManager) tmLabels() map[string]string {
@@ -925,7 +960,7 @@ func (s *KubernetesResourceManager) tmLabels() map[string]string {
 	if s.ownerRunID != "" {
 		labels[LabelRunID] = s.ownerRunID
 	}
-	labels[LabelManagedBy] = LabelValueRuntimeCluster
+	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels
 }
 
@@ -952,7 +987,7 @@ func (s *KubernetesResourceManager) sandboxLabels() map[string]string {
 	if s.ownerRunID != "" {
 		labels[LabelRunID] = s.ownerRunID
 	}
-	labels[LabelManagedBy] = LabelValueRuntimeCluster
+	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels
 }
 

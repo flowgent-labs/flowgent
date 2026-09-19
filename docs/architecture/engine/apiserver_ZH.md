@@ -163,11 +163,19 @@ Definition、Run、Task、Approval 与 Trace 共享一致的 Repository 边界�
 Owner 在 Namespace Settings 管理成员；Flow Owner 在该 Flow Settings 管理直接授权。
 系统禁止删除最后一个 Namespace Owner，也禁止当前身份移除自身。
 
-JWT（ES256/RS256/EdDSA）、OIDC 与 LDAP 身份共用相同 Evaluator。Controller、JM、
-TM、Notifier 与 A2A 分别使用 Kubernetes Secret 投递的可轮换 Workload Token。
-API Key 明文只显示一次；数据库只保存 SHA-256 摘要、前后缀、有效期、撤销状态、
-Namespace 限制和显式 Permission 限制。Namespace Owner 可为该组织 Service Account
-签发 Key，但最终权限仍受目标 Principal 的 Role Binding 限制。
+JWT（ES256/RS256/EdDSA）、GitHub 浏览器 SSO、通用 OIDC 与 LDAP 身份共用相同
+Evaluator。GitHub SSO 使用标准 OAuth2 authorization-code flow；通用 OIDC 使用
+Provider Discovery、ID Token 验签和 Nonce 校验。浏览器登录成功后，Callback
+设置 HttpOnly `flowgent_session` Cookie 并返回 `303 /dashboard`；Callback
+不会把 Token 写入 HTML 或浏览器存储，因此 CSP 可保持 `script-src 'self'`。
+手动 Bearer 输入仅用于 API Key 与 break-glass Token。LDAP 密码登录成功后也遵循
+同一个浏览器 Session Cookie 契约。`POST /auth/logout` 清理 Session Cookie。
+
+Controller、JM、TM、Notifier 与 A2A 分别使用 Kubernetes Secret 投递的可轮换
+Workload Token。API Key 明文只显示一次；数据库只保存 SHA-256 摘要、前后缀、
+有效期、撤销状态、Namespace 限制和显式 Permission 限制。Namespace Owner 可为
+该组织 Service Account 签发 Key，但最终权限仍受目标 Principal 的 Role Binding
+限制。
 
 跨团队复用通过生产方拥有的不可变 `FlowRelease` 完成。消费方获得显式 Grant 后，
 把副本安装到自己的 Namespace，并自行拥有资源绑定、Secret、Run、Trace 与结果；

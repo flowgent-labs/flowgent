@@ -11,7 +11,7 @@ deterministic, which work may use an LLM, how outputs move between nodes, where
 approval is required, and which side effects are permitted. The L1 engine
 persists, schedules, dispatches, isolates, and observes the configured graph.
 Concrete application nodes, edges, integrations, and E2E evidence belong to
-the owning `usecase/{use-case}/README.md`, linked from the use-case catalog.
+the owning `use-cases/{use-case}/README.md`, linked from the use-case catalog.
 
 ```text
 Flow manifest + Agent/MCP/Skill definitions
@@ -382,7 +382,7 @@ directory holds the annotated engine configuration:
 etc/
 └── flowgent.yaml
 
-usecase/{use-case}/config/
+use-cases/{use-case}/config/
 ├── agents/                  # Agent definitions
 ├── flows/                   # Flow manifests
 ├── mcps/                    # Remote MCP definitions
@@ -576,10 +576,10 @@ flowgent console -c etc/staging.yaml -- import /tmp/prod-export.yaml
 
 # 3. Or — import individual resource files from a config directory
 flowgent console -c etc/dev.yaml -- import \
-  usecase/my-application/config/agents/ \
-  usecase/my-application/config/flows/ \
-  usecase/my-application/config/mcps/ \
-  usecase/my-application/config/skills/
+  use-cases/my-application/config/agents/ \
+  use-cases/my-application/config/flows/ \
+  use-cases/my-application/config/mcps/ \
+  use-cases/my-application/config/skills/
 ```
 
 ### Module Dependency

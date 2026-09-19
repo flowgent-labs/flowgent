@@ -22,7 +22,7 @@
 架构与 use-case 契约仍由
 [`architecture/overview.md`](../architecture/overview.md)、
 [`architecture/agent-flow.md`](../architecture/agent-flow.md) 和
-[`usecase/security-autonomy-fixer/README.md`](../../usecase/security-autonomy-fixer/README.md)
+[`use-cases/security-autonomy-fixer/README.md`](../../use-cases/security-autonomy-fixer/README.md)
 维护；本计划只记录实施进度与验证证据。
 
 ## 强制门禁
@@ -165,7 +165,7 @@ topic、Jaeger 关联、脱敏 UI 证据以及专用真实 A2A verifier。
 |    5 | `e14e61c1-d9cd-42d7-865c-50326105588c` |           86 | `3d3f61ad-3e2a-41d1-94ed-e9fcaee3420e` | 通过 |
 
 机器可读汇总为 `PASS`，连续成功数为 `5/5`，文件位于
-`usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/summary.json`。
+`use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/summary.json`。
 每轮均保留 `00_summary.md`、15 份场景报告、Playwright HTML 输出和截图。第 5 轮
 代表性截图包括 `ui-run-dag.png`、`ui-attempt-io.png`、`ui-jaeger-attempt.png`、
 `ui-real-retry-attempts.png`、`ui-real-retry-jaeger.png`、
@@ -220,20 +220,20 @@ runtime-cluster 契约。当前验收必须重新从空库 Helm 部署开始，�
 
 - 每轮 summary 保留在 use-case 的 `e2e/reports/` 证据目录。
 - Review 截图和机器可读 summary 按轮归档在
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds/`。
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds/`。
 - 阶段二五轮证据归档在
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase2/`；每轮保留
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase2/`；每轮保留
   `round.json`、`ui-provision.json`、15 份场景报告、Playwright HTML 报告和 UI 截图。
 - 阶段三 RBAC/A2A 证据独立归档在
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase3-rbac-a2a/`。
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase3-rbac-a2a/`。
 - 阶段四 Settings/运行时配置证据归档在
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase4-settings-runtime-config/`；
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase4-settings-runtime-config/`；
   每轮均保留 `round.json`、`ui-provision.json`、15 份场景报告、Playwright HTML
   报告和已脱敏 UI 截图。
 - 真实三 attempt retry probe 截图保留在阶段四证据目录的 `retry-probe/` 下。
 - 旧阶段五 pool-model 证据只作为历史记录，不能证明当前 runtime-cluster 契约。
 - 当前 runtime-cluster 验收证据归档在
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/`；
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/`；
   每轮均需保留 `round.json`、`ui-provision.json`、15 份场景报告，以及 Runtime mode
   配置、GitHub 风格 Settings、DAG、attempt I/O、RBAC、脱敏 Secret 和 Jaeger 关联截图。
 - 本计划和任何生成证据都不得写入 Secret。

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -178,46 +179,52 @@ func TestE2E_OIDC_FullFlow(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	client := &http.Client{
+		Jar:     jar,
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	resp1, err := client.Get(fmt.Sprintf("http://localhost:%d/auth/login/oidc", oidcCallbackPort))
 	if err != nil {
 		t.Fatalf("login request: %v", err)
 	}
 	defer resp1.Body.Close()
-
-	body1, _ := io.ReadAll(resp1.Body)
-	if resp1.StatusCode != http.StatusOK {
-		t.Fatalf("step 1: expected 200 after redirect chain, got %d: %s", resp1.StatusCode, string(body1))
+	if resp1.StatusCode != http.StatusFound {
+		body1, _ := io.ReadAll(resp1.Body)
+		t.Fatalf("step 1: expected provider redirect, got %d: %s", resp1.StatusCode, string(body1))
 	}
-	var result map[string]any
-	if err := json.Unmarshal(body1, &result); err != nil {
-		t.Fatalf("decode login response: %v", err)
+	location := resp1.Header.Get("Location")
+	if !strings.HasPrefix(location, kcIssuer+"/protocol/openid-connect/auth?") {
+		t.Fatalf("step 1: unexpected redirect location: %s", location)
 	}
-	if result["success"] != true {
-		t.Fatalf("login failed: %v", result)
+	callbackURL, err := url.Parse(fmt.Sprintf("http://localhost:%d/auth/callback/oidc", oidcCallbackPort))
+	if err != nil {
+		t.Fatal(err)
 	}
-	accessToken, _ := result["access_token"].(string)
-	if accessToken == "" {
-		t.Fatal("no access_token in response")
+	if got := jar.Cookies(callbackURL); !hasCookie(got, "oidc_state") || !hasCookie(got, "oidc_nonce") {
+		t.Fatalf("step 1: expected OIDC state and nonce cookies, got %#v", got)
 	}
-	refreshToken, _ := result["refresh_token"].(string)
-	if refreshToken == "" {
-		t.Fatal("no refresh_token in response")
-	}
-
-	user, _ := result["user"].(map[string]any)
-	t.Logf("OIDC login OK: user=%v", user)
 
 	req2, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/api/protected", oidcCallbackPort), nil)
-	req2.Header.Set("Authorization", "Bearer "+accessToken)
 	resp2, err := client.Do(req2)
 	if err != nil {
 		t.Fatalf("protected request: %v", err)
 	}
 	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
+	if resp2.StatusCode != http.StatusUnauthorized {
 		body2, _ := io.ReadAll(resp2.Body)
-		t.Errorf("step 2: protected endpoint status = %d, want 200: %s", resp2.StatusCode, string(body2))
+		t.Errorf("step 2: protected endpoint status = %d, want 401 before callback: %s", resp2.StatusCode, string(body2))
 	}
+}
+
+func hasCookie(cookies []*http.Cookie, name string) bool {
+	for _, cookie := range cookies {
+		if cookie.Name == name && cookie.Value != "" {
+			return true
+		}
+	}
+	return false
 }

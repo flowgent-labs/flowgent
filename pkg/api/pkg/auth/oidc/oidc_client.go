@@ -4,23 +4,18 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	oidcprovider "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"golang.org/x/oauth2"
 )
 
-// ── OIDC HTTP client ──────────────────────────────────────────────
-
-// oidcClient handles all HTTP interactions with the OIDC provider.
-// Separated from oidc_auth.go to keep the provider logic clean.
 type oidcClient struct {
 	cfg        config.OIDCConfig
 	httpClient *http.Client
@@ -33,182 +28,130 @@ func newOIDCClient(cfg config.OIDCConfig) *oidcClient {
 	}
 }
 
-// buildAuthURL performs OIDC discovery and constructs the authorization URL.
-func (c *oidcClient) buildAuthURL(ctx context.Context) (string, string, error) {
-	issuerURL := strings.TrimRight(c.cfg.IssueURL, "/")
-	authEndpoint, err := c.discoverEndpoint(ctx, issuerURL, "authorization_endpoint")
+func (c *oidcClient) buildAuthURL(ctx context.Context) (authURL, state, nonce string, err error) {
+	provider, err := c.provider(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-
-	state := generateState()
-	nonce := generateState()
-
-	authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&scope=%s&state=%s&nonce=%s",
-		authEndpoint,
-		url.QueryEscape(c.cfg.ClientID),
-		url.QueryEscape(c.cfg.RedirectURL),
-		url.QueryEscape(c.cfg.Scope),
-		url.QueryEscape(state),
-		url.QueryEscape(nonce),
-	)
-	return authURL, state, nil
+	state = randomURLToken()
+	nonce = randomURLToken()
+	return c.oauthConfig(provider.Endpoint()).AuthCodeURL(state, oidcprovider.Nonce(nonce)), state, nonce, nil
 }
 
-// exchangeCode exchanges the authorization code for tokens.
-func (c *oidcClient) exchangeCode(ctx context.Context, code string) (map[string]any, error) {
-	issuerURL := strings.TrimRight(c.cfg.IssueURL, "/")
-	tokenEndpoint, err := c.discoverEndpoint(ctx, issuerURL, "token_endpoint")
+func (c *oidcClient) exchangeCode(ctx context.Context, code string) (*oauth2.Token, error) {
+	provider, err := c.provider(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	data := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {c.cfg.RedirectURL},
-		"client_id":     {c.cfg.ClientID},
-		"client_secret": {c.cfg.ClientSecret},
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
+	token, err := c.oauthConfig(provider.Endpoint()).Exchange(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("oidc token exchange: %w", err)
 	}
+	if !token.Valid() {
+		return nil, fmt.Errorf("oidc token exchange returned invalid token")
+	}
+	return token, nil
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint,
-		strings.NewReader(data.Encode()))
+func (c *oidcClient) extractUserInfo(ctx context.Context, token *oauth2.Token, nonce string) (*auth.UserInfo, error) {
+	provider, err := c.provider(ctx)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("token request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned status %d: %s", resp.StatusCode, string(body))
+	user := &auth.UserInfo{
+		Issuer: "oidc:" + strings.TrimRight(c.cfg.IssueURL, "/"),
+		Type:   entities.PrincipalUser,
+		Extra:  make(map[string]any),
 	}
 
-	var tokenResp map[string]any
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("decode token response: %w", err)
-	}
-	return tokenResp, nil
-}
-
-// extractUserInfo extracts user identity from ID token claims or the userinfo endpoint.
-func (c *oidcClient) extractUserInfo(ctx context.Context, tokenResp map[string]any) (*auth.UserInfo, error) {
-	user := &auth.UserInfo{Issuer: "oidc:" + strings.TrimRight(c.cfg.IssueURL, "/"), Extra: make(map[string]any)}
-
-	// Try ID token claims first
-	if idToken, ok := tokenResp["id_token"].(string); ok {
-		if claims, err := decodeJWTBody(idToken); err == nil {
-			if sub, ok := claims["sub"].(string); ok {
-				user.UserID = sub
-			}
-			if name, ok := claims["preferred_username"].(string); ok {
-				user.Username = name
-			} else if name, ok := claims["email"].(string); ok {
-				user.Username = name
-			}
-			if email, ok := claims["email"].(string); ok {
-				user.Email = email
-			}
-			if name, ok := claims["name"].(string); ok {
-				user.DisplayName = name
-			}
+	if rawIDToken, ok := token.Extra("id_token").(string); ok && rawIDToken != "" {
+		verifier := provider.Verifier(&oidcprovider.Config{ClientID: c.cfg.ClientID})
+		idToken, err := verifier.Verify(ctx, rawIDToken)
+		if err != nil {
+			return nil, fmt.Errorf("oidc id_token verify: %w", err)
 		}
-	}
-
-	// Fallback: call userinfo endpoint
-	if user.UserID == "" {
-		if accessToken, ok := tokenResp["access_token"].(string); ok {
-			issuerURL := strings.TrimRight(c.cfg.IssueURL, "/")
-			userinfoEndpoint, err := c.discoverEndpoint(ctx, issuerURL, "userinfo_endpoint")
-			if err == nil {
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, userinfoEndpoint, nil)
-				req.Header.Set("Authorization", "Bearer "+accessToken)
-				resp, err := c.httpClient.Do(req)
-				if err == nil {
-					defer resp.Body.Close()
-					var info map[string]any
-					if json.NewDecoder(resp.Body).Decode(&info) == nil {
-						if sub, ok := info["sub"].(string); ok {
-							user.UserID = sub
-						}
-						if name, ok := info["preferred_username"].(string); ok {
-							user.Username = name
-						}
-						if email, ok := info["email"].(string); ok {
-							user.Email = email
-						}
-						if name, ok := info["name"].(string); ok {
-							user.DisplayName = name
-						}
-					}
-				}
-			}
+		if nonce != "" && idToken.Nonce != nonce {
+			return nil, fmt.Errorf("oidc nonce mismatch")
 		}
+		var claims struct {
+			Subject           string   `json:"sub"`
+			PreferredUsername string   `json:"preferred_username"`
+			Email             string   `json:"email"`
+			Name              string   `json:"name"`
+			Groups            []string `json:"groups"`
+		}
+		if err := idToken.Claims(&claims); err != nil {
+			return nil, fmt.Errorf("oidc id_token claims: %w", err)
+		}
+		applyClaims(user, claims.Subject, claims.PreferredUsername, claims.Email, claims.Name, claims.Groups)
 	}
 
 	if user.UserID == "" {
-		return nil, fmt.Errorf("unable to extract user identity from token response")
+		ctx = oidcprovider.ClientContext(ctx, c.httpClient)
+		userInfo, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+		if err != nil {
+			return nil, fmt.Errorf("oidc userinfo: %w", err)
+		}
+		var claims struct {
+			Subject           string   `json:"sub"`
+			PreferredUsername string   `json:"preferred_username"`
+			Email             string   `json:"email"`
+			Name              string   `json:"name"`
+			Groups            []string `json:"groups"`
+		}
+		if err := userInfo.Claims(&claims); err != nil {
+			return nil, fmt.Errorf("oidc userinfo claims: %w", err)
+		}
+		applyClaims(user, claims.Subject, claims.PreferredUsername, claims.Email, claims.Name, claims.Groups)
+	}
+	if user.UserID == "" {
+		return nil, fmt.Errorf("oidc user identity is missing subject")
 	}
 	return user, nil
 }
 
-// discoverEndpoint fetches a specific endpoint from the OIDC discovery document.
-func (c *oidcClient) discoverEndpoint(ctx context.Context, issuerURL, key string) (string, error) {
-	wellKnown := issuerURL + "/.well-known/openid-configuration"
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnown, nil)
-	if err != nil {
-		return "", err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch discovery doc: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("discovery doc returned status %d", resp.StatusCode)
-	}
-
-	var discovery map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
-		return "", fmt.Errorf("decode discovery doc: %w", err)
-	}
-
-	endpoint, ok := discovery[key].(string)
-	if !ok || endpoint == "" {
-		return "", fmt.Errorf("no %s in discovery doc", key)
-	}
-	return endpoint, nil
+func (c *oidcClient) provider(ctx context.Context) (*oidcprovider.Provider, error) {
+	ctx = oidcprovider.ClientContext(ctx, c.httpClient)
+	return oidcprovider.NewProvider(ctx, strings.TrimRight(c.cfg.IssueURL, "/"))
 }
 
-// ── Helpers ───────────────────────────────────────────────────────
-
-func generateState() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+func (c *oidcClient) oauthConfig(endpoint oauth2.Endpoint) *oauth2.Config {
+	return &oauth2.Config{
+		ClientID:     c.cfg.ClientID,
+		ClientSecret: c.cfg.ClientSecret,
+		RedirectURL:  c.cfg.RedirectURL,
+		Scopes:       oidcScopes(c.cfg.Scope),
+		Endpoint:     endpoint,
+	}
 }
 
-// decodeJWTBody extracts claims from a JWT body without verifying the signature.
-func decodeJWTBody(token string) (map[string]any, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid JWT format")
+func oidcScopes(scope string) []string {
+	fields := strings.Fields(scope)
+	for _, field := range fields {
+		if field == "openid" {
+			return fields
+		}
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("decode JWT payload: %w", err)
+	return append([]string{"openid"}, fields...)
+}
+
+func applyClaims(user *auth.UserInfo, sub, preferredUsername, email, name string, groups []string) {
+	user.UserID = sub
+	user.Username = preferredUsername
+	if user.Username == "" {
+		user.Username = email
 	}
-	var claims map[string]any
-	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return nil, err
+	if user.Username == "" {
+		user.Username = sub
 	}
-	return claims, nil
+	user.Email = email
+	user.DisplayName = name
+	user.Groups = append([]string(nil), groups...)
+}
+
+func randomURLToken() string {
+	raw := make([]byte, 32)
+	_, _ = rand.Read(raw)
+	return base64.RawURLEncoding.EncodeToString(raw)
 }

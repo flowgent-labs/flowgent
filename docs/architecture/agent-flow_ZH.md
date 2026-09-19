@@ -6,7 +6,7 @@
 
 **运行时绑定：** 每个 Flow 必须声明一个 `runtime_mode`（`application` 或 `session`）
 
-AgentFlow 是面向应用的 DAG 模型：它定义哪些工作是确定性的、哪些可使用 LLM、输出如何在节点间流动、何处需要审批，以及允许哪些副作用。L1 引擎负责持久化、调度、分派、隔离和观测这张图。具体应用的 Nodes、Edges、Integrations 与 E2E 证据归属 `usecase/{use-case}/README.md`，并由文档索引统一索引。
+AgentFlow 是面向应用的 DAG 模型：它定义哪些工作是确定性的、哪些可使用 LLM、输出如何在节点间流动、何处需要审批，以及允许哪些副作用。L1 引擎负责持久化、调度、分派、隔离和观测这张图。具体应用的 Nodes、Edges、Integrations 与 E2E 证据归属 `use-cases/{use-case}/README.md`，并由文档索引统一索引。
 
 ```text
 Flow manifest + Agent/MCP/Skill definitions
@@ -316,7 +316,7 @@ orchestration:
 etc/
 └── flowgent.yaml
 
-usecase/{use-case}/config/
+use-cases/{use-case}/config/
 ├── agents/
 ├── flows/
 ├── mcps/
@@ -419,10 +419,10 @@ flowgent console -c etc/staging.yaml -- import /tmp/prod-export.yaml
 
 # 或导入用例目录的单项资源
 flowgent console -c etc/dev.yaml -- import \
-  usecase/my-application/config/agents/ \
-  usecase/my-application/config/flows/ \
-  usecase/my-application/config/mcps/ \
-  usecase/my-application/config/skills/
+  use-cases/my-application/config/agents/ \
+  use-cases/my-application/config/flows/ \
+  use-cases/my-application/config/mcps/ \
+  use-cases/my-application/config/skills/
 ```
 
 `console` 依赖 `config`、`model` 与 `store`，在依赖图中与 `core` 同层并由

@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.a2a.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -17,7 +18,7 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: a2a
-{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+{{ if and .Values.runtime.secrets.vault.enabled .Values.runtime.secrets.vault.injectAnnotations }}
       annotations:
         {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
 {{ end }}
@@ -43,7 +44,7 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
             {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
 {{ end }}
           resources:
@@ -58,7 +59,7 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
         {{- include "flowgent.credentialVolumes" . | nindent 8 }}
 {{ end }}
 ---
@@ -70,10 +71,16 @@ metadata:
     {{- include "flowgent.labels" . | nindent 4 }}
     app.kubernetes.io/component: a2a
 spec:
+  type: {{ .Values.a2a.service.type | default "ClusterIP" }}
   selector:
     {{- include "flowgent.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: a2a
   ports:
     - name: http
       port: {{ .Values.a2a.service.port }}
+      targetPort: http
+{{- if and (eq (.Values.a2a.service.type | default "ClusterIP") "NodePort") .Values.a2a.service.nodePort }}
+      nodePort: {{ .Values.a2a.service.nodePort }}
+{{- end }}
+{{- end }}
 {{- end }}

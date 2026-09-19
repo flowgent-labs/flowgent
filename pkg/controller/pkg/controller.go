@@ -32,7 +32,7 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/discovery"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/trigger"
-	"github.com/flowgent-labs/flowgent/model/pkg"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
@@ -809,7 +809,7 @@ func resourceMemory(resources *model.SandboxResources) string {
 func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID string, spec *entities.FlowInfo, run *entities.FlowRunInfo, clusterID, runtimeConfigMap, runtimeSecret, runtimeChecksum string) *appsv1.Deployment {
 	replicas := int32(1)
 	labels := map[string]string{
-		"app":                          "flowgent-jobmanager",
+		"app":                          c.applicationJobManagerAppLabel(),
 		"app.kubernetes.io/component":  "jobmanager",
 		"flowgent.io/namespace":        namespaceID,
 		"flowgent.io/flow":             spec.ID,
@@ -883,6 +883,14 @@ func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID stri
 			},
 		},
 	}
+}
+
+func (c *FlowgentController) applicationJobManagerAppLabel() string {
+	owner := strings.TrimSpace(c.cfg.Runtime.ResourceOwner)
+	if owner == "" || owner == "flowgent" {
+		return "flowgent-jobmanager"
+	}
+	return resourceid.KubernetesName(owner, "jobmanager")
 }
 
 func (c *FlowgentController) jobManagerTokenEnv() corev1.EnvVar {
@@ -968,7 +976,7 @@ func (c *FlowgentController) systemNamespace() string {
 	if c.cfg.Runtime.K8sNamespace != "" {
 		return c.cfg.Runtime.K8sNamespace
 	}
-	return "flowgen-system"
+	return "flowgent-system"
 }
 
 // gcOrphanedJMDeployments deletes dedicated JM Deployments (labeled
@@ -989,7 +997,7 @@ func (c *FlowgentController) gcOrphanedJMDeployments(ctx context.Context, seen m
 
 	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set{
-			"app":                            "flowgent-jobmanager",
+			"app":                            c.applicationJobManagerAppLabel(),
 			resourcemanager.LabelRuntimeMode: string(entities.RuntimeModeApplication),
 		}).String(),
 	})
@@ -1057,7 +1065,7 @@ func (c *FlowgentController) gcOrphanedApplicationRuntimeDeployments(ctx context
 		return
 	}
 	selector := labels.SelectorFromSet(labels.Set{
-		resourcemanager.LabelManagedBy:   resourcemanager.LabelValueRuntimeCluster,
+		resourcemanager.LabelManagedBy:   resourcemanager.ManagedByLabelValue(c.cfg.Runtime.ResourceOwner),
 		resourcemanager.LabelRuntimeMode: string(entities.RuntimeModeApplication),
 	}).String()
 	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{LabelSelector: selector})

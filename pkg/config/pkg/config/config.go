@@ -116,7 +116,16 @@ type AuthConfig struct {
 	OIDC           OIDCConfig          `json:"oidc" yaml:"oidc"`
 	LDAP           LDAPConfig          `json:"ldap" yaml:"ldap"`
 	GitHub         GitHubAuthConfig    `json:"github" yaml:"github"`
+	AuthGuard      AuthGuardConfig     `json:"authguard" yaml:"authguard"`
 	Authorization  AuthorizationConfig `json:"authorization" yaml:"authorization"`
+}
+
+// AuthGuardConfig enables verification of the signed access context injected
+// by an AuthGuard-protected Envoy Gateway. The HMAC key must come from a secret
+// provider; an unverified principal header is never trusted.
+type AuthGuardConfig struct {
+	Enabled              bool   `json:"enabled" yaml:"enabled"`
+	AccessContextHMACKey string `json:"access_context_hmac_key" yaml:"access_context_hmac_key"`
 }
 
 // AuthorizationConfig controls default-deny API authorization. BootstrapToken
@@ -418,6 +427,7 @@ type RuntimeConfig struct {
 	TMReplicas          int                   `json:"tm_replicas" yaml:"tm_replicas"`
 	TMSlots             int                   `json:"tm_slots" yaml:"tm_slots"`
 	TMOrphanTimeout     string                `json:"tm_orphan_timeout" yaml:"tm_orphan_timeout"`
+	ResourceOwner       string                `json:"resource_owner" yaml:"resource_owner"`
 	CredentialEnvSecret string                `json:"credential_env_secret" yaml:"credential_env_secret"`
 	InternalAuthSecret  string                `json:"internal_auth_secret" yaml:"internal_auth_secret"`
 	JobManagerAuthKey   string                `json:"jobmanager_auth_key" yaml:"jobmanager_auth_key"`

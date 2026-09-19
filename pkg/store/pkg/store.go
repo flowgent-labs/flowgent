@@ -25,7 +25,7 @@ func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 		pg := cfg.Storage.Postgres
 		// Prefer explicit DSN (set via FLOWGENT__STORAGE__POSTGRES__DSN or YAML)
 		if pg.Dsn != "" {
-			pool := NewPostgresPool(context.Background(), pg.Dsn, "public")
+			pool := NewPostgresPool(context.Background(), pg.Dsn, pg.Schema)
 			if err := RunMigrationsPG(pool, "postgres"); err != nil {
 				slog.Warn("PG migrations failed (non-fatal)", "err", err)
 			}
@@ -37,7 +37,7 @@ func NewStoreManager(cfg *config.FlowgentConfig) *StoreManager {
 		}
 		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, ssl)
-		pool := NewPostgresPool(context.Background(), dsn, "public")
+		pool := NewPostgresPool(context.Background(), dsn, pg.Schema)
 		if err := RunMigrationsPG(pool, "postgres"); err != nil {
 			slog.Warn("PG migrations failed (non-fatal)", "err", err)
 		}

@@ -22,7 +22,7 @@ clean PostgreSQL + Helm redeploy
 Architecture and use-case contracts remain owned by
 [`architecture/overview.md`](../architecture/overview.md),
 [`architecture/agent-flow.md`](../architecture/agent-flow.md), and
-[`usecase/security-autonomy-fixer/README.md`](../../usecase/security-autonomy-fixer/README.md).
+[`use-cases/security-autonomy-fixer/README.md`](../../use-cases/security-autonomy-fixer/README.md).
 This plan records implementation progress and verification evidence only.
 
 ## Hard Gates
@@ -182,7 +182,7 @@ and the dedicated real A2A verifier.
 |     5 | `e14e61c1-d9cd-42d7-865c-50326105588c` |           86 | `3d3f61ad-3e2a-41d1-94ed-e9fcaee3420e` | Pass   |
 
 The machine-readable summary is `PASS` with `5/5` consecutive successes at
-`usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/summary.json`.
+`use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/summary.json`.
 Each round retained `00_summary.md`, all 15 scenario reports, Playwright HTML
 output, and screenshots. Representative round-05 screenshots include
 `ui-run-dag.png`, `ui-attempt-io.png`, `ui-jaeger-attempt.png`,
@@ -242,15 +242,15 @@ runtime model.
 
 - Per-round summaries remain under the use-case `e2e/reports/` evidence tree.
 - Review screenshots and the machine-readable summary are archived per round
-  under `usecase/security-autonomy-fixer/e2e/reports/ui-rounds/`.
+  under `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds/`.
 - Phase-2 evidence is archived under
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase2/`; every round
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase2/`; every round
   retains `round.json`, `ui-provision.json`, 15 scenario reports, the Playwright
   HTML report, and UI screenshots.
 - Phase-3 RBAC/A2A evidence is archived separately under
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase3-rbac-a2a/`.
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase3-rbac-a2a/`.
 - Phase-4 Settings/runtime-configuration evidence is archived under
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase4-settings-runtime-config/`;
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase4-settings-runtime-config/`;
   each round retains `round.json`, `ui-provision.json`, all 15 scenario reports,
   the Playwright HTML report, and redacted UI screenshots.
 - The real three-attempt retry probe screenshots are retained in the Phase-4
@@ -258,5 +258,5 @@ runtime model.
 - Superseded Phase-5 pool-model evidence is historical evidence for the
   previous model, not acceptance evidence for runtime clusters.
 - Current runtime-cluster acceptance evidence must be archived under
-  `usecase/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/`.
+  `use-cases/security-autonomy-fixer/e2e/reports/ui-rounds-phase6-runtime-clusters/`.
 - No secret value may be written into this plan or generated evidence.

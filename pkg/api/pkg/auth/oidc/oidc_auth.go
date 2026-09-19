@@ -5,12 +5,16 @@
 package oidc
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
 	"github.com/flowgent-labs/flowgent/api/pkg/auth"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+)
+
+const (
+	stateCookieName = "oidc_state"
+	nonceCookieName = "oidc_nonce"
 )
 
 // ── Provider ──────────────────────────────────────────────────────
@@ -52,7 +56,7 @@ func (p *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // handleLogin initiates the OIDC authorization code flow.
 func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
-	authURL, state, err := p.client.buildAuthURL(r.Context())
+	authURL, state, nonce, err := p.client.buildAuthURL(r.Context())
 	if err != nil {
 		slog.Error("oidc: build auth URL failed", "error", err)
 		auth.WriteJSON(w, http.StatusInternalServerError,
@@ -60,10 +64,19 @@ func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isTLS := r.TLS != nil
+	isTLS := auth.ExternalScheme(r) == "https"
 	http.SetCookie(w, &http.Cookie{
-		Name:     "oidc_state",
+		Name:     stateCookieName,
 		Value:    state,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isTLS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   600,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     nonceCookieName,
+		Value:    nonce,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   isTLS,
@@ -77,10 +90,16 @@ func (p *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleCallback processes the OIDC authorization callback.
 func (p *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, err := r.Cookie("oidc_state")
+	stateCookie, err := r.Cookie(stateCookieName)
 	if err != nil || r.URL.Query().Get("state") != stateCookie.Value {
 		auth.WriteJSON(w, http.StatusBadRequest,
 			`{"success":false,"message":"Invalid OIDC state parameter"}`)
+		return
+	}
+	nonceCookie, err := r.Cookie(nonceCookieName)
+	if err != nil || nonceCookie.Value == "" {
+		auth.WriteJSON(w, http.StatusBadRequest,
+			`{"success":false,"message":"Missing OIDC nonce"}`)
 		return
 	}
 
@@ -91,7 +110,7 @@ func (p *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenResp, err := p.client.exchangeCode(r.Context(), code)
+	token, err := p.client.exchangeCode(r.Context(), code)
 	if err != nil {
 		slog.Error("oidc: token exchange failed", "error", err)
 		auth.WriteJSON(w, http.StatusInternalServerError,
@@ -99,7 +118,7 @@ func (p *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := p.client.extractUserInfo(r.Context(), tokenResp)
+	user, err := p.client.extractUserInfo(r.Context(), token, nonceCookie.Value)
 	if err != nil {
 		slog.Error("oidc: userinfo extraction failed", "error", err)
 		auth.WriteJSON(w, http.StatusInternalServerError,
@@ -115,25 +134,10 @@ func (p *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshToken, _ := p.tokenService.IssueRefreshToken(user)
-
 	slog.Info("oidc: login successful", "user", user.Username, "email", user.Email)
 
-	// Clear state cookie
-	http.SetCookie(w, &http.Cookie{Name: "oidc_state", Value: "", Path: "/", MaxAge: -1})
+	auth.ClearCookie(w, r, stateCookieName)
+	auth.ClearCookie(w, r, nonceCookieName)
 
-	// Return tokens as JSON
-	resp := map[string]any{
-		"success":       true,
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
-		"user": map[string]any{
-			"id":           user.UserID,
-			"username":     user.Username,
-			"email":        user.Email,
-			"display_name": user.DisplayName,
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	auth.RedirectWithSession(w, r, accessToken, p.tokenService.AccessTokenTTL())
 }

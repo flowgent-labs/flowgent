@@ -8,6 +8,12 @@ global:
     tag: latest
     pullPolicy: IfNotPresent
 
+# Business workload lifecycle. Keep this true for ordinary Flowgent releases.
+# A separately managed AuthGuard middleware release sets it to false so normal
+# Flowgent upgrades cannot create, upgrade, or delete middleware resources.
+application:
+  enabled: true
+
 # ═══════════════════════════════════════════════════════════════
 # Middleware — enabled=true deploys as part of this chart.
 # enabled=false uses existing external middleware via K8s Secret.
@@ -49,6 +55,8 @@ storage:
   postgres:
     # External DSN. The E2E deployer supplies this when PostgreSQL is external.
     dsn: ""
+    # PostgreSQL schema boundary. Empty defaults to public.
+    schema: ""
   artifacts:
     provider: default          # default | s3 | gcs
     inlineMaxBytes: 262144
@@ -105,8 +113,12 @@ apiserver:
   replicas: 2
   image: ""
   service:
+    type: NodePort
     restPort: 9999
     mgmtPort: 9991
+    nodePorts:
+      rest: 30999
+      mgmt: 30991
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
@@ -127,10 +139,32 @@ a2a:
   replicas: 2
   image: ""
   service:
+    type: NodePort
     port: 9992
+    nodePort: 30992
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
+
+# ═══════════════════════════════════════════════════════════════
+# UI — Nginx-served Operations Console
+# ═══════════════════════════════════════════════════════════════
+ui:
+  enabled: true
+  replicas: 1
+  image:
+    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  apiUpstream: ""                 # default: http://{release}-apiserver:{apiserver.service.restPort}
+  service:
+    type: NodePort
+    port: 8080
+    targetPort: 8080
+    nodePort: 30080
+  resources:
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits:   { cpu: "250m", memory: "256Mi" }
 
 # ═══════════════════════════════════════════════════════════════
 # Controller — Distributed Sharded Flow Driver
@@ -147,142 +181,6 @@ controller:
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
-
-# ═══════════════════════════════════════════════════════════════
-# Session Runtime — Helm-deployed Flink-style shared runtime cluster
-# Flows with runtime_mode=session are consumed by this JobManager and execute
-# only on TM/Sandbox pods carrying this clusterId.
-# ═══════════════════════════════════════════════════════════════
-session:
-  enabled: true
-  clusterId: session
-  serviceAccount:
-    create: true
-    name: ""
-  rbac:
-    create: true
-  jobmanager:
-    replicas: 1
-    resources:
-      requests: { cpu: "100m", memory: "128Mi" }
-      limits:   { cpu: "500m", memory: "512Mi" }
-  taskmanager:
-    replicas: 1
-    slots: 4
-    resources:
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-  sandbox:
-    minReplicas: 0
-    maxReplicas: 10
-    slots: 4
-    resources:
-      limits:
-        cpu: "500m"
-        memory: "512Mi"
-
-# ═══════════════════════════════════════════════════════════════
-# Application Runtime Defaults — per-FlowRun runtime clusters created by the
-# Controller. Flow YAML top-level resources may override only pod sizes.
-# ═══════════════════════════════════════════════════════════════
-application:
-  jobmanager:
-    resources:
-      limits:
-        cpu: ""
-        memory: ""
-  taskmanager:
-    replicas: 1
-    slots: 4
-    resources:
-      limits:
-        cpu: ""
-        memory: ""
-  sandbox:
-    minReplicas: 0
-    maxReplicas: 10
-    slots: 4
-    resources:
-      limits:
-        cpu: ""
-        memory: ""
-
-# ═══════════════════════════════════════════════════════════════
-# Secrets — External K8s Secret references for credentials.
-# extraSecrets injects env vars from K8s Secrets into all engine pods
-# (taskmanager, sandbox, jobmanager). Each mapping extracts a key from
-# the named Secret and exposes it as an env var.
-# ═══════════════════════════════════════════════════════════════
-secrets:
-  extraSecrets: []
-  # Example:
-  # extraSecrets:
-  #   - name: "flowgent-llm-deepseek"
-  #     optional: true
-  #     mappings:
-  #       - key: apikey
-  #         env: DEEPSEEK_APIKEY
-  #   - name: "flowgent-github-token"
-  #     optional: true
-  #     mappings:
-  #       - key: token
-  #         env: GITHUB_TOKEN
-
-# ═══════════════════════════════════════════════════════════════
-# Credential Providers — CSI Secret Store Driver / Vault Injector
-#
-# GCP and AWS use the Kubernetes CSI Secret Store Driver
-# (secrets-store.csi.k8s.io) with SecretProviderClass resources.
-# Secrets are mounted at the specified mountPath and loaded by the
-# Go config loader from {mountPath}/{namespace}/secret/.credentials.
-#
-# Vault uses the HashiCorp Vault Agent Injector (annotation-based).
-# When vault.injectAnnotations=true, Vault annotations are added to
-# Deployment pod templates; the Vault webhook injects init/sidecar
-# containers that render secrets to files.
-#
-# Each provider uses a map structure because their configuration
-# fields differ significantly.
-# ═══════════════════════════════════════════════════════════════
-credentialProviders:
-  # Shared ServiceAccount annotations (e.g. workload identity for GCP)
-  serviceAccount:
-    annotations: {}
-    # iam.gke.io/gcp-service-account: "flowgent@PROJECT.iam.gserviceaccount.com"
-
-  # GCP Secret Manager via CSI Secret Store Driver
-  gcp:
-    enabled: false
-    mountPath: "/var/flowgent"
-    secrets: []
-    # secrets:
-    #   - resourceName: "projects/my-project/secrets/github-token/versions/latest"
-    #     fileName: "github-token"
-
-  # AWS Secrets Manager via CSI Secret Store Driver
-  aws:
-    enabled: false
-    mountPath: "/var/flowgent"
-    region: ""
-    secrets: []
-    # secrets:
-    #   - objectName: "github-token"
-    #     objectType: "secretsmanager"
-
-  # HashiCorp Vault via Vault Agent Injector (annotation-based, not CSI)
-  vault:
-    enabled: false
-    # When true, Vault agent annotations are added to Deployment pod templates.
-    # The Vault Injector webhook must be installed in the cluster.
-    injectAnnotations: true
-    vaultAddress: ""
-    vaultRole: ""
-    secrets: []
-    # secrets:
-    #   - secretPath: "secret/data/flowgent/github"
-    #     secretKey: "token"
-    #     fileName: "github-token"
 
 # ═══════════════════════════════════════════════════════════════
 # Sandbox — Secure Script Execution Policy
@@ -356,16 +254,8 @@ notifier:
     limits:   { cpu: "500m", memory: "512Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# Orchestration — runtime execution settings
-# ═══════════════════════════════════════════════════════════════
-orchestration:
-  maxConcurrentFlows: 10
-  flowExecutionTimeout: "30m"
-  maxNodeRetries: 3
-
-# ═══════════════════════════════════════════════════════════════
 # Runtime — deploy-time operational parameters under runtime: in config.
-# Includes namespace isolation, credential paths, and other runtime settings.
+# Includes runtime modes, namespace isolation, credential paths, and secrets.
 #
 # namespacePrefix MUST match between the apiserver (Trigger routing) and the
 # Controller (per-namespace JM Deployment namespace placement — every flow's
@@ -374,7 +264,279 @@ orchestration:
 # runtimeNamespace contract.
 # ═══════════════════════════════════════════════════════════════
 runtime:
-  systemNamespace: "flowgen-system"
+  # Stable owner identity used in labels for controller-created JM/TM/Sandbox.
+  # Give concurrent installations distinct values to prevent cross-release GC.
+  resourceOwner: flowgent
+  # Complete Flowgent runtime configuration mounted as /etc/flowgent/flowgent.yaml.
+  # This block is rendered with Helm tpl, so it can reference chart values.
+  flowgent-config: |
+    service_name: {{ include "flowgent.name" . }}
+    server:
+      host: "0.0.0.0"
+      port: {{ .Values.apiserver.service.restPort }}
+      shutdown_timeout: "15s"
+    a2a:
+      enabled: {{ .Values.a2a.enabled }}
+      host: "0.0.0.0"
+      port: {{ .Values.a2a.service.port }}
+    mgmt:
+      enabled: true
+      host: "0.0.0.0"
+      port: {{ .Values.apiserver.service.mgmtPort }}
+      pprof:
+        enabled: true
+        server_bind: "0.0.0.0:6669"
+      otel:
+        enabled: true
+        endpoint: "{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.otlpHttp }}"
+        protocol: "http/protobuf"
+        sample_rate: 1.0
+        {{- if .Values.jaeger.enabled }}
+        query_endpoint: "http://{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.ui }}"
+        {{- else }}
+        query_endpoint: {{ .Values.jaeger.queryEndpoint | quote }}
+        {{- end }}
+        query_timeout: 10000
+        query_lookback: "24h"
+        query_limit: 20
+      metrics:
+        enabled: false
+    logging:
+      mode: JSON
+      level: DEBUG
+    auth:
+      jwt_validity_ak: {{ .Values.apiserver.config.jwtValidityAk }}
+      jwt_validity_rk: {{ .Values.apiserver.config.jwtValidityRk }}
+      jwt_algorithm: {{ .Values.apiserver.config.jwtAlgorithm }}
+      anonymous_paths:
+        {{- range .Values.apiserver.config.anonymousPaths }}
+        - {{ . | quote }}
+        {{- end }}
+      authorization:
+        enabled: {{ .Values.authorization.enabled }}
+        enforcement: {{ .Values.authorization.enforcement | quote }}
+        bootstrap_token: "${FLOWGENT_AUTH_BOOTSTRAP_TOKEN}"
+        internal_tokens:
+          controller: "${FLOWGENT_AUTH_CONTROLLER_TOKEN}"
+          jobmanager: "${FLOWGENT_AUTH_JOBMANAGER_TOKEN}"
+          taskmanager: "${FLOWGENT_AUTH_TASKMANAGER_TOKEN}"
+          notifier: "${FLOWGENT_AUTH_NOTIFIER_TOKEN}"
+          a2a: "${FLOWGENT_AUTH_A2A_TOKEN}"
+        audit_allow: {{ .Values.authorization.auditAllow }}
+        audit_deny: {{ .Values.authorization.auditDeny }}
+        trusted_proxy_cidrs: []
+      authguard:
+        {{- $middleware := index .Values "authguard-middleware" }}
+        enabled: {{ or $middleware.enabled $middleware.adapter.enabled }}
+        access_context_hmac_key: "${AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}"
+      # Generic OIDC remains available through full config override, but the
+      # default browser SSO provider is GitHub below.
+      oidc:
+        enabled: false
+        client_id: ""
+        client_secret: ""
+        issue_url: ""
+        redirect_url: ""
+        scope: "openid profile email"
+      ldap:
+        enabled: false
+        url: ""
+        base_dn: ""
+        user_dn: ""
+        password: "${FLOWGENT_LDAP_BIND_PASSWORD}"
+        domains: []
+        role_mapping: []
+        user_search_filter: "(cn=%s)"
+        username_attribute: "cn"
+        email_attribute: "mail"
+        display_name_attribute: "cn"
+        group_search_base: ""
+        group_search_filter: "(member=%s)"
+        group_name_attribute: "cn"
+        user_attr_mapping: {}
+        referral: "follow"
+        insecure_skip_verify: false
+      github:
+        enabled: true
+        client_id: "${FLOWGENT_GITHUB_CLIENT_ID}"
+        client_secret: "${FLOWGENT_GITHUB_CLIENT_SECRET}"
+        auth_url: "https://github.com/login/oauth/authorize"
+        token_url: "https://github.com/login/oauth/access_token"
+        redirect_url: ""
+        scope: "read:user user:email"
+        user_info_url: "https://api.github.com/user"
+    cache:
+      provider: Memory
+      memory:
+        initial_capacity: 32
+        max_capacity: 65535
+        ttl: 3600000
+        eviction_policy: LRU
+    storage:
+      type: {{ .Values.storage.type | default "SQLITE" | quote }}
+      {{- if eq (.Values.storage.type | default "SQLITE") "SQLITE" }}
+      sqlite:
+        dir: .flowgent/sqlite
+      {{- end }}
+      {{- if .Values.storage.postgres.dsn }}
+      postgres:
+        dsn: {{ .Values.storage.postgres.dsn | quote }}
+        {{- if .Values.storage.postgres.schema }}
+        schema: {{ .Values.storage.postgres.schema | quote }}
+        {{- end }}
+      {{- else if .Values.postgresql.enabled }}
+      postgres:
+        host: "{{ include "flowgent.fullname" . }}-postgresql"
+        port: 5432
+        database: flowgent
+        {{- if .Values.storage.postgres.schema }}
+        schema: {{ .Values.storage.postgres.schema | quote }}
+        {{- end }}
+        username: flowgent
+        password: flowgent
+        min_connections: 2
+        max_connections: 20
+      {{- end }}
+      artifacts:
+        provider: {{ .Values.storage.artifacts.provider | default "default" | quote }}
+        inline_max_bytes: {{ int64 .Values.storage.artifacts.inlineMaxBytes }}
+        max_payload_bytes: {{ int64 .Values.storage.artifacts.maxPayloadBytes }}
+        compression: {{ .Values.storage.artifacts.compression | default "gzip" | quote }}
+        prefix: {{ .Values.storage.artifacts.prefix | default "flowgent/task-runs" | quote }}
+        put_timeout: {{ .Values.storage.artifacts.putTimeout | default "30s" | quote }}
+        get_timeout: {{ .Values.storage.artifacts.getTimeout | default "30s" | quote }}
+        verify_checksum: {{ .Values.storage.artifacts.verifyChecksum }}
+        s3:
+          bucket: {{ .Values.storage.artifacts.s3.bucket | default "" | quote }}
+          region: {{ .Values.storage.artifacts.s3.region | default "" | quote }}
+          endpoint: {{ .Values.storage.artifacts.s3.endpoint | default "" | quote }}
+          force_path_style: {{ .Values.storage.artifacts.s3.forcePathStyle }}
+        gcs:
+          bucket: {{ .Values.storage.artifacts.gcs.bucket | default "" | quote }}
+          endpoint: {{ .Values.storage.artifacts.gcs.endpoint | default "" | quote }}
+          credentials_file: {{ .Values.storage.artifacts.gcs.credentialsFile | default "" | quote }}
+          anonymous: {{ .Values.storage.artifacts.gcs.anonymous }}
+    orchestration:
+      max_concurrent_flows: 10
+      flow_execution_timeout: "30m"
+      max_node_retries: 3
+    messager:
+      type: {{ .Values.messaging.type | quote }}
+      mqtt:
+        broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
+        client_id: "flowgent"
+    lock:
+      provider: {{ .Values.lock.provider | default (ternary "postgres" "memory" (eq (.Values.storage.type | default "SQLITE") "POSTGRE")) | quote }}
+    notifier:
+      enabled: {{ .Values.notifier.enabled }}
+      scan_interval: {{ .Values.notifier.scanInterval | quote }}
+      cleanup_interval: {{ .Values.notifier.cleanupInterval | quote }}
+      route_timeout: {{ .Values.notifier.routeTimeout | quote }}
+      secret_encryption:
+        provider: {{ .Values.notifier.secretEncryption.provider | quote }}
+        active_key_id: {{ .Values.notifier.secretEncryption.activeKeyId | quote }}
+        keys:
+          {{ .Values.notifier.secretEncryption.activeKeyId }}: "${FLOWGENT_NOTIFICATION_KEY_V1}"
+    runtime:
+      resource_owner: {{ .Values.runtime.resourceOwner | default "flowgent" | quote }}
+      system_namespace: {{ .Values.runtime.systemNamespace | default "flowgent-system" | quote }}
+      k8s_namespace: {{ .Values.runtime.k8sNamespace | default .Release.Namespace | quote }}
+      mode: "session"
+      runtime_cluster_id: {{ .Values.runtime.session.clusterId | default "session" | quote }}
+      session_cluster_id: {{ .Values.runtime.session.clusterId | default "session" | quote }}
+      tm_orphan_timeout: {{ .Values.runtime.tmOrphanTimeout | default "3m" | quote }}
+      credential_env_secret: {{ .Values.runtime.credentialEnvSecret | default "" | quote }}
+      internal_auth_secret: {{ include "flowgent.runtimeAuthorizationSecretName" . | quote }}
+      jobmanager_auth_key: {{ .Values.authorization.jobmanagerKey | quote }}
+      taskmanager_auth_key: {{ .Values.authorization.taskmanagerKey | quote }}
+      jm_image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+      tm_image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+      tm_deploy: {{ printf "%s-session-taskmanager" (include "flowgent.fullname" .) | quote }}
+      sandbox_deploy: {{ printf "%s-session-sandbox" (include "flowgent.fullname" .) | quote }}
+      tm_replicas: {{ .Values.runtime.session.taskmanager.replicas | default 1 }}
+      tm_slots: {{ .Values.runtime.session.taskmanager.slots | default 4 }}
+      jm_config_map: {{ printf "%s-config" (include "flowgent.fullname" .) | quote }}
+      session:
+        cluster_id: {{ .Values.runtime.session.clusterId | default "session" | quote }}
+        jobmanager:
+          resources:
+            cpu: {{ .Values.runtime.session.jobmanager.resources.limits.cpu | default "500m" | quote }}
+            memory: {{ .Values.runtime.session.jobmanager.resources.limits.memory | default "512Mi" | quote }}
+        taskmanager:
+          replicas: {{ .Values.runtime.session.taskmanager.replicas | default 1 }}
+          slots: {{ .Values.runtime.session.taskmanager.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.runtime.session.taskmanager.resources.limits.cpu | default "2" | quote }}
+            memory: {{ .Values.runtime.session.taskmanager.resources.limits.memory | default "2Gi" | quote }}
+        sandbox:
+          min_replicas: {{ .Values.runtime.session.sandbox.minReplicas | default 0 }}
+          max_replicas: {{ .Values.runtime.session.sandbox.maxReplicas | default 10 }}
+          slots: {{ .Values.runtime.session.sandbox.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.runtime.session.sandbox.resources.limits.cpu | default "2" | quote }}
+            memory: {{ .Values.runtime.session.sandbox.resources.limits.memory | default "2Gi" | quote }}
+      application:
+        jobmanager:
+          resources:
+            cpu: {{ .Values.runtime.application.jobmanager.resources.limits.cpu | default "" | quote }}
+            memory: {{ .Values.runtime.application.jobmanager.resources.limits.memory | default "" | quote }}
+        taskmanager:
+          replicas: {{ .Values.runtime.application.taskmanager.replicas | default 1 }}
+          slots: {{ .Values.runtime.application.taskmanager.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.runtime.application.taskmanager.resources.limits.cpu | default "" | quote }}
+            memory: {{ .Values.runtime.application.taskmanager.resources.limits.memory | default "" | quote }}
+        sandbox:
+          min_replicas: {{ .Values.runtime.application.sandbox.minReplicas | default 0 }}
+          max_replicas: {{ .Values.runtime.application.sandbox.maxReplicas | default 10 }}
+          slots: {{ .Values.runtime.application.sandbox.slots | default 4 }}
+          resources:
+            cpu: {{ .Values.runtime.application.sandbox.resources.limits.cpu | default "" | quote }}
+            memory: {{ .Values.runtime.application.sandbox.resources.limits.memory | default "" | quote }}
+      namespace:
+        default_namespace: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
+        namespace_prefix: {{ .Values.runtime.namespace.namespacePrefix | default "flowgent-" | quote }}
+      credential_paths:
+        base_path: {{ .Values.runtime.credentialPaths.basePath | default "/var/flowgent" | quote }}
+    wallet:
+      enabled: {{ .Values.wallet.enabled | default false }}
+      transport: {{ .Values.wallet.transport | default "mqtt" | quote }}
+      client_id_prefix: {{ .Values.wallet.clientIdPrefix | default "flowgent-" | quote }}
+      key_id: {{ .Values.wallet.keyId | default "" | quote }}
+      public_address: {{ .Values.wallet.publicAddress | default "" | quote }}
+      sign_timeout: {{ .Values.wallet.signTimeout | default "30s" | quote }}
+      local_socket: {{ .Values.wallet.localSocket | default "/run/wallet/wallet.sock" | quote }}
+      policies:
+        max_single_payment_usd: {{ .Values.wallet.policies.maxSinglePaymentUsd }}
+        max_daily_budget_usd: {{ .Values.wallet.policies.maxDailyBudgetUsd }}
+        allowed_domains: {{ .Values.wallet.policies.allowedDomains | toJson }}
+        blocked_domains: {{ .Values.wallet.policies.blockedDomains | toJson }}
+        require_human_approval_above_usd: {{ .Values.wallet.policies.requireHumanApprovalAboveUsd }}
+        allowed_assets: {{ .Values.wallet.policies.allowedAssets | toJson }}
+        allowed_chains: {{ .Values.wallet.policies.allowedChains | toJson }}
+      x402:
+        timeout: {{ .Values.wallet.httpTimeout | default "30s" | quote }}
+    sandbox:
+      workspace: {{ .Values.sandbox.workspace | default "/var/flowgent" | quote }}
+      host_workspace: {{ .Values.sandbox.hostWorkspace | default "/mnt/disk1/flowgent/e2e" | quote }}
+      policy:
+        network:
+          mode: {{ .Values.sandbox.policy.network.mode | default "none" | quote }}
+        allowed_runtimes: {{ .Values.sandbox.policy.allowedRuntimes | toJson }}
+        banned_commands: {{ .Values.sandbox.policy.bannedCommands | toJson }}
+        default_timeout: {{ .Values.sandbox.policy.defaultTimeout | default "120s" | quote }}
+        max_timeout: {{ .Values.sandbox.policy.maxTimeout | default "600s" | quote }}
+      deployment:
+        enabled: true
+        image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+        min_replicas: {{ .Values.sandbox.minReplicas | default 0 }}
+        max_replicas: {{ .Values.sandbox.maxReplicas | default 10 }}
+        resources:
+          cpu: {{ .Values.sandbox.resources.limits.cpu | default "2" | quote }}
+          memory: {{ .Values.sandbox.resources.limits.memory | default "2Gi" | quote }}
+        slots_per_pod: {{ .Values.sandbox.slots | default 4 }}
+
+  systemNamespace: "flowgent-system"
   k8sNamespace: ""
   tmOrphanTimeout: "3m"
   credentialEnvSecret: ""
@@ -385,3 +547,162 @@ runtime:
   # Hierarchy: flow-level overrides namespace-level.
   credentialPaths:
     basePath: "/var/flowgent"
+
+  # Session Runtime — Helm-deployed Flink-style shared runtime cluster.
+  # Flows with runtime_mode=session are consumed by this JobManager and execute
+  # only on TM/Sandbox pods carrying this clusterId.
+  session:
+    enabled: true
+    clusterId: session
+    serviceAccount:
+      create: true
+      name: ""
+    rbac:
+      create: true
+    jobmanager:
+      replicas: 1
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits:   { cpu: "500m", memory: "512Mi" }
+    taskmanager:
+      replicas: 1
+      slots: 4
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+    sandbox:
+      minReplicas: 0
+      maxReplicas: 10
+      slots: 4
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+
+  # Application Runtime Defaults — per-FlowRun runtime clusters created by the
+  # Controller. Flow YAML top-level resources may override only pod sizes.
+  application:
+    jobmanager:
+      resources:
+        limits:
+          cpu: ""
+          memory: ""
+    taskmanager:
+      replicas: 1
+      slots: 4
+      resources:
+        limits:
+          cpu: ""
+          memory: ""
+    sandbox:
+      minReplicas: 0
+      maxReplicas: 10
+      slots: 4
+      resources:
+        limits:
+          cpu: ""
+          memory: ""
+
+  # Secrets — runtime credential providers and K8s-native Secret env injection.
+  secrets:
+    serviceAccount:
+      annotations: {}
+      # iam.gke.io/gcp-service-account: "flowgent@PROJECT.iam.gserviceaccount.com"
+
+    # AWS Secrets Manager via CSI Secret Store Driver.
+    aws:
+      enabled: false
+      mountPath: "/var/flowgent"
+      region: ""
+      secrets: []
+      # secrets:
+      #   - objectName: "github-token"
+      #     objectType: "secretsmanager"
+
+    # GCP Secret Manager via CSI Secret Store Driver.
+    gcp:
+      enabled: false
+      mountPath: "/var/flowgent"
+      secrets: []
+      # secrets:
+      #   - resourceName: "projects/my-project/secrets/github-token/versions/latest"
+      #     fileName: "github-token"
+
+    # HashiCorp Vault via Vault Agent Injector (annotation-based, not CSI).
+    vault:
+      enabled: false
+      # When true, Vault agent annotations are added to Deployment pod templates.
+      # The Vault Injector webhook must be installed in the cluster.
+      injectAnnotations: true
+      vaultAddress: ""
+      vaultRole: ""
+      secrets: []
+      # secrets:
+      #   - secretPath: "secret/data/flowgent/github"
+      #     secretKey: "token"
+      #     fileName: "github-token"
+
+    # Kubernetes native Secret env injection for engine pods
+    # (apiserver, controller, jobmanager, taskmanager, sandbox, notifier, a2a).
+    kubernetes:
+      env: []
+      # env:
+      #   - name: "flowgent-llm-deepseek"
+      #     optional: true
+      #     mappings:
+      #       - key: apikey
+      #         env: DEEPSEEK_APIKEY
+# ───────────────────────────────────────────────────────────────
+# AuthGuard — opt-in enterprise authentication and authorization middleware.
+# Keep enabled=false for ordinary Flowgent releases. Deploy the middleware as a
+# separately managed release with application.enabled=false, or enable both in
+# one designated E2E release. adapter.enabled lets an ordinary Flowgent release
+# consume signed access context from that separate release without owning it.
+# When both flags are false, repositories use the no-op FlowgentSqlScope.
+# ───────────────────────────────────────────────────────────────
+authguard-middleware:
+  enabled: false
+  adapter:
+    enabled: false
+    existingSecret: ""           # key must contain a random value of at least 32 bytes
+    hmacKey: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY
+  envoy_gateway:
+    enabled: true
+    nameOverride: flowgent-envoy-gateway
+    ext_authz:
+      enabled: true
+      gateway:
+        create: true
+        name: flowgent-authguard
+        className: flowgent-authguard
+        controllerName: gateway.envoyproxy.io/gatewayclass-controller
+      authguardRoute:
+        enabled: true
+        name: flowgent-api
+        hostnames: [flowgent.wl4g.com]
+        backend:
+          name: flowgent-apiserver
+          port: 9999
+      authnRoute:
+        enabled: true
+        name: flowgent-authn
+        hostnames: [flowgent.wl4g.com]
+  authguard:
+    authn:
+      enabled: true
+      applications:
+        flowgent:
+          hosts: [flowgent.wl4g.com]
+          displayName: Flowgent
+          returnUris: [https://flowgent.wl4g.com/**]
+    web:
+      enabled: true
+      route:
+        enabled: true
+        hostnames: [flowgent.wl4g.com]
+        console:
+          enabled: false
+          hostnames: []
+    authz:
+      enabled: true

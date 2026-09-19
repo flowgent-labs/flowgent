@@ -22,6 +22,7 @@ import (
 	a2apkg "github.com/flowgent-labs/flowgent/a2a/pkg"
 	"github.com/flowgent-labs/flowgent/api/pkg"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth"
+	githubauth "github.com/flowgent-labs/flowgent/api/pkg/auth/github"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
 	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	"github.com/flowgent-labs/flowgent/api/pkg/authz"
@@ -258,6 +259,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 		slog.Error("auth service setup failed", "error", err)
 		return nil, nil, fmt.Errorf("auth service setup: %w", err)
 	}
+	authSvc.Register(githubauth.NewService(state.cfg.Auth.GitHub, authSvc.TokenService()))
 	authSvc.Register(oidc.NewService(state.cfg.Auth.OIDC, authSvc.TokenService()))
 	authSvc.Register(ldap.NewService(state.cfg.Auth.LDAP, authSvc.TokenService()))
 	authSvc.SetCredentialAuthenticator(authorizer)

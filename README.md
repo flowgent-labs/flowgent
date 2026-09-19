@@ -55,6 +55,54 @@ curl http://localhost:9992/.well-known/agent.json # A2A agent card
 
 REST API on `:9999` · A2A on `:9992` · pprof on `:9991`
 
+### One-command Security Autonomy Fixer E2E
+
+This is the production-shaped k3s path: Flowgent, Envoy Gateway, AuthGuard,
+LDAP principal discovery, GitHub OAuth authentication, PostgreSQL, EMQX,
+Jaeger, and the Security Autonomy Fixer are deployed and verified together.
+The runner silently loads `~/.wl4gshrc.sec` when present; it never prints its
+secret values.
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
+```
+
+The successful Helm deployment is intentionally retained. It is isolated from
+AuthGuard's own E2E by the `e2e-flowgent-*` namespace/release/resource prefix,
+a dedicated Envoy Gateway controller name, workload namespaces, PostgreSQL
+schemas `e2e_flowgent` / `e2e_flowgent_authguard`, and special ports. Start
+persistent local tunnels for manual exploration with:
+
+```bash
+make e2e-security-fixer-access
+```
+
+| Endpoint | Address |
+| --- | --- |
+| Flowgent UI | `http://127.0.0.1:31080` |
+| Direct E2E API tunnel | `http://127.0.0.1:29999` |
+| AuthGuard-protected API tunnel | `http://127.0.0.1:18089` |
+| AuthGuard AuthN tunnel | `http://127.0.0.1:18082` |
+| AuthGuard management tunnel | `http://127.0.0.1:19091` |
+
+The E2E intentionally enables only the identity features used here: GitHub
+OAuth and LDAP federated principal discovery. A dedicated Redis cluster stores
+the mandatory one-time OAuth challenges; OIDC, Keycloak, SCIM, and custom
+discovery connectors remain disabled. See the
+[use-case security deployment](use-cases/security-autonomy-fixer/README.md#enterprise-authorization-preset)
+for the multinational financial-company role model.
+
+The Helm chart vendors the locked official AuthGuard dependency behind
+`authguard-middleware.enabled=false`. Its reviewed Application contract binds
+Hosted Login and AuthN to `flowgent.wl4g.com` with HTTPS-only return URIs.
+Production operators deploy middleware independently with
+`application.enabled=false`; ordinary Flowgent upgrades therefore cannot
+remove it. Set `authguard-middleware.adapter.enabled=true` on the application
+release to consume its signed context. When both flags are false, no AuthGuard
+credentials are required and repositories use the native-IAM no-op
+`FlowgentSqlScope`. The designated E2E may enable application and middleware in
+one isolated release.
+
 ---
 
 ## Architectures
@@ -72,4 +120,6 @@ REST API on `:9999` · A2A on `:9992` · pprof on `:9991`
 
 ## License
 
-See [Apache License](LICENSE).
+Licensed under the business-friendly [Apache License 2.0](LICENSE), including
+commercial use, modification, distribution, and patent grants subject to its
+terms and notices.

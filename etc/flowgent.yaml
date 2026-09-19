@@ -60,6 +60,11 @@ logging:
 
 # ── Authentication ───────────────────────────────────────────────────────────
 auth:
+  # Optional edge identity from AuthGuard. Enable only when requests arrive
+  # through an AuthGuard-protected Envoy and inject the HMAC key from secrets.
+  authguard:
+    enabled: false
+    access_context_hmac_key: "${AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}"
   jwt_validity_ak: 3600
   jwt_validity_rk: 86400
   jwt_algorithm: "ES256"           # ES256 | RS256 | EdDSA
@@ -97,8 +102,8 @@ auth:
     enabled: false
     url: "ldap://ad.example.com:389"               # LDAP server URL (ldap:// or ldaps://)
     base_dn: "dc=example,dc=com"                     # root base DN
-    bind_dn: "cn=admin,dc=example,dc=com"            # service account DN
-    bind_password: "${LDAP_BIND_PASSWORD}"           # service account password
+    user_dn: "cn=admin,dc=example,dc=com"            # service account DN
+    password: "${LDAP_BIND_PASSWORD}"                # service account password
     domains:                                         # AD multi-domain search
       - base_dn: "dc=corp,dc=example,dc=com"
         user_search_filter: "(sAMAccountName=%s)"
@@ -126,8 +131,10 @@ auth:
     client_secret: "<YOUR_GITHUB_CLIENT_SECRET>"
     auth_url: "https://github.com/login/oauth/authorize"
     token_url: "https://github.com/login/oauth/access_token"
-    redirect_url: "http://wl4g.local:10000/serve/auth/callback/github"
-    scope: "user"
+    # Empty redirect_url lets Flowgent derive the public callback from
+    # X-Forwarded-Proto/X-Forwarded-Host: /auth/callback/github.
+    redirect_url: ""
+    scope: "read:user user:email"
     user_info_url: "https://api.github.com/user"
 
 # ── Cache ────────────────────────────────────────────────────────────────────
@@ -309,6 +316,8 @@ notifier:
 #    Operational parameters typically set via FLOWGENT__RUNTIME__* env vars
 #    rather than in the static config file.
 runtime:
+  # Installation ownership boundary for controller-created K8s resources.
+  resource_owner: "flowgent"
   # Namespace isolation defaults
   namespace:
     default_namespace: "default"
@@ -320,8 +329,8 @@ runtime:
   credential_paths:
     base_path: "/var/flowgent"
   api_server_url: "http://apiserver:9999"
-  system_namespace: "flowgen-system"
-  k8s_namespace: "flowgen-system"
+  system_namespace: "flowgent-system"
+  k8s_namespace: "flowgent-system"
   mode: "session"
   runtime_cluster_id: "session"
   session_cluster_id: "session"

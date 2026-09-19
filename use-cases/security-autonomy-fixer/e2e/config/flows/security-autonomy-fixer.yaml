@@ -1,0 +1,807 @@
+consoleVersion: core.flowgent.io/v1
+kind: Flow
+metadata:
+  name: security-autonomy-fixer
+  namespace: security-fixer
+  labels: {}
+  status: active
+  description: End-to-end SonarQube SAST security remediation pipeline — discovery, analyze, fix, review, vote, approve, commit
+data:
+  id: security-autonomy-fixer
+  runtime_mode: application
+  resources:
+    jobmanager:
+      cpu: "50m"
+      memory: "512Mi"
+    taskmanager:
+      cpu: "50m"
+      memory: "512Mi"
+    sandbox:
+      cpu: "50m"
+      memory: "512Mi"
+  description: "SonarQube-only developer remediation agentflow for security vulnerabilities:\n\n1. DISCOVERY — Fetch latest\
+    \ commit; query SonarQube SAST issues via MCP.\n2. ANALYZE — issue-detector agent parses, normalizes, deduplicates, and\n\
+    \   assigns severity to all SonarQube findings.\n3. FIX — fixer-agent analyzes root cause and generates minimal secure\
+    \ patches.\n4. REVIEW — Three agents (security, quality, architecture) review in parallel.\n5. VOTE — Deterministic majority\
+    \ vote decides whether to proceed.\n6. SUPERVISOR — Safety gate with bounded retries, injection limits, abort.\n7. CONDITIONAL\
+    \ — Record the vote and always proceed to the human safety gate.\n8. HUMAN APPROVAL — Async approval gate (24h timeout)\
+    \ before code push.\n9. COMMIT & PR — Check for existing open PR first (idempotent); reuse if found, else create branch,\
+    \ push, open new PR.\n10. RE-SCAN — Trigger SonarQube re-analysis, poll for completion, compare\n    pre/post results.\
+    \ Incomplete results are recorded for a bounded follow-up run.\n11. REPORT — Compile final summary, notify\
+    \ via PR comment + email + webhook.\n"
+  vars:
+    repo: rengine
+    max_iterations: 3
+    iteration: 0
+    target_severities: BLOCKER,CRITICAL,MAJOR
+    sonarqube_url: https://sonarqube.wl4g.com
+    notify_email_to: security-team@company.com
+    notify_webhook_url: https://outlook.office.com/webhook/xxxxx
+  nodes:
+  - id: get-commit
+    kind: tool
+    tool: github
+    args:
+      action: get_commit
+      owner: wl4g
+      repo: ${vars.repo}
+      sha: master
+  - id: scan-sonarqube
+    kind: tool
+    tool: sonarqube
+    args:
+      action: GetIssuesSearch
+      projectKey: ${vars.repo}
+      branch: master
+  - id: aggregate-issues
+    kind: agent
+    instruction: 'Parse the SonarQube scan results. For each issue extract:
+
+      - Source (sonarqube), rule ID, severity
+
+      - File path, line number, message
+
+      - Deduplicate by file+rule (keep highest severity)
+
+      - Sort by severity (BLOCKER > CRITICAL > MAJOR)
+
+      - Select top 10 issues to fix (prioritize BLOCKER/CRITICAL)
+
+      '
+    agent: issue-detector
+    args:
+      repo: ${vars.repo}
+      sonarqube_issues: ${scan-sonarqube}
+  - id: git-clone
+    kind: sandbox
+    runtime: bash
+    timeout: 300s
+    args:
+      repo: ${vars.repo}
+    network_policy:
+      mode: allowlist
+      allowed:
+      - github.com
+      - ${FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY}
+    script: |-
+      #!/bin/bash
+      set -euo pipefail
+      INPUT=$(cat input.json)
+      REPO=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['repo'])")
+      PLAN_DIR="$(pwd)"
+      REPO_PATH="${PLAN_DIR}/repos/${REPO}"
+      TOKEN="${GITHUB_TOKEN:-}"
+
+      if [ -n "$TOKEN" ]; then
+        AUTH_URL="https://${TOKEN}@github.com/wl4g/${REPO}.git"
+      else
+        AUTH_URL="https://github.com/wl4g/${REPO}.git"
+      fi
+
+      gateway_proxy() {
+        python3 - <<'PY'
+      import os
+      import subprocess
+      import urllib.parse
+
+      value = (
+          os.environ.get("HTTPS_PROXY")
+          or os.environ.get("https_proxy")
+          or os.environ.get("HTTP_PROXY")
+          or os.environ.get("http_proxy")
+          or ""
+      )
+      if not value:
+          raise SystemExit(0)
+      parsed = urllib.parse.urlsplit(value)
+      port = parsed.port or 8800
+      scheme = parsed.scheme or "http"
+      try:
+          route = subprocess.check_output(
+              "ip route | awk '/default/ {print $3; exit}'",
+              shell=True,
+              text=True,
+              stderr=subprocess.DEVNULL,
+          ).strip()
+      except Exception:
+          route = ""
+      if route:
+          print(f"{scheme}://{route}:{port}")
+      PY
+      }
+
+      clone_with_proxy() {
+        local proxy="$1"
+        local attempt=1
+        local rc=1
+        local max_attempts=4
+        if [ -n "$proxy" ]; then
+          export HTTPS_PROXY="$proxy"
+          export HTTP_PROXY="$proxy"
+          export https_proxy="$proxy"
+          export http_proxy="$proxy"
+        fi
+        while [ "$attempt" -le "$max_attempts" ]; do
+          if [ -n "$proxy" ]; then
+            echo "git clone attempt ${attempt}/${max_attempts} using configured proxy" >&2
+          else
+            echo "git clone attempt ${attempt}/${max_attempts} without proxy" >&2
+          fi
+          if [ -n "$proxy" ] && ! proxy_tcp_ready "$proxy"; then
+            rc=111
+            echo "proxy endpoint not reachable for clone attempt ${attempt}/${max_attempts}" >&2
+          elif timeout 60s git clone --depth 1 --branch master "$AUTH_URL" "$REPO_PATH" >&2; then
+            return 0
+          else
+            rc=$?
+            rm -rf "$REPO_PATH"
+            echo "git clone attempt ${attempt}/${max_attempts} failed rc=${rc}" >&2
+          fi
+          attempt=$((attempt + 1))
+          sleep $((attempt * 5))
+        done
+        return "$rc"
+      }
+
+      proxy_tcp_ready() {
+        local proxy="$1"
+        if [ -z "$proxy" ]; then
+          return 0
+        fi
+        python3 - "$proxy" <<'PY' >/dev/null 2>&1
+      import socket
+      import sys
+      import urllib.parse
+
+      parsed = urllib.parse.urlsplit(sys.argv[1])
+      host = parsed.hostname
+      port = parsed.port or (443 if parsed.scheme == "https" else 80)
+      if not host:
+          raise SystemExit(1)
+      with socket.create_connection((host, port), timeout=3):
+          pass
+      PY
+      }
+
+      verify_proxy() {
+        local proxy="$1"
+        if [ -z "$proxy" ]; then
+          return 0
+        fi
+        HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" https_proxy="$proxy" http_proxy="$proxy" \
+          timeout 10s git ls-remote https://github.com/wl4g/${REPO}.git HEAD >/dev/null 2>&1
+      }
+
+      select_proxy() {
+        local primary="$1"
+        local gateway="$2"
+        if [ -n "$primary" ] && verify_proxy "$primary"; then
+          printf "%s" "$primary"
+          return 0
+        fi
+        if [ -n "$gateway" ] && [ "$gateway" != "$primary" ] && verify_proxy "$gateway"; then
+          printf "%s" "$gateway"
+          return 0
+        else
+          printf "%s" "$primary"
+        fi
+      }
+
+      if [ -d "$REPO_PATH/.git" ]; then
+        cd "$REPO_PATH"
+        git checkout master >/dev/null 2>&1 || true
+      else
+        mkdir -p "$(dirname "$REPO_PATH")"
+        PRIMARY_PROXY="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
+        GATEWAY_PROXY="$(gateway_proxy || true)"
+        SELECTED_PROXY="$(select_proxy "$PRIMARY_PROXY" "$GATEWAY_PROXY")"
+        CLONED=0
+        LAST_RC=1
+        if [ -n "$SELECTED_PROXY" ]; then
+          if clone_with_proxy "$SELECTED_PROXY"; then
+            CLONED=1
+          else
+            LAST_RC=$?
+            rm -rf "$REPO_PATH"
+          fi
+        fi
+        if [ "$CLONED" != "1" ] && [ -n "$GATEWAY_PROXY" ] && [ "$GATEWAY_PROXY" != "$SELECTED_PROXY" ]; then
+          if clone_with_proxy "$GATEWAY_PROXY"; then
+            CLONED=1
+          else
+            LAST_RC=$?
+            rm -rf "$REPO_PATH"
+          fi
+        fi
+        if [ "$CLONED" != "1" ] && [ -z "$SELECTED_PROXY" ] && [ -z "$GATEWAY_PROXY" ]; then
+          if clone_with_proxy ""; then
+            CLONED=1
+          else
+            LAST_RC=$?
+          fi
+        fi
+        if [ "$CLONED" != "1" ]; then
+          exit "$LAST_RC"
+        fi
+        cd "$REPO_PATH"
+      fi
+
+      COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+      printf '{"status":"ready","path":"%s","commit":"%s"}\n' "$REPO_PATH" "$COMMIT"
+  - id: read-source-files
+    kind: sandbox
+    runtime: python3
+    timeout: 60s
+    args:
+      issues: ${aggregate-issues.issues}
+      repo_path: ${git-clone.path}
+    script: |-
+      #!/usr/bin/env python3
+      import json, os
+
+      with open("input.json") as f:
+          inp = json.load(f)
+
+      issues = inp.get("issues", [])
+      repo_path = inp.get("repo_path")
+      if not repo_path:
+          print(json.dumps({"issues": [], "files": [], "error": "repo_path missing from git-clone output"}))
+          raise SystemExit(1)
+      max_files = int(inp.get("max_files", 1))
+      max_issues = int(inp.get("max_issues", 2))
+      max_chars = int(inp.get("max_chars_per_file", 12000))
+
+      generated_path_markers = (
+          "/flinkclient", "/nextbreakpoint/", "/generated/", "/target/",
+      )
+      generated_content_markers = (
+          "auto generated", "swagger codegen", "do not edit the class manually",
+      )
+
+      def is_generated_path(path):
+          lower = "/" + path.lower()
+          return any(marker in lower for marker in generated_path_markers)
+
+      candidates = []
+      selected = []
+      for issue in issues:
+          fp = issue.get("file", "")
+          if not fp or is_generated_path(fp):
+              continue
+          full = os.path.join(repo_path, fp)
+          if not os.path.isfile(full):
+              continue
+          with open(full, errors="replace") as f:
+              sample = f.read(2048).lower()
+          if any(marker in sample for marker in generated_content_markers):
+              continue
+          candidates.append((os.path.getsize(full), fp, full, issue))
+
+      if not candidates:
+          for issue in issues:
+              fp = issue.get("file", "")
+              if not fp:
+                  continue
+              full = os.path.join(repo_path, fp)
+              if os.path.isfile(full):
+                  candidates.append((os.path.getsize(full), fp, full, issue))
+
+      files = {}
+      selected_file_paths = set()
+      for _, fp, full, issue in sorted(candidates, key=lambda item: item[0]):
+          if len(files) >= max_files and fp not in selected_file_paths:
+              continue
+          if full not in files and len(files) < max_files:
+              with open(full, errors="replace") as f:
+                  content = f.read(max_chars + 1)
+              files[full] = {
+                  "path": fp,
+                  "content": content[:max_chars],
+                  "truncated": len(content) > max_chars,
+                  "size": os.path.getsize(full),
+              }
+              selected_file_paths.add(fp)
+          if fp in selected_file_paths and len(selected) < max_issues:
+              selected.append(issue)
+          if len(files) >= max_files and len(selected) >= max_issues:
+              break
+
+      result = {
+          "issues": selected,
+          "files": list(files.values()),
+          "selection": {
+              "issue_count": len(selected),
+              "file_count": len(files),
+              "max_chars_per_file": max_chars,
+          },
+      }
+      print(json.dumps(result))
+  - id: generate-fixes
+    kind: agent
+    instruction: 'Fix only the provided issue(s) in the provided source_files.
+
+      The E2E selector passes at most one source file. Return at most one file entry.
+
+      Output the FULL corrected file content for the changed file, NOT diffs.
+
+      Do NOT change business logic. Prefer targeted fixes.
+
+      Output compact JSON only. Do not use markdown fences. Do not include unchanged files.
+
+      '
+    agent: fixer-agent
+    args:
+      issues: ${read-source-files.issues}
+      source_files: ${read-source-files.files}
+      repo_path: ${git-clone.path}
+    output_schema:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              content:
+                type: string
+            required:
+            - path
+            - content
+        patches:
+          type: array
+          items:
+            type: object
+            properties:
+              file:
+                type: string
+              rule:
+                type: string
+              description:
+                type: string
+            required:
+            - file
+            - rule
+            - description
+      required:
+      - files
+      - patches
+  - id: review-security
+    kind: agent
+    instruction: 'Review each patch for security correctness. Does it fix the root cause?
+
+      Could it introduce new vulnerabilities?
+
+      '
+    agent: security-reviewer
+    args:
+      patches: ${generate-fixes.patches}
+  - id: review-quality
+    kind: agent
+    instruction: 'Review each patch for code quality. Is it minimal? Does it follow best practices?
+
+      '
+    agent: quality-reviewer
+    args:
+      patches: ${generate-fixes.patches}
+    output_schema:
+      type: object
+      properties:
+        decision:
+          type: boolean
+        confidence:
+          type: number
+        reason:
+          type: string
+      required:
+      - decision
+      - confidence
+      - reason
+  - id: review-arch
+    kind: agent
+    instruction: 'Review each patch for architectural impact. Does it break design patterns?
+
+      Could it affect system behavior?
+
+      '
+    agent: arch-reviewer
+    args:
+      patches: ${generate-fixes.patches}
+    output_schema:
+      type: object
+      properties:
+        decision:
+          type: boolean
+        confidence:
+          type: number
+        reason:
+          type: string
+      required:
+      - decision
+      - confidence
+      - reason
+  - id: committee
+    kind: committee
+    strategy:
+      type: majority
+    args:
+      votes:
+      - ${review-security.decision}
+      - ${review-quality.decision}
+      - ${review-arch.decision}
+  - id: supervisor-check
+    kind: supervisor
+    agent: supervisor
+    supervisor_config:
+      max_retries: 3
+      max_nodes: 50
+      max_injections: 5
+      allowed_actions:
+      - continue
+      - retry
+      - inject
+      - abort
+  - id: is-approved
+    kind: condition
+    expression: ${committee.decision} == true
+  - id: review-needs-human
+    kind: noop
+  - id: human-approval
+    kind: human
+    approval:
+      timeout: 24h
+      on_approve: continue
+      on_reject: abort
+  - id: check-existing-pr
+    kind: tool
+    tool: github
+    args:
+      action: list_pull_requests
+      owner: wl4g
+      repo: ${vars.repo}
+      state: open
+  - id: pr-exists
+    kind: condition
+    expression: "true"
+  - id: create-branch
+    kind: tool
+    tool: github
+    args:
+      action: create_branch
+      owner: wl4g
+      repo: ${vars.repo}
+      branch: fix/flowgent_sec_auto_fix
+      from_branch: master
+  - id: commit-fixes
+    kind: tool
+    tool: github
+    args:
+      action: push_files
+      owner: wl4g
+      repo: ${vars.repo}
+      branch: fix/flowgent_sec_auto_fix
+      files: ${generate-fixes.files}
+      message: '[Security Fix] Auto-generated security fix
+
+
+        Issues addressed:
+
+        ${aggregate-issues.issues}
+
+
+        Reviewed by: security, quality, architecture
+
+        Vote: ${committee.decision}
+
+        '
+  - id: create-pr
+    kind: tool
+    tool: github
+    args:
+      action: create_pull_request
+      owner: wl4g
+      repo: ${vars.repo}
+      title: '[Security Fix] Auto-generated security remediation'
+      head: fix/flowgent_sec_auto_fix
+      base: master
+      body: '## Security Fix Summary
+
+        Automatically generated by Flowgent Security Autonomy Fixer.
+
+
+        ### Issues Found
+
+        ${aggregate-issues.issues}
+
+
+        ### Review Results
+
+        - Security: ${review-security.decision} (${review-security.reason})
+
+        - Quality: ${review-quality.decision} (${review-quality.reason})
+
+        - Architecture: ${review-arch.decision} (${review-arch.reason})
+
+
+        ### Vote
+
+        Committee majority decision: **${committee.decision}**
+
+        '
+  - id: commit-to-existing
+    kind: tool
+    tool: github
+    args:
+      action: push_files
+      owner: wl4g
+      repo: ${vars.repo}
+      branch: fix/flowgent_sec_auto_fix
+      files: ${generate-fixes.files}
+      message: '[Security Fix] Additional auto-generated security fixes
+
+
+        Issues addressed:
+
+        ${aggregate-issues.issues}
+
+
+        Reviewed by: security, quality, architecture
+
+        Vote: ${committee.decision}
+
+        '
+  - id: trigger-rescan
+    kind: tool
+    tool: sonarqube
+    args:
+      action: GetProjectsExportFindings
+      project: ${vars.repo}
+      branch: master
+  - id: wait-rescan
+    kind: sandbox
+    runtime: bash
+    timeout: 120s
+    retry:
+      max: 12
+      initial: 10s
+      max_delay: 10s
+      factor: 1.0
+    args:
+      sonarqube_url: ${vars.sonarqube_url}
+      repo: ${vars.repo}
+    script: |-
+      #!/bin/bash
+      set -euo pipefail
+      SQ_URL=$(python3 -c "import json; print(json.load(open('input.json')).get('sonarqube_url','https://sonarqube.wl4g.com'))")
+      PROJECT_KEY=$(python3 -c "import json; print(json.load(open('input.json')).get('repo','rengine'))")
+      SQ_TOKEN="${SONARQUBE_TOKEN:-}"
+
+      for _ in $(seq 1 12); do
+        STATUS=$(curl -s --noproxy '*' -u "${SQ_TOKEN}:" \
+          "$SQ_URL/api/ce/activity?type=REPORT&component=$PROJECT_KEY&ps=1" \
+          2>/dev/null | python3 -c "import sys,json; data=json.load(sys.stdin); tasks=data.get('tasks') or []; print(tasks[0].get('status','NONE') if tasks else 'NONE')" \
+          2>/dev/null || echo "NONE")
+        if [ "$STATUS" = "SUCCESS" ] || [ "$STATUS" = "NONE" ]; then
+          printf '{"status":"completed","ce_status":"%s"}\n' "$STATUS"
+          exit 0
+        fi
+        sleep 10
+      done
+      printf '{"status":"pending","ce_status":"%s"}\n' "$STATUS"
+      exit 1
+    network_policy:
+      mode: allowlist
+      allowed:
+      - https://sonarqube.wl4g.com
+  - id: check-resolved
+    kind: tool
+    tool: sonarqube
+    args:
+      action: GetIssuesSearch
+      projectKey: ${vars.repo}
+      branch: master
+  - id: compare-results
+    kind: agent
+    instruction: 'Compare pre-fix and post-fix SonarQube issue lists.
+
+      Count how many of the original issues are now resolved.
+
+      - ALL resolved → resolution="complete"
+
+      - SOME resolved → resolution="partial"
+
+      - NONE resolved → resolution="none"
+
+      - iteration >= max_iterations → resolution="max_iterations_reached"
+
+      '
+    agent: issue-detector
+    args:
+      before_issues: ${aggregate-issues.issues}
+      after_issues: ${check-resolved}
+      iteration: ${vars.iteration}
+      max_iterations: ${vars.max_iterations}
+    output_schema:
+      type: object
+      properties:
+        resolution:
+          type: string
+          enum:
+          - complete
+          - partial
+          - none
+          - max_iterations_reached
+        resolved_count:
+          type: integer
+        remaining_count:
+          type: integer
+        resolved_issues:
+          type: array
+          items:
+            type: string
+        remaining_issues:
+          type: array
+          items:
+            type: string
+      required:
+      - resolution
+      - resolved_count
+      - remaining_count
+      - resolved_issues
+      - remaining_issues
+  - id: fix-complete
+    kind: condition
+    expression: ${compare-results.resolution} == 'complete' || ${compare-results.resolution} == 'max_iterations_reached'
+  - id: remediation-incomplete
+    kind: noop
+  - id: summary-report
+    kind: agent
+    instruction: 'Generate a final summary report in markdown format.
+
+      Include: total issues found, patches applied, review votes,
+
+      fix resolution status, PR link, scan result summaries.
+
+      For PR link and number: if existing_pr has entries, use the first entry''s html_url and number. Otherwise fall back
+      to new_pr.pr_url and new_pr.pr_number.
+
+      '
+    agent: issue-detector
+    args:
+      repo: ${vars.repo}
+      original_issues: ${aggregate-issues.issues}
+      patches: ${generate-fixes.patches}
+      vote_decision: ${committee.decision}
+      existing_pr: ${check-existing-pr}
+      new_pr: ${create-pr}
+      compare_result: ${compare-results}
+      scan_results:
+        sonarqube: ${scan-sonarqube}
+    output_schema:
+      type: object
+      properties:
+        report:
+          type: string
+        status:
+          type: string
+          enum:
+          - completed
+          - partial
+          - failed
+        issues_found:
+          type: integer
+        issues_fixed:
+          type: integer
+        pr_number:
+          type: integer
+      required:
+      - report
+      - status
+      - issues_found
+      - issues_fixed
+      - pr_number
+  - id: notify-pr
+    kind: tool
+    tool: github
+    args:
+      action: add_issue_comment
+      owner: wl4g
+      repo: ${vars.repo}
+      issue_number: ${summary-report.pr_number}
+      body: ${summary-report.report}
+  - id: end
+    kind: noop
+  edges:
+  - from: get-commit
+    to: scan-sonarqube
+  - from: scan-sonarqube
+    to: aggregate-issues
+  - from: aggregate-issues
+    to: git-clone
+  - from: git-clone
+    to: read-source-files
+  - from: read-source-files
+    to: generate-fixes
+  - from: generate-fixes
+    to: review-security
+  - from: generate-fixes
+    to: review-quality
+  - from: generate-fixes
+    to: review-arch
+  - from: review-security
+    to: committee
+  - from: review-quality
+    to: committee
+  - from: review-arch
+    to: committee
+  - from: committee
+    to: supervisor-check
+  - from: supervisor-check
+    to: is-approved
+  - from: is-approved
+    to: human-approval
+    condition: true
+  - from: is-approved
+    to: review-needs-human
+    condition: false
+  - from: review-needs-human
+    to: human-approval
+  - from: human-approval
+    to: check-existing-pr
+  - from: check-existing-pr
+    to: pr-exists
+  - from: pr-exists
+    to: create-branch
+    condition: false
+  - from: pr-exists
+    to: commit-to-existing
+    condition: true
+  - from: create-branch
+    to: commit-fixes
+  - from: commit-fixes
+    to: create-pr
+  - from: create-pr
+    to: trigger-rescan
+  - from: commit-to-existing
+    to: trigger-rescan
+  - from: trigger-rescan
+    to: wait-rescan
+  - from: wait-rescan
+    to: check-resolved
+  - from: check-resolved
+    to: compare-results
+  - from: compare-results
+    to: fix-complete
+  - from: fix-complete
+    to: summary-report
+    condition: true
+  - from: fix-complete
+    to: remediation-incomplete
+    condition: false
+  - from: remediation-incomplete
+    to: summary-report
+  - from: summary-report
+    to: notify-pr
+  - from: notify-pr
+    to: end

@@ -70,6 +70,9 @@ func (s *Service) AuthorizeAdditional(r *http.Request, namespace, permission, re
 	if !ok {
 		return false, nil
 	}
+	if externallyAuthorized(user) {
+		return true, nil
+	}
 	requestID := r.Header.Get("X-Request-ID")
 	if requestID == "" {
 		requestID = uuid.NewString()
@@ -233,6 +236,14 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			writeForbidden(w, "authenticated principal is required")
 			return
 		}
+		// The HMAC-signed context proves that AuthGuard's fail-closed edge
+		// already authorized this exact request. Re-evaluating it against the
+		// independent local IAM catalog would require duplicate bindings and
+		// can create contradictory policy decisions.
+		if externallyAuthorized(user) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// OIDC/LDAP tokens carry the upstream immutable subject. Resolve it to
 		// the deployment principal ID used by role bindings. Unprovisioned
 		// identities remain unmatched and are denied by default.
@@ -264,6 +275,15 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func externallyAuthorized(user *auth.UserInfo) bool {
+	if user == nil || user.Issuer != "authguard" || user.Extra == nil {
+		return false
+	}
+	action, actionOK := user.Extra["authguard_action"].(string)
+	resource, resourceOK := user.Extra["authguard_resource_urn"].(string)
+	return actionOK && resourceOK && action != "" && resource != ""
 }
 
 func (s *Service) audit(ctx context.Context, user *auth.UserInfo, policy RoutePolicy, decision Decision, requestID, ip string) {

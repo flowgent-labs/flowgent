@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.controller.rbac.create }}
 apiVersion: v1
 kind: ServiceAccount
@@ -102,7 +103,7 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: controller
-{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+{{ if and .Values.runtime.secrets.vault.enabled .Values.runtime.secrets.vault.injectAnnotations }}
       annotations:
         {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
 {{ end }}
@@ -134,7 +135,7 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
             {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
 {{ end }}
           resources:
@@ -143,6 +144,7 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
         {{- include "flowgent.credentialVolumes" . | nindent 8 }}
 {{ end }}
+{{- end }}
