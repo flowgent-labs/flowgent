@@ -165,8 +165,6 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix-run-1",
 		ownerJobManagerNamespace: "flowgent-default",
 		credentialEnvSecret:      "flowgent-runtime-env",
-		internalAuthSecret:       "flowgent-runtime-auth",
-		taskManagerAuthKey:       "tm-token",
 	}
 
 	if err := rm.ensureDeployment(context.Background()); err != nil {
@@ -196,21 +194,6 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	}
 	if container.EnvFrom[0].SecretRef.Optional == nil || !*container.EnvFrom[0].SecretRef.Optional {
 		t.Fatal("TM credential secret ref should be optional")
-	}
-	var workloadToken *corev1.EnvVar
-	for i := range container.Env {
-		if container.Env[i].Name == "FLOWGENT_INTERNAL_TOKEN" {
-			workloadToken = &container.Env[i]
-		}
-	}
-	if workloadToken == nil || workloadToken.ValueFrom == nil || workloadToken.ValueFrom.SecretKeyRef == nil {
-		t.Fatalf("TM workload token secret ref missing: %#v", workloadToken)
-	}
-	if got := workloadToken.ValueFrom.SecretKeyRef.Name; got != "flowgent-runtime-auth" {
-		t.Fatalf("TM workload Secret = %q", got)
-	}
-	if got := workloadToken.ValueFrom.SecretKeyRef.Key; got != "tm-token" {
-		t.Fatalf("TM workload Secret key = %q", got)
 	}
 	var slots string
 	for i := range container.Env {

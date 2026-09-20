@@ -1,0 +1,179 @@
+version: "3.8"
+x-e2e-project-name: e2e-flowgent-docker
+x-authguard-redis-environment: &authguard-redis-environment
+  ALLOW_EMPTY_PASSWORD: "no"
+  REDIS_PASSWORD: "${AUTHGUARD_REDIS_PASSWORD}"
+  REDISCLI_AUTH: "${AUTHGUARD_REDIS_PASSWORD}"
+  REDIS_NODES: "authguard-redis-0 authguard-redis-1 authguard-redis-2"
+  REDIS_CLUSTER_REPLICAS: "0"
+  REDIS_CLUSTER_DYNAMIC_IPS: "yes"
+  REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: "1"
+
+services:
+  postgres:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
+    environment:
+      POSTGRESQL_USERNAME: test
+      POSTGRESQL_PASSWORD: test
+      POSTGRESQL_DATABASE: flowgent
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=test pg_isready -U test -d flowgent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+      - "127.0.0.1:25432:5432"
+    volumes:
+      - postgres-data:/bitnami/postgresql
+      - ../../reports/.state/docker/init.sql:/docker-entrypoint-initdb.d/01-e2e-flowgent.sql:ro
+
+  emqx:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/emqx_emqx:5.5.0-elixir-amd64
+    ports:
+      - "127.0.0.1:11883:1883"
+      - "127.0.0.1:18084:18083"
+    healthcheck:
+      test: ["CMD-SHELL", "emqx ctl status | grep -q 'is started'"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  jaeger:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16688:16686"
+
+  authguard-redis-0:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    environment:
+      <<: *authguard-redis-environment
+      REDIS_CLUSTER_CREATOR: "yes"
+    depends_on:
+      authguard-redis-1: {condition: service_started}
+      authguard-redis-2: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a '${AUTHGUARD_REDIS_PASSWORD}' cluster info | grep -q 'cluster_state:ok'"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  authguard-redis-1:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    environment:
+      <<: *authguard-redis-environment
+
+  authguard-redis-2:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+    environment:
+      <<: *authguard-redis-environment
+
+  ldap:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0
+    volumes:
+      - ../../reports/.state/docker/ldap-config.cfg:/app/config/config.cfg:ro
+
+  mock-github:
+    image: localhost/flowgent:latest
+    entrypoint: ["python3", "/opt/e2e/server.py"]
+    volumes:
+      - ../mocksvc-github-service/app/server.py:/opt/e2e/server.py:ro
+    ports:
+      - "127.0.0.1:18087:8080"
+
+  notification-receiver:
+    image: localhost/flowgent:latest
+    entrypoint: ["python3", "/opt/e2e/server.py"]
+    environment:
+      EXPECTED_TOKEN: "${FLOWGENT_E2E_NOTIFICATION_TOKEN}"
+    volumes:
+      - ../mocksvc-notification-service/app/server.py:/opt/e2e/server.py:ro
+    ports:
+      - "127.0.0.1:21081:8080"
+
+  authguard-authn:
+    image: localhost/e2e-flowgent-authguard:0.1.0
+    command: ["--config", "/etc/authguard/authguard.yaml", "authn", "--bind", "0.0.0.0:8082"]
+    volumes:
+      - ../../reports/.state/docker/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      authguard-redis-0: {condition: service_healthy}
+      ldap: {condition: service_started}
+    ports:
+      - "127.0.0.1:18082:8082"
+
+  authguard-authz:
+    image: localhost/e2e-flowgent-authguard:0.1.0
+    command: ["--config", "/etc/authguard/authguard.yaml", "authz"]
+    volumes:
+      - ../../reports/.state/docker/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      authguard-redis-0: {condition: service_healthy}
+      ldap: {condition: service_started}
+    ports:
+      - "127.0.0.1:19091:9091"
+
+  authguard-web:
+    image: localhost/e2e-flowgent-authguard-web:0.1.0
+    depends_on:
+      authguard-authn: {condition: service_started}
+      authguard-authz: {condition: service_started}
+
+  flowgent:
+    image: localhost/flowgent:latest
+    command: ["all-in-one", "start", "-c", "/etc/flowgent/e2e.yaml"]
+    environment:
+      AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: "${AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}"
+      FLOWGENT_NOTIFICATION_KEY_V1: "${FLOWGENT_NOTIFICATION_KEY_V1}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_API_KEY_FLOWGENT: "${DEEPSEEK_API_KEY:-}"
+      SONARQUBE_TOKEN: "${SONARQUBE_TOKEN:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      GH_TOKEN: "${GH_TOKEN:-}"
+      # A host-loopback proxy is not reachable as 127.0.0.1 from a container.
+      HTTPS_PROXY: "${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY:-http://host.docker.internal:8800}"
+      NO_PROXY: "localhost,127.0.0.1,postgres,emqx,jaeger,authguard-authn,authguard-authz,ldap,mock-github,notification-receiver"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../../reports/.state/docker/flowgent.yaml:/etc/flowgent/e2e.yaml:ro
+      - ../../config:/e2e/config:ro
+      - e2e-workspace:/var/flowgent
+    depends_on:
+      postgres: {condition: service_healthy}
+      emqx: {condition: service_healthy}
+      jaeger: {condition: service_started}
+      notification-receiver: {condition: service_started}
+    ports:
+      - "127.0.0.1:29999:9990"
+      - "127.0.0.1:29998:9999"
+      - "127.0.0.1:19992:9992"
+
+  web:
+    image: localhost/flowgent-web:latest
+    environment:
+      FLOWGENT_API_UPSTREAM: http://flowgent:9990
+    depends_on:
+      flowgent: {condition: service_started}
+    ports:
+      - "127.0.0.1:21080:8080"
+
+  envoy:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+    volumes:
+      - ../../config/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      authguard-authn: {condition: service_started}
+      authguard-authz: {condition: service_started}
+      authguard-web: {condition: service_started}
+      flowgent: {condition: service_started}
+    ports:
+      - "127.0.0.1:18089:8080"
+
+volumes:
+  postgres-data:
+  e2e-workspace:

@@ -357,7 +357,7 @@ Flowgent Console (REPL)
    FlowgentConsole
           │
           ▼
-     IStore (PG/SQLite)
+   IStorage (PG/SQLite)
 ```
 
 | Kind | CLI 名称 | REST Endpoint | Export | Import | CRUD |

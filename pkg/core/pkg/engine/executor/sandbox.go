@@ -62,7 +62,13 @@ func (e *SandboxExecutor) SetRuntimeConfigResolver(resolver RuntimeConfigResolve
 func (e *SandboxExecutor) TaskType() entities.TaskType { return entities.TaskSandbox }
 
 func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	if e.policy != nil && plan.NodeSpec != nil && plan.NodeSpec.NetworkPolicy == nil {
+	if plan == nil || plan.NodeSpec == nil {
+		return nil, fmt.Errorf("sandbox execution plan and node spec are required")
+	}
+	if e.queue == nil {
+		return nil, fmt.Errorf("sandbox message queue is not configured")
+	}
+	if e.policy != nil && plan.NodeSpec.NetworkPolicy == nil {
 		plan.NodeSpec.NetworkPolicy = &e.policy.Network
 	}
 

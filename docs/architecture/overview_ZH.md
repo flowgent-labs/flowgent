@@ -12,7 +12,7 @@ Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义
 
 | 层级 | 文档 | 物理或逻辑职责 |
 |---|---|---|
-| Security / IAM | [企业级 IAM 授权](enterprise-iam-authorization_ZH.md) | Subject/group/role/grant 模型、Resource URN、请求匹配与资源列表范围 |
+| Security | [AuthGuard 集成](authguard-integration_ZH.md) | Gateway 信任边界、adapters SDK 与 Repository SQL Scope |
 | L1 Engine | [API Server](engine/apiserver_ZH.md) | 外部 REST/A2A 网关及唯一数据库客户端 |
 | L1 Engine | [Controller](engine/controller_ZH.md) | Flow 发现与活跃 Run 的 JobManager 生命周期 |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters_ZH.md) | application/session 运行时生命周期与隔离 |
@@ -493,7 +493,7 @@ Flowgent 只依赖 wire contract，不依赖 Wallet source 或 key-management li
 | cache | `pkg/cache/` | Memory 与 Redis cache 抽象 |
 | config | `pkg/config/` | YAML/environment 加载及运行配置 |
 | messager | `pkg/messager/` | Flowgent 内部 memory/MQTT bus 与 topic contract |
-| store | `pkg/store/` | Flowgent 自有状态的 PostgreSQL/SQLite store |
+| storage | `pkg/storage/` | Flowgent 自有状态的 PostgreSQL/SQLite 存储模块 |
 | sandbox | `pkg/sandbox/` | 隔离执行、policy 与 seccomp 控制 |
 | notifier | `pkg/notifier/` | Delivery channels 与 UI event push |
 | core | `pkg/core/` | Executors、JM/TM/RM、LLM/MCP client、x402 policy 与外部 Wallet client |

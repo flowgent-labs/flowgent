@@ -17,8 +17,8 @@ import (
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 	model "github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/notifier"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/notifier"
 )
 
 type NotifierHandler struct {
@@ -28,7 +28,7 @@ type NotifierHandler struct {
 	logger       *utils.Logger
 }
 
-func NewNotifierHandler(s store.IStore, cfg config.NotifierConfig, mqtt MQTTPublisher, logger *utils.Logger) (*NotifierHandler, error) {
+func NewNotifierHandler(s storage.IStorage, cfg config.NotifierConfig, mqtt MQTTPublisher, logger *utils.Logger) (*NotifierHandler, error) {
 	var nStore notifier.INotifierStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:

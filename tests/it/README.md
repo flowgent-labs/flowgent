@@ -33,8 +33,6 @@ tests/it/
     pgvector/
     github-mcp/
     sonarqube-mcp/
-    glauth/                ← LDAP (build tag: ldap)
-    keycloak/              ← OIDC (build tag: oidc)
 ```
 
 ## Design

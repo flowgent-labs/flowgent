@@ -8,8 +8,8 @@ import (
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agent"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/agent"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,7 +21,7 @@ type AgentDefHandler struct {
 }
 
 // NewAgentDefHandler creates an agent CRUD handler.
-func NewAgentDefHandler(s store.IStore, logger *utils.Logger) *AgentDefHandler {
+func NewAgentDefHandler(s storage.IStorage, logger *utils.Logger) *AgentDefHandler {
 	var agStore agent.IAgentInfoStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:

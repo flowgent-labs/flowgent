@@ -135,12 +135,15 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 				if run.RuntimeMode != cfg.RuntimeMode {
 					continue
 				}
+				// Resolve the durable definition for every new run. The initial map is
+				// only a startup fallback; keeping it authoritative would make local
+				// all-in-one execution ignore Flow edits made through the API/UI.
 				spec := flows[run.AgentFlowID]
-				if spec == nil {
-					if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
-						spec = apiSpec
-						slog.Debug("poller loaded flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
-					}
+				if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
+					spec = apiSpec
+					slog.Debug("poller loaded current flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
+				} else if spec == nil {
+					slog.Warn("poller flow spec unavailable", "agentFlowID", run.AgentFlowID, "err", err)
 				}
 				if spec == nil {
 					continue

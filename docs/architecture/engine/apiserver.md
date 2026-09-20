@@ -29,10 +29,17 @@ aligns with Kubernetes' apiserver→etcd pattern.
 2. **Flow definition cache** — in-memory map, invalidated on CRUD, pushed to Controller via watch
 3. **MQTT lifecycle events** — publishes flow/run lifecycle events for real-time consumption by Controller, JM, and other components
 4. **State write endpoint** — JM/TM/sandbox update run/task status via REST (FlowgentClient), notifier reads channels via API
-5. **Multi-tenancy** — Auth (JWT/OIDC/GitHub OAuth) + rate limiting + namespace routing
+5. **Multi-tenancy** — AuthGuard gateway policy + repository SQL scope + namespace routing
 6. **Scale independence** — stateless, 2+ replicas (JM is stateful, leader-elected)
 
-### REST API (Port 9999)
+### REST API (Ports 9999 and 9990)
+
+Port `9999` is the external business listener. When the AuthGuard adapter is
+enabled, every business request must carry a valid signed access context and
+its AuthGuard action must match the HTTP method. Port `9990` exposes the same
+state API only to trusted Flowgent control-plane components and supplies the
+dummy SDK SQL scope needed by Controller/JM/TM/Sandbox/Notifier. It must not be
+published through the business Gateway.
 
 | Route | Method | Description |
 |-------|--------|-------------|
@@ -42,7 +49,6 @@ aligns with Kubernetes' apiserver→etcd pattern.
 | `/api/v1/{namespace}/flows` | GET/POST | List / Create flows |
 | `/api/v1/{namespace}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
 | `/api/v1/{namespace}/flows/{id}/runs[...]` | GET/POST/DELETE | Flow-scoped run/task/approval/trace surface for exact-Flow grants |
-| `/api/v1/{namespace}/flows/{id}/iam/{options,bindings}` | GET/POST/DELETE | Repository-style Flow Settings access management |
 | `/api/v1/{namespace}/runtime-config[/environment\|/secrets]` | GET/PUT | Namespace environment defaults and write-only secrets |
 | `/api/v1/{namespace}/flows/{id}/runtime-config[/environment\|/secrets]` | GET/PUT | Flow-local overrides plus redacted effective inheritance |
 | `/api/v1/{namespace}/flows/{id}/runtime-config/resolved` | GET | Controller-only effective runtime values for K8s materialization |
@@ -62,8 +68,6 @@ aligns with Kubernetes' apiserver→etcd pattern.
 | `/api/v1/{namespace}/notifications/channels/{id}` | GET/PUT/DELETE | Notification channel CRUD |
 | `/api/v1/{namespace}/llm/providers` | GET/POST | List / Create LLM provider definitions |
 | `/api/v1/{namespace}/mcp` | GET/POST | List / Create Streamable HTTP MCP definitions |
-| `/api/v1/{namespace}/iam/{principals,groups,roles,bindings}` | GET/POST/PUT/DELETE | Namespace organization membership, teams, roles, and grants |
-| `/api/v1/{namespace}/iam/api-keys` | GET/POST/DELETE | One-time, revocable namespace machine credentials |
 | `/api/v1/{namespace}/flow-releases` | GET/POST | Immutable shared Flow release catalog |
 | `/api/v1/{namespace}/flow-releases/{id}/{grants,install}` | GET/POST/DELETE | Producer grants and consumer-owned installation copies |
 | `/api/v1/human/approvals` | GET/POST | List pending / Create human approval |
@@ -146,56 +150,26 @@ API lifecycle.
 ### A2A Protocol (Port 9992)
 
 The standalone and all-in-one compositions use the same A2A 0.3 server and
-shared database-backed task store. The card advertises JSON-RPC and a Bearer
-security scheme. Every protocol request validates its caller through API Server
-`/api/v1/auth/me`, forwards that same credential to REST, and therefore receives
-the caller's ordinary RBAC decision. The store partitions tasks by a SHA-256
-credential digest; plaintext bearer credentials are never persisted.
+shared database-backed task store. When enabled, the AuthGuard adapter verifies
+the signed gateway context and partitions tasks by a SHA-256 digest of the
+verified principal ID. Calls from A2A to the API Server use the private
+in-cluster control plane.
 
 | Route | Method | Description |
 |-------|--------|-------------|
 | `/.well-known/agent.json` | GET | A2A 0.3 Agent Card |
 | `/` | POST | Standard JSON-RPC (`message/send`, `tasks/get`, and SDK task methods) |
-| `/_/healthz` | GET | Process health; it does not bypass request authentication |
+| `/_/healthz` | GET | Process health |
 
-### Auth & Multi-Tenancy
+### AuthGuard & Multi-Tenancy
 
-The deployment is the implicit enterprise boundary; there is deliberately no
-Enterprise or Workspace database entity. A `namespace_id` is the organization,
-business-team, runtime, data, and secret-isolation boundary. Deployment-scoped
-principals are mapped by immutable `(issuer, external_id)` identities and join
-one or more namespaces through explicit membership edges. Removing membership
-revokes only that organization's group memberships and bindings; it does not
-delete the enterprise identity.
-
-Authorization is default-deny and has three scopes: platform, namespace, and
-exact resource. Groups are namespace-owned teams. Built-in or custom roles bind
-users, service accounts, or teams; explicit DENY precedes ALLOW, and bindings
-can expire or restrict source CIDRs. A Flow binding's resource is the exact
-`namespace/flow` pair. Browser routes use
-`/{namespace}/{flow}/...` (namespace-only administration stays under
-`/namespaces/{namespace}/settings`), while REST run aliases nest beneath
-the Flow, so Definition, runs, tasks, approvals, and traces share one coherent
-repository-style boundary. Namespace owners manage membership under namespace
-Settings; Flow owners manage direct grants under that Flow's Settings. The last
-namespace-owner grant and self-removal are protected.
-
-JWT (ES256/RS256/EdDSA), GitHub browser SSO, generic OIDC, and LDAP identities
-use the same evaluator. GitHub SSO uses the standard OAuth2 authorization-code
-flow; generic OIDC uses provider discovery, ID-token verification, and nonce
-validation. Successful browser callbacks set an HttpOnly `flowgent_session`
-cookie and return `303 /dashboard`; callbacks never write tokens into HTML or
-browser storage, so CSP can keep `script-src 'self'`. Manual Bearer input remains
-only for API keys and break-glass tokens. LDAP password login follows the same
-browser-session cookie contract after successful bind. `POST /auth/logout`
-clears the session cookie.
-
-Internal Controller/JM/TM/Notifier/A2A credentials are distinct rotatable
-workload tokens delivered by Kubernetes Secrets. API keys are one-time plaintext
-credentials whose database rows contain only a SHA-256 digest, prefix/suffix
-metadata, expiry, revocation, namespace attenuation, and explicit permission
-attenuation. Namespace owners may issue them for namespace service accounts; the
-target's role bindings remain authoritative.
+AuthGuard owns authentication, GitHub/LDAP federation, sessions, principals,
+roles, policies, and authorization audit. Flowgent only verifies the signed
+AuthGuard access context with the official Go adapters SDK and converts grants
+to `FlowgentSqlScope` for business queries. When integration is disabled the
+scope is a no-op. The API Service is private by default, and public requests
+must traverse the AuthGuard-managed Envoy Gateway. See
+[AuthGuard integration](../authguard-integration.md).
 
 Cross-team reuse publishes an immutable producer-owned `FlowRelease`. A
 consumer with an explicit grant installs a copy into its own namespace and then

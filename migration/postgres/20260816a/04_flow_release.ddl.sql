@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_flow_release_catalog
 CREATE TABLE IF NOT EXISTS orh_flow_release_grant (
     id                    VARCHAR(64) PRIMARY KEY,
     release_id            VARCHAR(64) NOT NULL REFERENCES orh_flow_release(id),
-    consumer_namespace    VARCHAR(255) NOT NULL REFERENCES iam_namespace(id),
+    consumer_namespace    VARCHAR(255) NOT NULL,
     expires_at            TIMESTAMPTZ,
     description           TEXT NOT NULL DEFAULT '',
     namespace_id          VARCHAR(255) NOT NULL,

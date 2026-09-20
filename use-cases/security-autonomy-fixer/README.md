@@ -14,7 +14,7 @@ logic.
 
 ## Enterprise Authorization Preset
 
-Run the production-shaped k3s deployment and real verification with one command:
+Run the production-shaped K8s deployment and real verification with one command:
 
 ```bash
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
@@ -28,6 +28,18 @@ separate workload namespaces, a dedicated Gateway controller name, and special
 ports. Flowgent and AuthGuard use the dedicated PostgreSQL schemas
 `e2e_flowgent` and `e2e_flowgent_authguard`, so AuthGuard's adjacent default
 E2E can run concurrently without sharing application state.
+
+The same runner also provides a functionally equivalent Docker Compose backend:
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer-docker
+```
+
+Both backends execute the same ordered verifier matrix. K8s uses Helm,
+isolated namespaces, and runtime Pods; Docker uses the
+`e2e-flowgent-docker` Compose project and the standalone in-process runtime.
+Both expose Flowgent/Web, PostgreSQL, MQTT, Jaeger, LDAP, GitHub OAuth mock,
+AuthGuard AuthN/AuthZ/Web, Redis, and Envoy on isolated resources and ports.
 
 The financial-enterprise preset provides Global Platform Security
 Administrator, Security Automation Owner, Application Security Analyst,
@@ -50,8 +62,25 @@ security-autonomy-fixer/
 │   │   ├── agents/                # application-specific agent roles
 │   │   ├── mcps/                  # GitHub and SonarQube integrations
 │   │   ├── llmproviders/          # model/provider definitions
-│   │   └── notifiers/             # delivery-channel definitions
-│   └── common/, deploy/, verifier/ # implementation modules
+│   │   ├── notifiers/             # delivery-channel definitions
+│   │   └── envoy/                 # Envoy edge-proxy declaration
+│   ├── common/
+│   │   └── project.py              # Flowgent API, database, state, and suite operations
+│   ├── deploy/
+│   │   ├── __init__.py             # BaseDeployer and backend factory
+│   │   ├── base/                   # Kubernetes and Docker Compose backend implementations
+│   │   ├── authguard/              # LDAP, GitHub OAuth, AuthGuard, and Envoy setup
+│   │   ├── flowgent/               # isolated Helm release lifecycle
+│   │   ├── mocksvc-github-service/  # isolated OAuth-provider mock implementation
+│   │   ├── mocksvc-notification-service/ # authenticated webhook-receiver mock implementation
+│   │   ├── sonarqube/              # external or local SonarQube lifecycle
+│   │   └── docker/                 # Compose topology
+│   ├── verifier/
+│   │   ├── __init__.py             # BaseVerifier step and evidence contract
+│   │   ├── infra/                  # InfrastructureVerifier scenarios
+│   │   ├── core/                   # CoreVerifier scenarios
+│   │   └── agentflow/              # AgentFlowVerifier scenarios
+│   └── reports/                    # ignored round reports and evidence artifacts
 ```
 
 | Resource  | Canonical file                                                              | Role                                                                                 |
@@ -60,11 +89,22 @@ security-autonomy-fixer/
 | Subflow   | [`sub-fix.yaml`](e2e/config/flows/sub-fix.yaml)                                 | Three-node analyze → patch → validate flow; currently a separate reusable definition |
 | Agents    | [`e2e/config/agents/`](e2e/config/agents/)                                      | Supervisor, detector, fixer, and three reviewers plus Git role                       |
 | MCPs      | [`e2e/config/mcps/`](e2e/config/mcps/)                                          | GitHub delivery and SonarQube issue/scan access                                      |
-| E2E       | [`e2e/runner.py`](e2e/runner.py)                                                  | Single entry for deployment, verification, UI rounds, access, and optional cleanup   |
+| Envoy     | [`e2e/config/envoy/envoy.yaml`](e2e/config/envoy/envoy.yaml)                    | Declarative edge-proxy configuration, separate from deployment code                  |
+| E2E       | [`e2e/runner.py`](e2e/runner.py)                                                  | Single entry for deployment, verification, manual access, and optional cleanup       |
 
 The YAML manifest is the executable source of truth. This README explains its
 intent and current behavior; when they differ, the manifest and observed E2E
 evidence take precedence.
+
+`--deployer k8s` is the canonical cluster mode. The former `kubernetes` value
+is normalized as a compatibility alias. Image loading discovers the active
+node runtime and imports into k3s' embedded containerd or the standard
+containerd `k8s.io` namespace; local kind, minikube, and k3d contexts are also
+recognized. Select a supported runtime explicitly with
+`FLOWGENT_E2E_KUBERNETES_IMAGE_LOADER` (`auto`, `k3s`, `kind`, `minikube`,
+`k3d`, or `containerd`) and, when needed, set
+`FLOWGENT_E2E_KUBERNETES_CLUSTER`. An unsupported remote runtime fails closed
+rather than importing an image to the wrong node store.
 
 ## Flow Contract
 
@@ -236,27 +276,32 @@ Run the complete real-cluster gate from the repository root:
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
 ```
 
-The unified runner builds and imports the Flowgent images, installs the root Helm
-chart with its AuthGuard/Envoy dependency, imports `e2e/config`, and verifies
+The unified runner builds the Flowgent images, deploys either the root Helm
+chart or the equivalent Compose topology with AuthGuard/Envoy, imports
+`e2e/config`, and verifies
 infrastructure, LDAP discovery, GitHub OAuth, edge allow/deny policy, telemetry,
 API Server, Notifier, Controller, MQTT, A2A, remediation, PR delivery, knowledge,
 and the shared workspace. Useful focused modes are:
 
 ```bash
 E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-fixer
-E2E_ARGS="--ui-rounds 5 --skip-first-build" make e2e-security-fixer
 make e2e-security-fixer-access
 E2E_ARGS="--clean-after-run" make e2e-security-fixer
+make e2e-security-fixer-docker
+python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker cleanup
 ```
 
 Cleanup is opt-in: `--clean-after-run` defaults to false. A successful ordinary
-run retains the isolated `e2e-flowgent-*` Helm deployment for manual evaluation;
-the cleanup flag removes only that release and its dedicated system/workload
-namespaces.
+run retains the selected backend for manual evaluation. Cleanup removes only
+the isolated `e2e-flowgent-*` Helm namespaces or the
+`e2e-flowgent-docker` Compose project and its named volumes.
 
-Generated `e2e/reports/` data and `.last_*` files are execution evidence, not design
-sources. They MUST NOT replace assertions against the manifest, REST state,
-MQTT routing, PostgreSQL, Kubernetes resources, or external-system outcomes.
+Generated data is organized as `e2e/reports/round-XX/`: verifier Markdown sits
+at the round root and machine evidence/screenshots live under
+`evidence/<scenario>/`. Transient cross-verifier state remains hidden under
+`reports/.state/`. These artifacts are execution evidence, not design sources;
+they MUST NOT replace assertions against the manifest, REST state, MQTT routing,
+PostgreSQL, Kubernetes resources, or external-system outcomes.
 
 ## Expected Behavior
 

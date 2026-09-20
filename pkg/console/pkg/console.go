@@ -7,13 +7,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agent"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
-	"github.com/flowgent-labs/flowgent/store/pkg/mcp"
-	"github.com/flowgent-labs/flowgent/store/pkg/notifier"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/agent"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/llmprovider"
+	"github.com/flowgent-labs/flowgent/storage/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/storage/pkg/notifier"
 )
 
 // FlowgentConsole is the unified resource management class for import/export
@@ -21,7 +21,7 @@ import (
 // channels, skills, and runs). Wallet keys are owned by the external Wallet
 // service and are managed with walletd, outside the Flowgent process.
 type FlowgentConsole struct {
-	store     store.IStore
+	store     storage.IStorage
 	namespace string
 	ctx       context.Context
 }
@@ -38,7 +38,7 @@ type lazyStores struct {
 
 // NewFlowgentConsole creates a FlowgentConsole from the given config.
 func NewFlowgentConsole(cfg *config.FlowgentConfig) (*FlowgentConsole, error) {
-	storeImpl := store.InitStore(cfg)
+	storeImpl := storage.InitStorage(cfg)
 
 	fc := &FlowgentConsole{
 		store: storeImpl,

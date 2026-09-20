@@ -13,9 +13,9 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
-	runtimeconfig "github.com/flowgent-labs/flowgent/store/pkg/runtimeconfig"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	runtimeconfig "github.com/flowgent-labs/flowgent/storage/pkg/runtimeconfig"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -36,7 +36,7 @@ type RuntimeConfigHandler struct {
 	secretBox secretbox.ISecretCipher
 }
 
-func NewRuntimeConfigHandler(s storepkg.IStore, encryption config.NotifierSecretEncryptionConfig) (*RuntimeConfigHandler, error) {
+func NewRuntimeConfigHandler(s storage.IStorage, encryption config.NotifierSecretEncryptionConfig) (*RuntimeConfigHandler, error) {
 	repo, err := runtimeconfig.NewRepository(s)
 	if err != nil {
 		return nil, err

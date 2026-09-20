@@ -65,14 +65,11 @@ func TestApplicationJobManagerAppLabelIsInstallationScoped(t *testing.T) {
 // apiserver URL — so the dedicated JM pod could never actually start.
 func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 	c := testController(&config.FlowgentConfig{
-		Auth: config.AuthConfig{Authorization: config.AuthorizationConfig{Enabled: true, Enforcement: "enforce"}},
 		Runtime: config.RuntimeConfig{
 			JMImage:             "flowgent:test",
 			JMConfigMap:         "flowgent-config",
 			APIServerURL:        "http://apiserver:9999",
 			CredentialEnvSecret: "flowgent-runtime-env",
-			InternalAuthSecret:  "flowgent-runtime-auth",
-			JobManagerAuthKey:   "jm-token",
 		},
 		Messager: config.MessagerConfig{
 			MQTT: config.MQTTConfig{Broker: "tcp://emqx:1883"},
@@ -136,21 +133,6 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 			t.Errorf("env[%q] = %q, want %q", k, got, want)
 		}
 	}
-	var workloadToken *corev1.EnvVar
-	for i := range container.Env {
-		if container.Env[i].Name == "FLOWGENT_INTERNAL_TOKEN" {
-			workloadToken = &container.Env[i]
-		}
-	}
-	if workloadToken == nil || workloadToken.ValueFrom == nil || workloadToken.ValueFrom.SecretKeyRef == nil {
-		t.Fatalf("JM workload token secret ref missing: %#v", workloadToken)
-	}
-	if got := workloadToken.ValueFrom.SecretKeyRef.Name; got != "flowgent-runtime-auth" {
-		t.Fatalf("JM workload Secret = %q", got)
-	}
-	if got := workloadToken.ValueFrom.SecretKeyRef.Key; got != "jm-token" {
-		t.Fatalf("JM workload Secret key = %q", got)
-	}
 	if len(container.EnvFrom) != 3 || container.EnvFrom[0].SecretRef == nil || container.EnvFrom[1].ConfigMapRef == nil || container.EnvFrom[2].SecretRef == nil {
 		t.Fatalf("expected credential, Flow environment and Flow secret envFrom refs, got %#v", container.EnvFrom)
 	}
@@ -168,52 +150,6 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 	}
 	if got := dep.Spec.Template.Annotations["flowgent.io/runtime-config-checksum"]; got != "checksum" {
 		t.Fatalf("runtime configuration checksum = %q", got)
-	}
-}
-
-func TestEnsureRuntimeAuthSecretCopiesOnlyRuntimeKeysAndRotates(t *testing.T) {
-	ctx := context.Background()
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "runtime-auth", Namespace: "system"},
-		Data: map[string][]byte{
-			"jm":        []byte("jm-v1"),
-			"tm":        []byte("tm-v1"),
-			"bootstrap": []byte("must-not-cross-boundary"),
-		},
-	})
-	c := testController(&config.FlowgentConfig{
-		Auth: config.AuthConfig{Authorization: config.AuthorizationConfig{Enabled: true, Enforcement: "enforce"}},
-		Runtime: config.RuntimeConfig{
-			SystemNamespace: "system", InternalAuthSecret: "runtime-auth",
-			JobManagerAuthKey: "jm", TaskManagerAuthKey: "tm",
-		},
-	})
-
-	if !c.ensureRuntimeAuthSecret(ctx, clientset, "flowgent-acme", "acme", "flow-a") {
-		t.Fatal("initial Secret synchronization failed")
-	}
-	destination, err := clientset.CoreV1().Secrets("flowgent-acme").Get(ctx, "runtime-auth", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get destination Secret: %v", err)
-	}
-	if len(destination.Data) != 2 || string(destination.Data["jm"]) != "jm-v1" || string(destination.Data["tm"]) != "tm-v1" {
-		t.Fatalf("destination data = %#v", destination.Data)
-	}
-	if _, leaked := destination.Data["bootstrap"]; leaked {
-		t.Fatal("bootstrap credential crossed into workload namespace")
-	}
-
-	source, _ := clientset.CoreV1().Secrets("system").Get(ctx, "runtime-auth", metav1.GetOptions{})
-	source.Data["tm"] = []byte("tm-v2")
-	if _, err := clientset.CoreV1().Secrets("system").Update(ctx, source, metav1.UpdateOptions{}); err != nil {
-		t.Fatalf("rotate source Secret: %v", err)
-	}
-	if !c.ensureRuntimeAuthSecret(ctx, clientset, "flowgent-acme", "acme", "flow-a") {
-		t.Fatal("rotated Secret synchronization failed")
-	}
-	destination, _ = clientset.CoreV1().Secrets("flowgent-acme").Get(ctx, "runtime-auth", metav1.GetOptions{})
-	if got := string(destination.Data["tm"]); got != "tm-v2" {
-		t.Fatalf("rotated TM token = %q", got)
 	}
 }
 

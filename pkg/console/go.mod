@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/flowgent-labs/flowgent/config v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
-	github.com/flowgent-labs/flowgent/store v0.0.0
+	github.com/flowgent-labs/flowgent/storage v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/peterh/liner v1.2.2
@@ -74,5 +74,5 @@ replace (
 	github.com/flowgent-labs/flowgent/messager => ../messager
 	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
-	github.com/flowgent-labs/flowgent/store => ../store
+	github.com/flowgent-labs/flowgent/storage => ../storage
 )

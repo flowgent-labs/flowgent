@@ -22,7 +22,6 @@ func RegisterRESTRoutes(
 	webhook *handler.WebhookHandler,
 	knowledgeHandler *handler.KnowledgeHandler,
 	traceHandler *handler.TraceHandler,
-	iamHandler *handler.IAMHandler,
 	flowRelease *handler.FlowReleaseHandler,
 	runtimeConfig *handler.RuntimeConfigHandler,
 ) *http.ServeMux {
@@ -64,12 +63,6 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/{decision}", human.ResolveRunApproval)
 	if traceHandler != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/trace", traceHandler.GetRunTrace)
-	}
-	if iamHandler != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/iam/options", iamHandler.FlowAccessOptions)
-		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/iam/bindings", iamHandler.ListFlowBindings)
-		mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/iam/bindings", iamHandler.CreateFlowBinding)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{flow_id}/iam/bindings/{binding_id}", iamHandler.DeleteFlowBinding)
 	}
 	if runtimeConfig != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/runtime-config", runtimeConfig.GetNamespace)
@@ -141,41 +134,6 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("DELETE /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Delete)
 	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/search", knowledgeHandler.Search)
 
-	// ── Identity and namespace-scoped authorization ──────────
-	if iamHandler != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/me", iamHandler.CurrentPrincipal)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/namespaces", iamHandler.Namespace)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/namespaces", iamHandler.CreateNamespace)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/namespaces/{id}", iamHandler.GetNamespace)
-		mux.HandleFunc("PUT /api/v1/{namespace}/iam/namespaces/{id}", iamHandler.UpdateNamespace)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/namespaces/{id}", iamHandler.DeleteNamespace)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/permissions", iamHandler.ListPermissions)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/principals", iamHandler.ListPrincipals)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/principals", iamHandler.CreatePrincipal)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/principals/{id}", iamHandler.GetPrincipal)
-		mux.HandleFunc("PUT /api/v1/{namespace}/iam/principals/{id}", iamHandler.UpdatePrincipal)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/principals/{id}", iamHandler.DeletePrincipal)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/groups", iamHandler.ListGroups)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/groups", iamHandler.CreateGroup)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/groups/{id}", iamHandler.GetGroup)
-		mux.HandleFunc("PUT /api/v1/{namespace}/iam/groups/{id}", iamHandler.UpdateGroup)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/groups/{id}", iamHandler.DeleteGroup)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/groups/{id}/members", iamHandler.ListGroupMembers)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/groups/{id}/members", iamHandler.AddGroupMember)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/groups/{id}/members/{member_id}", iamHandler.DeleteGroupMember)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/roles", iamHandler.ListRoles)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/roles", iamHandler.CreateRole)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/roles/{id}", iamHandler.GetRole)
-		mux.HandleFunc("PUT /api/v1/{namespace}/iam/roles/{id}", iamHandler.UpdateRole)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/roles/{id}", iamHandler.DeleteRole)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/bindings", iamHandler.ListBindings)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/bindings", iamHandler.CreateBinding)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/bindings/{id}", iamHandler.DeleteBinding)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/api-keys", iamHandler.ListAPIKeys)
-		mux.HandleFunc("POST /api/v1/{namespace}/iam/api-keys", iamHandler.CreateAPIKey)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/iam/api-keys/{id}", iamHandler.RevokeAPIKey)
-		mux.HandleFunc("GET /api/v1/{namespace}/iam/audit", iamHandler.ListAudit)
-	}
 	// ── Immutable Flow releases and consumer installations ───
 	if flowRelease != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases", flowRelease.List)

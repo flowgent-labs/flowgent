@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/mcp"
 )
 
 func publicMcp(m *entities.McpInfo) *entities.McpInfo {
@@ -73,8 +73,8 @@ type McpHandler struct {
 	store mcp.IMCPStore
 }
 
-// NewMcpHandler creates an McpHandler from an IStore.
-func NewMcpHandler(s store.IStore) *McpHandler {
+// NewMcpHandler creates an McpHandler from an IStorage.
+func NewMcpHandler(s storage.IStorage) *McpHandler {
 	var mcpStore mcp.IMCPStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:

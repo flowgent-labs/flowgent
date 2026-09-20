@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/llmprovider"
 )
 
 // publicLlmProvider returns the browser-safe resource projection. The API key
@@ -52,8 +52,8 @@ type LlmProviderHandler struct {
 	store llmprovider.ILlmProviderStore
 }
 
-// NewLlmProviderHandler creates an LlmProviderHandler from an IStore.
-func NewLlmProviderHandler(s storepkg.IStore) *LlmProviderHandler {
+// NewLlmProviderHandler creates an LlmProviderHandler from an IStorage.
+func NewLlmProviderHandler(s storage.IStorage) *LlmProviderHandler {
 	var lpStore llmprovider.ILlmProviderStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:

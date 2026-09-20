@@ -32,7 +32,7 @@ import (
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -170,7 +170,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	}
 
 	logProgress("[store] connecting to PostgreSQL at %s:%s", host, port)
-	storeImpl := storepkg.InitStore(cfg)
+	storeImpl := storage.InitStorage(cfg)
 	t.Cleanup(func() { _ = storeImpl.Close() })
 
 	pool, ok := storeImpl.DB().(*pgxpool.Pool)
@@ -209,7 +209,6 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		handler.NewMcpHandler(storeImpl),
 		handler.NewWebhookHandler(flowHandler, logger, namespace),
 		handler.NewKnowledgeHandler(storeImpl),
-		nil,
 		nil,
 		nil,
 		runtimeConfigHandler,

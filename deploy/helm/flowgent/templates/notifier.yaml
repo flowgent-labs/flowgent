@@ -25,13 +25,12 @@ spec:
     spec:
       containers:
         - name: notifier
-          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          image: {{ include "flowgent.image" . | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
           args: ["notifier", "start"]
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            {{- include "flowgent.workloadTokenEnv" (dict "root" . "component" "notifier") | nindent 12 }}
             {{- include "flowgent.notificationSecretEnv" . | nindent 12 }}
             - name: FLOWGENT__CONFIG__FILE
               value: /etc/flowgent/flowgent.yaml

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
-	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -48,21 +47,7 @@ func startJobManager(cfgPath string) error {
 	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
 	jmID := "jm-" + utils.Hostname()
 
-	if svcCfg.Mgmt.OTEL.Enabled && svcCfg.Mgmt.OTEL.Endpoint != "" {
-		otelCfg := &tracing.OTELConfig{
-			Enabled:    svcCfg.Mgmt.OTEL.Enabled,
-			Endpoint:   svcCfg.Mgmt.OTEL.Endpoint,
-			Protocol:   svcCfg.Mgmt.OTEL.Protocol,
-			Timeout:    svcCfg.Mgmt.OTEL.Timeout,
-			SampleRate: svcCfg.Mgmt.OTEL.SampleRate,
-		}
-		if provider, err := tracing.NewProvider(context.Background(), "flowgent-jobmanager", "1.0", otelCfg, nil); err != nil {
-			slog.Warn("OTEL tracer provider init failed, tracing disabled", "error", err)
-		} else {
-			defer provider.Shutdown(context.Background())
-			slog.Info("OTEL tracing enabled", "endpoint", svcCfg.Mgmt.OTEL.Endpoint)
-		}
-	}
+	defer startOTELTracing(svcCfg, "flowgent-jobmanager")()
 
 	q := messager.NewQueueFromConfig(svcCfg, jmID)
 	defer q.Close()
@@ -135,8 +120,6 @@ func startJobManager(cfgPath string) error {
 			APIServerURL:             svcCfg.Runtime.APIServerURL,
 			Namespace:                namespace,
 			CredentialEnvSecret:      svcCfg.Runtime.CredentialEnvSecret,
-			InternalAuthSecret:       svcCfg.Runtime.InternalAuthSecret,
-			TaskManagerAuthKey:       svcCfg.Runtime.TaskManagerAuthKey,
 			OwnerNamespaceID:         namespace,
 			RuntimeClusterID:         clusterID,
 			OwnerFlowID:              agentFlowID,

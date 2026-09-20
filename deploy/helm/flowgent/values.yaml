@@ -4,8 +4,8 @@
 
 global:
   image:
-    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent
-    tag: latest
+    repository: ghcr.io/flowgent-labs/flowgent
+    tag: ""                       # defaults to Chart.appVersion
     pullPolicy: IfNotPresent
 
 # Business workload lifecycle. Keep this true for ordinary Flowgent releases.
@@ -87,24 +87,6 @@ messaging:
   mqtt:
     broker: ""                   # set via FLOWGENT_MQTT_BROKER env or external secret
 
-# ── Authentication / Authorization ───────────────────────────
-# The deployment itself is the implicit Enterprise boundary. namespace_id is
-# the GitHub-Organization-equivalent isolation and authorization boundary.
-# Empty existingSecret values create release-local, upgrade-stable credentials.
-authorization:
-  enabled: true
-  enforcement: enforce           # enforce | audit | disabled
-  auditAllow: true
-  auditDeny: true
-  existingSecret: ""             # keys: bootstrap-token, controller-token, notifier-token, a2a-token
-  runtimeExistingSecret: ""      # keys: jobmanager-token, taskmanager-token
-  bootstrapKey: bootstrap-token
-  controllerKey: controller-token
-  notifierKey: notifier-token
-  a2aKey: a2a-token
-  jobmanagerKey: jobmanager-token
-  taskmanagerKey: taskmanager-token
-
 # ═══════════════════════════════════════════════════════════════
 # API Server — [always] Multi-namespace REST Gateway
 # ═══════════════════════════════════════════════════════════════
@@ -113,23 +95,19 @@ apiserver:
   replicas: 2
   image: ""
   service:
-    type: NodePort
+    # External traffic enters through the AuthGuard-managed Envoy Gateway.
+    # E2E may explicitly override this to NodePort.
+    type: ClusterIP
     restPort: 9999
+    internalPort: 9990
     mgmtPort: 9991
     nodePorts:
       rest: 30999
+      internal: 30990
       mgmt: 30991
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
-  config:
-    jwtAlgorithm: ES256
-    jwtValidityAk: 3600
-    jwtValidityRk: 86400
-    anonymousPaths:
-      - "/public/**"
-      - "/static/**"
-      - "/_/healthz/**"
 
 # ═══════════════════════════════════════════════════════════════
 # A2A — [optional] Google Agent-to-Agent Protocol Server
@@ -147,14 +125,14 @@ a2a:
     limits:   { cpu: "500m", memory: "512Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# UI — Nginx-served Operations Console
+# Web — Nginx-served Operations Console
 # ═══════════════════════════════════════════════════════════════
-ui:
+web:
   enabled: true
   replicas: 1
   image:
-    repository: registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent-ui
-    tag: latest
+    repository: ghcr.io/flowgent-labs/flowgent-web
+    tag: ""                       # defaults to Chart.appVersion
     pullPolicy: IfNotPresent
   apiUpstream: ""                 # default: http://{release}-apiserver:{apiserver.service.restPort}
   service:
@@ -274,6 +252,7 @@ runtime:
     server:
       host: "0.0.0.0"
       port: {{ .Values.apiserver.service.restPort }}
+      internal_port: {{ .Values.apiserver.service.internalPort }}
       shutdown_timeout: "15s"
     a2a:
       enabled: {{ .Values.a2a.enabled }}
@@ -304,67 +283,13 @@ runtime:
     logging:
       mode: JSON
       level: DEBUG
-    auth:
-      jwt_validity_ak: {{ .Values.apiserver.config.jwtValidityAk }}
-      jwt_validity_rk: {{ .Values.apiserver.config.jwtValidityRk }}
-      jwt_algorithm: {{ .Values.apiserver.config.jwtAlgorithm }}
-      anonymous_paths:
-        {{- range .Values.apiserver.config.anonymousPaths }}
-        - {{ . | quote }}
-        {{- end }}
-      authorization:
-        enabled: {{ .Values.authorization.enabled }}
-        enforcement: {{ .Values.authorization.enforcement | quote }}
-        bootstrap_token: "${FLOWGENT_AUTH_BOOTSTRAP_TOKEN}"
-        internal_tokens:
-          controller: "${FLOWGENT_AUTH_CONTROLLER_TOKEN}"
-          jobmanager: "${FLOWGENT_AUTH_JOBMANAGER_TOKEN}"
-          taskmanager: "${FLOWGENT_AUTH_TASKMANAGER_TOKEN}"
-          notifier: "${FLOWGENT_AUTH_NOTIFIER_TOKEN}"
-          a2a: "${FLOWGENT_AUTH_A2A_TOKEN}"
-        audit_allow: {{ .Values.authorization.auditAllow }}
-        audit_deny: {{ .Values.authorization.auditDeny }}
-        trusted_proxy_cidrs: []
-      authguard:
-        {{- $middleware := index .Values "authguard-middleware" }}
-        enabled: {{ or $middleware.enabled $middleware.adapter.enabled }}
-        access_context_hmac_key: "${AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}"
-      # Generic OIDC remains available through full config override, but the
-      # default browser SSO provider is GitHub below.
-      oidc:
-        enabled: false
-        client_id: ""
-        client_secret: ""
-        issue_url: ""
-        redirect_url: ""
-        scope: "openid profile email"
-      ldap:
-        enabled: false
-        url: ""
-        base_dn: ""
-        user_dn: ""
-        password: "${FLOWGENT_LDAP_BIND_PASSWORD}"
-        domains: []
-        role_mapping: []
-        user_search_filter: "(cn=%s)"
-        username_attribute: "cn"
-        email_attribute: "mail"
-        display_name_attribute: "cn"
-        group_search_base: ""
-        group_search_filter: "(member=%s)"
-        group_name_attribute: "cn"
-        user_attr_mapping: {}
-        referral: "follow"
-        insecure_skip_verify: false
-      github:
-        enabled: true
-        client_id: "${FLOWGENT_GITHUB_CLIENT_ID}"
-        client_secret: "${FLOWGENT_GITHUB_CLIENT_SECRET}"
-        auth_url: "https://github.com/login/oauth/authorize"
-        token_url: "https://github.com/login/oauth/access_token"
-        redirect_url: ""
-        scope: "read:user user:email"
-        user_info_url: "https://api.github.com/user"
+    authguard_adapter:
+      {{- $middleware := index .Values "authguard-middleware" }}
+      enabled: {{ or $middleware.enabled $middleware.adapter.enabled }}
+      partition: {{ $middleware.adapter.resource.partition | quote }}
+      service: {{ $middleware.adapter.resource.service | quote }}
+      region: {{ $middleware.adapter.resource.region | quote }}
+      tenant: {{ $middleware.adapter.resource.tenant | quote }}
     cache:
       provider: Memory
       memory:
@@ -438,6 +363,7 @@ runtime:
         keys:
           {{ .Values.notifier.secretEncryption.activeKeyId }}: "${FLOWGENT_NOTIFICATION_KEY_V1}"
     runtime:
+      api_server_url: "http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.internalPort }}"
       resource_owner: {{ .Values.runtime.resourceOwner | default "flowgent" | quote }}
       system_namespace: {{ .Values.runtime.systemNamespace | default "flowgent-system" | quote }}
       k8s_namespace: {{ .Values.runtime.k8sNamespace | default .Release.Namespace | quote }}
@@ -446,11 +372,8 @@ runtime:
       session_cluster_id: {{ .Values.runtime.session.clusterId | default "session" | quote }}
       tm_orphan_timeout: {{ .Values.runtime.tmOrphanTimeout | default "3m" | quote }}
       credential_env_secret: {{ .Values.runtime.credentialEnvSecret | default "" | quote }}
-      internal_auth_secret: {{ include "flowgent.runtimeAuthorizationSecretName" . | quote }}
-      jobmanager_auth_key: {{ .Values.authorization.jobmanagerKey | quote }}
-      taskmanager_auth_key: {{ .Values.authorization.taskmanagerKey | quote }}
-      jm_image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
-      tm_image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+      jm_image: "{{ include "flowgent.image" . }}"
+      tm_image: "{{ include "flowgent.image" . }}"
       tm_deploy: {{ printf "%s-session-taskmanager" (include "flowgent.fullname" .) | quote }}
       sandbox_deploy: {{ printf "%s-session-sandbox" (include "flowgent.fullname" .) | quote }}
       tm_replicas: {{ .Values.runtime.session.taskmanager.replicas | default 1 }}
@@ -528,7 +451,7 @@ runtime:
         max_timeout: {{ .Values.sandbox.policy.maxTimeout | default "600s" | quote }}
       deployment:
         enabled: true
-        image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+        image: "{{ include "flowgent.image" . }}"
         min_replicas: {{ .Values.sandbox.minReplicas | default 0 }}
         max_replicas: {{ .Values.sandbox.maxReplicas | default 10 }}
         resources:
@@ -667,6 +590,11 @@ authguard-middleware:
     enabled: false
     existingSecret: ""           # key must contain a random value of at least 32 bytes
     hmacKey: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY
+    resource:
+      partition: prod
+      service: flowgent
+      region: global
+      tenant: example-corp
   envoy_gateway:
     enabled: true
     nameOverride: flowgent-envoy-gateway

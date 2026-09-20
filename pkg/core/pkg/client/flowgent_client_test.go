@@ -31,23 +31,6 @@ func TestNotifierClientUsesDefaultNamespaceAndDecodesPage(t *testing.T) {
 	}
 }
 
-func TestFlowgentClientSendsBearerToken(t *testing.T) {
-	const token = "workload-secret"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
-			t.Fatalf("Authorization = %q", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
-	}))
-	defer server.Close()
-
-	client := NewFlowgentClientWithToken(server.URL, token)
-	if _, err := client.ListFlows(context.Background(), "default"); err != nil {
-		t.Fatalf("ListFlows() error = %v", err)
-	}
-}
-
 func TestFlowgentClientTriggerRunDecodesAcknowledgement(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/team-a/flows/trigger" {

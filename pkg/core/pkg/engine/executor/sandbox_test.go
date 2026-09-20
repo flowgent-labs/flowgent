@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -11,6 +12,21 @@ import (
 type runtimeConfigResolverStub struct {
 	value *entities.ResolvedRuntimeConfig
 	err   error
+}
+
+func TestSandboxExecutorRejectsMissingPlanAndQueue(t *testing.T) {
+	executor := NewSandboxExecutor(nil, nil, t.TempDir())
+
+	if _, err := executor.Execute(context.Background(), nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "plan and node spec") {
+		t.Fatalf("Execute(nil) error = %v, want plan validation error", err)
+	}
+
+	plan := &entities.ExecutionPlan{NodeSpec: &entities.NodeSpec{}}
+	if _, err := executor.Execute(context.Background(), plan, nil); err == nil ||
+		!strings.Contains(err.Error(), "message queue") {
+		t.Fatalf("Execute() error = %v, want missing queue error", err)
+	}
 }
 
 func (s runtimeConfigResolverStub) ResolveFlowRuntimeConfig(context.Context, string, string) (*entities.ResolvedRuntimeConfig, error) {

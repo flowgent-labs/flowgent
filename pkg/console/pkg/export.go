@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 )
 
 // ExportAll collects all Flowgent-owned resources from the database.

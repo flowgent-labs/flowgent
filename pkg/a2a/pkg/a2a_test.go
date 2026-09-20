@@ -10,9 +10,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	guardaccess "authguard/adapters/golang/access"
+	guardmodel "authguard/adapters/golang/model"
 	protocol "github.com/a2aproject/a2a-go/a2a"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
 )
 
 type sqliteTestStore struct{ db *sql.DB }
@@ -22,7 +24,7 @@ func (s *sqliteTestStore) Close() error { return s.db.Close() }
 
 func newSQLiteTaskStore(t *testing.T) *PersistentTaskStore {
 	t.Helper()
-	db := storepkg.NewSQLiteConn(t.Context(), t.TempDir())
+	db := storage.NewSQLiteConn(t.Context(), t.TempDir())
 	t.Cleanup(func() { _ = db.Close() })
 	taskStore, err := NewPersistentTaskStore(&sqliteTestStore{db: db})
 	if err != nil {
@@ -31,8 +33,8 @@ func newSQLiteTaskStore(t *testing.T) *PersistentTaskStore {
 	return taskStore
 }
 
-func callerContext(token string) context.Context {
-	return context.WithValue(context.Background(), bearerTokenContextKey{}, token)
+func callerContext(principal string) context.Context {
+	return guardaccess.WithRequestAccess(context.Background(), guardmodel.RequestAccess{PrincipalID: principal})
 }
 
 func TestPersistentTaskStoreIsolationAndVersioning(t *testing.T) {
@@ -68,18 +70,10 @@ func TestPersistentTaskStoreIsolationAndVersioning(t *testing.T) {
 	}
 }
 
-func TestHTTPServerStandardProtocolAndBearerPropagation(t *testing.T) {
+func TestHTTPServerStandardProtocolUsesPrivateAPIServerChannel(t *testing.T) {
 	var propagatedAuthorization string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		propagatedAuthorization = r.Header.Get("Authorization")
-		if r.URL.Path == "/api/v1/auth/me" {
-			if propagatedAuthorization != "Bearer caller-token" {
-				http.Error(w, "invalid", http.StatusUnauthorized)
-				return
-			}
-			_, _ = w.Write([]byte(`{"principal":{"id":"caller"}}`))
-			return
-		}
 		if r.URL.Path != "/api/v1/team-a/flows" {
 			http.NotFound(w, r)
 			return
@@ -90,8 +84,11 @@ func TestHTTPServerStandardProtocolAndBearerPropagation(t *testing.T) {
 	defer api.Close()
 
 	cfg := &config.FlowgentConfig{ServiceName: "flowgent", Runtime: config.RuntimeConfig{APIServerURL: api.URL}}
-	cfg.Auth.Authorization.Enabled = true
-	a2aServer := httptest.NewServer(NewHTTPServer(cfg, newSQLiteTaskStore(t)).Handler)
+	server, err := NewHTTPServer(cfg, newSQLiteTaskStore(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2aServer := httptest.NewServer(server.Handler)
 	defer a2aServer.Close()
 
 	cardResp, err := http.Get(a2aServer.URL + "/.well-known/agent.json")
@@ -116,18 +113,7 @@ func TestHTTPServerStandardProtocolAndBearerPropagation(t *testing.T) {
 			}}},
 		}},
 	}
-	withoutAuth := postJSON(t, a2aServer.URL, payload, "")
-	if withoutAuth.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status = %d", withoutAuth.StatusCode)
-	}
-	_ = withoutAuth.Body.Close()
-	invalidAuth := postJSON(t, a2aServer.URL, payload, "invalid-token")
-	if invalidAuth.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("invalid credential status = %d", invalidAuth.StatusCode)
-	}
-	_ = invalidAuth.Body.Close()
-
-	response := postJSON(t, a2aServer.URL, payload, "caller-token")
+	response := postJSON(t, a2aServer.URL, payload)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(response.Body)
@@ -143,12 +129,12 @@ func TestHTTPServerStandardProtocolAndBearerPropagation(t *testing.T) {
 	if result.Error != nil || result.Result.Status.State != protocol.TaskStateCompleted {
 		t.Fatalf("message/send result = %+v", result)
 	}
-	if propagatedAuthorization != "Bearer caller-token" {
+	if propagatedAuthorization != "" {
 		t.Fatalf("APIServer authorization = %q", propagatedAuthorization)
 	}
 }
 
-func postJSON(t *testing.T, url string, payload any, token string) *http.Response {
+func postJSON(t *testing.T, url string, payload any) *http.Response {
 	t.Helper()
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -159,9 +145,6 @@ func postJSON(t *testing.T, url string, payload any, token string) *http.Respons
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

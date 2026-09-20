@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 )
 
 type traceRunStore struct {

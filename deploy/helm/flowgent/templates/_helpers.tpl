@@ -23,6 +23,15 @@ app.kubernetes.io/name: {{ include "flowgent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/* Official releases inherit the chart appVersion; local/E2E values may pin a tag. */}}
+{{- define "flowgent.image" -}}
+{{- printf "%s:%s" .Values.global.image.repository (.Values.global.image.tag | default .Chart.AppVersion) -}}
+{{- end }}
+
+{{- define "flowgent.webImage" -}}
+{{- printf "%s:%s" .Values.web.image.repository (.Values.web.image.tag | default .Chart.AppVersion) -}}
+{{- end }}
+
 {{/* PG secret name: auto-generated when enabled, externalSecret when disabled */}}
 {{- define "flowgent.pgSecretName" -}}
 {{- if .Values.postgresql.externalSecret }}
@@ -58,66 +67,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
       key: {{ .Values.notifier.secretEncryption.keyName | quote }}
 {{- end }}
 
-{{/* API authorization credentials and runtime-only workload credentials. */}}
-{{- define "flowgent.authorizationSecretName" -}}
-{{- if .Values.authorization.existingSecret }}
-{{- .Values.authorization.existingSecret }}
-{{- else }}
-{{- printf "%s-authorization" (include "flowgent.fullname" .) }}
-{{- end }}
-{{- end }}
-
-{{- define "flowgent.runtimeAuthorizationSecretName" -}}
-{{- if .Values.authorization.runtimeExistingSecret }}
-{{- .Values.authorization.runtimeExistingSecret }}
-{{- else }}
-{{- printf "%s-runtime-auth" (include "flowgent.fullname" .) }}
-{{- end }}
-{{- end }}
-
-{{- define "flowgent.workloadTokenEnv" -}}
-{{- $root := .root -}}
-{{- $component := .component -}}
-- name: FLOWGENT_INTERNAL_TOKEN
-  valueFrom:
-    secretKeyRef:
-      {{- if or (eq $component "jobmanager") (eq $component "taskmanager") }}
-      name: {{ include "flowgent.runtimeAuthorizationSecretName" $root | quote }}
-      key: {{ index $root.Values.authorization (printf "%sKey" $component) | quote }}
-      {{- else }}
-      name: {{ include "flowgent.authorizationSecretName" $root | quote }}
-      key: {{ index $root.Values.authorization (printf "%sKey" $component) | quote }}
-      {{- end }}
-{{- end }}
-
-{{- define "flowgent.authorizationServerEnv" -}}
-- name: FLOWGENT_AUTH_BOOTSTRAP_TOKEN
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "flowgent.authorizationSecretName" . | quote }}
-      key: {{ .Values.authorization.bootstrapKey | quote }}
-{{- range $component := list "controller" "notifier" "a2a" }}
-- name: {{ printf "FLOWGENT_AUTH_%s_TOKEN" (upper $component) }}
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "flowgent.authorizationSecretName" $ | quote }}
-      key: {{ index $.Values.authorization (printf "%sKey" $component) | quote }}
-{{- end }}
-
-{{- range $component := list "jobmanager" "taskmanager" }}
-- name: {{ printf "FLOWGENT_AUTH_%s_TOKEN" (upper $component) }}
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "flowgent.runtimeAuthorizationSecretName" $ | quote }}
-      key: {{ index $.Values.authorization (printf "%sKey" $component) | quote }}
-{{- end }}
-{{- end }}
-
 {{/* Shared HMAC verifier for contexts produced by the AuthGuard edge. */}}
 {{- define "flowgent.authguardAdapterEnv" -}}
 {{- $middleware := index .Values "authguard-middleware" -}}
 {{- if or $middleware.enabled $middleware.adapter.enabled }}
-- name: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY
+- name: AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY
   valueFrom:
     secretKeyRef:
       name: {{ required "authguard-middleware.adapter.existingSecret is required when AuthGuard integration is enabled" $middleware.adapter.existingSecret | quote }}

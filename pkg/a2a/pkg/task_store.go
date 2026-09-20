@@ -14,14 +14,15 @@ import (
 	"time"
 
 	protocol "github.com/a2aproject/a2a-go/a2a"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
+	"github.com/flowgent-labs/flowgent/api/pkg/authz"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PersistentTaskStore keeps A2A protocol task state in Flowgent's shared
-// database. Tasks are isolated by a one-way digest of the caller credential;
-// bearer credentials are never persisted.
+// database. Tasks are isolated by a one-way digest of the AuthGuard-verified
+// principal identifier.
 type PersistentTaskStore struct {
 	sqlite   *sql.DB
 	postgres *pgxpool.Pool
@@ -29,7 +30,7 @@ type PersistentTaskStore struct {
 
 // NewPersistentTaskStore adapts Flowgent's configured database to the A2A SDK
 // task-store contract. Migrations are owned by the regular store bootstrap.
-func NewPersistentTaskStore(store storepkg.IStore) (*PersistentTaskStore, error) {
+func NewPersistentTaskStore(store storage.IStorage) (*PersistentTaskStore, error) {
 	switch db := store.DB().(type) {
 	case *sql.DB:
 		return &PersistentTaskStore{sqlite: db}, nil
@@ -307,11 +308,8 @@ func taskPage(tasks []*protocol.Task, pageSize, offset, total int) *protocol.Lis
 }
 
 func a2aCallerKey(ctx context.Context) string {
-	token := bearerTokenFromContext(ctx)
-	if token == "" {
-		return "anonymous"
-	}
-	digest := sha256.Sum256([]byte(token))
+	principal := authz.PrincipalIDFromContext(ctx)
+	digest := sha256.Sum256([]byte(principal))
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 

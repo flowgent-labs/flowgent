@@ -14,7 +14,7 @@ their owning documents.
 
 | Layer | Document | Physical or logical ownership |
 |---|---|---|
-| Security / IAM | [Enterprise IAM authorization](enterprise-iam-authorization.md) | Subject/group/role/grant model, Resource URN, request matchers, and resource-list scoping |
+| Security | [AuthGuard integration](authguard-integration.md) | Gateway trust boundary, adapters SDK, and repository SQL scope |
 | L1 Engine | [API Server](engine/apiserver.md) | External REST/A2A gateway and sole database client |
 | L1 Engine | [Controller](engine/controller.md) | Flow discovery and active-run JobManager lifecycle |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters.md) | Application/session runtime lifecycle and isolation |
@@ -632,7 +632,7 @@ a key-management library.
 | cache | `pkg/cache/` | Memory and Redis cache abstractions |
 | config | `pkg/config/` | YAML/environment loading and runtime configuration |
 | messager | `pkg/messager/` | Flowgent-internal memory/MQTT bus and topic contracts |
-| store | `pkg/store/` | PostgreSQL/SQLite stores for Flowgent-owned state |
+| storage | `pkg/storage/` | PostgreSQL/SQLite storage for Flowgent-owned state |
 | sandbox | `pkg/sandbox/` | Isolated execution, policy, and seccomp controls |
 | notifier | `pkg/notifier/` | Delivery channels and UI event push |
 | core | `pkg/core/` | Executors, JM/TM/RM, LLM/MCP clients, x402 policy and external Wallet client |

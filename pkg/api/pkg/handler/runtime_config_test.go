@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	runtimeconfig "github.com/flowgent-labs/flowgent/store/pkg/runtimeconfig"
+	runtimeconfig "github.com/flowgent-labs/flowgent/storage/pkg/runtimeconfig"
 )
 
 type runtimeConfigRepoStub struct {

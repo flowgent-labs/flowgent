@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	tracequery "github.com/flowgent-labs/flowgent/api/pkg/trace"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,7 +17,7 @@ type TraceHandler struct {
 	query tracequery.RunTraceQuery
 }
 
-func NewTraceHandler(store storepkg.IStore, query tracequery.RunTraceQuery) *TraceHandler {
+func NewTraceHandler(store storage.IStorage, query tracequery.RunTraceQuery) *TraceHandler {
 	var runs flowrun.IFlowRunStore
 	switch db := store.DB().(type) {
 	case *pgxpool.Pool:

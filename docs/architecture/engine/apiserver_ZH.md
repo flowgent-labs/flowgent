@@ -28,10 +28,15 @@ UI / REST / A2A / webhook
 2. **Flow 定义缓存**——内存 Map；CRUD 时失效，并通过 watch 推送给 Controller。
 3. **MQTT 生命周期事件**——发布 Flow/Run 生命周期事件，供 Controller、JM 等实时消费。
 4. **状态写入端点**——JM/TM/Sandbox 通过 REST（FlowgentClient）更新 Run/Task 状态；Notifier 通过 API 读取 Channel。
-5. **多租户**——JWT/OIDC/GitHub OAuth 认证、限流与 Namespace 路由。
+5. **多租户**——AuthGuard Gateway Policy、Repository SQL Scope 与 Namespace 路由。
 6. **独立扩缩容**——自身无状态，可部署 2 个以上副本；JM 有状态并选主。
 
-### REST API（端口 9999）
+### REST API（端口 9999 与 9990）
+
+`9999` 是外部业务监听器。启用 AuthGuard Adapter 后，所有业务请求都必须携带
+有效的签名访问上下文，且 AuthGuard Action 必须与 HTTP 方法一致。`9990` 仅向
+可信的 Flowgent 控制面组件开放相同的状态 API，并为 Controller/JM/TM/Sandbox/
+Notifier 提供 dummy SDK SQL scope；不得把该端口发布到业务 Gateway。
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
@@ -41,7 +46,6 @@ UI / REST / A2A / webhook
 | `/api/v1/{namespace}/flows` | GET/POST | 列出/创建 Flow |
 | `/api/v1/{namespace}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
 | `/api/v1/{namespace}/flows/{id}/runs[...]` | GET/POST/DELETE | 面向精确 Flow 授权的 Run/Task/Approval/Trace 嵌套接口 |
-| `/api/v1/{namespace}/flows/{id}/iam/{options,bindings}` | GET/POST/DELETE | 类 Repository 的 Flow Settings 权限管理 |
 | `/api/v1/{namespace}/runtime-config[/environment\|/secrets]` | GET/PUT | Namespace 环境变量默认值与只写 Secret |
 | `/api/v1/{namespace}/flows/{id}/runtime-config[/environment\|/secrets]` | GET/PUT | Flow 局部覆盖与脱敏后的有效继承结果 |
 | `/api/v1/{namespace}/flows/{id}/runtime-config/resolved` | GET | 仅 Controller 可读的 K8s 运行时物化值 |
@@ -61,8 +65,6 @@ UI / REST / A2A / webhook
 | `/api/v1/{namespace}/notifications/channels/{id}` | GET/PUT/DELETE | Notifier Channel CRUD |
 | `/api/v1/{namespace}/llm/providers` | GET/POST | 列出/创建 LLM Provider 定义 |
 | `/api/v1/{namespace}/mcp` | GET/POST | 列出/创建 Streamable HTTP MCP 定义 |
-| `/api/v1/{namespace}/iam/{principals,groups,roles,bindings}` | GET/POST/PUT/DELETE | Namespace 成员、团队、角色与授权 |
-| `/api/v1/{namespace}/iam/api-keys` | GET/POST/DELETE | 仅显示一次、可撤销的 Namespace 机器凭据 |
 | `/api/v1/{namespace}/flow-releases` | GET/POST | 不可变共享 Flow Release 目录 |
 | `/api/v1/{namespace}/flow-releases/{id}/{grants,install}` | GET/POST/DELETE | 生产方授权与消费方自有安装副本 |
 | `/api/v1/human/approvals` | GET/POST | 列出待审批项/创建人工审批 |
@@ -135,47 +137,22 @@ Flowgent 业务数据库。
 ### A2A 协议（端口 9992）
 
 Standalone 与 All-in-one 使用同一个 A2A 0.3 Server 和数据库共享 Task Store。
-Agent Card 声明 JSON-RPC 与 Bearer Security Scheme。每个协议请求先通过 API
-Server `/api/v1/auth/me` 校验调用方，再把同一个凭据转发给 REST，因此沿用调用方
-的正常 RBAC 决策。Task Store 按凭据 SHA-256 摘要隔离，绝不持久化 Bearer 明文。
+开启集成时，AuthGuard Adapter 校验 Gateway 签名 Context，Task Store 按已验证
+Principal ID 的 SHA-256 摘要隔离。A2A 调用 API Server 走集群内私有控制面。
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
 | `/.well-known/agent.json` | GET | A2A 0.3 Agent Card |
 | `/` | POST | 标准 JSON-RPC（`message/send`、`tasks/get` 及 SDK Task 方法） |
-| `/_/healthz` | GET | 进程健康检查；不会绕过业务请求认证 |
+| `/_/healthz` | GET | 进程健康检查 |
 
-### 认证与多租户
+### AuthGuard 与多租户
 
-一个部署就是隐式 Enterprise 边界，刻意不增加 Enterprise/Workspace 数据实体。
-`namespace_id` 同时是 Organization、业务团队、运行时、数据与 Secret 隔离边界。
-Principal 是部署级身份，以不可变 `(issuer, external_id)` 映射；身份通过显式
-Membership Edge 加入一个或多个 Namespace。移出某个 Namespace 只撤销该组织的
-Group Membership 和 Binding，不会删除全局企业身份。
-
-授权默认拒绝，分 Platform、Namespace 与精确资源三级 Scope。Group 是 Namespace
-拥有的 Team。内置或自定义 Role 可绑定 User、Service Account 或 Team；显式 DENY
-优先于 ALLOW，Binding 可过期或限制来源 CIDR。Flow Binding 的资源是精确的
-`namespace/flow` 对。浏览器使用
-`/{namespace}/{flow}/...`（仅 Namespace 管理保留在
-`/namespaces/{namespace}/settings`）；REST 把 Run 接口嵌套到 Flow 下，令
-Definition、Run、Task、Approval 与 Trace 共享一致的 Repository 边界。Namespace
-Owner 在 Namespace Settings 管理成员；Flow Owner 在该 Flow Settings 管理直接授权。
-系统禁止删除最后一个 Namespace Owner，也禁止当前身份移除自身。
-
-JWT（ES256/RS256/EdDSA）、GitHub 浏览器 SSO、通用 OIDC 与 LDAP 身份共用相同
-Evaluator。GitHub SSO 使用标准 OAuth2 authorization-code flow；通用 OIDC 使用
-Provider Discovery、ID Token 验签和 Nonce 校验。浏览器登录成功后，Callback
-设置 HttpOnly `flowgent_session` Cookie 并返回 `303 /dashboard`；Callback
-不会把 Token 写入 HTML 或浏览器存储，因此 CSP 可保持 `script-src 'self'`。
-手动 Bearer 输入仅用于 API Key 与 break-glass Token。LDAP 密码登录成功后也遵循
-同一个浏览器 Session Cookie 契约。`POST /auth/logout` 清理 Session Cookie。
-
-Controller、JM、TM、Notifier 与 A2A 分别使用 Kubernetes Secret 投递的可轮换
-Workload Token。API Key 明文只显示一次；数据库只保存 SHA-256 摘要、前后缀、
-有效期、撤销状态、Namespace 限制和显式 Permission 限制。Namespace Owner 可为
-该组织 Service Account 签发 Key，但最终权限仍受目标 Principal 的 Role Binding
-限制。
+AuthGuard 拥有认证、GitHub/LDAP 联邦、Session、Principal、Role、Policy 与授权审计。
+Flowgent 仅使用官方 Go adapters SDK 校验 AuthGuard 签名访问上下文，并把 Grant
+转换为业务查询的 `FlowgentSqlScope`。关闭集成时 Scope 为空实现。API Service
+默认私有，公网请求必须经过 AuthGuard 管理的 Envoy Gateway。见
+[AuthGuard 集成](../authguard-integration_ZH.md)。
 
 跨团队复用通过生产方拥有的不可变 `FlowRelease` 完成。消费方获得显式 Grant 后，
 把副本安装到自己的 Namespace，并自行拥有资源绑定、Secret、Run、Trace 与结果；

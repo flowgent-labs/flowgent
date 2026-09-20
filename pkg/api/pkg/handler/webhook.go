@@ -20,8 +20,8 @@ var webhookTracer = tracing.Tracer("flowgent/api/webhook")
 
 // maxWebhookBody caps the request body a webhook provider may POST (1 MiB),
 // well above any realistic GitHub/GitLab/Gitea push/PR payload but small
-// enough to keep an unauthenticated public endpoint from being used to
-// exhaust memory.
+// enough to protect the externally reachable delivery endpoint from memory
+// exhaustion even after AuthGuard has authorized the request.
 const maxWebhookBody = 1 << 20
 
 // WebhookHandler receives SCM (GitHub / GitLab / Gitea) webhook deliveries at

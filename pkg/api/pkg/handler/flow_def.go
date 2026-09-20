@@ -17,9 +17,9 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -29,7 +29,7 @@ var flowDefTracer = tracing.Tracer("flowgent/api/flowdef")
 
 // FlowDefHandler manages flow definition CRUD, watch API, and in-memory cache.
 type FlowDefHandler struct {
-	store            store.IStore
+	store            storage.IStorage
 	afStore          flow.IFlowInfoStore
 	frStore          flowrun.IFlowRunStore
 	mqtt             MQTTPublisher
@@ -51,7 +51,7 @@ type FlowDefHandler struct {
 // namespace ID (namespace.default_namespace) used when a flow spec doesn't
 // carry its own Namespace. sessionNamespace is the physical K8s namespace of
 // the Helm-deployed session runtime cluster.
-func NewFlowDefHandler(s store.IStore, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultNamespace string, sessionNamespace string, mqtt MQTTPublisher) *FlowDefHandler {
+func NewFlowDefHandler(s storage.IStorage, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultNamespace string, sessionNamespace string, mqtt MQTTPublisher) *FlowDefHandler {
 	afMap := make(map[string]*entities.FlowInfo)
 	for i := range agentFlows {
 		namespace := agentFlows[i].Namespace

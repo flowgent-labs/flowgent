@@ -82,8 +82,6 @@ type ResourceManagerConfig struct {
 	APIServerURL          string // API server URL for TM pod env var (K8s mode)
 	Namespace             string // default namespace for TM runtime resolution
 	CredentialEnvSecret   string // optional K8s Secret mounted via envFrom into TM/Sandbox pods
-	InternalAuthSecret    string // K8s Secret containing the TaskManager workload credential
-	TaskManagerAuthKey    string // key in InternalAuthSecret; defaults to taskmanager-token
 }
 
 // ─── Factory ──────────────────────────────────────────────────

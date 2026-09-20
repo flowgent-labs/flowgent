@@ -12,19 +12,12 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/google/uuid"
-
 	a2apkg "github.com/flowgent-labs/flowgent/a2a/pkg"
 	"github.com/flowgent-labs/flowgent/api/pkg"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth"
-	githubauth "github.com/flowgent-labs/flowgent/api/pkg/auth/github"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
 	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
@@ -36,24 +29,30 @@ import (
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/jobmanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/resourcemanager"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine/trigger"
+	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/notifier/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
-	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
-	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	flowreleasestore "github.com/flowgent-labs/flowgent/storage/pkg/flowrelease"
 )
 
 // allInOneState bundles shared dependencies for the all-in-one process.
 type allInOneState struct {
 	cfg         *config.FlowgentConfig
-	store       store.IStore
+	store       storage.IStorage
 	apiClient   *client.FlowgentClient
 	namespace   string
 	taskClient  *client.TaskStateClient
 	humanClient *client.HumanApprovalClient
 	logger      *utils.Logger
 	payloads    taskpayload.ITaskPayloadProvider
+	queue       messager.IMessager
+}
+
+type allInOneRESTServers struct {
+	external *http.Server
+	internal *http.Server
 }
 
 func StartAllInOne(cfgPath, pidFile string) error {
@@ -80,27 +79,22 @@ func startAllInOne(cfgPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	config.LogConfig(svcCfg)
+	defer startOTELTracing(svcCfg, "flowgent-jobmanager")()
 	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
-	if svcCfg.Auth.Authorization.Enabled {
-		if svcCfg.Auth.Authorization.InternalTokens == nil {
-			svcCfg.Auth.Authorization.InternalTokens = make(map[string]string)
-		}
-		token := svcCfg.Auth.Authorization.InternalTokens["allinone"]
-		if token == "" || strings.Contains(token, "${") {
-			token = uuid.NewString() + uuid.NewString()
-			svcCfg.Auth.Authorization.InternalTokens["allinone"] = token
-		}
-	}
-
-	storeImpl := store.InitStore(svcCfg)
+	storeImpl := storage.InitStorage(svcCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
 	payloadProvider, err := taskpayload.NewProvider(context.Background(), svcCfg.Storage.Artifacts)
 	if err != nil {
 		return fmt.Errorf("create task payload provider: %w", err)
 	}
 	defer payloadProvider.Close()
+	queue := messager.NewQueueFromConfig(
+		svcCfg,
+		uniqueRawMQTTClientID(svcCfg.Messager.MQTT.ClientID+"-allinone"),
+	)
+	defer queue.Close()
 
-	apiClient := client.NewFlowgentClientWithToken(svcCfg.Runtime.APIServerURL, svcCfg.Auth.Authorization.InternalTokens["allinone"])
+	apiClient := client.NewFlowgentClient(svcCfg.Runtime.APIServerURL)
 	namespace := svcCfg.Runtime.Namespace.DefaultNamespace
 	if namespace == "" {
 		namespace = "default"
@@ -115,17 +109,12 @@ func startAllInOne(cfgPath string) error {
 		humanClient: &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
 		logger:      logger,
 		payloads:    payloadProvider,
+		queue:       queue,
 	}
 
 	// Flow definitions are DB-backed and are loaded through the store.
 	agentFlows, subFlows := loadFlows(state)
 	allFlows := append(agentFlows, flattenSubflows(subFlows)...)
-
-	// Resource Manager (standalone, starts TM in-process)
-	rm, err := createStandaloneRM(state)
-	if err != nil {
-		return err
-	}
 
 	// Notifier + WS bridge (before REST so bridge is available)
 	notifSvc, wsBridge, err := startNotifier(state)
@@ -133,8 +122,22 @@ func startAllInOne(cfgPath string) error {
 		return err
 	}
 
-	// REST API Server (with optional WS bridge)
-	restSrv, flowHandler, err := startRESTServer(state, agentFlows, subFlows, wsBridge)
+	// REST API Server (with optional WS bridge). The standalone Resource
+	// Manager resolves its DB-backed runtime registry through this internal
+	// endpoint, so the API must be accepting traffic before RM construction.
+	restServers, flowHandler, err := startRESTServer(state, agentFlows, subFlows, wsBridge)
+	if err != nil {
+		return err
+	}
+	if err := waitForAllInOneREST(svcCfg); err != nil {
+		return err
+	}
+
+	// The standalone Resource Manager constructs its in-process TaskManager,
+	// which resolves DB-backed MCP and LLM definitions through the internal API.
+	// Start it only after that API accepts traffic; otherwise all-in-one startup
+	// races itself and permanently caches an empty runtime registry.
+	rm, err := createStandaloneRM(state)
 	if err != nil {
 		return err
 	}
@@ -154,7 +157,32 @@ func startAllInOne(cfgPath string) error {
 	// Pprof
 	pprofSrv := startPprof(state)
 
-	return waitForShutdown(state, restSrv, a2aSrv, pprofSrv, notifSvc)
+	return waitForShutdown(state, restServers, a2aSrv, pprofSrv, notifSvc)
+}
+
+func waitForAllInOneREST(cfg *config.FlowgentConfig) error {
+	port := cfg.Server.InternalPort
+	if port <= 0 {
+		port = cfg.Server.Port
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/_/healthz", port)
+	client := &http.Client{Timeout: 250 * time.Millisecond}
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		response, err := client.Get(url)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return nil
+			}
+			lastErr = fmt.Errorf("health endpoint returned HTTP %d", response.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("all-in-one internal API did not become ready: %w", lastErr)
 }
 
 // ─── Flow loading ─────────────────────────────────────────────────
@@ -186,9 +214,12 @@ func createStandaloneRM(state *allInOneState) (resourcemanager.ResourceManager, 
 		TaskState:        state.taskClient,
 		ApprovalInfo:     state.humanClient,
 		Logger:           state.logger,
+		Messager:         state.queue,
 		APIServerURL:     state.cfg.Runtime.APIServerURL,
 		Namespace:        state.namespace,
 		RuntimeClusterID: "local",
+		SandboxWorkspace: state.cfg.Sandbox.Workspace,
+		SandboxPolicy:    state.cfg.Sandbox.Policy,
 	})
 }
 
@@ -206,7 +237,7 @@ func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *ha
 // ─── REST API Server ──────────────────────────────────────────────
 
 func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
-	subFlows map[string]entities.FlowInfo, wsBridge *handler.NotifierWSBridge) (*http.Server, *handler.FlowDefHandler, error) {
+	subFlows map[string]entities.FlowInfo, wsBridge *handler.NotifierWSBridge) (*allInOneRESTServers, *handler.FlowDefHandler, error) {
 
 	var mqttPub handler.MQTTPublisher
 	if state.cfg.Messager.Type == "mqtt" && state.cfg.Messager.MQTT.Broker != "" {
@@ -234,36 +265,24 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 		jaegerClient = nil
 	}
 	traceHandler := handler.NewTraceHandler(state.store, jaegerClient)
-	iamRepository, err := iamstore.NewRepository(state.store)
-	if err != nil {
-		return nil, nil, fmt.Errorf("IAM repository: %w", err)
-	}
-	authorizer := authz.NewService(state.cfg.Auth.Authorization, iamRepository)
-	iamHandler := handler.NewIAMHandler(iamRepository, authorizer)
 	flowReleaseRepository, err := flowreleasestore.NewRepository(state.store)
 	if err != nil {
 		return nil, nil, fmt.Errorf("flow release repository: %w", err)
 	}
-	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, iamRepository, flowHandler)
+	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, flowHandler)
 	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(state.store, state.cfg.Notifier.SecretEncryption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("runtime configuration secrets: %w", err)
 	}
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{}, flowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler)
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, flowReleaseHandler, runtimeConfigHandler)
 
-	var restHandler http.Handler = restMux
-	authSvc, err := auth.NewService(state.cfg.Auth)
+	adapter, err := authz.NewAdapter(state.cfg.AuthGuardAdapter)
 	if err != nil {
-		slog.Error("auth service setup failed", "error", err)
-		return nil, nil, fmt.Errorf("auth service setup: %w", err)
+		return nil, nil, fmt.Errorf("AuthGuard adapter: %w", err)
 	}
-	authSvc.Register(githubauth.NewService(state.cfg.Auth.GitHub, authSvc.TokenService()))
-	authSvc.Register(oidc.NewService(state.cfg.Auth.OIDC, authSvc.TokenService()))
-	authSvc.Register(ldap.NewService(state.cfg.Auth.LDAP, authSvc.TokenService()))
-	authSvc.SetCredentialAuthenticator(authorizer)
-	restHandler = authSvc.Middleware()(authorizer.Middleware(restMux))
+	var restHandler http.Handler = adapter.Middleware(restMux)
 
 	readTO := parseDuration(state.cfg.Server.ReadTimeout, 30*time.Second)
 	writeTO := parseDuration(state.cfg.Server.WriteTimeout, 60*time.Second)
@@ -278,7 +297,24 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 		slog.Info("REST API server", "addr", restAddr)
 		_ = restSrv.ListenAndServe()
 	}()
-	return restSrv, flowHandler, nil
+	servers := &allInOneRESTServers{external: restSrv}
+	if state.cfg.Server.InternalPort > 0 {
+		if state.cfg.Server.InternalPort == state.cfg.Server.Port {
+			_ = restSrv.Close()
+			return nil, nil, fmt.Errorf("server.internal_port must differ from server.port")
+		}
+		internalAddr := fmt.Sprintf("%s:%d", state.cfg.Server.Host, state.cfg.Server.InternalPort)
+		servers.internal = &http.Server{
+			Addr: internalAddr, Handler: adapter.InternalMiddleware(restMux),
+			ReadTimeout: readTO, WriteTimeout: writeTO,
+			MaxHeaderBytes: state.cfg.Server.MaxBodyBytes,
+		}
+		go func() {
+			slog.Info("Internal control-plane API server", "addr", internalAddr)
+			_ = servers.internal.ListenAndServe()
+		}()
+	}
+	return servers, flowHandler, nil
 }
 
 // ─── Cron Scheduler ───────────────────────────────────────────────
@@ -343,7 +379,10 @@ func startA2AServer(state *allInOneState) (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create A2A task store: %w", err)
 	}
-	a2aSrv := a2apkg.NewHTTPServer(state.cfg, taskStore)
+	a2aSrv, err := a2apkg.NewHTTPServer(state.cfg, taskStore)
+	if err != nil {
+		return nil, err
+	}
 	go func() {
 		slog.Info("A2A server", "addr", a2aSrv.Addr)
 		if err := a2aSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -372,7 +411,7 @@ func startPprof(state *allInOneState) *http.Server {
 
 // ─── Shutdown ─────────────────────────────────────────────────────
 
-func waitForShutdown(state *allInOneState, restSrv, a2aSrv, pprofSrv *http.Server,
+func waitForShutdown(state *allInOneState, restServers *allInOneRESTServers, a2aSrv, pprofSrv *http.Server,
 	notifSvc *notifier.FlowgentNotifierManager) error {
 
 	sigCh := make(chan os.Signal, 1)
@@ -384,8 +423,13 @@ func waitForShutdown(state *allInOneState, restSrv, a2aSrv, pprofSrv *http.Serve
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTO)
 	defer cancel()
 
-	if restSrv != nil {
-		restSrv.Shutdown(ctx)
+	if restServers != nil {
+		if restServers.external != nil {
+			restServers.external.Shutdown(ctx)
+		}
+		if restServers.internal != nil {
+			restServers.internal.Shutdown(ctx)
+		}
 	}
 	if a2aSrv != nil {
 		a2aSrv.Shutdown(ctx)

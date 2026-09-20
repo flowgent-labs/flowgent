@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,22 +21,22 @@ import (
 // All resource definitions (agents, agentflows, MCPs, skills, LLM providers, channels)
 // are now DB-backed and managed via the management console or REST API.
 type FlowgentConfig struct {
-	ServiceName         string              `json:"service_name" yaml:"service_name"`
-	Server              ServerConfig        `json:"server" yaml:"server"`
-	A2A                 A2AConfig           `json:"a2a" yaml:"a2a"`
-	Mgmt                MgmtConfig          `json:"mgmt" yaml:"mgmt"`
-	Logging             LoggingConfig       `json:"logging" yaml:"logging"`
-	Auth                AuthConfig          `json:"auth" yaml:"auth"`
-	Cache               CacheConfig         `json:"cache" yaml:"cache"`
-	Storage             StorageConfig       `json:"storage" yaml:"storage"`
-	Orchestration       OrchestrationConfig `json:"orchestration" yaml:"orchestration"`
-	Messager            MessagerConfig      `json:"messager" yaml:"messager"`
-	Lock                LockConfig          `json:"lock" yaml:"lock"`
-	Sandbox             SandboxConfig       `json:"sandbox" yaml:"sandbox"`
-	Wallet              *WalletConfig       `json:"wallet" yaml:"wallet"`
-	Notifier            NotifierConfig      `json:"notifier" yaml:"notifier"`
-	Runtime             RuntimeConfig       `json:"runtime" yaml:"runtime"`
-	ResolvedCredentials map[string]string   `json:"-" yaml:"-"`
+	ServiceName         string                 `json:"service_name" yaml:"service_name"`
+	Server              ServerConfig           `json:"server" yaml:"server"`
+	A2A                 A2AConfig              `json:"a2a" yaml:"a2a"`
+	Mgmt                MgmtConfig             `json:"mgmt" yaml:"mgmt"`
+	Logging             LoggingConfig          `json:"logging" yaml:"logging"`
+	AuthGuardAdapter    AuthGuardAdapterConfig `json:"authguard_adapter" yaml:"authguard_adapter"`
+	Cache               CacheConfig            `json:"cache" yaml:"cache"`
+	Storage             StorageConfig          `json:"storage" yaml:"storage"`
+	Orchestration       OrchestrationConfig    `json:"orchestration" yaml:"orchestration"`
+	Messager            MessagerConfig         `json:"messager" yaml:"messager"`
+	Lock                LockConfig             `json:"lock" yaml:"lock"`
+	Sandbox             SandboxConfig          `json:"sandbox" yaml:"sandbox"`
+	Wallet              *WalletConfig          `json:"wallet" yaml:"wallet"`
+	Notifier            NotifierConfig         `json:"notifier" yaml:"notifier"`
+	Runtime             RuntimeConfig          `json:"runtime" yaml:"runtime"`
+	ResolvedCredentials map[string]string      `json:"-" yaml:"-"`
 }
 
 // ─── Server ──────────────────────────────────────────────────
@@ -52,6 +51,7 @@ type A2AConfig struct {
 type ServerConfig struct {
 	Host            string `json:"host" yaml:"host"`
 	Port            int    `json:"port" yaml:"port"`
+	InternalPort    int    `json:"internal_port" yaml:"internal_port"`
 	ContextPath     string `json:"context_path" yaml:"context_path"`
 	ShutdownTimeout string `json:"shutdown_timeout" yaml:"shutdown_timeout"`
 	MaxBodyBytes    int    `json:"max_body_bytes" yaml:"max_body_bytes"`
@@ -99,125 +99,22 @@ type MetricsBoundaries struct {
 	Queue []float64 `json:"queue" yaml:"queue"`
 }
 
-// ─── Logging / Auth ──────────────────────────────────────────
+// ─── Logging / AuthGuard Adapter ─────────────────────────────
 
 type LoggingConfig struct {
 	Mode  string `json:"mode" yaml:"mode"`
 	Level string `json:"level" yaml:"level"`
 }
 
-type AuthConfig struct {
-	JWTValidityAK  int                 `json:"jwt_validity_ak" yaml:"jwt_validity_ak"`
-	JWTValidityRK  int                 `json:"jwt_validity_rk" yaml:"jwt_validity_rk"`
-	JWTAlgorithm   string              `json:"jwt_algorithm" yaml:"jwt_algorithm"`
-	JWTPrivateKey  string              `json:"jwt_private_key" yaml:"jwt_private_key"`
-	JWTPublicKey   string              `json:"jwt_public_key" yaml:"jwt_public_key"`
-	AnonymousPaths []string            `json:"anonymous_paths" yaml:"anonymous_paths"`
-	OIDC           OIDCConfig          `json:"oidc" yaml:"oidc"`
-	LDAP           LDAPConfig          `json:"ldap" yaml:"ldap"`
-	GitHub         GitHubAuthConfig    `json:"github" yaml:"github"`
-	AuthGuard      AuthGuardConfig     `json:"authguard" yaml:"authguard"`
-	Authorization  AuthorizationConfig `json:"authorization" yaml:"authorization"`
-}
-
-// AuthGuardConfig enables verification of the signed access context injected
-// by an AuthGuard-protected Envoy Gateway. The HMAC key must come from a secret
-// provider; an unverified principal header is never trusted.
-type AuthGuardConfig struct {
-	Enabled              bool   `json:"enabled" yaml:"enabled"`
-	AccessContextHMACKey string `json:"access_context_hmac_key" yaml:"access_context_hmac_key"`
-}
-
-// AuthorizationConfig controls default-deny API authorization. BootstrapToken
-// is a rotatable break-glass credential; InternalTokens are distinct workload
-// identities for Flowgent components and must be sourced from Kubernetes
-// Secrets or an equivalent external secret manager.
-type AuthorizationConfig struct {
-	Enabled           bool              `json:"enabled" yaml:"enabled"`
-	Enforcement       string            `json:"enforcement" yaml:"enforcement"`
-	BootstrapToken    string            `json:"bootstrap_token" yaml:"bootstrap_token"`
-	InternalTokens    map[string]string `json:"internal_tokens" yaml:"internal_tokens"`
-	AuditAllow        bool              `json:"audit_allow" yaml:"audit_allow"`
-	AuditDeny         bool              `json:"audit_deny" yaml:"audit_deny"`
-	TrustedProxyCIDRs []string          `json:"trusted_proxy_cidrs" yaml:"trusted_proxy_cidrs"`
-}
-
-type OIDCConfig struct {
-	Enabled      bool   `json:"enabled" yaml:"enabled"`
-	ClientID     string `json:"client_id" yaml:"client_id"`
-	ClientSecret string `json:"client_secret" yaml:"client_secret"`
-	IssueURL     string `json:"issue_url" yaml:"issue_url"`
-	RedirectURL  string `json:"redirect_url" yaml:"redirect_url"`
-	Scope        string `json:"scope" yaml:"scope"`
-}
-
-// LDAPConfig configures enterprise LDAP/AD authentication.
-//
-// Field naming mirrors Spring's LdapContextSource + LdapTemplate patterns.
-//
-// # Connection (like Spring's LdapContextSource)
-//
-//	url:      ldaps://aa-lds-prod.us.mycompany:3269  (Global Catalog SSL)
-//	base_dn:  DC=InfoDir,DC=Prod,DC=MyCompany
-//	user_dn:  CN=GB-MyAPP-AD-OPS,OU=Alternate Accounts,OU=MyCompanyPeople,DC=…
-//	password: "${LDAP_PASSWORD}"
-//	referral: follow  (≡ LdapContextSource.setReferral("follow"))
-//
-// # User search (like Spring's EqualsFilter + SUBTREE_SCOPE + countLimit=1)
-//
-//	user_search_filter: (CN=%s)
-//	username_attribute: CN
-//
-// # Attribute mapping (like Spring's CustomLdapContextMapper)
-//
-// Maps internal field names to LDAP attribute names configured per deployment.
-//
-//	user_attr_mapping:
-//	  identifier:   "cn"
-//	  display_name: "displayName"
-//	  email:        "mail"
-//	  groups:       "memberOf"
-type LDAPConfig struct {
-	Enabled              bool               `json:"enabled" yaml:"enabled"`
-	URL                  string             `json:"url" yaml:"url"`                                       // ldap[s]://host:port
-	BaseDN               string             `json:"base_dn" yaml:"base_dn"`                               // root base DN
-	UserDN               string             `json:"user_dn" yaml:"user_dn"`                               // service account DN
-	Password             string             `json:"password" yaml:"password"`                             // service account password
-	Domains              []LDAPDomainConfig `json:"domains" yaml:"domains"`                               // AD multi-domain search
-	RoleMapping          []LDAPRoleMapping  `json:"role_mapping" yaml:"role_mapping"`                     // AD group/domain → role
-	UserSearchFilter     string             `json:"user_search_filter" yaml:"user_search_filter"`         // default: (cn=%s)
-	UsernameAttribute    string             `json:"username_attribute" yaml:"username_attribute"`         // default: cn
-	EmailAttribute       string             `json:"email_attribute" yaml:"email_attribute"`               // default: mail
-	DisplayNameAttribute string             `json:"display_name_attribute" yaml:"display_name_attribute"` // default: cn
-	GroupSearchBase      string             `json:"group_search_base" yaml:"group_search_base"`           // optional: for group→role resolution
-	GroupSearchFilter    string             `json:"group_search_filter" yaml:"group_search_filter"`       // default: (member=%s)
-	GroupNameAttribute   string             `json:"group_name_attribute" yaml:"group_name_attribute"`     // default: cn
-	UserAttrMapping      map[string]string  `json:"user_attr_mapping" yaml:"user_attr_mapping"`           // internal name → LDAP attribute name
-	Referral             string             `json:"referral" yaml:"referral"`                             // "follow" or "throw" (for AD multi-domain GC)
-	InsecureSkipVerify   bool               `json:"insecure_skip_verify" yaml:"insecure_skip_verify"`
-}
-
-// LDAPDomainConfig defines an AD domain to search for users.
-type LDAPDomainConfig struct {
-	BaseDN           string `json:"base_dn" yaml:"base_dn"`
-	UserSearchFilter string `json:"user_search_filter" yaml:"user_search_filter"` // e.g. (sAMAccountName=%s)
-}
-
-// LDAPRoleMapping maps an AD group DN or domain base DN to a Flowgent built-in role.
-type LDAPRoleMapping struct {
-	Match string `json:"match" yaml:"match"` // AD group DN or domain base DN
-	Role  string `json:"role" yaml:"role"`   // admin | operator | viewer
-}
-
-type GitHubAuthConfig struct {
-	Enabled      bool   `json:"enabled" yaml:"enabled"`
-	ClientID     string `json:"client_id" yaml:"client_id"`
-	ClientSecret string `json:"client_secret" yaml:"client_secret"`
-	AuthURL      string `json:"auth_url" yaml:"auth_url"`
-	TokenURL     string `json:"token_url" yaml:"token_url"`
-	RedirectURL  string `json:"redirect_url" yaml:"redirect_url"`
-	Scope        string `json:"scope" yaml:"scope"`
-	UserInfoURL  string `json:"user_info_url" yaml:"user_info_url"`
+// AuthGuardAdapterConfig contains only the business-resource mapping required
+// by the AuthGuard Go adapter SDK. Authentication, identity federation, policy
+// evaluation, and credential lifecycle are owned by AuthGuard.
+type AuthGuardAdapterConfig struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Partition string `json:"partition" yaml:"partition"`
+	Service   string `json:"service" yaml:"service"`
+	Region    string `json:"region" yaml:"region"`
+	Tenant    string `json:"tenant" yaml:"tenant"`
 }
 
 // ─── Cache ───────────────────────────────────────────────────
@@ -429,9 +326,6 @@ type RuntimeConfig struct {
 	TMOrphanTimeout     string                `json:"tm_orphan_timeout" yaml:"tm_orphan_timeout"`
 	ResourceOwner       string                `json:"resource_owner" yaml:"resource_owner"`
 	CredentialEnvSecret string                `json:"credential_env_secret" yaml:"credential_env_secret"`
-	InternalAuthSecret  string                `json:"internal_auth_secret" yaml:"internal_auth_secret"`
-	JobManagerAuthKey   string                `json:"jobmanager_auth_key" yaml:"jobmanager_auth_key"`
-	TaskManagerAuthKey  string                `json:"taskmanager_auth_key" yaml:"taskmanager_auth_key"`
 	ControllerLabel     string                `json:"controller_label" yaml:"controller_label"`
 	JMImage             string                `json:"jm_image" yaml:"jm_image"`
 	TMImage             string                `json:"tm_image" yaml:"tm_image"`
@@ -845,7 +739,7 @@ func LogConfig(cfg *FlowgentConfig) {
 	slog.Info("Artifact storage", "provider", cfg.Storage.Artifacts.Provider, "inline_max_bytes", cfg.Storage.Artifacts.InlineMaxBytes, "max_payload_bytes", cfg.Storage.Artifacts.MaxPayloadBytes, "compression", cfg.Storage.Artifacts.Compression)
 
 	slog.Info("Cache", "provider", cfg.Cache.Provider)
-	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "context", cfg.Server.ContextPath)
+	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "internal_port", cfg.Server.InternalPort, "context", cfg.Server.ContextPath)
 	if cfg.A2A.Enabled {
 		slog.Info("A2A API", "host", cfg.A2A.Host, "port", cfg.A2A.Port)
 	} else {
@@ -856,31 +750,4 @@ func LogConfig(cfg *FlowgentConfig) {
 	}
 
 	slog.Info("Engine", "max_concurrent", cfg.Orchestration.MaxConcurrentFlows, "timeout", cfg.Orchestration.FlowExecutionTimeout, "max_retries", cfg.Orchestration.MaxNodeRetries)
-}
-
-// ── Auth middleware ──────────────────────────────────────────────
-
-// AuthMiddleware creates a simple auth middleware that skips anonymous paths.
-func AuthMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, p := range cfg.AnonymousPaths {
-			if MatchGlob(p, r.URL.Path) {
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// MatchGlob matches a path against a glob-like pattern.
-func MatchGlob(pattern, path string) bool {
-	if pattern == path {
-		return true
-	}
-	if len(pattern) >= 3 && pattern[len(pattern)-3:] == "/**" {
-		pfx := pattern[:len(pattern)-3]
-		return len(path) >= len(pfx) && path[:len(pfx)] == pfx
-	}
-	return false
 }

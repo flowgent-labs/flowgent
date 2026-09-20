@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/knowledge"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/knowledge"
 )
 
 // KnowledgeHandler serves DB-backed knowledge entries via REST API.
@@ -21,8 +21,8 @@ type KnowledgeHandler struct {
 	store knowledge.IKnowledgeStore
 }
 
-// NewKnowledgeHandler creates a KnowledgeHandler from an IStore.
-func NewKnowledgeHandler(s store.IStore) *KnowledgeHandler {
+// NewKnowledgeHandler creates a KnowledgeHandler from an IStorage.
+func NewKnowledgeHandler(s storage.IStorage) *KnowledgeHandler {
 	var kStore knowledge.IKnowledgeStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:

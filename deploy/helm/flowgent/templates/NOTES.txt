@@ -25,8 +25,10 @@ Namespace: {{ .Release.Namespace }}
 
 ━━━ Components ━━━
   API Server       — {{ .Values.apiserver.replicas }} replicas, {{ .Values.apiserver.service.type | default "ClusterIP" }}, :{{ .Values.apiserver.service.restPort }}
+  API Internal     — trusted control plane only, :{{ .Values.apiserver.service.internalPort }}
 {{- if eq (.Values.apiserver.service.type | default "ClusterIP") "NodePort" }}
   API REST NodePort — :{{ .Values.apiserver.service.nodePorts.rest }}
+  API Internal NodePort — :{{ .Values.apiserver.service.nodePorts.internal }}
   API MGMT NodePort — :{{ .Values.apiserver.service.nodePorts.mgmt }}
 {{- end }}
 {{- if .Values.a2a.enabled }}
@@ -35,10 +37,10 @@ Namespace: {{ .Release.Namespace }}
   A2A NodePort     — :{{ .Values.a2a.service.nodePort }}
 {{- end }}
 {{- end }}
-{{- if .Values.ui.enabled }}
-  UI               — {{ .Values.ui.replicas }} replicas, {{ .Values.ui.service.type | default "ClusterIP" }}, :{{ .Values.ui.service.port }}
-{{- if eq (.Values.ui.service.type | default "ClusterIP") "NodePort" }}
-  UI NodePort      — :{{ .Values.ui.service.nodePort }}
+{{- if .Values.web.enabled }}
+  Web              — {{ .Values.web.replicas }} replicas, {{ .Values.web.service.type | default "ClusterIP" }}, :{{ .Values.web.service.port }}
+{{- if eq (.Values.web.service.type | default "ClusterIP") "NodePort" }}
+  Web NodePort     — :{{ .Values.web.service.nodePort }}
 {{- end }}
 {{- end }}
   Controller       — {{ .Values.controller.replicas }} replicas
@@ -47,11 +49,11 @@ Namespace: {{ .Release.Namespace }}
 ━━━ Quick Checks ━━━
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   curl http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.restPort }}/_/healthz
-{{- if .Values.ui.enabled }}
-{{- if eq (.Values.ui.service.type | default "ClusterIP") "NodePort" }}
-  curl http://<node-ip>:{{ .Values.ui.service.nodePort }}/ui-healthz
+{{- if .Values.web.enabled }}
+{{- if eq (.Values.web.service.type | default "ClusterIP") "NodePort" }}
+  curl http://<node-ip>:{{ .Values.web.service.nodePort }}/healthz
 {{- else }}
-  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "flowgent.fullname" . }}-ui 8080:{{ .Values.ui.service.port }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "flowgent.fullname" . }}-web 8080:{{ .Values.web.service.port }}
 {{- end }}
 {{- end }}
 

@@ -16,7 +16,7 @@ cd /home/agent/flowgent
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
 ```
 
-该命令统一完成构建、k3s Helm 部署、配置导入与真实用例验证，并验证
+该命令统一完成构建、K8s Helm 部署、配置导入与真实用例验证，并验证
 `GitHub OAuth → AuthGuard AuthN → Envoy JWT → AuthGuard AuthZ → Flowgent` 以及
 LDAP 联邦 Principal 搜索/物化。成功后不会卸载 Helm；执行
 `make e2e-security-fixer-access` 可保持人工体验所需的本地隧道。
@@ -25,6 +25,18 @@ LDAP 联邦 Principal 搜索/物化。成功后不会卸载 Helm；执行
 `e2e-flowgent-*` 资源前缀，并使用独立 Gateway controllerName 和特殊端口，
 Flowgent/AuthGuard 数据分别使用 `e2e_flowgent` 与
 `e2e_flowgent_authguard` schema，不会清理、读取或接管隔壁 AuthGuard 默认 E2E。
+
+同一个入口还提供功能等价的 Docker Compose 部署模式：
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer-docker
+```
+
+两种后端执行完全相同的有序 verifier 矩阵。K8s 后端使用 Helm、隔离
+Namespace 与运行时 Pod；Docker 后端使用 `e2e-flowgent-docker` Compose Project
+和进程内 standalone runtime。两者均真实部署 Flowgent/Web、PostgreSQL、MQTT、
+Jaeger、LDAP、GitHub OAuth Mock、AuthGuard AuthN/AuthZ/Web、Redis 与 Envoy，并
+使用独立前缀和非默认回环端口。
 
 | 预设角色 | 典型金融企业职责 | 默认能力 |
 | --- | --- | --- |
@@ -52,8 +64,25 @@ security-autonomy-fixer/
 │   │   ├── agents/                # 应用专属 Agent Roles
 │   │   ├── mcps/                  # GitHub 与 SonarQube Integrations
 │   │   ├── llmproviders/          # Model/Provider 定义
-│   │   └── notifiers/             # 投递 Channel 定义
-│   └── common/、deploy/、verifier/ # 实现模块
+│   │   ├── notifiers/             # 投递 Channel 定义
+│   │   └── envoy/                 # Envoy 边缘代理声明配置
+│   ├── common/
+│   │   └── project.py              # Flowgent API、数据库、状态与验证编排
+│   ├── deploy/
+│   │   ├── __init__.py             # BaseDeployer 与后端工厂
+│   │   ├── base/                   # Kubernetes 与 Docker Compose 后端实现
+│   │   ├── authguard/              # LDAP、GitHub OAuth、AuthGuard 与 Envoy 配置
+│   │   ├── flowgent/               # 隔离 Helm release 生命周期
+│   │   ├── mocksvc-github-service/ # OAuth provider mock 实现
+│   │   ├── mocksvc-notification-service/ # 认证 webhook receiver mock 实现
+│   │   ├── sonarqube/              # 外部或本地 SonarQube 生命周期
+│   │   └── docker/                 # Compose 拓扑
+│   ├── verifier/
+│   │   ├── __init__.py             # BaseVerifier、有序 Step 与证据契约
+│   │   ├── infra/                  # InfrastructureVerifier 场景
+│   │   ├── core/                   # CoreVerifier 场景
+│   │   └── agentflow/              # AgentFlowVerifier 场景
+│   └── reports/                    # 忽略提交的轮次报告与证据
 ```
 
 | 资源   | 规范文件                                                                    | 作用                                                    |
@@ -62,10 +91,18 @@ security-autonomy-fixer/
 | 子流程 | [`sub-fix.yaml`](e2e/config/flows/sub-fix.yaml)                                 | 三节点 analyze → patch → validate；当前为独立可复用定义 |
 | Agents | [`e2e/config/agents/`](e2e/config/agents/)                                      | Supervisor、Detector、Fixer、三个 Reviewer 与 Git Role  |
 | MCPs   | [`e2e/config/mcps/`](e2e/config/mcps/)                                          | GitHub 交付与 SonarQube Issue/Scan 访问                 |
-| E2E    | [`e2e/runner.py`](e2e/runner.py)                                                  | 部署、验证、UI 多轮、人工隧道与可选清理的唯一入口       |
+| Envoy  | [`e2e/config/envoy/envoy.yaml`](e2e/config/envoy/envoy.yaml)                    | 声明式边缘代理配置，与部署代码分离                       |
+| E2E    | [`e2e/runner.py`](e2e/runner.py)                                                  | 部署、验证、人工访问与可选清理的唯一入口               |
 
 YAML Manifest 是可执行事实来源。本文解释其意图和当前行为；发生差异时，以
 Manifest 与实际 E2E 证据为准。
+
+集群模式统一命名为 `--deployer k8s`，旧值 `kubernetes` 仅作为兼容别名并
+自动归一化。镜像导入会探测 k3s 内置 containerd、标准 Kubernetes containerd
+的 `k8s.io` Namespace，以及本地 kind、minikube、k3d；不再硬编码某个
+containerd Socket 或存储目录。远程/多节点集群可通过
+`FLOWGENT_E2E_IMAGE_IMPORT_COMMAND` 配置带 `{image}` 或 `{archive}` 占位符的
+导入命令。
 
 ## Flow 契约
 
@@ -228,25 +265,28 @@ Agent、MCP 或 README。
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
 ```
 
-统一 runner 会构建并导入 Flowgent 镜像，通过根 Helm Chart 部署
-AuthGuard/Envoy 依赖，导入 `e2e/config`，并验证基础设施、LDAP Principal 发现、
+统一 runner 会构建 Flowgent 镜像，通过根 Helm Chart 或功能等价的 Compose
+拓扑部署 AuthGuard/Envoy，导入 `e2e/config`，并验证基础设施、LDAP Principal 发现、
 GitHub OAuth、边缘 allow/deny 策略、Telemetry、API Server、Notifier、Controller、
 MQTT、A2A、修复、PR 交付、Knowledge 与共享 Workspace。常用模式：
 
 ```bash
 E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-fixer
-E2E_ARGS="--ui-rounds 5 --skip-first-build" make e2e-security-fixer
 make e2e-security-fixer-access
 E2E_ARGS="--clean-after-run" make e2e-security-fixer
+make e2e-security-fixer-docker
+python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker cleanup
 ```
 
-清理为显式选择：`--clean-after-run` 默认 false。普通成功运行会保留隔离的
-`e2e-flowgent-*` Helm 环境供人工体验；启用该参数时只删除本 release 及其专用
-system/workload namespace。
+清理为显式选择：`--clean-after-run` 默认 false。普通成功运行会保留所选后端
+供人工体验；启用该参数时只删除 `e2e-flowgent-*` Helm 资源与专用
+Namespace，或 `e2e-flowgent-docker` Compose Project 及其命名 Volume。
 
-生成的 `e2e/reports/` 与 `.last_*` 文件是执行证据，不是设计来源。它们 **MUST NOT**
-替代对 Manifest、REST State、MQTT Routing、PostgreSQL、Kubernetes Resource
-或外部系统结果的断言。
+生成内容统一组织为 `e2e/reports/round-XX/`：轮次根目录保存 verifier Markdown，
+机器证据与截图放在 `evidence/<scenario>/`，跨 verifier 的瞬态状态隐藏在
+`reports/.state/`。这些产物是执行证据，不是设计来源，**MUST NOT** 替代对
+Manifest、REST State、MQTT Routing、PostgreSQL、Kubernetes Resource 或外部系统
+结果的断言。
 
 ## 预期行为
 

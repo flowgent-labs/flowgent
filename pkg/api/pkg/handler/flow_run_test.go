@@ -12,7 +12,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 )
 
 type flowRunStoreStub struct {

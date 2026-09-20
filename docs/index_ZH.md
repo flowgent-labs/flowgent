@@ -9,7 +9,7 @@
 
 | 层次 | 文档 | 范围 |
 |---|---|---|
-| Security / IAM | [企业级 IAM 授权](architecture/enterprise-iam-authorization_ZH.md) | Subject/group/role/grant 模型、Resource URN、请求匹配与资源列表范围 |
+| Security | [AuthGuard 集成](architecture/authguard-integration_ZH.md) | Gateway 信任边界、adapters SDK 与 Repository SQL Scope |
 | L1 引擎 | [引擎总览](architecture/overview_ZH.md) | 跨组件调用、状态与消息契约、部署及共享模块 |
 | L1 引擎 | [API Server](architecture/engine/apiserver_ZH.md) | 外部网关与唯一 durable-state client |
 | L1 引擎 | [Controller](architecture/engine/controller_ZH.md) | 活跃 Run 的 JobManager 协调 |
@@ -47,7 +47,6 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 
 当前活动开发计划：
 
-- [Security Fixer 纯 UI 完整端到端闭环](development/security-fixer-ui-e2e_ZH.md)
 
 ## 语言版本
 

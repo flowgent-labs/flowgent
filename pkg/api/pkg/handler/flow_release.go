@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
-	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
+	flowreleasestore "github.com/flowgent-labs/flowgent/storage/pkg/flowrelease"
 	"github.com/google/uuid"
 )
 
@@ -31,12 +31,11 @@ var (
 // updated only after commit so its runtime cache never leads durable state.
 type FlowReleaseHandler struct {
 	repo     flowreleasestore.IRepository
-	iam      iamstore.IRepository
 	flowDefs *FlowDefHandler
 }
 
-func NewFlowReleaseHandler(repo flowreleasestore.IRepository, iam iamstore.IRepository, flowDefs *FlowDefHandler) *FlowReleaseHandler {
-	return &FlowReleaseHandler{repo: repo, iam: iam, flowDefs: flowDefs}
+func NewFlowReleaseHandler(repo flowreleasestore.IRepository, flowDefs *FlowDefHandler) *FlowReleaseHandler {
+	return &FlowReleaseHandler{repo: repo, flowDefs: flowDefs}
 }
 
 func (h *FlowReleaseHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +112,7 @@ func (h *FlowReleaseHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		Visibility:     visibility,
 		PublishedAt:    now,
 	}
-	release.MarkCreated(iamActor(r))
+	release.MarkCreated(authz.PrincipalID(r))
 	if err := h.repo.SaveRelease(r.Context(), release); err != nil {
 		http.Error(w, "release version or snapshot already exists", http.StatusConflict)
 		return
@@ -128,7 +127,7 @@ func (h *FlowReleaseHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := h.repo.RevokeRelease(r.Context(), namespace, releaseID, iamActor(r)); err != nil {
+	if err := h.repo.RevokeRelease(r.Context(), namespace, releaseID, authz.PrincipalID(r)); err != nil {
 		http.Error(w, "release cannot be revoked", http.StatusConflict)
 		return
 	}
@@ -165,17 +164,13 @@ func (h *FlowReleaseHandler) CreateGrant(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "expires_at must be in the future", http.StatusBadRequest)
 		return
 	}
-	if _, err := h.iam.GetNamespace(r.Context(), input.ConsumerNamespace); err != nil {
-		http.Error(w, "consumer namespace not found", http.StatusBadRequest)
-		return
-	}
 	grant := &entities.FlowReleaseGrant{
 		BaseEntity:        entities.BaseEntity{ID: uuid.NewString(), Description: strings.TrimSpace(input.Description), Namespace: namespace},
 		ReleaseID:         releaseID,
 		ConsumerNamespace: input.ConsumerNamespace,
 		ExpiresAt:         input.ExpiresAt,
 	}
-	grant.MarkCreated(iamActor(r))
+	grant.MarkCreated(authz.PrincipalID(r))
 	if err := h.repo.SaveGrant(r.Context(), grant); err != nil {
 		http.Error(w, "grant already exists", http.StatusConflict)
 		return
@@ -188,7 +183,7 @@ func (h *FlowReleaseHandler) DeleteGrant(w http.ResponseWriter, r *http.Request)
 	if !h.ownsRelease(w, r, namespace, releaseID) {
 		return
 	}
-	if err := h.repo.DeleteGrant(r.Context(), namespace, releaseID, r.PathValue("grant_id"), iamActor(r)); err != nil {
+	if err := h.repo.DeleteGrant(r.Context(), namespace, releaseID, r.PathValue("grant_id"), authz.PrincipalID(r)); err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -258,8 +253,8 @@ func (h *FlowReleaseHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if installation.ResourceBindings == nil {
 		installation.ResourceBindings = map[string]string{}
 	}
-	installation.MarkCreated(iamActor(r))
-	if err := h.repo.Install(r.Context(), &definition, installation, iamActor(r)); err != nil {
+	installation.MarkCreated(authz.PrincipalID(r))
+	if err := h.repo.Install(r.Context(), &definition, installation, authz.PrincipalID(r)); err != nil {
 		slog.Warn("flow release install failed", "namespace", namespace, "release_id", releaseID, "error", err)
 		http.Error(w, "installed_flow_id already exists or installation failed", http.StatusConflict)
 		return

@@ -111,17 +111,16 @@ spec:
       serviceAccountName: {{ .Values.controller.serviceAccount.name }}
       containers:
         - name: controller
-          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          image: {{ include "flowgent.image" . | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
           args: ["controller", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            {{- include "flowgent.workloadTokenEnv" (dict "root" . "component" "controller") | nindent 12 }}
             - name: FLOWGENT__RUNTIME__CONTROLLER_LABEL
               value: "app.kubernetes.io/component=controller"
             - name: FLOWGENT__RUNTIME__JM_IMAGE
-              value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+              value: {{ include "flowgent.image" . | quote }}
             - name: FLOWGENT__RUNTIME__JM_CONFIG_MAP
               value: "{{ include "flowgent.fullname" . }}-config"
             - name: POD_NAME

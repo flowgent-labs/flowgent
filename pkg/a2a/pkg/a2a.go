@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,39 +19,45 @@ import (
 	"github.com/a2aproject/a2a-go/a2asrv"
 	"github.com/a2aproject/a2a-go/a2asrv/eventqueue"
 
+	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
 )
 
 // FlowgentA2AServer is the standalone A2A protocol administration server.
 type FlowgentA2AServer struct {
 	cfg        *config.FlowgentConfig
 	httpServer *http.Server
-	store      storepkg.IStore
+	store      storage.IStorage
 }
 
 // NewFlowgentA2AServer creates the A2A server with all handlers registered.
 // It does not start listening.
 func NewFlowgentA2AServer(cfg *config.FlowgentConfig) (*FlowgentA2AServer, error) {
-	backingStore := storepkg.InitStore(cfg)
+	backingStore := storage.InitStorage(cfg)
 	taskStore, err := NewPersistentTaskStore(backingStore)
+	if err != nil {
+		_ = backingStore.Close()
+		return nil, err
+	}
+	httpServer, err := NewHTTPServer(cfg, taskStore)
 	if err != nil {
 		_ = backingStore.Close()
 		return nil, err
 	}
 	return &FlowgentA2AServer{
 		cfg:        cfg,
-		httpServer: NewHTTPServer(cfg, taskStore),
+		httpServer: httpServer,
 		store:      backingStore,
 	}, nil
 }
 
 // NewHTTPServer creates the canonical A2A HTTP server used by both standalone
 // and all-in-one modes. Callers own the supplied task store and server lifecycle.
-func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) *http.Server {
+func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) (*http.Server, error) {
 	executor := &adminAgentHandler{apiServerURL: cfg.Runtime.APIServerURL}
 
 	handler := a2asrv.NewHandler(executor, a2asrv.WithTaskStore(taskStore))
@@ -67,15 +72,6 @@ func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) *http
 		Capabilities:       a2a.AgentCapabilities{Streaming: false},
 		DefaultInputModes:  []string{"application/json", "text/plain"},
 		DefaultOutputModes: []string{"application/json"},
-		Security: []a2a.SecurityRequirements{
-			{a2a.SecuritySchemeName("bearerAuth"): a2a.SecuritySchemeScopes{}},
-		},
-		SecuritySchemes: a2a.NamedSecuritySchemes{
-			a2a.SecuritySchemeName("bearerAuth"): a2a.HTTPAuthSecurityScheme{
-				Scheme: "Bearer", BearerFormat: "JWT or Flowgent API key",
-				Description: "A Flowgent identity token; authorization is enforced by the APIServer RBAC policy.",
-			},
-		},
 		Skills: []a2a.AgentSkill{
 			{ID: "list_flows", Name: "List AgentFlows", Description: "List all agentflow definitions"},
 			{ID: "get_flow", Name: "Get AgentFlow", Description: "Get a single agentflow by ID"},
@@ -98,7 +94,11 @@ func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) *http
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.Handle("/", bearerContextMiddleware(a2asrv.NewJSONRPCHandler(handler), cfg.Auth.Authorization.Enabled, cfg.Runtime.APIServerURL))
+	adapter, err := authz.NewAdapter(cfg.AuthGuardAdapter)
+	if err != nil {
+		return nil, fmt.Errorf("AuthGuard adapter: %w", err)
+	}
+	mux.Handle("/", adapter.Middleware(a2asrv.NewJSONRPCHandler(handler)))
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
 	if readTO == 0 {
@@ -113,7 +113,7 @@ func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) *http
 	return &http.Server{
 		Addr: a2aAddr, Handler: mux,
 		ReadTimeout: readTO, WriteTimeout: writeTO,
-	}
+	}, nil
 }
 
 // Start begins listening and blocks until a shutdown signal is received.
@@ -208,7 +208,7 @@ func (h *adminAgentHandler) Cancel(ctx context.Context, reqCtx *a2asrv.RequestCo
 }
 
 func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (string, error) {
-	apiClient := client.NewFlowgentClientWithToken(h.apiServerURL, bearerTokenFromContext(ctx))
+	apiClient := client.NewFlowgentClient(h.apiServerURL)
 	switch req.Action {
 	case "list_flows":
 		flows, err := apiClient.ListFlows(ctx, req.Namespace)
@@ -289,68 +289,6 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 	default:
 		return "", fmt.Errorf("unknown admin action: %q (available: list_flows, get_flow, create_flow, update_flow, delete_flow, start_run, cancel_run, get_run, list_runs)", req.Action)
 	}
-}
-
-type bearerTokenContextKey struct{}
-
-func bearerContextMiddleware(next http.Handler, required bool, apiServerURL string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := strings.TrimSpace(r.Header.Get("Authorization"))
-		parts := strings.Fields(header)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-			if required {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="flowgent-a2a"`)
-				http.Error(w, "bearer authentication required", http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-			return
-		}
-		if required {
-			valid, err := validateBearerCredential(r.Context(), apiServerURL, parts[1])
-			if err != nil {
-				http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			if !valid {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="flowgent-a2a"`)
-				http.Error(w, "invalid or expired bearer credential", http.StatusUnauthorized)
-				return
-			}
-		}
-		ctx := context.WithValue(r.Context(), bearerTokenContextKey{}, parts[1])
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func validateBearerCredential(ctx context.Context, apiServerURL, token string) (bool, error) {
-	if apiServerURL == "" {
-		apiServerURL = "http://flowgent-apiserver:9999"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(apiServerURL, "/")+"/api/v1/auth/me", nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return true, nil
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return false, nil
-	default:
-		return false, fmt.Errorf("authentication service returned %d", resp.StatusCode)
-	}
-}
-
-func bearerTokenFromContext(ctx context.Context) string {
-	token, _ := ctx.Value(bearerTokenContextKey{}).(string)
-	return token
 }
 
 // ─── Request Parsing ──────────────────────────────────────────

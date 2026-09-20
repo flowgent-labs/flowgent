@@ -1,12 +1,14 @@
-.PHONY: help build build-core build-image build-image-core build-image-ui clean test-ut test-x402 test-it test-it-deps test-authguard-adapter test-sql-scope test-runtime-isolation test-e2e-runner e2e-security-fixer e2e-security-fixer-access fmt
+.PHONY: help build build-core build-image build-image-core build-image-web clean test test-ut test-web test-x402 test-it test-it-deps test-authguard-adapter test-sql-scope test-runtime-isolation test-e2e-runner e2e-security-fixer e2e-security-fixer-docker e2e-security-fixer-access fmt
 
 BIN_DIR  ?= bin
 GO       ?= go
-UI_IMAGE ?= flowgent-ui:latest
-UI_LOCAL_IMAGE ?= localhost/flowgent-ui:latest
-UI_BUILD_TARGET ?= runtime-dist
-UI_NODE_IMAGE ?= docker.io/library/node:22-alpine
-UI_NGINX_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginx:1.27-alpine
+CORE_IMAGE ?= flowgent:latest
+CORE_LOCAL_IMAGE ?= localhost/flowgent:latest
+WEB_IMAGE ?= flowgent-web:latest
+WEB_LOCAL_IMAGE ?= localhost/flowgent-web:latest
+WEB_BUILD_TARGET ?= runtime-dist
+WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
+WEB_NGINX_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginx:1.27-alpine
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # IN_CN_GFW controls whether to route Go module downloads through a proxy/CDN.
 #   IN_CN_GFW=true  → prefer HTTPS_PROXY if set, otherwise use goproxy.cn
@@ -25,9 +27,9 @@ help:
 	@echo "Flowgent -- Makefile"
 	@echo ""
 	@echo "  Docker builds:"
-	@echo "    make build:image              Build the production flowgent-core and flowgent-ui images."
-	@echo "    make build:image:core         Build the production flowgent-core image."
-	@echo "    make build:image:ui           Build the production flowgent-ui nginx image."
+	@echo "    make build:image              Build the production flowgent and flowgent-web images."
+	@echo "    make build:image:core         Build the production flowgent image."
+	@echo "    make build:image:web          Build the production flowgent-web image."
 	@echo ""
 	@echo "  Binary builds:"
 	@echo "    make build                    Build the flowgent-core binary."
@@ -43,6 +45,7 @@ help:
 	@echo "  Test:"
 	@echo "    make test-ut test-x402 test-it fmt clean"
 	@echo "    make e2e-security-fixer        Build, deploy, and verify the real use case; keep Helm running."
+	@echo "    make e2e-security-fixer-docker Run the equivalent isolated Docker Compose E2E."
 	@echo "    make e2e-security-fixer-access Keep isolated localhost tunnels open for manual use."
 
 .DEFAULT_GOAL := help
@@ -57,7 +60,7 @@ help:
 _GO_MODULES = migration \
 	pkg/a2a pkg/api pkg/cache pkg/cmd pkg/common pkg/config \
 	pkg/console pkg/controller pkg/core pkg/messager pkg/model \
-	pkg/notifier pkg/sandbox pkg/store tests
+	pkg/notifier pkg/sandbox pkg/storage tests
 
 bootstrap-go:
 	@if [ ! -f go.work ]; then \
@@ -68,34 +71,34 @@ bootstrap-go:
 
 # ── Docker builds ─────────────────────────────────────────────────
 
-build-image: build-image-core build-image-ui
+build-image: build-image-core build-image-web
 
 build-image-core:
 ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
-	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile.core .
 else
-	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile.core .
 endif
 else
-	DOCKER_BUILDKIT=1 docker build --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t flowgent-core:latest -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile.core .
 endif
 
-build-image-ui:
-ifeq ($(UI_BUILD_TARGET),runtime-dist)
-	@if [ ! -x flowgent-ui/node_modules/.bin/tsc ]; then \
-		cd flowgent-ui && npm ci --prefer-offline --no-audit --no-fund; \
+build-image-web:
+ifeq ($(WEB_BUILD_TARGET),runtime-dist)
+	@if [ ! -x web/node_modules/.bin/tsc ]; then \
+		cd web && npm ci --prefer-offline --no-audit --no-fund; \
 	fi
-	cd flowgent-ui && npm run build
+	cd web && npm run build
 endif
 ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
-	DOCKER_BUILDKIT=1 docker build --network=host --target="$(UI_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(UI_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(UI_NGINX_IMAGE)" --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg="NO_PROXY=$(NO_PROXY)" -t $(UI_IMAGE) -t $(UI_LOCAL_IMAGE) -f flowgent-ui/Dockerfile flowgent-ui
+	DOCKER_BUILDKIT=1 docker build --network=host --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg="NO_PROXY=$(NO_PROXY)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
 else
-	DOCKER_BUILDKIT=1 docker build --target="$(UI_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(UI_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(UI_NGINX_IMAGE)" -t $(UI_IMAGE) -t $(UI_LOCAL_IMAGE) -f flowgent-ui/Dockerfile flowgent-ui
+	DOCKER_BUILDKIT=1 docker build --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
 endif
 else
-	DOCKER_BUILDKIT=1 docker build --target="$(UI_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(UI_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(UI_NGINX_IMAGE)" -t $(UI_IMAGE) -t $(UI_LOCAL_IMAGE) -f flowgent-ui/Dockerfile flowgent-ui
+	DOCKER_BUILDKIT=1 docker build --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
 endif
 
 # ── Binary builds ─────────────────────────────────────────────────
@@ -107,6 +110,8 @@ build-core: bootstrap-go
 	cd pkg/cmd && CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -tags "$(TAGS_X402)" -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent-core ./pkg/
 
 # ── Utils ─────────────────────────────────────────────────────────
+
+test: test-ut test-x402 test-web test-e2e-runner
 
 clean:
 	rm -rf $(BIN_DIR)/
@@ -122,10 +127,18 @@ test-ut:
 	cd pkg/controller && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/notifier  && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/api       && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
-	cd pkg/store     && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
+	cd pkg/storage   && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/sandbox   && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/core      && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/cmd       && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
+
+test-web:
+	cd web && npm ci --prefer-offline --no-audit --no-fund
+	cd web && npm run format:check
+	cd web && npm run lint
+	cd web && npm run typecheck
+	cd web && npm run test
+	cd web && npm run build
 
 test-x402:
 	cd pkg/core   && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -tags "$(TAGS_X402)" -timeout 120s ./pkg/client/...
@@ -152,19 +165,11 @@ test-it-deps:
 test-it: test-it-deps
 	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -v -count=1 -timeout 300s -p 1 ./probe ./apiserver ./controller ./engine ./externalmock ./knowledge ./notifier ./sandbox .
 
-# Auth integration tests need a live LDAP (GLAuth) / OIDC (Keycloak) container:
-#   cd deploy/docker/glauth   && docker compose up -d   (then: make test-it-ldap)
-#   cd deploy/docker/keycloak && docker compose up -d   (then: make test-it-oidc)
-test-it-ldap:
-	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -tags=ldap -timeout 120s -run TestE2E_LDAP ./...
-test-it-oidc:
-	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -tags=oidc -timeout 120s -run TestE2E_OIDC ./...
-
 test-authguard-adapter:
-	cd pkg/api && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/auth ./pkg/authz
+	cd pkg/api && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/authz
 
 test-sql-scope:
-	cd pkg/store && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg
+	cd pkg/storage && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 
 test-runtime-isolation:
 	cd pkg/controller && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg
@@ -179,32 +184,32 @@ test-e2e-runner:
 	trap 'rm -f "$$_rendered"' EXIT; \
 	helm template flowgent deploy/helm/flowgent > "$$_rendered"; \
 	if grep -q '^# Source: flowgent/charts/authguard-middleware/' "$$_rendered" || \
-	   grep -q '^- name: AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY' "$$_rendered"; then \
+	   grep -q '^[[:space:]]*- name: AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY' "$$_rendered"; then \
 		echo "ERROR: authguard-middleware.enabled=false rendered AuthGuard runtime resources"; exit 1; \
 	fi
+	@_rendered="$$(mktemp)"; \
+	trap 'rm -f "$$_rendered"' EXIT; \
+	helm template e2e-flowgent deploy/helm/flowgent \
+	  --set a2a.enabled=true \
+	  --set authguard-middleware.enabled=true \
+	  --set authguard-middleware.envoy_gateway.ext_authz.authguardRoute.backend.name=e2e-flowgent-apiserver \
+	  --set authguard-middleware.adapter.existingSecret=e2e-flowgent-authguard-context > "$$_rendered"; \
+	grep -q '^# Source: flowgent/charts/authguard-middleware/' "$$_rendered"; \
+	[ "$$(grep -c '^[[:space:]]*- name: AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY' "$$_rendered")" -eq 2 ]; \
+	grep -q 'api_server_url: "http://e2e-flowgent-apiserver:9990"' "$$_rendered"; \
+	grep -A1 '^[[:space:]]*- name: e2e-flowgent-apiserver$$' "$$_rendered" | grep -q 'port: 9999'
 
 e2e-security-fixer:
-	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py $(E2E_ARGS)
+	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s $(E2E_ARGS)
+
+e2e-security-fixer-docker:
+	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker $(E2E_ARGS)
 
 e2e-security-fixer-access:
-	python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --access
+	python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
 
 fmt:
-	cd pkg/a2a      && $(GOENV) $(GO) fmt ./...
-	cd pkg/common    && $(GOENV) $(GO) fmt ./...
-	cd pkg/model     && $(GOENV) $(GO) fmt ./...
-	cd pkg/messager && $(GOENV) $(GO) fmt ./...
-	cd pkg/cache     && $(GOENV) $(GO) fmt ./...
-	cd pkg/config    && $(GOENV) $(GO) fmt ./...
-	cd pkg/console   && $(GOENV) $(GO) fmt ./...
-	cd pkg/controller && $(GOENV) $(GO) fmt ./...
-	cd pkg/notifier  && $(GOENV) $(GO) fmt ./...
-	cd pkg/api       && $(GOENV) $(GO) fmt ./...
-	cd pkg/store     && $(GOENV) $(GO) fmt ./...
-	cd pkg/sandbox   && $(GOENV) $(GO) fmt ./...
-	cd pkg/core      && $(GOENV) $(GO) fmt ./...
-	cd pkg/cmd       && $(GOENV) $(GO) fmt ./...
-	cd tests         && $(GOENV) $(GO) fmt ./...
+	gofmt -w $$(rg --files pkg tests -g '*.go')
 
 # ── Secrets ───────────────────────────────────────────────────
 # K8s Secret management for Flowgent microservices.

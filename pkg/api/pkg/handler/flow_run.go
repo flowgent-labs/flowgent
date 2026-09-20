@@ -13,9 +13,9 @@ import (
 	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/task"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/task"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,7 +28,7 @@ type FlowRunHandler struct {
 	logger    *utils.Logger
 }
 
-func NewFlowRunHandler(s store.IStore, payloads taskpayload.ITaskPayloadProvider, mqtt MQTTPublisher, logger *utils.Logger) *FlowRunHandler {
+func NewFlowRunHandler(s storage.IStorage, payloads taskpayload.ITaskPayloadProvider, mqtt MQTTPublisher, logger *utils.Logger) *FlowRunHandler {
 	var runStore flowrun.IFlowRunStore
 	var taskStore task.ITaskStore
 	switch db := s.DB().(type) {

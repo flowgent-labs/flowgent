@@ -314,9 +314,6 @@ func (c *FlowgentController) ensureApplicationJobManager(ctx context.Context, sp
 		return
 	}
 	c.ensureRuntimeConfigMap(ctx, clientset, ns, namespaceID, spec.ID)
-	if !c.ensureRuntimeAuthSecret(ctx, clientset, ns, namespaceID, spec.ID) {
-		return
-	}
 	runtimeConfigMap, runtimeSecret, runtimeChecksum, ok := c.ensureFlowRuntimeConfiguration(ctx, clientset, ns, namespaceID, spec.ID)
 	if !ok {
 		return
@@ -492,53 +489,6 @@ func upsertRuntimeSecret(ctx context.Context, clientset kubernetes.Interface, na
 	existing.Type = corev1.SecretTypeOpaque
 	_, err = clientset.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
 	return err == nil
-}
-
-// ensureRuntimeAuthSecret copies only the runtime workload credentials into
-// the namespace runtime boundary. Human/bootstrap and control-plane tokens are
-// deliberately kept out of workload namespaces. Existing Secrets are
-// updated on rotation before a new JM is admitted.
-func (c *FlowgentController) ensureRuntimeAuthSecret(ctx context.Context, clientset kubernetes.Interface, namespace, namespaceID, flowID string) bool {
-	if !c.cfg.Auth.Authorization.Enabled || strings.EqualFold(c.cfg.Auth.Authorization.Enforcement, "disabled") {
-		return true
-	}
-	name := c.cfg.Runtime.InternalAuthSecret
-	if name == "" {
-		c.logger.Error("Runtime authorization Secret is not configured", "flow_id", flowID, "namespace", namespace)
-		return false
-	}
-	source, err := clientset.CoreV1().Secrets(c.systemNamespace()).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		c.logger.Error("Failed to read runtime authorization Secret", "flow_id", flowID, "namespace", namespace, "secret", name, "error", err)
-		return false
-	}
-	keys := []string{c.jobManagerAuthKey(), c.taskManagerAuthKey()}
-	data := make(map[string][]byte, len(keys))
-	for _, key := range keys {
-		value, ok := source.Data[key]
-		if !ok || len(value) == 0 {
-			c.logger.Error("Runtime authorization Secret is missing a workload key", "flow_id", flowID, "namespace", namespace, "secret", name, "key", key)
-			return false
-		}
-		data[key] = append([]byte(nil), value...)
-	}
-	labels := map[string]string{"flowgent.io/runtime-boundary": "namespace", "flowgent.io/namespace": namespaceID}
-	existing, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = clientset.CoreV1().Secrets(namespace).Create(ctx, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}, Type: corev1.SecretTypeOpaque, Data: data,
-		}, metav1.CreateOptions{})
-	} else if err == nil && (!reflect.DeepEqual(existing.Data, data) || !reflect.DeepEqual(existing.Labels, labels)) {
-		existing.Data = data
-		existing.Labels = labels
-		existing.Type = corev1.SecretTypeOpaque
-		_, err = clientset.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		c.logger.Error("Failed to synchronize runtime authorization Secret", "flow_id", flowID, "namespace", namespace, "secret", name, "error", err)
-		return false
-	}
-	return true
 }
 
 func (c *FlowgentController) ensureRuntimeRBAC(ctx context.Context, clientset kubernetes.Interface, namespace, namespaceID, flowID string) {
@@ -860,7 +810,6 @@ func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID stri
 							{Name: "FLOWGENT__RUNTIME__APPLICATION__SANDBOX__RESOURCES__MEMORY", Value: resourceMemory(applicationResources.Sandbox)},
 							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: c.cfg.Messager.MQTT.Broker},
 							{Name: "FLOWGENT__RUNTIME__API_SERVER_URL", Value: c.cfg.Runtime.APIServerURL},
-							c.jobManagerTokenEnv(),
 							{
 								Name: "POD_NAMESPACE",
 								ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
@@ -891,32 +840,6 @@ func (c *FlowgentController) applicationJobManagerAppLabel() string {
 		return "flowgent-jobmanager"
 	}
 	return resourceid.KubernetesName(owner, "jobmanager")
-}
-
-func (c *FlowgentController) jobManagerTokenEnv() corev1.EnvVar {
-	env := corev1.EnvVar{Name: "FLOWGENT_INTERNAL_TOKEN"}
-	if !c.cfg.Auth.Authorization.Enabled || strings.EqualFold(c.cfg.Auth.Authorization.Enforcement, "disabled") || c.cfg.Runtime.InternalAuthSecret == "" {
-		return env
-	}
-	env.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-		LocalObjectReference: corev1.LocalObjectReference{Name: c.cfg.Runtime.InternalAuthSecret},
-		Key:                  c.jobManagerAuthKey(),
-	}}
-	return env
-}
-
-func (c *FlowgentController) jobManagerAuthKey() string {
-	if c.cfg.Runtime.JobManagerAuthKey != "" {
-		return c.cfg.Runtime.JobManagerAuthKey
-	}
-	return "jobmanager-token"
-}
-
-func (c *FlowgentController) taskManagerAuthKey() string {
-	if c.cfg.Runtime.TaskManagerAuthKey != "" {
-		return c.cfg.Runtime.TaskManagerAuthKey
-	}
-	return "taskmanager-token"
 }
 
 func runtimeEnvFrom(credentialSecret, flowConfigMap, flowSecret string) []corev1.EnvFromSource {

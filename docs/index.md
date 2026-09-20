@@ -10,7 +10,7 @@ that owns the subject.
 
 | Layer | Document | Scope |
 |---|---|---|
-| Security / IAM | [Enterprise IAM authorization](architecture/enterprise-iam-authorization.md) | Subject/group/role/grant model, Resource URN, request matchers, and resource-list scoping |
+| Security | [AuthGuard integration](architecture/authguard-integration.md) | Gateway trust boundary, adapters SDK, and repository SQL scope |
 | L1 Engine | [Engine overview](architecture/overview.md) | Cross-component calls, state and messaging contracts, deployment, and shared modules |
 | L1 Engine | [API Server](architecture/engine/apiserver.md) | External gateway and sole durable-state client |
 | L1 Engine | [Controller](architecture/engine/controller.md) | Active-run JobManager reconciliation |
@@ -49,7 +49,6 @@ Shared DAG semantics belong to the
 
 Current active development plan:
 
-- [Security Fixer UI-only end-to-end completion](development/security-fixer-ui-e2e.md)
 
 ## Language Versions
 

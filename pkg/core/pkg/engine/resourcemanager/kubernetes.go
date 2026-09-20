@@ -121,8 +121,6 @@ type KubernetesResourceManager struct {
 	managedByLabelValue      string
 	deleteOnShutdown         bool
 	credentialEnvSecret      string
-	internalAuthSecret       string
-	taskManagerAuthKey       string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -249,8 +247,6 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		managedByLabelValue:      ManagedByLabelValue(cfg.ResourceOwner),
 		deleteOnShutdown:         cfg.DeleteOnShutdown,
 		credentialEnvSecret:      cfg.CredentialEnvSecret,
-		internalAuthSecret:       cfg.InternalAuthSecret,
-		taskManagerAuthKey:       defaultIfEmpty(cfg.TaskManagerAuthKey, "taskmanager-token"),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -850,7 +846,6 @@ func (s *KubernetesResourceManager) desiredTMDeployment() *appsv1.Deployment {
 							{Name: "FLOWGENT__RUNTIME__MODE", Value: string(s.runtimeMode)},
 							{Name: "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID", Value: s.runtimeClusterID},
 							{Name: "FLOWGENT__RUNTIME__TM_SLOTS", Value: fmt.Sprintf("%d", s.slotsPerTM)},
-							workloadTokenEnv(s.internalAuthSecret, s.taskManagerAuthKey),
 						},
 						Command:   []string{"/app/flowgent", "taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"},
 						Resources: resourceRequirements(s.tmResources, "200m", "256Mi", "2000m", "2Gi"),
@@ -876,18 +871,6 @@ func (s *KubernetesResourceManager) desiredTMDeployment() *appsv1.Deployment {
 			},
 		},
 	}
-}
-
-func workloadTokenEnv(secretName, key string) corev1.EnvVar {
-	env := corev1.EnvVar{Name: "FLOWGENT_INTERNAL_TOKEN"}
-	if secretName == "" {
-		return env
-	}
-	env.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-		LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-		Key:                  key,
-	}}
-	return env
 }
 
 func (s *KubernetesResourceManager) credentialEnvFrom() []corev1.EnvFromSource {

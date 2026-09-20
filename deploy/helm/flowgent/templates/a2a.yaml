@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: a2a
-          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          image: {{ include "flowgent.image" . | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
           args: ["a2a", "start", "-c", "/etc/flowgent/flowgent.yaml"]
@@ -34,7 +34,7 @@ spec:
               containerPort: {{ .Values.a2a.service.port }}
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
-            {{- include "flowgent.workloadTokenEnv" (dict "root" . "component" "a2a") | nindent 12 }}
+            {{- include "flowgent.authguardAdapterEnv" . | nindent 12 }}
             - name: FLOWGENT__CONFIG__FILE
               value: /etc/flowgent/flowgent.yaml
             - name: POD_NAME

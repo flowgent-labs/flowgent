@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -24,24 +23,15 @@ import (
 // access is embedded here.
 
 type FlowgentClient struct {
-	BaseURL     string
-	BearerToken string
+	BaseURL string
 }
 
 func NewFlowgentClient(baseURL string) *FlowgentClient {
-	return NewFlowgentClientWithToken(baseURL, os.Getenv("FLOWGENT_INTERNAL_TOKEN"))
-}
-
-// NewFlowgentClientWithToken creates an authenticated API client without
-// mutating process-global environment. Workload entrypoints normally use
-// NewFlowgentClient and receive FLOWGENT_INTERNAL_TOKEN from a Kubernetes
-// Secret; this constructor is useful for all-in-one mode and focused tests.
-func NewFlowgentClientWithToken(baseURL, token string) *FlowgentClient {
 	if baseURL == "" {
-		baseURL = "http://flowgent-apiserver:9999"
+		baseURL = "http://flowgent-apiserver:9990"
 	}
 	slog.Info("api client using apiserver", "url", baseURL)
-	return &FlowgentClient{BaseURL: baseURL, BearerToken: token}
+	return &FlowgentClient{BaseURL: baseURL}
 }
 
 // ─── helpers ─────────────────────────────────────────────────────
@@ -53,9 +43,6 @@ func (c *FlowgentClient) do(ctx context.Context, method, path string, body io.Re
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.BearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.BearerToken)
 	}
 	return http.DefaultClient.Do(req)
 }

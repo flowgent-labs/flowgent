@@ -13,6 +13,7 @@ service_name: flowgent
 server:
   host: 0.0.0.0
   port: 9999
+  internal_port: 9990             # trusted Flowgent control-plane only
   context_path: "/"
   shutdown_timeout: 15s
   max_body_bytes: 10485760   # 10 MiB
@@ -58,84 +59,13 @@ logging:
   mode: JSON                      # HUMAN | JSON
   level: DEBUG                    # DEBUG | INFO | WARN | ERROR
 
-# ── Authentication ───────────────────────────────────────────────────────────
-auth:
-  # Optional edge identity from AuthGuard. Enable only when requests arrive
-  # through an AuthGuard-protected Envoy and inject the HMAC key from secrets.
-  authguard:
-    enabled: false
-    access_context_hmac_key: "${AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}"
-  jwt_validity_ak: 3600
-  jwt_validity_rk: 86400
-  jwt_algorithm: "ES256"           # ES256 | RS256 | EdDSA
-  jwt_private_key: "<YOUR_PRIVATE_KEY>"
-  jwt_public_key: "<YOUR_PUBLIC_KEY>"
-  anonymous_paths:
-    - "/public/**"
-    - "/static/**"
-    - "/_/healthz"
-    - "/_/healthz/**"
-    - "/swagger-ui/**"
-    - "/.well-known/**"
-  authorization:
-    enabled: true
-    enforcement: "enforce"       # enforce | audit | disabled
-    bootstrap_token: "${FLOWGENT_AUTH_BOOTSTRAP_TOKEN}"
-    internal_tokens:
-      controller: "${FLOWGENT_AUTH_CONTROLLER_TOKEN}"
-      jobmanager: "${FLOWGENT_AUTH_JOBMANAGER_TOKEN}"
-      taskmanager: "${FLOWGENT_AUTH_TASKMANAGER_TOKEN}"
-      notifier: "${FLOWGENT_AUTH_NOTIFIER_TOKEN}"
-      a2a: "${FLOWGENT_AUTH_A2A_TOKEN}"
-      allinone: "${FLOWGENT_AUTH_ALLINONE_TOKEN}"
-    audit_allow: true
-    audit_deny: true
-    trusted_proxy_cidrs: []
-  oidc:
-    enabled: false
-    client_id: "<YOUR_OIDC_CLIENT_ID>"
-    client_secret: "<YOUR_OIDC_CLIENT_SECRET>"
-    issue_url: "https://iam.wl4g.com/realms/master"
-    redirect_url: "http://wl4g.local:10000/serve/auth/callback/oidc"
-    scope: "openid profile email"
-  ldap:
-    enabled: false
-    url: "ldap://ad.example.com:389"               # LDAP server URL (ldap:// or ldaps://)
-    base_dn: "dc=example,dc=com"                     # root base DN
-    user_dn: "cn=admin,dc=example,dc=com"            # service account DN
-    password: "${LDAP_BIND_PASSWORD}"                # service account password
-    domains:                                         # AD multi-domain search
-      - base_dn: "dc=corp,dc=example,dc=com"
-        user_search_filter: "(sAMAccountName=%s)"
-      - base_dn: "dc=eng,dc=example,dc=com"
-        user_search_filter: "(uid=%s)"
-    role_mapping:                                     # AD group/domain → Flowgent role
-      - match: "cn=FlowgentAdmins,ou=groups,dc=corp,dc=example,dc=com"
-        role: "admin"
-      - match: "cn=FlowgentOps,ou=groups,dc=corp,dc=example,dc=com"
-        role: "operator"
-      - match: "dc=eng,dc=example,dc=com"
-        role: "viewer"
-    # ── Optional (defaults shown) ──
-    user_search_filter: "(uid=%s)"                     # default: (cn=%s)
-    username_attribute: "uid"                         # default: cn
-    email_attribute: "mail"                           # default: mail
-    display_name_attribute: "cn"                       # default: cn
-    group_search_base: "ou=groups,dc=example,dc=com"   # for group→role resolution
-    group_search_filter: "(member=%s)"                 # default: (member=%s)
-    group_name_attribute: "cn"                         # default: cn
-    insecure_skip_verify: false
-  github:
-    enabled: true
-    client_id: "<YOUR_GITHUB_CLIENT_ID>"
-    client_secret: "<YOUR_GITHUB_CLIENT_SECRET>"
-    auth_url: "https://github.com/login/oauth/authorize"
-    token_url: "https://github.com/login/oauth/access_token"
-    # Empty redirect_url lets Flowgent derive the public callback from
-    # X-Forwarded-Proto/X-Forwarded-Host: /auth/callback/github.
-    redirect_url: ""
-    scope: "read:user user:email"
-    user_info_url: "https://api.github.com/user"
+# ── AuthGuard Adapter ────────────────────────────────────────────────────────
+authguard_adapter:
+  enabled: false
+  partition: "prod"
+  service: "flowgent"
+  region: "global"
+  tenant: "example-corp"
 
 # ── Cache ────────────────────────────────────────────────────────────────────
 #    Provider: Memory (all-in-one/dev) | Redis (production/distributed)
@@ -328,7 +258,7 @@ runtime:
   # Flow-level credentials override namespace-level.
   credential_paths:
     base_path: "/var/flowgent"
-  api_server_url: "http://apiserver:9999"
+  api_server_url: "http://127.0.0.1:9990"
   system_namespace: "flowgent-system"
   k8s_namespace: "flowgent-system"
   mode: "session"
@@ -336,9 +266,6 @@ runtime:
   session_cluster_id: "session"
   tm_orphan_timeout: "3m"
   credential_env_secret: ""
-  internal_auth_secret: "flowgent-runtime-auth"
-  jobmanager_auth_key: "jobmanager-token"
-  taskmanager_auth_key: "taskmanager-token"
   # agent_flow_id: ""            # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
   # agent_flow_run_id: ""        # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID)
   # tm_id: ""                    # set per TM pod (FLOWGENT__RUNTIME__TM_ID)

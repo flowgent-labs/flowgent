@@ -98,6 +98,29 @@ func TestStandaloneResourceManager_Schedule_Noop(t *testing.T) {
 	}
 }
 
+func TestStandaloneResourceManagerPreservesExecutorFailure(t *testing.T) {
+	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
+		PoolSize: 1, TaskState: fakeTaskState{}, SandboxWorkspace: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := rm.Schedule(context.Background(), &entities.ExecutionPlan{
+		PlanID: "sandbox-plan", AgentFlowRunID: "run-1", NodeID: "sandbox-node",
+		TaskType: entities.TaskSandbox,
+		NodeSpec: &entities.NodeSpec{
+			ID: "sandbox-node", Kind: entities.SandboxNode, Runtime: "bash", Script: "exit 0",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || !strings.Contains(result.Error, "message queue") {
+		t.Fatalf("Schedule() result = %#v, want preserved executor failure", result)
+	}
+}
+
 func TestStandaloneResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
 	rm, err := NewStandaloneResourceManager(&ResourceManagerConfig{
 		PoolSize: 2, TaskState: fakeTaskState{}, Messager: messager.NewLocalMessager(10),

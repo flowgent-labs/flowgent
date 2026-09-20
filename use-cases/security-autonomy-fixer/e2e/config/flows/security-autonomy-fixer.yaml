@@ -53,6 +53,10 @@ data:
       action: GetIssuesSearch
       projectKey: ${vars.repo}
       branch: master
+      ps: 20
+      s: SEVERITY
+      asc: "false"
+      resolved: "false"
   - id: aggregate-issues
     kind: agent
     instruction: 'Parse the SonarQube scan results. For each issue extract:
@@ -621,6 +625,10 @@ data:
       action: GetIssuesSearch
       projectKey: ${vars.repo}
       branch: master
+      ps: 20
+      s: SEVERITY
+      asc: "false"
+      resolved: "false"
   - id: compare-results
     kind: agent
     instruction: 'Compare pre-fix and post-fix SonarQube issue lists.

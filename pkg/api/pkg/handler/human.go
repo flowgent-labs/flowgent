@@ -9,9 +9,9 @@ import (
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/approval"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/approval"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,7 +29,7 @@ type MQTTPublisher interface {
 }
 
 // NewHumanHandler creates a human approval HTTP handler.
-func NewHumanHandler(s store.IStore, mqtt MQTTPublisher, logger *utils.Logger) *HumanHandler {
+func NewHumanHandler(s storage.IStorage, mqtt MQTTPublisher, logger *utils.Logger) *HumanHandler {
 	var apStore approval.IApprovalStore
 	var runStore flowrun.IFlowRunStore
 	switch db := s.DB().(type) {

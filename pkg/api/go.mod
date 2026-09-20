@@ -3,6 +3,7 @@ module github.com/flowgent-labs/flowgent/api
 go 1.26.0
 
 require (
+	authguard/adapters/golang v0.0.0
 	cloud.google.com/go/storage v1.56.3
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
@@ -11,9 +12,7 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/flowgent-labs/flowgent/common v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
-	github.com/flowgent-labs/flowgent/store v0.0.0
-	github.com/go-ldap/ldap/v3 v3.4.10
-	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/flowgent-labs/flowgent/storage v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	go.opentelemetry.io/otel v1.38.0
@@ -22,12 +21,8 @@ require (
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
-	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.7 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
@@ -64,7 +59,8 @@ require (
 )
 
 replace (
+	authguard/adapters/golang => github.com/wl4g/authguard/src/adapters/golang v0.0.0-20260919033855-d0022086809a
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/model => ../model
-	github.com/flowgent-labs/flowgent/store => ../store
+	github.com/flowgent-labs/flowgent/storage => ../storage
 )

@@ -127,5 +127,5 @@ replace (
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../sandbox
-	github.com/flowgent-labs/flowgent/store => ../store
+	github.com/flowgent-labs/flowgent/storage => ../storage
 )

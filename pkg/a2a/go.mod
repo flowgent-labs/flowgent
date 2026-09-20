@@ -3,12 +3,14 @@ module github.com/flowgent-labs/flowgent/a2a
 go 1.26.0
 
 require (
+	authguard/adapters/golang v0.0.0
 	github.com/a2aproject/a2a-go v0.3.15
+	github.com/flowgent-labs/flowgent/api v0.0.0
 	github.com/flowgent-labs/flowgent/common v0.0.0
 	github.com/flowgent-labs/flowgent/config v0.0.0
 	github.com/flowgent-labs/flowgent/core v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
-	github.com/flowgent-labs/flowgent/store v0.0.0
+	github.com/flowgent-labs/flowgent/storage v0.0.0
 	github.com/jackc/pgx/v5 v5.7.6
 )
 
@@ -35,9 +37,12 @@ require (
 )
 
 replace (
+	authguard/adapters/golang => github.com/wl4g/authguard/src/adapters/golang v0.0.0-20260919033855-d0022086809a
+	github.com/flowgent-labs/flowgent/api => ../api
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/config => ../config
 	github.com/flowgent-labs/flowgent/core => ../core
+	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
-	github.com/flowgent-labs/flowgent/store => ../store
+	github.com/flowgent-labs/flowgent/storage => ../storage
 )

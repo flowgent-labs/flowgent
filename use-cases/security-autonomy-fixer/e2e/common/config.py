@@ -1,32 +1,68 @@
-"""
-Flowgent E2E Verification — Unified Configuration.
-
-All verification scenarios read from this single config source.
-Override via environment variables or by editing the defaults below.
-"""
+"""Static Flowgent E2E configuration, paths, ports, and scenario registry."""
+from __future__ import annotations
 
 import os
+from pathlib import Path
 
 
-def _is_kubeconfig_candidate(path: str) -> bool:
-    return (
-        bool(path)
-        and os.path.isfile(path)
-        and os.access(path, os.R_OK)
-        and os.path.getsize(path) > 0
-    )
+E2E_DIR = Path(__file__).resolve().parents[1]
+USE_CASE_DIR = E2E_DIR.parent
+PROJECT_ROOT = USE_CASE_DIR.parents[1]
+HELM_CHART = PROJECT_ROOT / "deploy" / "helm" / "flowgent"
+SONAR_COMPOSE = PROJECT_ROOT / "deploy" / "docker" / "sonarqube" / "docker-compose.yml"
+CONFIG_DIR = E2E_DIR / "config"
+CONSOLE_BIN = PROJECT_ROOT / "bin" / "flowgent-core"
+CONSOLE_CFG = PROJECT_ROOT / "etc" / "flowgent.yaml"
+REPORTS_DIR = E2E_DIR / "reports"
 
 
-def _default_kubeconfig() -> str:
-    candidates = (
-        os.getenv("KUBECONFIG", ""),
-        os.path.expanduser("~/.kube/config"),
-        "/etc/rancher/k3s/k3s.yaml",
-    )
-    for path in candidates:
-        if _is_kubeconfig_candidate(path):
-            return path
-    return os.path.expanduser("~/.kube/config")
+SCENARIOS = {
+    "01": ("E2E Structure — Layered Deployment and Verifier Contracts", "verifier.infra.s01_structure"),
+    "11": ("Infrastructure — Pre-Deployment & Pod Readiness", "verifier.infra.s11_infrastructure"),
+    "12": ("Console Import — Binary, Import Command, DB Verification", "verifier.infra.s12_console_import"),
+    "13": ("OTEL — Jaeger Span Coverage", "verifier.infra.s13_otel"),
+    "14": ("AuthGuard — LDAP Federation + GitHub OAuth + Envoy Policy", "verifier.infra.s14_authguard"),
+    "31": ("E2E Fixer — Seed & Trigger", "verifier.agentflow.s31_seed_trigger"),
+    "32": ("E2E Fixer — Discovery & Analyze", "verifier.agentflow.s32_discovery_analyze"),
+    "33": ("E2E Fixer — Remediation", "verifier.agentflow.s33_remediation"),
+    "34": ("E2E Fixer — Delivery & Report", "verifier.agentflow.s34_delivery_report"),
+    "35": ("PR Commits — Verify Fix Commits on Target PR", "verifier.agentflow.s35_pr_commit"),
+    "36": ("Knowledge — RAG Retrieval & Injection", "verifier.agentflow.s36_knowledge"),
+    "37": ("Volume Workspace — Pod Mount and Git Clone Evidence", "verifier.agentflow.s37_volume_workspace"),
+    "21": ("API Server — REST CRUD + Lifecycle Events", "verifier.core.s21_apiserver"),
+    "22": ("Notifier — Multi-Channel Delivery", "verifier.core.s22_notifier"),
+    "23": ("Controller — Application Runtime Cluster Lifecycle", "verifier.core.s23_controller"),
+    "24": ("Messager — MQTT Topics + Sandbox Chain", "verifier.core.s24_messager"),
+    "25": ("A2A Protocol — Agent Card & Task Submit", "verifier.core.s25_a2a_protocol"),
+}
+DEFAULT_SCENARIOS = tuple(SCENARIOS)
+
+
+class KubernetesConfiguration:
+    """Class-owned operations for config."""
+
+    @staticmethod
+    def _is_kubeconfig_candidate(path: str) -> bool:
+        return (
+            bool(path)
+            and os.path.isfile(path)
+            and os.access(path, os.R_OK)
+            and os.path.getsize(path) > 0
+        )
+
+    @staticmethod
+    def _default_kubeconfig() -> str:
+        candidates = (
+            os.getenv("KUBECONFIG", ""),
+            os.path.expanduser("~/.kube/config"),
+            "/etc/rancher/k3s/k3s.yaml",
+        )
+        for path in candidates:
+            if KubernetesConfiguration._is_kubeconfig_candidate(path):
+                return path
+        return os.path.expanduser("~/.kube/config")
+
+
 
 
 # ── Isolated deployment identity / local tunnels ─────────────────
@@ -40,11 +76,12 @@ LOCAL_JAEGER_PORT = int(os.getenv("FLOWGENT_E2E_JAEGER_PORT", "16688"))
 LOCAL_AUTHN_PORT = int(os.getenv("FLOWGENT_E2E_AUTHN_PORT", "18082"))
 LOCAL_AUTHZ_MGMT_PORT = int(os.getenv("FLOWGENT_E2E_AUTHZ_MGMT_PORT", "19091"))
 LOCAL_GATEWAY_PORT = int(os.getenv("FLOWGENT_E2E_GATEWAY_PORT", "18089"))
+LOCAL_PG_PORT = int(os.getenv("FLOWGENT_E2E_PG_PORT", "25432"))
 
 # ── K8S / K8s API ───────────────────────────────────────────────
 K8S_APISERVER_URL = os.getenv("FLOWGENT_K8S_APISERVER", f"http://localhost:{LOCAL_API_PORT}")
 K8S_A2A_URL       = os.getenv("FLOWGENT_K8S_A2A",       f"http://localhost:{LOCAL_A2A_PORT}")
-K8S_KUBECONFIG    = _default_kubeconfig()
+K8S_KUBECONFIG    = KubernetesConfiguration._default_kubeconfig()
 os.environ["KUBECONFIG"] = K8S_KUBECONFIG
 SYSTEM_NAMESPACE  = os.getenv("FLOWGENT_SYSTEM_NAMESPACE", f"{RESOURCE_PREFIX}-system")
 NAMESPACE_ID      = os.getenv("FLOWGENT_NAMESPACE_ID", "security-fixer")
@@ -92,30 +129,30 @@ POLL_INTERVAL_S       = int(os.getenv("FLOWGENT_POLL_INTERVAL_S", "5"))
 POD_READY_TIMEOUT_S   = int(os.getenv("FLOWGENT_POD_READY_TIMEOUT_S", "60"))
 
 
-def pg_dsn():
-    return (
-        f"postgres://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DATABASE}"
-        f"?sslmode=disable&options=-csearch_path%3D{PG_SCHEMA}"
-    )
+class E2EConfiguration:
+    """Own mutable runtime configuration without spreading DSN parsing logic."""
 
+    @staticmethod
+    def postgres_dsn() -> str:
+        return (
+            f"postgres://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DATABASE}"
+            f"?sslmode=disable&options=-csearch_path%3D{PG_SCHEMA}"
+        )
 
-def apply_pg_override(dsn: str):
-    """Apply a --pg DSN override onto module-level PG_* globals.
+    @staticmethod
+    def apply_postgres_override(dsn: str) -> None:
+        """Apply a CLI DSN override to the module's canonical PG fields."""
+        import sys as _sys
 
-    Used by runner.py CLI to allow overriding
-    PostgreSQL connection parameters at runtime.
-    """
-    import sys as _sys
-    # Keep a reference to the config module so caller-site globals are patched.
-    mod = _sys.modules[__name__]
-    parts = dsn.replace("postgres://", "").split("@")
-    user_pass = parts[0].split(":")
-    host_db = parts[1].split("/")
-    host_port = host_db[0].split(":")
-    mod.PG_USER = user_pass[0]
-    if len(user_pass) > 1:
-        mod.PG_PASSWORD = user_pass[1]
-    mod.PG_HOST = host_port[0]
-    if len(host_port) > 1:
-        mod.PG_PORT = int(host_port[1])
-    mod.PG_DATABASE = host_db[1].split("?")[0]
+        module = _sys.modules[__name__]
+        parts = dsn.replace("postgres://", "").split("@")
+        user_pass = parts[0].split(":")
+        host_db = parts[1].split("/")
+        host_port = host_db[0].split(":")
+        module.PG_USER = user_pass[0]
+        if len(user_pass) > 1:
+            module.PG_PASSWORD = user_pass[1]
+        module.PG_HOST = host_port[0]
+        if len(host_port) > 1:
+            module.PG_PORT = int(host_port[1])
+        module.PG_DATABASE = host_db[1].split("?")[0]

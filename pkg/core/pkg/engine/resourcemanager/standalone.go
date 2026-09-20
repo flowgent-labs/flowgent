@@ -77,10 +77,11 @@ func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities
 		AgentFlowRunID: plan.AgentFlowRunID, NodeID: plan.NodeID,
 		Status: entities.TaskPending, ExecID: plan.PlanID,
 	}
-	if _, err := s.tm.ExecutePlan(ctx, plan, task); err != nil {
+	result, err := s.tm.ExecutePlan(ctx, plan, task)
+	if err != nil {
 		return &entities.TaskResult{Error: err.Error()}, nil
 	}
-	return &entities.TaskResult{Output: task.Output}, nil
+	return result, nil
 }
 
 func (s *StandaloneResourceManager) Shutdown(ctx context.Context) error { return nil }

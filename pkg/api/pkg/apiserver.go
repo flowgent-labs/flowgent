@@ -14,10 +14,6 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"github.com/flowgent-labs/flowgent/api/pkg/auth"
-	githubauth "github.com/flowgent-labs/flowgent/api/pkg/auth/github"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
 	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
 	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
@@ -26,22 +22,22 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
-	flowreleasestore "github.com/flowgent-labs/flowgent/store/pkg/flowrelease"
-	iamstore "github.com/flowgent-labs/flowgent/store/pkg/iam"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	flowreleasestore "github.com/flowgent-labs/flowgent/storage/pkg/flowrelease"
 )
 
 // FlowgentApiServer is the sole DB client and REST API server. It serves
 // CRUD endpoints for agents, flows, runs, tasks, and notifications.
 type FlowgentApiServer struct {
 	cfg   *config.FlowgentConfig
-	store storepkg.IStore
+	store storage.IStorage
 
-	restServer   *http.Server
-	ppServer     *http.Server
-	otelProvider *tracing.Provider
-	taskPayloads taskpayload.ITaskPayloadProvider
+	restServer     *http.Server
+	internalServer *http.Server
+	ppServer       *http.Server
+	otelProvider   *tracing.Provider
+	taskPayloads   taskpayload.ITaskPayloadProvider
 
 	// Handlers (set during construction)
 	agentFlowHandler *handler.FlowDefHandler
@@ -54,7 +50,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	config.LogConfig(cfg)
 
 	// ── Database ──
-	storeImpl := storepkg.InitStore(cfg)
+	storeImpl := storage.InitStorage(cfg)
 
 	// ── Load agentflows from DB ──
 	var agentFlows []entities.FlowInfo
@@ -134,19 +130,12 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		return nil, fmt.Errorf("create Jaeger query client: %w", err)
 	}
 	traceHandler := handler.NewTraceHandler(storeImpl, jaegerClient)
-	iamRepository, err := iamstore.NewRepository(storeImpl)
-	if err != nil {
-		cleanupConstruction()
-		return nil, fmt.Errorf("IAM repository: %w", err)
-	}
-	authorizer := authz.NewService(cfg.Auth.Authorization, iamRepository)
-	iamHandler := handler.NewIAMHandler(iamRepository, authorizer)
 	flowReleaseRepository, err := flowreleasestore.NewRepository(storeImpl)
 	if err != nil {
 		cleanupConstruction()
 		return nil, fmt.Errorf("flow release repository: %w", err)
 	}
-	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, iamRepository, agentFlowHandler)
+	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, agentFlowHandler)
 	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(storeImpl, cfg.Notifier.SecretEncryption)
 	if err != nil {
 		cleanupConstruction()
@@ -156,18 +145,13 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 
 	// ── Routes ──
 	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, iamHandler, flowReleaseHandler, runtimeConfigHandler)
-	var restHandler http.Handler = restMux
-	authSvc, err := auth.NewService(cfg.Auth)
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, flowReleaseHandler, runtimeConfigHandler)
+	adapter, err := authz.NewAdapter(cfg.AuthGuardAdapter)
 	if err != nil {
 		cleanupConstruction()
-		return nil, fmt.Errorf("auth service: %w", err)
+		return nil, fmt.Errorf("AuthGuard adapter: %w", err)
 	}
-	authSvc.Register(githubauth.NewService(cfg.Auth.GitHub, authSvc.TokenService()))
-	authSvc.Register(oidc.NewService(cfg.Auth.OIDC, authSvc.TokenService()))
-	authSvc.Register(ldap.NewService(cfg.Auth.LDAP, authSvc.TokenService()))
-	authSvc.SetCredentialAuthenticator(authorizer)
-	restHandler = authSvc.Middleware()(authorizer.Middleware(restMux))
+	var restHandler http.Handler = adapter.Middleware(restMux)
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
 	if readTO == 0 {
@@ -186,11 +170,26 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		WriteTimeout:   writeTO,
 		MaxHeaderBytes: cfg.Server.MaxBodyBytes,
 	}
+	var internalSrv *http.Server
+	if cfg.Server.InternalPort > 0 {
+		if cfg.Server.InternalPort == cfg.Server.Port {
+			cleanupConstruction()
+			return nil, fmt.Errorf("server.internal_port must differ from server.port")
+		}
+		internalSrv = &http.Server{
+			Addr:           fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.InternalPort),
+			Handler:        adapter.InternalMiddleware(restMux),
+			ReadTimeout:    readTO,
+			WriteTimeout:   writeTO,
+			MaxHeaderBytes: cfg.Server.MaxBodyBytes,
+		}
+	}
 
 	srv := &FlowgentApiServer{
 		cfg:              cfg,
 		store:            storeImpl,
 		restServer:       restSrv,
+		internalServer:   internalSrv,
 		otelProvider:     otelProvider,
 		taskPayloads:     payloadProvider,
 		agentFlowHandler: agentFlowHandler,
@@ -223,6 +222,14 @@ func (s *FlowgentApiServer) Start(ctx context.Context) error {
 			log.Fatalf("REST server: %v", err)
 		}
 	}()
+	if s.internalServer != nil {
+		go func() {
+			slog.Info("Internal control-plane API server", "addr", s.internalServer.Addr)
+			if err := s.internalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("internal control-plane server: %v", err)
+			}
+		}()
+	}
 
 	if s.ppServer != nil {
 		go func() {
@@ -261,6 +268,11 @@ func (s *FlowgentApiServer) Shutdown() error {
 	if s.restServer != nil {
 		if err := s.restServer.Shutdown(shutdownCtx); err != nil {
 			slog.Error("REST server shutdown", "error", err)
+		}
+	}
+	if s.internalServer != nil {
+		if err := s.internalServer.Shutdown(shutdownCtx); err != nil {
+			slog.Error("internal control-plane server shutdown", "error", err)
 		}
 	}
 	if s.ppServer != nil {

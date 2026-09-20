@@ -22,7 +22,7 @@ type LLMClient interface {
 	Generate(ctx context.Context, systemPrompt, userPrompt, model string, temperature float64, maxTokens int) (string, error)
 }
 
-// Note: pkg/core does not import pkg/store directly — only the apiserver connects
+// Note: pkg/core does not import pkg/storage directly — only the apiserver connects
 // to the database (see docs/01-L1-Engine-Architecture.md §1). Non-apiserver
 // components (JM, TM, controller, sandbox, notifier) persist state exclusively
 // via FlowgentClient (REST) or MQTT.
