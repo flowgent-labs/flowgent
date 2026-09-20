@@ -228,12 +228,12 @@ class VerificationRunner:
         try:
             module = importlib.import_module(module_name)
             with contextlib.redirect_stdout(capture):
-                verifier_class = getattr(module, "VERIFIER_CLASS", None)
-                if verifier_class is None:
-                    raise TypeError(f"{module_name} must export VERIFIER_CLASS")
-                result = verifier_class.verify(context)
+                entrypoint = getattr(module, "verifier", None)
+                if not callable(entrypoint):
+                    raise TypeError(f"{module_name} must export verifier(context)")
+                result = entrypoint(context)
             if not isinstance(result, VerificationResult):
-                raise TypeError(f"{module_name}.{verifier_class.__name__}.verify() returned an invalid result")
+                raise TypeError(f"{module_name}.verifier(context) returned an invalid result")
             if result.scenario_id != scenario_id or result.title != title:
                 raise ValueError(f"{module_name} metadata differs from common.config.SCENARIOS")
             result.output = capture.getvalue()

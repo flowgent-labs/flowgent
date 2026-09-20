@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from common.model import RunContext, VerificationResult
-from verifier.infra.base import InfrastructureVerifier
+from verifier import BaseVerifier
 
 
-class AuthGuardVerifier(InfrastructureVerifier):
+class AuthGuardVerifier(BaseVerifier):
     scenario_id = "14"
     title = "AuthGuard — LDAP Federation + GitHub OAuth + Envoy Policy"
 
@@ -18,12 +18,6 @@ class AuthGuardVerifier(InfrastructureVerifier):
             self.infrastructure.verify_authguard,
         )
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return AuthGuardVerifier(context).run()
-
-
-
-VERIFIER_CLASS = AuthGuardVerifier
-
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the AuthGuard scenario."""
+    return AuthGuardVerifier(context).run()

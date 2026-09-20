@@ -96,7 +96,7 @@ PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
 os.environ.setdefault(PROXY_ALLOWLIST_ENV, "github.com")
 
 
-class ConsoleImportChecks:
+class ConsoleImportOperations:
     """Class-owned operations for s12 console import."""
 
     @staticmethod
@@ -178,14 +178,14 @@ class ConsoleImportChecks:
             ),
         ]
         for label, args in checks:
-            data, err = ConsoleImportChecks._kubectl_json(args)
+            data, err = ConsoleImportOperations._kubectl_json(args)
             if data is None:
                 print(f"  [3.8] WARN: Could not query {label}: {err}")
                 failures.append(f"could not query idle workload {label}: {err}")
                 continue
             items = data.get("items", [])
             if items:
-                found = ConsoleImportChecks._names(items)
+                found = ConsoleImportOperations._names(items)
                 print(f"  [3.8] WARN: Idle workload {label} exist after import: {found}")
                 failures.append(f"idle workload {label} exist after import: {found}")
             else:
@@ -193,7 +193,7 @@ class ConsoleImportChecks:
 
     @staticmethod
     def _verify_security_flow_network_policy(failures):
-        result = ConsoleImportChecks._pg_query(
+        result = ConsoleImportOperations._pg_query(
             "SELECT definition::text FROM orh_agentflow "
             f"WHERE namespace_id='{NAMESPACE}' AND agentflow_id='security-autonomy-fixer' "
             "AND del_flag=false ORDER BY version DESC LIMIT 1;"
@@ -240,7 +240,7 @@ class ConsoleImportChecks:
 
         # ── L1.1: Binary exists ─────────────────────────────────
         print("\n── L1: Binary Check ──")
-        binary = ConsoleImportChecks._find_binary()
+        binary = ConsoleImportOperations._find_binary()
         if binary:
             result = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=10)
             version_out = (result.stdout + result.stderr)[:300]
@@ -274,7 +274,7 @@ class ConsoleImportChecks:
         import_summary = ""
 
         if binary:
-            cfg = ConsoleImportChecks._find_config()
+            cfg = ConsoleImportOperations._find_config()
             if not cfg:
                 print("  [2.1] WARN: No flowgent config file found. Searched:")
                 for cp in CONFIG_PATHS:
@@ -329,7 +329,7 @@ class ConsoleImportChecks:
         print("\n── L3: Database Verification ──")
 
         # ── L3.1: Agents ─────────────────────────────────────────
-        result = ConsoleImportChecks._pg_query(f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportOperations._pg_query(f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.1] llm_agent: {count} records (min expected: {MIN_AGENTS})")
@@ -339,7 +339,7 @@ class ConsoleImportChecks:
                 print(f"  [3.1] WARN: Expected ≥{MIN_AGENTS} agents, found {count}")
                 failures.append(f"expected >={MIN_AGENTS} agents, found {count}")
                 # List agent names for diagnosis
-                result2 = ConsoleImportChecks._pg_query(f"SELECT name FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
+                result2 = ConsoleImportOperations._pg_query(f"SELECT name FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        Agent: {line.strip()}")
@@ -349,7 +349,7 @@ class ConsoleImportChecks:
             failures.append(f"could not query llm_agent: {stderr_short}")
 
         # ── L3.2: Flows ──────────────────────────────────────────
-        result = ConsoleImportChecks._pg_query(
+        result = ConsoleImportOperations._pg_query(
             f"SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
             "AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow';"
         )
@@ -361,7 +361,7 @@ class ConsoleImportChecks:
             else:
                 print(f"  [3.2] WARN: Expected ≥{MIN_FLOWS} flows, found {count}")
                 failures.append(f"expected >={MIN_FLOWS} flows, found {count}")
-                result2 = ConsoleImportChecks._pg_query(
+                result2 = ConsoleImportOperations._pg_query(
                     f"SELECT agentflow_id FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
                     "AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow' ORDER BY agentflow_id;"
                 )
@@ -374,7 +374,7 @@ class ConsoleImportChecks:
             failures.append(f"could not query orh_agentflow: {stderr_short}")
 
         # ── L3.3: MCPs ───────────────────────────────────────────
-        result = ConsoleImportChecks._pg_query(f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportOperations._pg_query(f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.3] llm_mcp: {count} records (min expected: {MIN_MCPS})")
@@ -383,7 +383,7 @@ class ConsoleImportChecks:
             else:
                 print(f"  [3.3] WARN: Expected ≥{MIN_MCPS} MCPs, found {count}")
                 failures.append(f"expected >={MIN_MCPS} MCPs, found {count}")
-                result2 = ConsoleImportChecks._pg_query(f"SELECT name FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
+                result2 = ConsoleImportOperations._pg_query(f"SELECT name FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        MCP: {line.strip()}")
@@ -393,7 +393,7 @@ class ConsoleImportChecks:
             failures.append(f"could not query llm_mcp: {stderr_short}")
 
         # ── L3.4: LLM Providers ──────────────────────────────────
-        result = ConsoleImportChecks._pg_query(f"SELECT COUNT(*) FROM llm_providers WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportOperations._pg_query(f"SELECT COUNT(*) FROM llm_providers WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.4] llm_providers: {count} records (min expected: {MIN_LLM_PROVIDERS})")
@@ -408,7 +408,7 @@ class ConsoleImportChecks:
             failures.append(f"could not query llm_providers: {stderr_short}")
 
         # ── L3.5: Notify Channels ────────────────────────────────
-        result = ConsoleImportChecks._pg_query(f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportOperations._pg_query(f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.5] nfy_channel: {count} records (min expected: {MIN_NOTIFIERS})")
@@ -417,7 +417,7 @@ class ConsoleImportChecks:
             else:
                 print(f"  [3.5] WARN: Expected ≥{MIN_NOTIFIERS} channels, found {count}")
                 failures.append(f"expected >={MIN_NOTIFIERS} notify channels, found {count}")
-                result2 = ConsoleImportChecks._pg_query(f"SELECT name FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
+                result2 = ConsoleImportOperations._pg_query(f"SELECT name FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        Channel: {line.strip()}")
@@ -427,7 +427,7 @@ class ConsoleImportChecks:
             failures.append(f"could not query nfy_channel: {stderr_short}")
 
         # ── L3.6: Skills ─────────────────────────────────────────
-        result = ConsoleImportChecks._pg_query(
+        result = ConsoleImportOperations._pg_query(
             f"SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
             "AND lower(definition::jsonb->>'kind')='skill';"
         )
@@ -439,7 +439,7 @@ class ConsoleImportChecks:
             else:
                 print(f"  [3.6] WARN: Expected ≥{MIN_SKILLS} skills, found {count}")
                 failures.append(f"expected >={MIN_SKILLS} skills, found {count}")
-                result2 = ConsoleImportChecks._pg_query(
+                result2 = ConsoleImportOperations._pg_query(
                     f"SELECT agentflow_id FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
                     "AND lower(definition::jsonb->>'kind')='skill' ORDER BY agentflow_id;"
                 )
@@ -452,10 +452,10 @@ class ConsoleImportChecks:
             failures.append(f"could not query orh_agentflow for skills: {stderr_short}")
 
         # ── L3.7: Flow spec network policy ───────────────────────
-        ConsoleImportChecks._verify_security_flow_network_policy(failures)
+        ConsoleImportOperations._verify_security_flow_network_policy(failures)
 
         # ── L3.8: Metadata import must not allocate runtime pods ──
-        ConsoleImportChecks._verify_no_idle_workload_runtime(failures)
+        ConsoleImportOperations._verify_no_idle_workload_runtime(failures)
 
         # ── L3.9: Cross-table summary ────────────────────────────
         print("\n  ── Resource Inventory ──")
@@ -469,7 +469,7 @@ class ConsoleImportChecks:
         }
         all_ok = True
         for label, query in inventory_queries.items():
-            result = ConsoleImportChecks._pg_query(query)
+            result = ConsoleImportOperations._pg_query(query)
             if result.returncode == 0:
                 count = result.stdout.strip()
                 print(f"  {label:16s}: {count}")
@@ -508,10 +508,10 @@ class ConsoleImportChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.infra.base import InfrastructureVerifier
+from verifier import BaseVerifier
 
 
-class ConsoleImportVerifier(InfrastructureVerifier):
+class ConsoleImportVerifier(BaseVerifier):
     scenario_id = "12"
     title = "Console Import — Binary, Import Command, DB Verification"
 
@@ -520,11 +520,8 @@ class ConsoleImportVerifier(InfrastructureVerifier):
 
     @staticmethod
     def _verify_import() -> None:
-        ConsoleImportChecks._verify_scenario()
+        ConsoleImportOperations._verify_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return ConsoleImportVerifier(context).run()
-
-VERIFIER_CLASS = ConsoleImportVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the console-import scenario."""
+    return ConsoleImportVerifier(context).run()

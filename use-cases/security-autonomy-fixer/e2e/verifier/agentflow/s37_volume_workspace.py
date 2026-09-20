@@ -42,7 +42,7 @@ SANDBOX_NODE_IDS = ("git-clone", "read-source-files", "wait-rescan")
 CONTAINER_WORKSPACE = "/var/flowgent"
 
 
-class VolumeWorkspaceChecks:
+class VolumeWorkspaceOperations:
     """Class-owned operations for s37 volume workspace."""
 
     @staticmethod
@@ -55,7 +55,7 @@ class VolumeWorkspaceChecks:
 
     @staticmethod
     def kubectl_json(args):
-        result = VolumeWorkspaceChecks.kubectl(args + ["-o", "json"], check=False)
+        result = VolumeWorkspaceOperations.kubectl(args + ["-o", "json"], check=False)
         if result.returncode != 0:
             return None
         try:
@@ -104,12 +104,12 @@ class VolumeWorkspaceChecks:
 
     @staticmethod
     def runtime_cluster_for_run(run_id: str) -> str:
-        return VolumeWorkspaceChecks.kubernetes_name("app", run_id)
+        return VolumeWorkspaceOperations.kubernetes_name("app", run_id)
 
     @staticmethod
     def find_tm_pod(cluster_id: str) -> tuple:
         """Find a running application runtime TaskManager pod."""
-        pods = VolumeWorkspaceChecks.kubectl_json([
+        pods = VolumeWorkspaceOperations.kubectl_json([
             "get", "pods", "-n", WORKLOAD_NAMESPACE, "-l",
             f"flowgent/role=worker,flowgent.io/runtime-cluster={cluster_id}",
         ])
@@ -163,11 +163,11 @@ class VolumeWorkspaceChecks:
         #     volume mount inside the container.
         # ═══════════════════════════════════════════════════════════════
         print("\n── L2: Pod container — /var/flowgent volume mount ──")
-        cluster_id = VolumeWorkspaceChecks.runtime_cluster_for_run(run_id)
-        ns, pod_name, container = VolumeWorkspaceChecks.find_tm_pod(cluster_id)
+        cluster_id = VolumeWorkspaceOperations.runtime_cluster_for_run(run_id)
+        ns, pod_name, container = VolumeWorkspaceOperations.find_tm_pod(cluster_id)
         if not pod_name:
             print("  [L2] No TM pod found, trying sandbox pod...")
-            pods = VolumeWorkspaceChecks.kubectl_json([
+            pods = VolumeWorkspaceOperations.kubectl_json([
                 "get", "pods", "-n", WORKLOAD_NAMESPACE, "-l",
                 f"flowgent/role=sandbox-worker,flowgent.io/runtime-cluster={cluster_id}",
             ])
@@ -184,12 +184,12 @@ class VolumeWorkspaceChecks:
         print(f"  [L2] Using pod: {ns}/{pod_name} (container={container})")
 
         # L2.1 — directory existence inside container
-        rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+        rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
             f"test -d '{CONTAINER_WORKSPACE}' && echo 'EXISTS' || echo 'MISSING'")
         if "EXISTS" in out:
             print(f"  [L2.1] OK: {CONTAINER_WORKSPACE} exists inside container")
         else:
-            rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+            rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
                 "mount | grep -E '/var/flowgent' || echo 'NO_MOUNT'")
             if "NO_MOUNT" in out:
                 raise AssertionError("No /var/flowgent mount found in container mount table")
@@ -200,7 +200,7 @@ class VolumeWorkspaceChecks:
         # owning Deployment as soon as a run reaches a terminal state while its pod
         # remains available briefly. The pod spec is the authoritative evidence of
         # the volume and mount actually used by this run and avoids that GC race.
-        runtime_pod = VolumeWorkspaceChecks.kubectl_json(["get", "pod", "-n", ns, pod_name])
+        runtime_pod = VolumeWorkspaceOperations.kubectl_json(["get", "pod", "-n", ns, pod_name])
         if not runtime_pod:
             raise AssertionError(f"Selected runtime pod disappeared: {ns}/{pod_name}")
 
@@ -250,7 +250,7 @@ class VolumeWorkspaceChecks:
         # L3: Verify /var/flowgent is writable inside the container.
         # ═══════════════════════════════════════════════════════════════
         print("\n── L3: Workspace writable flag (inside container, no write) ──")
-        rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+        rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
             f"test -w '{CONTAINER_WORKSPACE}' && echo 'WRITABLE' || echo 'NOT_WRITABLE'")
         if "WRITABLE" in out:
             print(f"  [L3] OK: {CONTAINER_WORKSPACE} is writable inside container")
@@ -263,17 +263,17 @@ class VolumeWorkspaceChecks:
         #       /var/flowgent/{namespaceId}/{flowId}/{runId}/{taskId}/
         # ═══════════════════════════════════════════════════════════════
         print("\n── L4: DAG run workspace subdirectories (inside container) ──")
-        tasks = VolumeWorkspaceChecks.load_tasks(run_id)
+        tasks = VolumeWorkspaceOperations.load_tasks(run_id)
         tasks_by_node = common_api.FlowgentE2EProject.tasks_by_node(tasks)
         run_workspace = f"{CONTAINER_WORKSPACE}/{NAMESPACE}/{FLOW_ID}/{run_id}"
         legacy_workspace = f"{CONTAINER_WORKSPACE}/{NAMESPACE}/{FLOW_ID}/runs/{run_id}"
-        rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+        rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
             f"test -d '{run_workspace}' && echo 'RUN_WORKSPACE_EXISTS' || echo 'RUN_WORKSPACE_MISSING'")
         if "RUN_WORKSPACE_EXISTS" not in out:
             raise AssertionError(f"Current run workspace missing inside container: {run_workspace}")
         print(f"  [L4] OK: current run workspace exists: {run_workspace}")
 
-        rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+        rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
             f"test ! -d '{legacy_workspace}' && echo 'LEGACY_ABSENT' || echo 'LEGACY_PRESENT'")
         if "LEGACY_ABSENT" not in out:
             raise AssertionError(f"Legacy run/plans workspace still exists for current run: {legacy_workspace}")
@@ -281,10 +281,10 @@ class VolumeWorkspaceChecks:
 
         expected_plan_paths = {}
         for node_id in SANDBOX_NODE_IDS:
-            plan_id = VolumeWorkspaceChecks.workspace_plan_id(tasks_by_node, run_id, node_id)
+            plan_id = VolumeWorkspaceOperations.workspace_plan_id(tasks_by_node, run_id, node_id)
             plan_path = f"{run_workspace}/{plan_id}"
             expected_plan_paths[node_id] = plan_path
-            rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+            rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
                 f"test -d '{plan_path}' && "
                 f"test -f '{plan_path}/input.json' && "
                 f"test -f '{plan_path}/result.json' && "
@@ -295,7 +295,7 @@ class VolumeWorkspaceChecks:
                 raise AssertionError(f"task workspace incomplete for node {node_id}: {plan_path}")
             print(f"  [L4] OK: {node_id} task workspace exists: {plan_path}")
 
-        rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+        rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
             f"find '{run_workspace}' -maxdepth 3 -type d 2>/dev/null | sort")
         subdirs = [d for d in out.split("\n") if d.strip() and d != CONTAINER_WORKSPACE]
         if subdirs:
@@ -312,12 +312,12 @@ class VolumeWorkspaceChecks:
         # ═══════════════════════════════════════════════════════════════
         print("\n── L5: Rengine repo clone evidence (inside container) ──")
         expected_repo = f"{expected_plan_paths['git-clone']}/repos/rengine"
-        rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+        rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
             f"test -d '{expected_repo}/.git' && echo '{expected_repo}/.git' || true")
         git_dirs = [d for d in out.split("\n") if d.strip()]
         if not git_dirs:
             print(f"  [L5] Expected repo not found at {expected_repo}; scanning /var/flowgent as diagnostic...")
-            rc, out, err = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+            rc, out, err = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
                 f"find '{CONTAINER_WORKSPACE}' -name '.git' -type d 2>/dev/null | head -5")
             git_dirs = [d for d in out.split("\n") if d.strip()]
             if git_dirs:
@@ -331,16 +331,16 @@ class VolumeWorkspaceChecks:
                 if "rengine" not in repo_dir.lower():
                     continue
 
-                rc, out2, _ = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+                rc, out2, _ = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
                     f"cd '{repo_dir}' && echo '--- files ---' && ls | head -15 && "
                     f"echo '--- git log ---' && git log --oneline -3 2>/dev/null")
                 print(f"  [L5] Content preview: {out2[:500]}")
 
-                rc, out3, _ = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+                rc, out3, _ = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
                     f"find '{repo_dir}' -type f -not -path '*/.git/*' | wc -l")
                 print(f"  [L5] Total source files: {out3.strip()}")
 
-                rc, out4, _ = VolumeWorkspaceChecks.exec_in_pod(ns, pod_name, container,
+                rc, out4, _ = VolumeWorkspaceOperations.exec_in_pod(ns, pod_name, container,
                     f"test -f '{repo_dir}/pom.xml' && echo 'pom.xml: EXISTS' || echo 'pom.xml: MISSING'; "
                     f"find '{repo_dir}' -name 'pom.xml' -maxdepth 1 2>/dev/null | head -1")
                 print(f"  [L5] Build file: {out4.strip()}")
@@ -377,10 +377,10 @@ class VolumeWorkspaceChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.agentflow.base import AgentFlowVerifier
+from verifier import BaseVerifier
 
 
-class VolumeWorkspaceVerifier(AgentFlowVerifier):
+class VolumeWorkspaceVerifier(BaseVerifier):
     scenario_id = "37"
     title = "Volume Workspace — Pod Mount and Git Clone Evidence"
 
@@ -390,7 +390,7 @@ class VolumeWorkspaceVerifier(AgentFlowVerifier):
 
     @staticmethod
     def _verify_kubernetes_workspace() -> None:
-        VolumeWorkspaceChecks._verify_scenario()
+        VolumeWorkspaceOperations._verify_scenario()
 
     def _verify_docker_workspace(self) -> None:
         if not os.path.isfile(RUN_ID_PATH):
@@ -421,9 +421,6 @@ class VolumeWorkspaceVerifier(AgentFlowVerifier):
             f"Docker named volume preserves the same run/task workspace contract: {run_workspace}"
         )
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return VolumeWorkspaceVerifier(context).run()
-
-VERIFIER_CLASS = VolumeWorkspaceVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the workspace-volume scenario."""
+    return VolumeWorkspaceVerifier(context).run()

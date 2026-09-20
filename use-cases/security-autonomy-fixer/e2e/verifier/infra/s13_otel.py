@@ -54,7 +54,7 @@ JM_NAMESPACE = config.K8S_WORKLOAD_NAMESPACE
 JM_DEPLOY_NAME = f"flowgent-jobmanager-{NAMESPACE}-security-autonomy-fixer"
 
 
-class OtelChecks:
+class OtelOperations:
     """Class-owned operations for s13 otel."""
 
     @staticmethod
@@ -89,9 +89,9 @@ class OtelChecks:
                 return os.environ.get(m.group(1), m.group(0))
             return re.sub(r'\$\{(\w+)\}', _repl, obj)
         if isinstance(obj, dict):
-            return {k: OtelChecks._resolve_env_vars(v) for k, v in obj.items()}
+            return {k: OtelOperations._resolve_env_vars(v) for k, v in obj.items()}
         if isinstance(obj, list):
-            return [OtelChecks._resolve_env_vars(v) for v in obj]
+            return [OtelOperations._resolve_env_vars(v) for v in obj]
         return obj
 
     @staticmethod
@@ -101,10 +101,10 @@ class OtelChecks:
             if not fname.endswith(".yaml"):
                 continue
             with open(os.path.join(_AGENTS_DIR, fname)) as f:
-                agent_def = OtelChecks._unwrap_k8s(yaml.safe_load(f))
+                agent_def = OtelOperations._unwrap_k8s(yaml.safe_load(f))
             name = agent_def.get("name")
             if name:
-                OtelChecks._get_or_post(f"/api/v1/{NAMESPACE}/agents/{name}", f"/api/v1/{NAMESPACE}/agents", agent_def, "agent")
+                OtelOperations._get_or_post(f"/api/v1/{NAMESPACE}/agents/{name}", f"/api/v1/{NAMESPACE}/agents", agent_def, "agent")
 
         if not os.environ.get("GITHUB_TOKEN") and os.environ.get("GH_TOKEN"):
             os.environ["GITHUB_TOKEN"] = os.environ["GH_TOKEN"]
@@ -112,7 +112,7 @@ class OtelChecks:
         for mode in ("github", "sonarqube"):
             if _USE_REAL_MCP:
                 with open(os.path.join(_CONFIG_ROOT, "mcps", f"{mode}.yaml")) as f:
-                    mcp_def = OtelChecks._unwrap_k8s(yaml.safe_load(f))
+                    mcp_def = OtelOperations._unwrap_k8s(yaml.safe_load(f))
             else:
                 mcp_def = {"name": mode, "enabled": True, "type": "stdio",
                            "command": _MOCK_MCP_COMMAND, "args": [mode], "env": {}}
@@ -123,7 +123,7 @@ class OtelChecks:
                 if updated.status_code not in (200, 204):
                     print(f"  WARN: failed to enable mcp {mode}: {updated.status_code} {updated.text[:160]}")
             else:
-                OtelChecks._get_or_post(f"/api/v1/{NAMESPACE}/mcp/{mode}", f"/api/v1/{NAMESPACE}/mcp", mcp_def, "mcp")
+                OtelOperations._get_or_post(f"/api/v1/{NAMESPACE}/mcp/{mode}", f"/api/v1/{NAMESPACE}/mcp", mcp_def, "mcp")
         print("  OK Agent + MCP definitions ready")
 
     @staticmethod
@@ -182,7 +182,7 @@ class OtelChecks:
 
         while time.time() < deadline:
             try:
-                resp = OtelChecks._jaeger_get(url)
+                resp = OtelOperations._jaeger_get(url)
                 traces = resp.get("data", [])
                 print(f"  Jaeger returned {len(traces)} trace(s) for service=flowgent-jobmanager")
 
@@ -190,7 +190,7 @@ class OtelChecks:
                 matching = []
                 for trace in traces:
                     for span in trace.get("spans", []):
-                        tags = OtelChecks._span_tags(span)
+                        tags = OtelOperations._span_tags(span)
                         if tags.get("run.id") == run_id:
                             matching.append(trace)
                             break
@@ -232,7 +232,7 @@ class OtelChecks:
         tagged_spans = 0
 
         for span in all_spans:
-            tags = OtelChecks._span_tags(span)
+            tags = OtelOperations._span_tags(span)
             nid = tags.get("flowgent.node_id") or tags.get("node_id") or tags.get("agentflow.id")
             if nid and nid in node_counts:
                 node_counts[nid] += 1
@@ -272,7 +272,7 @@ class OtelChecks:
         (Informational) Print attributes from a sample of spans to verify
         ``flowgent.node_id``, ``flowgent.task_type`` are populated.
         """
-        tagged = [s for s in all_spans if OtelChecks._span_tags(s).get("flowgent.node_id")]
+        tagged = [s for s in all_spans if OtelOperations._span_tags(s).get("flowgent.node_id")]
         sample = tagged[:sample_count]
         if not sample:
             print("  (info) No spans with flowgent.node_id tag — instrumentation may be partial")
@@ -280,7 +280,7 @@ class OtelChecks:
 
         print(f"\n  Span attribute sample ({min(sample_count, len(sample))} of {len(tagged)} tagged spans):")
         for s in sample:
-            tags = OtelChecks._span_tags(s)
+            tags = OtelOperations._span_tags(s)
             nid = tags.get("flowgent.node_id", "?")
             ttype = tags.get("flowgent.task_type", "?")
             op = s.get("operationName", "?")
@@ -291,7 +291,7 @@ class OtelChecks:
     def ensure_security_fixer_flow_exists():
         print("  -> Ensuring security-autonomy-fixer flow definition exists...")
         with open(_FLOW_YAML_PATH) as f:
-            flow_def = OtelChecks._resolve_env_vars(OtelChecks._unwrap_k8s(yaml.safe_load(f)))
+            flow_def = OtelOperations._resolve_env_vars(OtelOperations._unwrap_k8s(yaml.safe_load(f)))
         flow_def.pop("name", None)
         flow_def.pop("triggers", None)
         flow_def["kind"] = "flow"
@@ -367,7 +367,7 @@ class OtelChecks:
         after a pod replacement. Jaeger trace presence remains the hard signal; this
         helper only backs the "runtime configured for OTEL" infrastructure check.
         """
-        pod_name = OtelChecks._run_text(
+        pod_name = OtelOperations._run_text(
             [
                 "kubectl", "get", "pods", "-n", namespace, "-l", selector,
                 "-o", "jsonpath={.items[0].metadata.name}",
@@ -378,17 +378,17 @@ class OtelChecks:
         config_text = ""
         env_endpoint = ""
         if pod_name:
-            config_text = OtelChecks._run_text(
+            config_text = OtelOperations._run_text(
                 ["kubectl", "exec", "-n", namespace, pod_name, "--", "cat", "/etc/flowgent/flowgent.yaml"],
                 timeout=10,
             )
-            env_endpoint = OtelChecks._run_text(
+            env_endpoint = OtelOperations._run_text(
                 ["kubectl", "exec", "-n", namespace, pod_name, "--", "printenv", "FLOWGENT__MGMT__OTEL__ENDPOINT"],
                 timeout=10,
             )
 
         if not config_text:
-            config_text = OtelChecks._run_text(
+            config_text = OtelOperations._run_text(
                 [
                     "kubectl", "get", "configmap", "flowgent-config", "-n", namespace,
                     "-o", "jsonpath={.data.flowgent\\.yaml}",
@@ -431,7 +431,7 @@ class OtelChecks:
             logs = result.stdout.strip() if result.returncode == 0 else ""
             if "OTEL tracing enabled" in logs:
                 return logs
-            evidence = OtelChecks._runtime_otel_evidence(
+            evidence = OtelOperations._runtime_otel_evidence(
                 JM_NAMESPACE,
                 "flowgent.io/flow=security-autonomy-fixer",
                 "JM",
@@ -452,7 +452,7 @@ class OtelChecks:
             logs = result.stdout.strip() if result.returncode == 0 else ""
             if "OTEL tracing enabled" in logs:
                 return logs
-            evidence = OtelChecks._runtime_otel_evidence(
+            evidence = OtelOperations._runtime_otel_evidence(
                 SYSTEM_NAMESPACE,
                 f"app.kubernetes.io/instance={config.RELEASE_NAME},app.kubernetes.io/component=apiserver",
                 "API Server",
@@ -507,10 +507,10 @@ class OtelChecks:
         print("  Scenario 13: OTEL Tracing — MANDATORY Jaeger Trace Verification")
         print("=" * 60)
 
-        OtelChecks.seed_agents_and_mcps()
-        OtelChecks.ensure_security_fixer_flow_exists()
-        run_id = OtelChecks.trigger_security_fixer()
-        status = OtelChecks.wait_for_completion(run_id, timeout=600)
+        OtelOperations.seed_agents_and_mcps()
+        OtelOperations.ensure_security_fixer_flow_exists()
+        run_id = OtelOperations.trigger_security_fixer()
+        status = OtelOperations.wait_for_completion(run_id, timeout=600)
         if status != "COMPLETED":
             print(f"  WARN: Flow status={status}, continuing verification...")
 
@@ -520,24 +520,24 @@ class OtelChecks:
 
         # ── Phase A: Infrastructure checks (prerequisite) ──
         print("\n  -> Verifying OTEL infrastructure from pod logs...")
-        jm_logs = OtelChecks.get_jm_pod_logs()
-        apiserver_logs = OtelChecks.get_apiserver_logs()
+        jm_logs = OtelOperations.get_jm_pod_logs()
+        apiserver_logs = OtelOperations.get_apiserver_logs()
 
-        otel_checks = OtelChecks.verify_otel_from_logs(jm_logs, apiserver_logs)
+        otel_checks = OtelOperations.verify_otel_from_logs(jm_logs, apiserver_logs)
 
         # ── Phase B: MANDATORY Jaeger trace query ──
         print(f"\n  -> [MANDATORY] Querying Jaeger for traces (run.id={run_id})...")
-        if not OtelChecks._check_jaeger_health(JAEGER_API):
+        if not OtelOperations._check_jaeger_health(JAEGER_API):
             raise AssertionError(
                 f"MANDATORY: Jaeger Query API at {JAEGER_API} is not reachable. "
                 "Ensure Jaeger all-in-one is running and accessible."
             )
 
-        traces, all_spans = OtelChecks.query_jaeger_trace(run_id, JAEGER_API, timeout_sec=90)
+        traces, all_spans = OtelOperations.query_jaeger_trace(run_id, JAEGER_API, timeout_sec=90)
 
         # ── Phase C: MANDATORY span coverage validation ──
         print("\n  -> [MANDATORY] Validating per-node span coverage...")
-        node_counts = OtelChecks.validate_span_coverage(all_spans, fail_on_core_missing=True)
+        node_counts = OtelOperations.validate_span_coverage(all_spans, fail_on_core_missing=True)
 
         # Edge case: if the flow didn't include PR phases (condition false on is-approved),
         # the commit-to-existing vs. create-branch+commit-fixes+create-pr paths are
@@ -551,7 +551,7 @@ class OtelChecks:
 
         # ── Phase D: Informational attribute sampling ──
         print("\n  -> [Informational] Span attribute sampling...")
-        OtelChecks.validate_span_attributes(all_spans)
+        OtelOperations.validate_span_attributes(all_spans)
 
         # ── Phase E: Verdict ──
         print(f"\n  {'=' * 60}")
@@ -615,23 +615,23 @@ class OtelChecks:
     @staticmethod
     def _verify_docker_scenario():
         """Verify the same trace contract without Kubernetes-only pod assertions."""
-        OtelChecks.seed_agents_and_mcps()
-        OtelChecks.ensure_security_fixer_flow_exists()
-        run_id = OtelChecks.trigger_security_fixer()
-        status = OtelChecks.wait_for_completion(run_id, timeout=600)
+        OtelOperations.seed_agents_and_mcps()
+        OtelOperations.ensure_security_fixer_flow_exists()
+        run_id = OtelOperations.trigger_security_fixer()
+        status = OtelOperations.wait_for_completion(run_id, timeout=600)
         if status != "COMPLETED":
             raise AssertionError(f"Docker FlowRun ended in {status}")
         time.sleep(10)
-        if not OtelChecks._check_jaeger_health(JAEGER_API):
+        if not OtelOperations._check_jaeger_health(JAEGER_API):
             raise AssertionError(f"Docker Jaeger is not reachable: {JAEGER_API}")
-        traces, spans = OtelChecks.query_jaeger_trace(run_id, JAEGER_API, timeout_sec=90)
-        node_counts = OtelChecks.validate_span_coverage(spans, fail_on_core_missing=True)
+        traces, spans = OtelOperations.query_jaeger_trace(run_id, JAEGER_API, timeout_sec=90)
+        node_counts = OtelOperations.validate_span_coverage(spans, fail_on_core_missing=True)
         missing = [node for node in CORE_NODES if node_counts.get(node, 0) == 0]
         if not traces or len(spans) < MIN_EXPECTED_SPANS or missing:
             raise AssertionError(
                 f"Docker trace parity failed: traces={len(traces)} spans={len(spans)} missing={missing}"
             )
-        OtelChecks.validate_span_attributes(spans)
+        OtelOperations.validate_span_attributes(spans)
 
 
 
@@ -715,10 +715,10 @@ MIN_EXPECTED_SPANS = len(CORE_NODES)
 
 
 from common.model import RunContext, VerificationResult
-from verifier.infra.base import InfrastructureVerifier
+from verifier import BaseVerifier
 
 
-class OtelVerifier(InfrastructureVerifier):
+class OtelVerifier(BaseVerifier):
     scenario_id = "13"
     title = "OTEL — Jaeger Span Coverage"
 
@@ -728,15 +728,12 @@ class OtelVerifier(InfrastructureVerifier):
 
     @staticmethod
     def _verify_kubernetes() -> None:
-        OtelChecks._verify_scenario()
+        OtelOperations._verify_scenario()
 
     @staticmethod
     def _verify_docker() -> None:
-        OtelChecks._verify_docker_scenario()
+        OtelOperations._verify_docker_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return OtelVerifier(context).run()
-
-VERIFIER_CLASS = OtelVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the OTEL scenario."""
+    return OtelVerifier(context).run()

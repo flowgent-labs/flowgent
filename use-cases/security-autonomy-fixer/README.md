@@ -17,12 +17,12 @@ logic.
 Run the production-shaped K8s deployment and real verification with one command:
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 ```
 
 It verifies LDAP federated Principal discovery and the complete GitHub OAuth →
 AuthGuard AuthN → Envoy JWT → AuthGuard AuthZ → Flowgent path. A successful
-release is retained for manual use; `make e2e-security-fixer-access` keeps the
+release is retained for manual use; `python3 e2e/runner.py --deployer k8s --access` keeps the
 local tunnels open. All owned resources use the `e2e-flowgent-*` boundary,
 separate workload namespaces, a dedicated Gateway controller name, and special
 ports. Flowgent and AuthGuard use the dedicated PostgreSQL schemas
@@ -32,7 +32,7 @@ E2E can run concurrently without sharing application state.
 The same runner also provides a functionally equivalent Docker Compose backend:
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer-docker
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-docker
 ```
 
 Both backends execute the same ordered verifier matrix. K8s uses Helm,
@@ -273,7 +273,7 @@ MUST use a bounded node retry or an explicit subflow/run boundary.
 Run the complete real-cluster gate from the repository root:
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 ```
 
 The unified runner builds the Flowgent images, deploys either the root Helm
@@ -284,10 +284,10 @@ API Server, Notifier, Controller, MQTT, A2A, remediation, PR delivery, knowledge
 and the shared workspace. Useful focused modes are:
 
 ```bash
-E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-fixer
-make e2e-security-fixer-access
-E2E_ARGS="--clean-after-run" make e2e-security-fixer
-make e2e-security-fixer-docker
+E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
+python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
+E2E_ARGS="--clean-after-run" make e2e-security-autonomy-fixer-with-helm
+make e2e-security-autonomy-fixer-with-docker
 python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker cleanup
 ```
 

@@ -14,7 +14,7 @@ COMPLETED_SET = c.COMPLETED_STATUSES
 
 # ── Phase: FIX ──
 
-class RemediationChecks:
+class RemediationOperations:
     """Class-owned operations for s33 remediation."""
 
     @staticmethod
@@ -212,11 +212,11 @@ class RemediationChecks:
         print(f"  {len(tasks)} task(s) fetched, {len(tbn)} unique node(s)")
 
         results = []
-        results.append(("Fix", *RemediationChecks.verify_fix(tbn)))
-        results.append(("Review", *RemediationChecks.verify_review(tbn)))
-        results.append(("Vote", *RemediationChecks.verify_vote(tbn)))
-        results.append(("Supervisor", *RemediationChecks.verify_supervisor(tbn)))
-        results.append(("Gate", *RemediationChecks.verify_condition_human(tbn)))
+        results.append(("Fix", *RemediationOperations.verify_fix(tbn)))
+        results.append(("Review", *RemediationOperations.verify_review(tbn)))
+        results.append(("Vote", *RemediationOperations.verify_vote(tbn)))
+        results.append(("Supervisor", *RemediationOperations.verify_supervisor(tbn)))
+        results.append(("Gate", *RemediationOperations.verify_condition_human(tbn)))
 
         print("\n-- [33 MQTT Audit] Slot-worker status and dependency wave order --")
         expected_nodes = ["generate-fixes", "review-security", "review-quality", "review-arch", "committee"]
@@ -259,10 +259,10 @@ class RemediationChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.agentflow.base import AgentFlowVerifier
+from verifier import BaseVerifier
 
 
-class RemediationVerifier(AgentFlowVerifier):
+class RemediationVerifier(BaseVerifier):
     scenario_id = "33"
     title = "E2E Fixer — Remediation"
 
@@ -271,11 +271,8 @@ class RemediationVerifier(AgentFlowVerifier):
 
     @staticmethod
     def _verify_execution() -> None:
-        RemediationChecks._verify_scenario()
+        RemediationOperations._verify_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return RemediationVerifier(context).run()
-
-VERIFIER_CLASS = RemediationVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the remediation scenario."""
+    return RemediationVerifier(context).run()

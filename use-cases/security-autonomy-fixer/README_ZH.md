@@ -13,13 +13,13 @@ Agents、Integrations 与验证资产属于本应用；引擎不包含 Security 
 
 ```bash
 cd /home/agent/flowgent
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 ```
 
 该命令统一完成构建、K8s Helm 部署、配置导入与真实用例验证，并验证
 `GitHub OAuth → AuthGuard AuthN → Envoy JWT → AuthGuard AuthZ → Flowgent` 以及
 LDAP 联邦 Principal 搜索/物化。成功后不会卸载 Helm；执行
-`make e2e-security-fixer-access` 可保持人工体验所需的本地隧道。
+`python3 e2e/runner.py --deployer k8s --access` 可保持人工体验所需的本地隧道。
 
 部署固定使用 `e2e-flowgent-system`、`e2e-flowgent-workload-*` 与
 `e2e-flowgent-*` 资源前缀，并使用独立 Gateway controllerName 和特殊端口，
@@ -29,7 +29,7 @@ Flowgent/AuthGuard 数据分别使用 `e2e_flowgent` 与
 同一个入口还提供功能等价的 Docker Compose 部署模式：
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer-docker
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-docker
 ```
 
 两种后端执行完全相同的有序 verifier 矩阵。K8s 后端使用 Helm、隔离
@@ -262,7 +262,7 @@ Agent、MCP 或 README。
 在仓库根目录执行完整真实集群验收：
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 ```
 
 统一 runner 会构建 Flowgent 镜像，通过根 Helm Chart 或功能等价的 Compose
@@ -271,10 +271,10 @@ GitHub OAuth、边缘 allow/deny 策略、Telemetry、API Server、Notifier、Co
 MQTT、A2A、修复、PR 交付、Knowledge 与共享 Workspace。常用模式：
 
 ```bash
-E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-fixer
-make e2e-security-fixer-access
-E2E_ARGS="--clean-after-run" make e2e-security-fixer
-make e2e-security-fixer-docker
+E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
+python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
+E2E_ARGS="--clean-after-run" make e2e-security-autonomy-fixer-with-helm
+make e2e-security-autonomy-fixer-with-docker
 python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker cleanup
 ```
 

@@ -50,7 +50,7 @@ EMQX_HOST = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 
 
-class MessagerChecks:
+class MessagerOperations:
     """Class-owned operations for s24 messager."""
 
     @staticmethod
@@ -98,10 +98,10 @@ class MessagerChecks:
         print(f"\n  → Testing Sandbox E2E Chain...")
     
         namespace = NAMESPACE
-        flow_id = "test-flow-" + MessagerChecks.rand_id()
-        run_id = "run-" + MessagerChecks.rand_id()
-        plan_id = "plan-" + MessagerChecks.rand_id()
-        task_id = "task-" + MessagerChecks.rand_id()
+        flow_id = "test-flow-" + MessagerOperations.rand_id()
+        run_id = "run-" + MessagerOperations.rand_id()
+        plan_id = "plan-" + MessagerOperations.rand_id()
+        task_id = "task-" + MessagerOperations.rand_id()
         cluster_id = "test-cluster"
     
         try:
@@ -267,9 +267,9 @@ class MessagerChecks:
         results = {}
     
         namespace = NAMESPACE
-        flow_id = "test-flow-" + MessagerChecks.rand_id()
-        run_id = "run-" + MessagerChecks.rand_id()
-        tm_id = "tm-" + MessagerChecks.rand_id()
+        flow_id = "test-flow-" + MessagerOperations.rand_id()
+        run_id = "run-" + MessagerOperations.rand_id()
+        tm_id = "tm-" + MessagerOperations.rand_id()
         cluster_id = "test-cluster"
 
         # Test topic pairs
@@ -278,13 +278,13 @@ class MessagerChecks:
                 "name": "exec/plans (JM → TM)",
                 "publish": f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
                 "subscribe": "flowgent/v1/+/clusters/+/flows/+/runs/+/exec/plans",
-                "payload": {"plan_id": MessagerChecks.rand_id(), "task_type": "agent", "runtime_cluster_id": cluster_id},
+                "payload": {"plan_id": MessagerOperations.rand_id(), "task_type": "agent", "runtime_cluster_id": cluster_id},
             },
             {
                 "name": "exec/results (TM → JM, state-only)",
                 "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results",
                 "subscribe": f"flowgent/v1/+/flows/+/runs/+/exec/results",
-                "payload": {"plan_id": MessagerChecks.rand_id(), "node_id": "n1", "state": "COMPLETED"},
+                "payload": {"plan_id": MessagerOperations.rand_id(), "node_id": "n1", "state": "COMPLETED"},
             },
             {
                 "name": "notify/event (Publisher → Notifier)",
@@ -332,7 +332,7 @@ class MessagerChecks:
     
         print(f"\n  → Testing MQTT Topic Pairs...")
         for test in topic_tests:
-            results[test["name"]] = MessagerChecks.test_topic_pair(
+            results[test["name"]] = MessagerOperations.test_topic_pair(
                 tester,
                 test["name"],
                 test["publish"],
@@ -341,7 +341,7 @@ class MessagerChecks:
             )
     
         # Test Sandbox E2E chain
-        results["Sandbox E2E Chain"] = MessagerChecks.test_sandbox_e2e_chain(tester)
+        results["Sandbox E2E Chain"] = MessagerOperations.test_sandbox_e2e_chain(tester)
     
         # Cleanup
         tester.close()
@@ -476,10 +476,10 @@ class MQTTTester:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.core.base import CoreVerifier
+from verifier import BaseVerifier
 
 
-class MessagerVerifier(CoreVerifier):
+class MessagerVerifier(BaseVerifier):
     scenario_id = "24"
     title = "Messager — MQTT Topics + Sandbox Chain"
 
@@ -488,11 +488,8 @@ class MessagerVerifier(CoreVerifier):
 
     @staticmethod
     def _verify_mqtt_contract() -> None:
-        MessagerChecks._verify_scenario()
+        MessagerOperations._verify_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return MessagerVerifier(context).run()
-
-VERIFIER_CLASS = MessagerVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the messaging scenario."""
+    return MessagerVerifier(context).run()

@@ -151,10 +151,10 @@ make test
 
 # Complete retained Kubernetes E2E: Flowgent, Web, Envoy, AuthGuard, LDAP,
 # GitHub OAuth mock, PostgreSQL, EMQX, Jaeger, and evidence-producing verifiers.
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 
 # Functionally equivalent, separately prefixed Docker Compose topology.
-HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-fixer-docker
+HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-docker
 ```
 
 Both deployment modes execute the same verifier matrix. Kubernetes E2E retains

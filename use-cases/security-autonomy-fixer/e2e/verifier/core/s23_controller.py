@@ -89,7 +89,7 @@ PROXY_SECRET_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
 FLOWGENT_SESSION = common_api.FlowgentE2EProject.session()
 
 
-class ControllerChecks:
+class ControllerOperations:
     """Class-owned operations for s23 controller."""
 
     @staticmethod
@@ -138,23 +138,23 @@ class ControllerChecks:
 
     @staticmethod
     def application_runtime_cluster_id(run_id: str) -> str:
-        return ControllerChecks.kubernetes_name("app", run_id)
+        return ControllerOperations.kubernetes_name("app", run_id)
 
     @staticmethod
     def application_jobmanager_deployment_name(flow_id: str, run_id: str) -> str:
-        return ControllerChecks.kubernetes_name("flowgent-jobmanager", NAMESPACE, flow_id, run_id)
+        return ControllerOperations.kubernetes_name("flowgent-jobmanager", NAMESPACE, flow_id, run_id)
 
     @staticmethod
     def taskmanager_deployment_name(cluster_id: str) -> str:
-        return ControllerChecks.kubernetes_name("flowgent-taskmanager", NAMESPACE, cluster_id)
+        return ControllerOperations.kubernetes_name("flowgent-taskmanager", NAMESPACE, cluster_id)
 
     @staticmethod
     def sandbox_deployment_name(cluster_id: str) -> str:
-        return ControllerChecks.kubernetes_name("flowgent-sandbox", NAMESPACE, cluster_id)
+        return ControllerOperations.kubernetes_name("flowgent-sandbox", NAMESPACE, cluster_id)
 
     @staticmethod
     def deployment_with_labels(namespace: str, required: Dict[str, str]) -> Optional[Dict]:
-        deployments = ControllerChecks.kubectl_get("deployments", namespace=namespace)
+        deployments = ControllerOperations.kubectl_get("deployments", namespace=namespace)
         if not deployments:
             return None
         for item in deployments.get("items", []):
@@ -212,7 +212,7 @@ class ControllerChecks:
     @staticmethod
     def validate_runtime_secret(secret: Dict, namespace: str) -> None:
         data = secret.get("data", {}) if secret else {}
-        if ControllerChecks.runtime_proxy_required():
+        if ControllerOperations.runtime_proxy_required():
             missing = [key for key in PROXY_SECRET_KEYS if key not in data]
             if missing:
                 raise AssertionError(f"Runtime Secret {namespace}/{RUNTIME_CREDENTIAL_SECRET} missing proxy keys: {missing}")
@@ -230,7 +230,7 @@ class ControllerChecks:
     
         start = time.time()
         while time.time() - start < timeout:
-            deployment = ControllerChecks.kubectl_get("deployment", name, namespace)
+            deployment = ControllerOperations.kubectl_get("deployment", name, namespace)
             if deployment:
                 print(f"      ✓ Deployment {name} exists")
                 return True
@@ -246,7 +246,7 @@ class ControllerChecks:
 
         start = time.time()
         while time.time() - start < timeout:
-            deployment = ControllerChecks.kubectl_get("deployment", name, namespace)
+            deployment = ControllerOperations.kubectl_get("deployment", name, namespace)
             if deployment:
                 actual = deployment.get("spec", {}).get("replicas", 0)
                 if actual == replicas:
@@ -254,7 +254,7 @@ class ControllerChecks:
                     return True
             time.sleep(2)
 
-        deployment = ControllerChecks.kubectl_get("deployment", name, namespace)
+        deployment = ControllerOperations.kubectl_get("deployment", name, namespace)
         actual = deployment.get("spec", {}).get("replicas", "?") if deployment else "missing"
         print(f"      ✗ Deployment {name} replicas={actual}, expected={replicas}")
         return False
@@ -266,7 +266,7 @@ class ControllerChecks:
     
         start = time.time()
         while time.time() - start < timeout:
-            pods = ControllerChecks.kubectl_get("pods", namespace=namespace)
+            pods = ControllerOperations.kubectl_get("pods", namespace=namespace)
             if not pods:
                 time.sleep(2)
                 continue
@@ -294,7 +294,7 @@ class ControllerChecks:
     @staticmethod
     def wait_for_deployment_deleted(name: str, namespace: str = WORKLOAD_NAMESPACE, timeout: int = 60) -> bool:
         """Wait for Deployment to be deleted"""
-        return ControllerChecks.wait_for_resource_deleted("deployment", name, namespace, timeout)
+        return ControllerOperations.wait_for_resource_deleted("deployment", name, namespace, timeout)
 
     @staticmethod
     def wait_for_resource_deleted(resource: str, name: str, namespace: str = WORKLOAD_NAMESPACE,
@@ -305,7 +305,7 @@ class ControllerChecks:
 
         start = time.time()
         while time.time() - start < timeout:
-            if not ControllerChecks.kubectl_get(resource, name, namespace):
+            if not ControllerOperations.kubectl_get(resource, name, namespace):
                 print(f"      ✓ {display} {name} deleted")
                 return True
             time.sleep(2)
@@ -318,11 +318,11 @@ class ControllerChecks:
         """Test metadata-only Flow, trigger-driven application runtime, and cleanup."""
         print(f"\n  → Testing FlowRun JM and application runtime cluster lifecycle...")
 
-        suffix = ControllerChecks.rand_id()
+        suffix = ControllerOperations.rand_id()
         flow_id = "test-flow-" + suffix
         runtime_config_map_name = f"flowgent-runtime-env-{NAMESPACE}-{flow_id}"
         runtime_secret_name = f"flowgent-runtime-secrets-{NAMESPACE}-{flow_id}"
-        jm_namespace = ControllerChecks.workload_namespace()
+        jm_namespace = ControllerOperations.workload_namespace()
         created_id = None
         run_id = None
         cluster_id = None
@@ -407,7 +407,7 @@ class ControllerChecks:
             # Step 2: Metadata creation must not allocate runtime components.
             print(f"    • Step 2: Verifying metadata-only import creates no JM/TM/Sandbox...")
             time.sleep(15)
-            if ControllerChecks.deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
+            if ControllerOperations.deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
                 raise AssertionError(f"Runtime Deployment created before trigger for flow={flow_id}")
             print(f"      ✓ No idle JM/TM/Sandbox created before trigger")
 
@@ -421,32 +421,32 @@ class ControllerChecks:
                 raise AssertionError(f"Trigger response missing run_id: {resp.text}")
             print(f"      ✓ FlowRun triggered: run_id={run_id}")
 
-            cluster_id = ControllerChecks.application_runtime_cluster_id(run_id)
-            jm_deployment_name = ControllerChecks.application_jobmanager_deployment_name(flow_id, run_id)
-            tm_deployment_name = ControllerChecks.taskmanager_deployment_name(cluster_id)
-            sb_deployment_name = ControllerChecks.sandbox_deployment_name(cluster_id)
+            cluster_id = ControllerOperations.application_runtime_cluster_id(run_id)
+            jm_deployment_name = ControllerOperations.application_jobmanager_deployment_name(flow_id, run_id)
+            tm_deployment_name = ControllerOperations.taskmanager_deployment_name(cluster_id)
+            sb_deployment_name = ControllerOperations.sandbox_deployment_name(cluster_id)
 
             # Step 4: Wait for Controller/JM/RM to realize the application runtime contract.
             print(f"    • Step 4: Waiting for active-run JM/TM/Sandbox Deployments...")
-            if not ControllerChecks.wait_for_deployment(jm_deployment_name, namespace=jm_namespace, timeout=120):
+            if not ControllerOperations.wait_for_deployment(jm_deployment_name, namespace=jm_namespace, timeout=120):
                 raise AssertionError(f"JM Deployment not created after trigger: {jm_namespace}/{jm_deployment_name}")
-            if not ControllerChecks.wait_for_deployment(tm_deployment_name, namespace=jm_namespace, timeout=180):
+            if not ControllerOperations.wait_for_deployment(tm_deployment_name, namespace=jm_namespace, timeout=180):
                 raise AssertionError(f"TM Deployment not created after trigger: {jm_namespace}/{tm_deployment_name}")
-            if not ControllerChecks.wait_for_deployment_replicas(tm_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
+            if not ControllerOperations.wait_for_deployment_replicas(tm_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
                 raise AssertionError(f"TM Deployment did not scale to exactly one replica for one pending plan")
-            if not ControllerChecks.wait_for_deployment(sb_deployment_name, namespace=jm_namespace, timeout=180):
+            if not ControllerOperations.wait_for_deployment(sb_deployment_name, namespace=jm_namespace, timeout=180):
                 raise AssertionError(f"Sandbox Deployment not created after sandbox task: {jm_namespace}/{sb_deployment_name}")
-            if not ControllerChecks.wait_for_deployment_replicas(sb_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
+            if not ControllerOperations.wait_for_deployment_replicas(sb_deployment_name, namespace=jm_namespace, replicas=1, timeout=60):
                 raise AssertionError("Sandbox Deployment did not scale to exactly one replica for one pending sandbox task")
 
             # Step 5: Verify JM Deployment spec
             print(f"    • Step 5: Verifying JM Deployment spec...")
-            deployment = ControllerChecks.kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace)
+            deployment = ControllerOperations.kubectl_get("deployment", jm_deployment_name, namespace=jm_namespace)
             if not deployment:
                 raise AssertionError("Deployment disappeared")
-            if not ControllerChecks.kubectl_get("configmap", runtime_config_map_name, namespace=jm_namespace):
+            if not ControllerOperations.kubectl_get("configmap", runtime_config_map_name, namespace=jm_namespace):
                 raise AssertionError(f"Flow runtime ConfigMap was not materialized: {jm_namespace}/{runtime_config_map_name}")
-            if not ControllerChecks.kubectl_get("secret", runtime_secret_name, namespace=jm_namespace):
+            if not ControllerOperations.kubectl_get("secret", runtime_secret_name, namespace=jm_namespace):
                 raise AssertionError(f"Flow runtime Secret was not materialized: {jm_namespace}/{runtime_secret_name}")
         
             spec = deployment.get("spec", {})
@@ -485,10 +485,10 @@ class ControllerChecks:
                     f"JM Deployment missing envFrom secretRef {RUNTIME_CREDENTIAL_SECRET}; refs={secret_refs}"
                 )
             for ns in (SYSTEM_NAMESPACE, jm_namespace):
-                secret = ControllerChecks.kubectl_get("secret", RUNTIME_CREDENTIAL_SECRET, namespace=ns)
+                secret = ControllerOperations.kubectl_get("secret", RUNTIME_CREDENTIAL_SECRET, namespace=ns)
                 if not secret:
                     raise AssertionError(f"Runtime credential Secret missing: {ns}/{RUNTIME_CREDENTIAL_SECRET}")
-                ControllerChecks.validate_runtime_secret(secret, ns)
+                ControllerOperations.validate_runtime_secret(secret, ns)
         
             print(f"      ✓ Deployment spec verified")
         
@@ -496,13 +496,13 @@ class ControllerChecks:
             print(f"    • Step 6: Waiting for JM/TM/Sandbox Pods to reach Running...")
         
             label_selector = f"flowgent.io/runtime-boundary=flow-jobmanager,flowgent.io/flow={flow_id},flowgent.io/run={run_id},flowgent.io/runtime-cluster={cluster_id}"
-            if not ControllerChecks.wait_for_pod_running(label_selector, namespace=jm_namespace, timeout=120):
+            if not ControllerOperations.wait_for_pod_running(label_selector, namespace=jm_namespace, timeout=120):
                 raise AssertionError("JM Pod did not reach Running")
             tm_selector = f"flowgent/role=worker,flowgent.io/runtime-cluster={cluster_id}"
-            if not ControllerChecks.wait_for_pod_running(tm_selector, namespace=jm_namespace, timeout=180):
+            if not ControllerOperations.wait_for_pod_running(tm_selector, namespace=jm_namespace, timeout=180):
                 raise AssertionError("Application TM Pod did not reach Running")
             sandbox_selector = f"flowgent/role=sandbox-worker,flowgent.io/runtime-cluster={cluster_id}"
-            if not ControllerChecks.wait_for_pod_running(sandbox_selector, namespace=jm_namespace, timeout=180):
+            if not ControllerOperations.wait_for_pod_running(sandbox_selector, namespace=jm_namespace, timeout=180):
                 raise AssertionError("Application Sandbox Pod did not reach Running")
         
             # Step 7: Cancel the active Run before deleting the Flow.
@@ -524,15 +524,15 @@ class ControllerChecks:
             # Step 8: Controller GC removes per-run application runtime and deleted
             # Flow configuration. There is no second runtime ownership plane.
             print(f"    • Step 8: Verifying application runtime cleanup...")
-            if not ControllerChecks.wait_for_deployment_deleted(jm_deployment_name, namespace=jm_namespace, timeout=90):
+            if not ControllerOperations.wait_for_deployment_deleted(jm_deployment_name, namespace=jm_namespace, timeout=90):
                 raise AssertionError(f"Controller did not delete JM Deployment: {jm_namespace}/{jm_deployment_name}")
-            if not ControllerChecks.wait_for_deployment_deleted(tm_deployment_name, namespace=jm_namespace, timeout=90):
+            if not ControllerOperations.wait_for_deployment_deleted(tm_deployment_name, namespace=jm_namespace, timeout=90):
                 raise AssertionError(f"Controller did not delete TM Deployment: {jm_namespace}/{tm_deployment_name}")
-            if not ControllerChecks.wait_for_deployment_deleted(sb_deployment_name, namespace=jm_namespace, timeout=90):
+            if not ControllerOperations.wait_for_deployment_deleted(sb_deployment_name, namespace=jm_namespace, timeout=90):
                 raise AssertionError(f"Controller did not delete Sandbox Deployment: {jm_namespace}/{sb_deployment_name}")
-            if not ControllerChecks.wait_for_resource_deleted("configmap", runtime_config_map_name, namespace=jm_namespace, timeout=90):
+            if not ControllerOperations.wait_for_resource_deleted("configmap", runtime_config_map_name, namespace=jm_namespace, timeout=90):
                 raise AssertionError(f"Controller did not delete runtime ConfigMap: {jm_namespace}/{runtime_config_map_name}")
-            if not ControllerChecks.wait_for_resource_deleted("secret", runtime_secret_name, namespace=jm_namespace, timeout=90):
+            if not ControllerOperations.wait_for_resource_deleted("secret", runtime_secret_name, namespace=jm_namespace, timeout=90):
                 raise AssertionError(f"Controller did not delete runtime Secret: {jm_namespace}/{runtime_secret_name}")
         
             if mqtt_client:
@@ -565,11 +565,11 @@ class ControllerChecks:
             # Cleanup on failure
             try:
                 if jm_deployment_name:
-                    ControllerChecks.kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
+                    ControllerOperations.kubectl_delete("deployment", jm_deployment_name, namespace=jm_namespace)
                 if tm_deployment_name:
-                    ControllerChecks.kubectl_delete("deployment", tm_deployment_name, namespace=jm_namespace)
+                    ControllerOperations.kubectl_delete("deployment", tm_deployment_name, namespace=jm_namespace)
                 if sb_deployment_name:
-                    ControllerChecks.kubectl_delete("deployment", sb_deployment_name, namespace=jm_namespace)
+                    ControllerOperations.kubectl_delete("deployment", sb_deployment_name, namespace=jm_namespace)
             except:
                 pass
         
@@ -581,7 +581,7 @@ class ControllerChecks:
         print(f"\n  → Verifying Controller pod...")
     
         try:
-            pods = ControllerChecks.kubectl_get("pods", namespace=SYSTEM_NAMESPACE)
+            pods = ControllerOperations.kubectl_get("pods", namespace=SYSTEM_NAMESPACE)
             if not pods:
                 raise AssertionError("Failed to get pods")
         
@@ -608,8 +608,8 @@ class ControllerChecks:
         """Test Flow UPDATE remains metadata-only without active runs."""
         print(f"\n  → Testing Flow UPDATE → no idle JM/TM allocation...")
 
-        flow_id = "test-flow-" + ControllerChecks.rand_id()
-        jm_namespace = ControllerChecks.workload_namespace()
+        flow_id = "test-flow-" + ControllerOperations.rand_id()
+        jm_namespace = ControllerOperations.workload_namespace()
         created_id = None
 
         try:
@@ -626,7 +626,7 @@ class ControllerChecks:
             created_id = resp.json().get("id")
 
             time.sleep(15)
-            if ControllerChecks.deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
+            if ControllerOperations.deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
                 raise AssertionError(f"Runtime Deployment created before trigger for flow={flow_id}")
 
             resp = FLOWGENT_SESSION.put(
@@ -644,7 +644,7 @@ class ControllerChecks:
                 raise AssertionError(f"Flow update failed: {resp.status_code} {resp.text}")
 
             time.sleep(15)
-            if ControllerChecks.deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
+            if ControllerOperations.deployment_with_labels(jm_namespace, {"flowgent.io/flow": flow_id}):
                 raise AssertionError(f"Runtime Deployment created by metadata-only update for flow={flow_id}")
             print(f"      ✓ Flow update did not allocate an idle Flow JM")
 
@@ -676,11 +676,11 @@ class ControllerChecks:
         results = {}
     
         # Check Controller pod
-        results["Controller Pod"] = ControllerChecks.test_controller_pod_running()
+        results["Controller Pod"] = ControllerOperations.test_controller_pod_running()
     
         # Test flow lifecycle
-        results["Flow CREATE+TRIGGER Lifecycle"] = ControllerChecks.test_flow_create_lifecycle()
-        results["Flow UPDATE Metadata Lifecycle"] = ControllerChecks.test_flow_update_lifecycle()
+        results["Flow CREATE+TRIGGER Lifecycle"] = ControllerOperations.test_flow_create_lifecycle()
+        results["Flow UPDATE Metadata Lifecycle"] = ControllerOperations.test_flow_update_lifecycle()
     
         # Summary
         passed = sum(1 for v in results.values() if v)
@@ -699,7 +699,7 @@ class ControllerChecks:
     @staticmethod
     def _verify_standalone_runtime():
         """Docker parity: the all-in-one process owns the same FlowRun lifecycle."""
-        flow_id = f"test-flow-docker-{ControllerChecks.rand_id()}"
+        flow_id = f"test-flow-docker-{ControllerOperations.rand_id()}"
         run_id = ""
         payload = {
             "id": flow_id,
@@ -796,10 +796,10 @@ class ControllerChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.core.base import CoreVerifier
+from verifier import BaseVerifier
 
 
-class ControllerVerifier(CoreVerifier):
+class ControllerVerifier(BaseVerifier):
     scenario_id = "23"
     title = "Controller — Application Runtime Cluster Lifecycle"
 
@@ -809,15 +809,12 @@ class ControllerVerifier(CoreVerifier):
 
     @staticmethod
     def _verify_kubernetes() -> None:
-        ControllerChecks._verify_scenario()
+        ControllerOperations._verify_scenario()
 
     @staticmethod
     def _verify_docker() -> None:
-        ControllerChecks._verify_standalone_runtime()
+        ControllerOperations._verify_standalone_runtime()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return ControllerVerifier(context).run()
-
-VERIFIER_CLASS = ControllerVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the controller scenario."""
+    return ControllerVerifier(context).run()

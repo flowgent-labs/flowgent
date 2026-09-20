@@ -1,4 +1,4 @@
-.PHONY: help build build-core build-image build-image-core build-image-web clean test test-ut test-web test-x402 test-it test-it-deps test-authguard-adapter test-sql-scope test-runtime-isolation test-e2e-runner e2e-security-fixer e2e-security-fixer-docker e2e-security-fixer-access fmt
+.PHONY: help build build-core build-image build-image-core build-image-web clean test test-ut test-web test-x402 test-it test-it-deps test-authguard-adapter test-sql-scope test-runtime-isolation test-e2e-runner e2e-security-autonomy-fixer-with-helm e2e-security-autonomy-fixer-with-docker fmt
 
 BIN_DIR  ?= bin
 GO       ?= go
@@ -44,9 +44,8 @@ help:
 	@echo ""
 	@echo "  Test:"
 	@echo "    make test-ut test-x402 test-it fmt clean"
-	@echo "    make e2e-security-fixer        Build, deploy, and verify the real use case; keep Helm running."
-	@echo "    make e2e-security-fixer-docker Run the equivalent isolated Docker Compose E2E."
-	@echo "    make e2e-security-fixer-access Keep isolated localhost tunnels open for manual use."
+	@echo "    make e2e-security-autonomy-fixer-with-helm   Build, deploy, and verify the real use case with Helm."
+	@echo "    make e2e-security-autonomy-fixer-with-docker Run the equivalent isolated Docker Compose E2E."
 
 .DEFAULT_GOAL := help
 
@@ -199,14 +198,11 @@ test-e2e-runner:
 	grep -q 'api_server_url: "http://e2e-flowgent-apiserver:9990"' "$$_rendered"; \
 	grep -A1 '^[[:space:]]*- name: e2e-flowgent-apiserver$$' "$$_rendered" | grep -q 'port: 9999'
 
-e2e-security-fixer:
+e2e-security-autonomy-fixer-with-helm:
 	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s $(E2E_ARGS)
 
-e2e-security-fixer-docker:
+e2e-security-autonomy-fixer-with-docker:
 	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker $(E2E_ARGS)
-
-e2e-security-fixer-access:
-	python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
 
 fmt:
 	gofmt -w $$(rg --files pkg tests -g '*.go')

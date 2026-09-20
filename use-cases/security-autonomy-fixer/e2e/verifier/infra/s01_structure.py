@@ -9,10 +9,10 @@ import yaml
 
 from common.config import E2E_DIR, SCENARIOS
 from common.model import RunContext, VerificationResult
-from verifier.infra.base import InfrastructureVerifier
+from verifier import BaseVerifier
 
 
-class E2EStructureVerifier(InfrastructureVerifier):
+class E2EStructureVerifier(BaseVerifier):
     scenario_id = "01"
     title = "E2E Structure — Layered Deployment and Verifier Contracts"
 
@@ -21,7 +21,7 @@ class E2EStructureVerifier(InfrastructureVerifier):
 
     def _run_scenario(self) -> None:
         self.step("verify shared deployer abstraction and both backends", self._verify_deployers)
-        self.step("verify layered scenario verifier classes", self._verify_verifiers)
+        self.step("verify direct BaseVerifier scenario classes", self._verify_verifiers)
         self.step("verify Docker and K8s functional matrix parity", self._verify_parity)
         self.step("verify K8s image-runtime discovery contract", self._verify_image_importer)
         self.step("verify obsolete procedural modules are absent", self._verify_forbidden_paths)
@@ -93,6 +93,10 @@ class E2EStructureVerifier(InfrastructureVerifier):
                 raise AssertionError(f"{class_name} misses topology lifecycle methods: {sorted(missing)}")
 
     def _verify_verifiers(self) -> None:
+        scenario_paths = {
+            E2E_DIR / f"{module_name.replace('.', '/')}.py"
+            for _, module_name in SCENARIOS.values()
+        }
         procedural_modules = []
         for path in sorted(E2E_DIR.rglob("*.py")):
             tree = self._tree(path)
@@ -101,13 +105,15 @@ class E2EStructureVerifier(InfrastructureVerifier):
                 for node in tree.body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-            if functions:
+            allowed_functions = ["verifier"] if path in scenario_paths else []
+            unexpected_functions = [name for name in functions if name not in allowed_functions]
+            if unexpected_functions:
                 procedural_modules.append(
-                    f"{path.relative_to(E2E_DIR)}: {', '.join(functions)}"
+                    f"{path.relative_to(E2E_DIR)}: {', '.join(unexpected_functions)}"
                 )
         if procedural_modules:
             raise AssertionError(
-                "all E2E behavior must be owned by classes; procedural functions remain: "
+                "only scenario verifier(context) entrypoints may be procedural; found: "
                 + "; ".join(procedural_modules)
             )
         for scenario_id, (_, module_name) in SCENARIOS.items():
@@ -116,40 +122,44 @@ class E2EStructureVerifier(InfrastructureVerifier):
             classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
             verifier_classes = [
                 node for node in classes
-                if any(self._name(base).endswith("Verifier") for base in node.bases)
+                if node.name.endswith("Verifier")
+                and any(self._name(base) == "BaseVerifier" for base in node.bases)
             ]
-            if not verifier_classes:
-                raise AssertionError(f"scenario {scenario_id} has no layered Verifier subclass: {path}")
+            if len(verifier_classes) != 1:
+                raise AssertionError(
+                    f"scenario {scenario_id} must declare exactly one XxxVerifier(BaseVerifier): {path}"
+                )
+            legacy_classes = [node.name for node in classes if node.name.endswith("Checks")]
+            if legacy_classes:
+                raise AssertionError(f"scenario {scenario_id} retains legacy Checks classes: {legacy_classes}")
             methods = {
                 method.name
-                for candidate in verifier_classes
-                for method in candidate.body
+                for method in verifier_classes[0].body
                 if isinstance(method, ast.FunctionDef)
             }
             if "run" not in methods or not any(method.startswith("_verify") or method == "_run_scenario" for method in methods):
                 raise AssertionError(
                     f"scenario {scenario_id} must keep its execution boundary inside its Verifier class: {path}"
                 )
-            entry_assignment = next(
-                (
-                    node
-                    for node in tree.body
-                    if isinstance(node, ast.Assign)
-                    and any(
-                        isinstance(target, ast.Name) and target.id == "VERIFIER_CLASS"
-                        for target in node.targets
-                    )
-                ),
-                None,
+            if "verify" in methods:
+                raise AssertionError(f"scenario {scenario_id} must use verifier(context), not {verifier_classes[0].name}.verify(context)")
+            legacy_entry = any(
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "VERIFIER_CLASS"
+                    for target in node.targets
+                )
+                for node in tree.body
             )
-            if not entry_assignment or not isinstance(entry_assignment.value, ast.Name):
-                raise AssertionError(f"scenario {scenario_id} must export a class-owned VERIFIER_CLASS entry")
-            entry_class = self._class(tree, entry_assignment.value.id)
-            entry_methods = {
-                node.name for node in entry_class.body if isinstance(node, ast.FunctionDef)
-            }
-            if "verify" not in entry_methods:
-                raise AssertionError(f"scenario {scenario_id} entry class must expose verify(context)")
+            if legacy_entry:
+                raise AssertionError(f"scenario {scenario_id} retains legacy VERIFIER_CLASS entry: {path}")
+            entries = [
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "verifier"
+            ]
+            if len(entries) != 1 or len(entries[0].args.args) != 1:
+                raise AssertionError(f"scenario {scenario_id} must export exactly verifier(context): {path}")
 
     def _verify_parity(self) -> None:
         compose_path = E2E_DIR / "deploy/docker/compose.yml"
@@ -220,6 +230,9 @@ class E2EStructureVerifier(InfrastructureVerifier):
             "deploy/sonarqube.py",
             "deploy/docker-compose.yml",
             "support",
+            "verifier/agentflow/base.py",
+            "verifier/core/base.py",
+            "verifier/infra/base.py",
             "verifier/web",
         )
         existing = [relative for relative in forbidden if (E2E_DIR / relative).exists()]
@@ -245,11 +258,6 @@ class E2EStructureVerifier(InfrastructureVerifier):
             return f"{cls._name(node.value)}.{node.attr}"
         return ""
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return E2EStructureVerifier(context).run()
-
-
-
-VERIFIER_CLASS = E2EStructureVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the E2E structure scenario."""
+    return E2EStructureVerifier(context).run()

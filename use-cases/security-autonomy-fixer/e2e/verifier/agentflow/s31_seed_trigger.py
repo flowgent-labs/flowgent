@@ -8,10 +8,10 @@ from common import project as common_api
 from common.model import RunContext, VerificationResult
 from common.project import RUN_ID_PATH
 from verifier.agentflow.support import SecurityAutonomyFixture as flow
-from verifier.agentflow.base import AgentFlowVerifier
+from verifier import BaseVerifier
 
 
-class SeedTriggerVerifier(AgentFlowVerifier):
+class SeedTriggerVerifier(BaseVerifier):
     """Own the resource seed and first real FlowRun lifecycle."""
 
     scenario_id = "31"
@@ -135,11 +135,6 @@ class SeedTriggerVerifier(AgentFlowVerifier):
         if passed < total:
             raise AssertionError(f"Seed verification failed: {passed}/{total}")
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return SeedTriggerVerifier(context).run()
-
-
-
-VERIFIER_CLASS = SeedTriggerVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the seed-and-trigger scenario."""
+    return SeedTriggerVerifier(context).run()

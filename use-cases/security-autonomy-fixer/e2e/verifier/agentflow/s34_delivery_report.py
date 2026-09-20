@@ -12,7 +12,7 @@ from common.project import RUN_ID_PATH
 
 COMPLETED_SET = c.COMPLETED_STATUSES
 
-class DeliveryReportChecks:
+class DeliveryReportOperations:
     """Class-owned operations for s34 delivery report."""
 
     @staticmethod
@@ -21,7 +21,7 @@ class DeliveryReportChecks:
 
     @staticmethod
     def _tool_task_ok(task, node_id):
-        if not task or not DeliveryReportChecks._is_completed(task.get("status", "")):
+        if not task or not DeliveryReportOperations._is_completed(task.get("status", "")):
             return False
         output = task.get("output") or {}
         parsed = c.parse_output(task)
@@ -47,7 +47,7 @@ class DeliveryReportChecks:
 
         for node_id in ["check-existing-pr", "pr-exists"]:
             task = c.node_task(tasks_by_node, node_id)
-            if task and DeliveryReportChecks._is_completed(task.get("status", "")):
+            if task and DeliveryReportOperations._is_completed(task.get("status", "")):
                 passed += 1
                 print(f"  OK {node_id}: {task.get('status')}")
             else:
@@ -64,9 +64,9 @@ class DeliveryReportChecks:
             failed = []
             for node_id in node_ids:
                 task = c.node_task(tasks_by_node, node_id)
-                if DeliveryReportChecks._tool_task_ok(task, node_id):
+                if DeliveryReportOperations._tool_task_ok(task, node_id):
                     completed.append(node_id)
-                elif task and DeliveryReportChecks._is_completed(task.get("status", "")):
+                elif task and DeliveryReportOperations._is_completed(task.get("status", "")):
                     failed.append(node_id)
             print(f"  Branch {branch_name}: completed={completed}/{node_ids}")
             if failed:
@@ -89,7 +89,7 @@ class DeliveryReportChecks:
 
         for node_id in rescan_nodes:
             task = c.node_task(tasks_by_node, node_id)
-            if task and DeliveryReportChecks._is_completed(task.get("status", "")):
+            if task and DeliveryReportOperations._is_completed(task.get("status", "")):
                 passed += 1
                 output = c.parse_output(task)
                 extra = ""
@@ -112,7 +112,7 @@ class DeliveryReportChecks:
         total = 3
 
         summary = c.node_task(tasks_by_node, "summary-report")
-        if summary and DeliveryReportChecks._is_completed(summary.get("status", "")):
+        if summary and DeliveryReportOperations._is_completed(summary.get("status", "")):
             output = c.parse_output(summary)
             report = output.get("report") or output.get("summary") or str(output)[:100]
             if isinstance(report, str) and len(report) > 20:
@@ -127,7 +127,7 @@ class DeliveryReportChecks:
 
         for node_id in ["notify-pr", "end"]:
             task = c.node_task(tasks_by_node, node_id)
-            if task and DeliveryReportChecks._is_completed(task.get("status", "")):
+            if task and DeliveryReportOperations._is_completed(task.get("status", "")):
                 print(f"  OK {node_id}: {task.get('status')}")
                 passed += 1
             else:
@@ -161,7 +161,7 @@ class DeliveryReportChecks:
             )
             rows = cur.fetchall()
             if rows:
-                completed = [r for r in rows if DeliveryReportChecks._is_completed(r[1])]
+                completed = [r for r in rows if DeliveryReportOperations._is_completed(r[1])]
                 if completed:
                     print(f"  OK {phase_name:<12}: {len(completed)} completed task(s)")
                     passed += 1
@@ -204,10 +204,10 @@ class DeliveryReportChecks:
         conn = c.pg_connect()
 
         results = []
-        results.append(("CommitPR", *DeliveryReportChecks.verify_commit_pr(tbn)))
-        results.append(("Rescan", *DeliveryReportChecks.verify_rescan(tbn)))
-        results.append(("Report", *DeliveryReportChecks.verify_report(tbn)))
-        results.append(("PG Final", *DeliveryReportChecks.verify_pg_final(conn, run_id)))
+        results.append(("CommitPR", *DeliveryReportOperations.verify_commit_pr(tbn)))
+        results.append(("Rescan", *DeliveryReportOperations.verify_rescan(tbn)))
+        results.append(("Report", *DeliveryReportOperations.verify_report(tbn)))
+        results.append(("PG Final", *DeliveryReportOperations.verify_pg_final(conn, run_id)))
 
         print("\n-- [34 MQTT Audit] Sandbox result and final execution callbacks --")
         c.assert_runtime_execution_evidence(
@@ -266,10 +266,10 @@ class DeliveryReportChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.agentflow.base import AgentFlowVerifier
+from verifier import BaseVerifier
 
 
-class DeliveryReportVerifier(AgentFlowVerifier):
+class DeliveryReportVerifier(BaseVerifier):
     scenario_id = "34"
     title = "E2E Fixer — Delivery & Report"
 
@@ -278,11 +278,8 @@ class DeliveryReportVerifier(AgentFlowVerifier):
 
     @staticmethod
     def _verify_execution() -> None:
-        DeliveryReportChecks._verify_scenario()
+        DeliveryReportOperations._verify_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return DeliveryReportVerifier(context).run()
-
-VERIFIER_CLASS = DeliveryReportVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the delivery-and-report scenario."""
+    return DeliveryReportVerifier(context).run()

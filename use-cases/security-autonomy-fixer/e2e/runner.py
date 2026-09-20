@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import traceback
 
 
@@ -153,6 +154,33 @@ class E2ERunner:
         return 0
 
     @staticmethod
+    def _archive_reports() -> None:
+        archive = E2EReportWriter.archive()
+        if archive:
+            print(f"Archived previous reports: {archive}")
+
+    @staticmethod
+    def _write_run_report(
+        context: RunContext,
+        *,
+        passed: bool,
+        duration_seconds: float,
+        title: str,
+        error: str | None = None,
+        details: list[str] | None = None,
+    ) -> None:
+        result = VerificationResult(
+            scenario_id="00",
+            title=title,
+            passed=passed,
+            duration_seconds=duration_seconds,
+            error=error,
+            details=details or [],
+        )
+        E2EReportWriter.write_round(context.round_number, result)
+        E2EReportWriter.write_summary([[result]])
+
+    @staticmethod
     def main() -> int:
         args = E2ERunner.parse_args()
         if args.list:
@@ -182,9 +210,15 @@ class E2ERunner:
         if args.pg:
             config.E2EConfiguration.apply_postgres_override(args.pg)
 
-        deployer = E2EDeployerFactory.create(context)
         exit_code = 1
+        started = time.monotonic()
+        results: list[VerificationResult] = []
+        reports_started = False
+        deployer = None
         try:
+            E2ERunner._archive_reports()
+            reports_started = True
+            deployer = E2EDeployerFactory.create(context)
             deployer.prepare(
                 skip_sonarqube=args.skip_sonarqube,
                 skip_build=args.skip_build,
@@ -193,8 +227,19 @@ class E2ERunner:
             )
             if args.no_verify:
                 exit_code = 0
+                E2ERunner._write_run_report(
+                    context,
+                    passed=True,
+                    duration_seconds=time.monotonic() - started,
+                    title="E2E Deployment — Verification Skipped",
+                    details=["Deployment completed successfully; verifier matrix was skipped by --no-verify."],
+                )
             else:
-                passed, _ = VerificationRunner.run_matrix(context, scenario_ids)
+                passed, results = VerificationRunner.run_matrix(
+                    context,
+                    scenario_ids,
+                    archive_existing=False,
+                )
                 exit_code = 0 if passed else 1
                 if passed and not args.clean_after_run:
                     print(
@@ -203,12 +248,38 @@ class E2ERunner:
                     )
         except KeyboardInterrupt:
             exit_code = 130
+            if reports_started:
+                E2ERunner._write_run_report(
+                    context,
+                    passed=False,
+                    duration_seconds=time.monotonic() - started,
+                    title="E2E Execution — Interrupted",
+                    error="E2E execution interrupted by user.",
+                )
         except Exception:
             traceback.print_exc()
             exit_code = 1
+            if reports_started:
+                E2ERunner._write_run_report(
+                    context,
+                    passed=False,
+                    duration_seconds=time.monotonic() - started,
+                    title="E2E Deployment — Failed Before Verification",
+                    error=traceback.format_exc(),
+                )
         finally:
-            if args.clean_after_run and not E2ERunner.cleanup_deployment(context) and exit_code == 0:
+            if deployer is not None and args.clean_after_run and not E2ERunner.cleanup_deployment(context) and exit_code == 0:
                 exit_code = 1
+                if reports_started:
+                    cleanup_failure = VerificationResult(
+                        scenario_id="00",
+                        title="E2E Cleanup",
+                        passed=False,
+                        duration_seconds=time.monotonic() - started,
+                        details=["The selected E2E deployment could not be cleaned up."],
+                    )
+                    E2EReportWriter.write_round(context.round_number, cleanup_failure)
+                    E2EReportWriter.write_summary([results + [cleanup_failure]])
         return exit_code
 
 
@@ -218,8 +289,9 @@ os.environ.setdefault("FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY", "github.com")
 from common import config
 from common.config import DEFAULT_SCENARIOS, SCENARIOS
 from deploy import E2EDeployerFactory
-from common.model import RunContext
+from common.model import RunContext, VerificationResult
 from common.project import VerificationRunner
+from common.report import E2EReportWriter
 
 
 

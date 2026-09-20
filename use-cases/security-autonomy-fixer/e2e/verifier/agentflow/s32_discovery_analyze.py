@@ -13,7 +13,7 @@ from common.project import RUN_ID_PATH
 
 # ── Phase: DISCOVERY ──
 
-class DiscoveryAnalyzeChecks:
+class DiscoveryAnalyzeOperations:
     """Class-owned operations for s32 discovery analyze."""
 
     @staticmethod
@@ -195,8 +195,8 @@ class DiscoveryAnalyzeChecks:
 
         # Run verifications
         results = []
-        results.append(("Discovery", *DiscoveryAnalyzeChecks.verify_discovery(tbn)))
-        results.append(("Analyze", *DiscoveryAnalyzeChecks.verify_analyze(tbn)))
+        results.append(("Discovery", *DiscoveryAnalyzeOperations.verify_discovery(tbn)))
+        results.append(("Analyze", *DiscoveryAnalyzeOperations.verify_analyze(tbn)))
 
         print("\n-- [32 MQTT Audit] JM/TM/Sandbox message chain --")
         c.assert_runtime_execution_evidence(run_id, tasks, require_sandbox=True)
@@ -226,10 +226,10 @@ class DiscoveryAnalyzeChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.agentflow.base import AgentFlowVerifier
+from verifier import BaseVerifier
 
 
-class DiscoveryAnalyzeVerifier(AgentFlowVerifier):
+class DiscoveryAnalyzeVerifier(BaseVerifier):
     scenario_id = "32"
     title = "E2E Fixer — Discovery & Analyze"
 
@@ -238,11 +238,8 @@ class DiscoveryAnalyzeVerifier(AgentFlowVerifier):
 
     @staticmethod
     def _verify_execution() -> None:
-        DiscoveryAnalyzeChecks._verify_scenario()
+        DiscoveryAnalyzeOperations._verify_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return DiscoveryAnalyzeVerifier(context).run()
-
-VERIFIER_CLASS = DiscoveryAnalyzeVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the discovery-and-analysis scenario."""
+    return DiscoveryAnalyzeVerifier(context).run()

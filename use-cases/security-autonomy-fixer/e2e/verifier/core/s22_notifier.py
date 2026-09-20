@@ -23,7 +23,7 @@ CHANNEL_NAME = "security-autonomy-alerts"
 RECEIVER = f"{config.RESOURCE_PREFIX}-webhook"
 
 
-class NotifierChecks:
+class NotifierOperations:
     """Class-owned operations for s22 notifier."""
 
     @staticmethod
@@ -128,7 +128,7 @@ class NotifierChecks:
 
         def on_message(_client, _userdata, message):
             try:
-                received.append(NotifierChecks._decode_delivery(message.payload))
+                received.append(NotifierOperations._decode_delivery(message.payload))
             except Exception as exc:  # keep a diagnostic without printing payload/secrets
                 received.append({"status": "DECODE_FAILED", "error": str(exc)})
 
@@ -166,7 +166,7 @@ class NotifierChecks:
             raise AssertionError(f"real notification delivery failed: {result.get('error', 'unknown')}")
         print("  ✓ Notifier decrypted the DB secret and emitted DELIVERED")
 
-        receipts = NotifierChecks._receiver_receipts()
+        receipts = NotifierOperations._receiver_receipts()
         if int(receipts.get("authorized_count", 0)) < 1:
             raise AssertionError("authenticated webhook receiver has no accepted delivery")
         print("  ✓ Authenticated HTTP receiver accepted the real webhook")
@@ -179,10 +179,10 @@ class NotifierChecks:
 
 
 from common.model import RunContext, VerificationResult
-from verifier.core.base import CoreVerifier
+from verifier import BaseVerifier
 
 
-class NotifierVerifier(CoreVerifier):
+class NotifierVerifier(BaseVerifier):
     scenario_id = "22"
     title = "Notifier — Multi-Channel Delivery"
 
@@ -191,11 +191,8 @@ class NotifierVerifier(CoreVerifier):
 
     @staticmethod
     def _verify_delivery() -> None:
-        NotifierChecks._verify_scenario()
+        NotifierOperations._verify_scenario()
 
-    @staticmethod
-    def verify(context: RunContext) -> VerificationResult:
-        """Create and run this scenario's class-owned verifier entrypoint."""
-        return NotifierVerifier(context).run()
-
-VERIFIER_CLASS = NotifierVerifier
+def verifier(context: RunContext) -> VerificationResult:
+    """Run the notifier scenario."""
+    return NotifierVerifier(context).run()
