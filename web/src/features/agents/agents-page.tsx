@@ -32,6 +32,7 @@ const agentSchema = z.object({
   instruction: z.string(),
   temperature: z.coerce.number().min(0).max(2),
   max_tokens: z.coerce.number().int().positive(),
+  input_schema: z.string(),
   output_schema: z.string(),
 })
 type AgentForm = z.infer<typeof agentSchema>
@@ -48,8 +49,15 @@ export function AgentsPage() {
     queryFn: ({ signal }) => repositories.agents.list(namespace, signal),
   })
   const save = useMutation({
-    mutationFn: ({ agent, isNew }: { agent: Agent; isNew: boolean }) =>
-      repositories.agents.save(namespace, agent, isNew),
+    mutationFn: ({
+      agent,
+      isNew,
+      originalName,
+    }: {
+      agent: Agent
+      isNew: boolean
+      originalName?: string
+    }) => repositories.agents.save(namespace, agent, isNew, originalName),
     onSuccess: () => {
       setSelected(null)
       void queryClient.invalidateQueries({ queryKey: [namespace, 'agents'] })
@@ -86,7 +94,7 @@ export function AgentsPage() {
                 }
               }}
             />
-            <Button onClick={() => setSelected('new')}>
+            <Button data-testid="agent-create" onClick={() => setSelected('new')}>
               <Plus size={16} />
               {t('agents.new')}
             </Button>
@@ -115,7 +123,11 @@ export function AgentsPage() {
       ) : (
         <div className="resource-card-grid">
           {rows.map((agent) => (
-            <article className="resource-card" key={agent.id}>
+            <article
+              className="resource-card"
+              data-testid={`agent-card-${agent.name}`}
+              key={agent.id}
+            >
               <header>
                 <span className="resource-card__icon">
                   <Bot size={20} />
@@ -148,6 +160,7 @@ export function AgentsPage() {
               </button>
               <footer>
                 <div className="tag-row">
+                  <span data-testid={`agent-version-${agent.name}`}>v{agent.version || 1}</span>
                   {Object.entries(agent.labels ?? {}).map(([key, value]) => (
                     <span key={key}>
                       {key}:{value}
@@ -155,6 +168,7 @@ export function AgentsPage() {
                   ))}
                 </div>
                 <IconButton
+                  data-testid={`agent-delete-${agent.name}`}
                   label={t('common.delete')}
                   onClick={() => {
                     if (window.confirm(t('common.confirmDelete'))) remove.mutate(agent.name)
@@ -174,7 +188,7 @@ export function AgentsPage() {
         saving={save.isPending}
         error={save.error}
         onClose={() => setSelected(null)}
-        onSave={(agent, isNew) => save.mutate({ agent, isNew })}
+        onSave={(agent, isNew, originalName) => save.mutate({ agent, isNew, originalName })}
       />
     </div>
   )
@@ -193,7 +207,7 @@ function AgentDrawer({
   saving: boolean
   error: unknown
   onClose: () => void
-  onSave: (agent: Agent, isNew: boolean) => void
+  onSave: (agent: Agent, isNew: boolean, originalName?: string) => void
 }) {
   const { t } = useTranslation()
   const isNew = !agent?.id
@@ -204,10 +218,13 @@ function AgentDrawer({
     formState: { errors, isDirty },
   } = useForm<AgentForm>({ resolver: zodResolver(agentSchema), defaultValues: toForm(agent) })
   const submit = handleSubmit((values) => {
-    let schema: Record<string, unknown>
+    let inputSchema: Record<string, unknown>
+    let outputSchema: Record<string, unknown>
     try {
-      schema = JSON.parse(values.output_schema) as Record<string, unknown>
+      inputSchema = JSON.parse(values.input_schema) as Record<string, unknown>
+      outputSchema = JSON.parse(values.output_schema) as Record<string, unknown>
     } catch {
+      setError('input_schema', { message: t('errors.invalidJson') })
       setError('output_schema', { message: t('errors.invalidJson') })
       return
     }
@@ -223,12 +240,15 @@ function AgentDrawer({
         model: values.model,
         soul: values.soul,
         instruction: values.instruction,
+        input_schema: inputSchema,
         temperature: values.temperature,
         max_tokens: values.max_tokens,
-        output_schema: schema,
+        output_schema: outputSchema,
+        version: agent?.version ?? 1,
         labels: agent?.labels ?? {},
       },
       isNew,
+      agent?.name,
     )
   })
   return (
@@ -243,7 +263,7 @@ function AgentDrawer({
           <Button variant="secondary" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={() => void submit()} disabled={saving}>
+          <Button data-testid="agent-save" onClick={() => void submit()} disabled={saving}>
             {t('common.save')}
           </Button>
         </>
@@ -257,26 +277,26 @@ function AgentDrawer({
         </div>
         <label className="field">
           <span className="field__label">{t('common.name')}</span>
-          <input {...register('name')} disabled={!isNew} />
+          <input data-testid="agent-name" pattern="[a-zA-Z0-9_-]+" {...register('name')} />
           {errors.name && <span className="field__error">{errors.name.message}</span>}
         </label>
         <label className="field">
           <span className="field__label">{t('common.description')}</span>
-          <input {...register('description')} disabled={!isNew} />
+          <input data-testid="agent-description" {...register('description')} />
         </label>
         <label className="field">
           <span className="field__label">{t('agents.model')}</span>
-          <input {...register('model')} />
+          <input data-testid="agent-model" {...register('model')} />
           {errors.model && <span className="field__error">{errors.model.message}</span>}
         </label>
         <label className="field">
           <span className="field__label">{t('agents.soul')}</span>
-          <textarea rows={4} {...register('soul')} />
+          <textarea data-testid="agent-soul" rows={4} {...register('soul')} />
           {errors.soul && <span className="field__error">{errors.soul.message}</span>}
         </label>
         <label className="field">
           <span className="field__label">{t('agents.instruction')}</span>
-          <textarea rows={9} {...register('instruction')} />
+          <textarea data-testid="agent-instruction" rows={9} {...register('instruction')} />
           {errors.instruction && <span className="field__error">{errors.instruction.message}</span>}
         </label>
         <div className="form-grid">
@@ -290,12 +310,24 @@ function AgentDrawer({
           </label>
         </div>
         <label className="field">
+          <span className="field__label">{t('agents.inputSchema')}</span>
+          <textarea
+            data-testid="agent-input-schema"
+            className="code-input"
+            rows={9}
+            {...register('input_schema')}
+          />
+          {errors.input_schema && (
+            <span className="field__error">{errors.input_schema.message}</span>
+          )}
+        </label>
+        <label className="field">
           <span className="field__label">{t('agents.schema')}</span>
           <textarea
+            data-testid="agent-output-schema"
             className="code-input"
             rows={9}
             {...register('output_schema')}
-            disabled={!isNew}
           />
           {errors.output_schema && (
             <span className="field__error">{errors.output_schema.message}</span>
@@ -315,6 +347,7 @@ function toForm(agent?: Agent): AgentForm {
     instruction: agent?.instruction ?? '',
     temperature: agent?.temperature ?? 0.2,
     max_tokens: agent?.max_tokens ?? 4096,
+    input_schema: JSON.stringify(agent?.input_schema ?? { type: 'object' }, null, 2),
     output_schema: JSON.stringify(agent?.output_schema ?? { type: 'object' }, null, 2),
   }
 }

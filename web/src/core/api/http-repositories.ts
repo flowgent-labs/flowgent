@@ -8,6 +8,7 @@ import type {
   McpRepository,
   NotificationRepository,
   RuntimeSkillRepository,
+  SkillRepository,
   RunRepository,
   TraceRepository,
 } from '../domain/repositories'
@@ -25,6 +26,7 @@ import type {
   RunFilters,
   RunMetrics,
   RunTrace,
+  SkillDefinition,
   TaskRun,
 } from '../domain/types'
 
@@ -217,11 +219,20 @@ export class HttpKnowledgeRepository implements KnowledgeRepository {
     return response.items
   }
   save(namespace: string, scope: 'run' | 'flow' | 'share', entry: KnowledgeEntry, isNew: boolean) {
+    const payload = {
+      title: entry.title,
+      content: entry.content,
+      content_type: entry.content_type,
+      source: entry.source,
+      source_ref: entry.source_ref,
+      tags: entry.tags,
+      metadata: { ...entry.metadata, scope },
+    }
     return this.api.request<KnowledgeEntry>(
       namespacePath(namespace, isNew ? 'knowledge' : `knowledge/${entry.id}`),
       {
         method: isNew ? 'POST' : 'PUT',
-        body: JSON.stringify({ ...entry, metadata: { ...entry.metadata, scope } }),
+        body: JSON.stringify(payload),
       },
     )
   }
@@ -238,9 +249,9 @@ export class HttpAgentRepository implements AgentRepository {
     })
     return response.items
   }
-  save(namespace: string, agent: Agent, isNew: boolean) {
+  save(namespace: string, agent: Agent, isNew: boolean, originalName = agent.name) {
     return this.api.request<Agent>(
-      namespacePath(namespace, isNew ? 'agents' : `agents/${encodeURIComponent(agent.name)}`),
+      namespacePath(namespace, isNew ? 'agents' : `agents/${encodeURIComponent(originalName)}`),
       { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(withoutAuditFields(agent)) },
     )
   }
@@ -256,9 +267,14 @@ export class HttpMcpRepository implements McpRepository {
   async list(namespace: string, signal?: AbortSignal): Promise<McpServer[]> {
     return this.api.request<McpServer[]>(namespacePath(namespace, 'mcp'), { signal })
   }
-  async save(namespace: string, item: McpServer, isNew: boolean): Promise<McpServer> {
+  async save(
+    namespace: string,
+    item: McpServer,
+    isNew: boolean,
+    originalName = item.name,
+  ): Promise<McpServer> {
     return this.api.request<McpServer>(
-      namespacePath(namespace, isNew ? 'mcp' : `mcp/${encodeURIComponent(item.name)}`),
+      namespacePath(namespace, isNew ? 'mcp' : `mcp/${encodeURIComponent(originalName)}`),
       {
         method: isNew ? 'POST' : 'PUT',
         body: JSON.stringify({
@@ -297,6 +313,51 @@ export class HttpLlmRepository implements LlmRepository {
   async remove(namespace: string, id: string): Promise<void> {
     await this.api.request<void>(
       namespacePath(namespace, `llm/providers/${encodeURIComponent(id)}`),
+      { method: 'DELETE' },
+    )
+  }
+}
+
+export class HttpSkillRepository implements SkillRepository {
+  constructor(private readonly api: ApiClient) {}
+
+  list(namespace: string, signal?: AbortSignal): Promise<SkillDefinition[]> {
+    return this.api.request<SkillDefinition[]>(namespacePath(namespace, 'skill-definitions'), {
+      signal,
+    })
+  }
+
+  save(namespace: string, item: SkillDefinition, isNew: boolean, originalName = item.name) {
+    const payload = {
+      name: item.name,
+      description: item.description,
+      instruction: item.instruction,
+      model: item.model,
+      temperature: item.temperature,
+      max_tokens: item.max_tokens,
+      tools: item.tools ?? [],
+    }
+    return this.api.request<SkillDefinition>(
+      namespacePath(
+        namespace,
+        isNew ? 'skill-definitions' : `skill-definitions/${encodeURIComponent(originalName)}`,
+      ),
+      { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(payload) },
+    )
+  }
+
+  upload(namespace: string, name: string, kind: 'assets' | 'scripts', file: File) {
+    const body = new FormData()
+    body.set('file', file)
+    return this.api.request<SkillDefinition>(
+      namespacePath(namespace, `skill-definitions/${encodeURIComponent(name)}/${kind}`),
+      { method: 'POST', body },
+    )
+  }
+
+  remove(namespace: string, name: string) {
+    return this.api.request<void>(
+      namespacePath(namespace, `skill-definitions/${encodeURIComponent(name)}`),
       { method: 'DELETE' },
     )
   }

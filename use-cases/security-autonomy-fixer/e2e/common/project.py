@@ -18,6 +18,7 @@ from .config import REPORTS_DIR, SCENARIOS
 from deploy import E2EDeployerFactory
 from .model import RunContext, VerificationResult
 from .report import E2EReportWriter
+from verifier import BaseVerifier
 
 
 STATE_DIR = REPORTS_DIR / ".state"
@@ -228,12 +229,22 @@ class VerificationRunner:
         try:
             module = importlib.import_module(module_name)
             with contextlib.redirect_stdout(capture):
-                entrypoint = getattr(module, "verifier", None)
-                if not callable(entrypoint):
-                    raise TypeError(f"{module_name} must export verifier(context)")
-                result = entrypoint(context)
+                candidates = [
+                    value
+                    for value in vars(module).values()
+                    if isinstance(value, type)
+                    and value is not BaseVerifier
+                    and value.__module__ == module.__name__
+                    and issubclass(value, BaseVerifier)
+                ]
+                if len(candidates) != 1:
+                    names = [candidate.__name__ for candidate in candidates]
+                    raise TypeError(
+                        f"{module_name} must define exactly one XxxVerifier(BaseVerifier), got {names}"
+                    )
+                result = candidates[0](context).run()
             if not isinstance(result, VerificationResult):
-                raise TypeError(f"{module_name}.verifier(context) returned an invalid result")
+                raise TypeError(f"{module_name} verifier returned an invalid result")
             if result.scenario_id != scenario_id or result.title != title:
                 raise ValueError(f"{module_name} metadata differs from common.config.SCENARIOS")
             result.output = capture.getvalue()

@@ -74,7 +74,7 @@ export function NotificationsPage() {
         title={t('notifications.title')}
         description={t('notifications.subtitle')}
         actions={
-          <Button onClick={() => setSelected(blankChannel())}>
+          <Button data-testid="notification-create" onClick={() => setSelected(blankChannel())}>
             <Plus size={16} />
             {t('notifications.new')}
           </Button>
@@ -106,7 +106,11 @@ export function NotificationsPage() {
       ) : (
         <div className="integration-grid">
           {rows.map((item) => (
-            <article className="integration-card" key={item.id} data-testid="notification-card">
+            <article
+              className="integration-card"
+              key={item.id}
+              data-testid={`notification-card-${item.name}`}
+            >
               <header>
                 <span className="resource-card__icon resource-card__icon--purple">
                   <BellRing size={20} />
@@ -142,6 +146,7 @@ export function NotificationsPage() {
                   {t('notifications.test')}
                 </Button>
                 <IconButton
+                  data-testid={`notification-delete-${item.name}`}
                   label={t('common.delete')}
                   onClick={() => {
                     if (window.confirm(t('common.confirmDelete'))) remove.mutate(item.id)

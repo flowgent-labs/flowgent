@@ -10,24 +10,26 @@ import (
 
 // SkillSQLiteStore wraps storage.SQLiteGenericStore[entities.SkillInfo].
 type SkillSQLiteStore struct {
-	inner *storage.SQLiteGenericStore[entities.SkillInfo]
+	byName *storage.SQLiteGenericStore[entities.SkillInfo]
+	byID   *storage.SQLiteGenericStore[entities.SkillInfo]
 }
 
 func NewSkillSQLiteStore(conn *sql.DB) *SkillSQLiteStore {
 	return &SkillSQLiteStore{
-		inner: &storage.SQLiteGenericStore[entities.SkillInfo]{Conn: conn, Table: "llm_skill", IDCol: "name"},
+		byName: &storage.SQLiteGenericStore[entities.SkillInfo]{Conn: conn, Table: "llm_skill", IDCol: "name"},
+		byID:   &storage.SQLiteGenericStore[entities.SkillInfo]{Conn: conn, Table: "llm_skill", IDCol: "id"},
 	}
 }
 
-func (s *SkillSQLiteStore) Get(ctx context.Context, name string) (*entities.SkillInfo, error) {
-	return s.inner.Get(ctx, name)
+func (s *SkillSQLiteStore) Get(ctx context.Context, namespace, name string) (*entities.SkillInfo, error) {
+	return s.byName.GetScoped(ctx, namespace, name)
 }
-func (s *SkillSQLiteStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.SkillInfo], error) {
-	return s.inner.Select(ctx, req)
+func (s *SkillSQLiteStore) List(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[entities.SkillInfo], error) {
+	return s.byID.SelectScoped(ctx, namespace, req)
 }
 func (s *SkillSQLiteStore) Save(ctx context.Context, e *entities.SkillInfo) error {
-	return s.inner.Save(ctx, e)
+	return s.byID.Save(ctx, e)
 }
-func (s *SkillSQLiteStore) Delete(ctx context.Context, name string) error {
-	return s.inner.Delete(ctx, name)
+func (s *SkillSQLiteStore) Delete(ctx context.Context, namespace, name string) error {
+	return s.byName.DeleteScoped(ctx, namespace, name)
 }

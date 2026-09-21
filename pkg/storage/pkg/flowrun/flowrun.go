@@ -37,9 +37,11 @@ type IFlowRunStore interface {
 }
 
 type metricRow struct {
-	bucket int
-	status entities.RunStatus
-	count  int64
+	bucket          int
+	status          entities.RunStatus
+	count           int64
+	durationTotalMs int64
+	durationCount   int64
 }
 
 func buildMetrics(req MetricRequest, rows []metricRow) *entities.RunMetrics {
@@ -52,11 +54,15 @@ func buildMetrics(req MetricRequest, rows []metricRow) *entities.RunMetrics {
 		start := req.Since.Add(time.Duration(i) * width)
 		result.Buckets[i] = entities.RunMetricBucket{StartTime: start, EndTime: start.Add(width)}
 	}
+	bucketDurationTotals := make([]int64, len(result.Buckets))
+	bucketDurationCounts := make([]int64, len(result.Buckets))
 	for _, row := range rows {
 		if row.bucket < 0 || row.bucket >= len(result.Buckets) {
 			continue
 		}
 		result.Total += row.count
+		bucketDurationTotals[row.bucket] += row.durationTotalMs
+		bucketDurationCounts[row.bucket] += row.durationCount
 		bucket := &result.Buckets[row.bucket]
 		switch row.status {
 		case entities.RunRunning:
@@ -71,6 +77,17 @@ func buildMetrics(req MetricRequest, rows []metricRow) *entities.RunMetrics {
 		case entities.RunCancelled:
 			result.Cancelled += row.count
 		}
+	}
+	var durationTotalMs, durationCount int64
+	for index := range result.Buckets {
+		durationTotalMs += bucketDurationTotals[index]
+		durationCount += bucketDurationCounts[index]
+		if bucketDurationCounts[index] > 0 {
+			result.Buckets[index].AverageDurationMs = bucketDurationTotals[index] / bucketDurationCounts[index]
+		}
+	}
+	if durationCount > 0 {
+		result.AverageDurationMs = durationTotalMs / durationCount
 	}
 	terminal := result.Completed + result.Failed + result.Cancelled
 	if terminal > 0 {

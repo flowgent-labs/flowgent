@@ -44,8 +44,15 @@ export function McpsPage() {
     queryFn: ({ signal }) => repositories.mcps.list(namespace, signal),
   })
   const save = useMutation({
-    mutationFn: ({ item, isNew }: { item: McpServer; isNew: boolean }) =>
-      repositories.mcps.save(namespace, item, isNew),
+    mutationFn: ({
+      item,
+      isNew,
+      originalName,
+    }: {
+      item: McpServer
+      isNew: boolean
+      originalName?: string
+    }) => repositories.mcps.save(namespace, item, isNew, originalName),
     onSuccess: () => {
       setSelected(null)
       void queryClient.invalidateQueries({ queryKey: [namespace, 'mcps'] })
@@ -82,7 +89,7 @@ export function McpsPage() {
                 }
               }}
             />
-            <Button onClick={() => setSelected(blankMcp())}>
+            <Button data-testid="mcp-create" onClick={() => setSelected(blankMcp())}>
               <Plus size={16} />
               {t('mcps.new')}
             </Button>
@@ -113,7 +120,11 @@ export function McpsPage() {
       ) : (
         <div className="integration-grid">
           {rows.map((item) => (
-            <article className="integration-card" key={item.id}>
+            <article
+              className="integration-card"
+              data-testid={`mcp-card-${item.name}`}
+              key={item.id}
+            >
               <header>
                 <span className="resource-card__icon">
                   <Network size={20} />
@@ -148,6 +159,7 @@ export function McpsPage() {
                   ))}
                 </span>
                 <IconButton
+                  data-testid={`mcp-delete-${item.name}`}
                   label={t('common.delete')}
                   onClick={() => {
                     if (window.confirm(t('common.confirmDelete'))) remove.mutate(item.name)
@@ -164,7 +176,7 @@ export function McpsPage() {
         key={selected ? selected.id || 'new' : 'closed'}
         value={selected}
         onClose={() => setSelected(null)}
-        onSave={(item, isNew) => save.mutate({ item, isNew })}
+        onSave={(item, isNew, originalName) => save.mutate({ item, isNew, originalName })}
         saving={save.isPending}
         error={save.error}
       />
@@ -183,7 +195,7 @@ function McpDrawer({
   saving: boolean
   error: unknown
   onClose: () => void
-  onSave: (value: McpServer, isNew: boolean) => void
+  onSave: (value: McpServer, isNew: boolean, originalName?: string) => void
 }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState<McpServer | null>(() =>
@@ -204,6 +216,7 @@ function McpDrawer({
           type: 'streamable-http',
         },
         !current.id,
+        value?.name,
       )
     } catch {
       window.alert(t('errors.invalidJson'))
@@ -219,7 +232,11 @@ function McpDrawer({
           <Button variant="secondary" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button disabled={saving || !current?.name || !current.url} onClick={submit}>
+          <Button
+            data-testid="mcp-save"
+            disabled={saving || !current?.name || !current.url}
+            onClick={submit}
+          >
             {t('common.save')}
           </Button>
         </>
@@ -234,14 +251,16 @@ function McpDrawer({
         <label className="field">
           <span className="field__label">{t('common.name')}</span>
           <input
+            data-testid="mcp-name"
             value={current?.name ?? ''}
-            disabled={Boolean(current?.id)}
+            pattern="[a-zA-Z0-9_-]+"
             onChange={(event) => update({ name: event.target.value })}
           />
         </label>
         <label className="field">
           <span className="field__label">{t('mcps.endpoint')}</span>
           <input
+            data-testid="mcp-url"
             type="url"
             value={current?.url ?? ''}
             onChange={(event) => update({ url: event.target.value })}

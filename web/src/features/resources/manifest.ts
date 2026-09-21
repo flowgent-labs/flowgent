@@ -113,10 +113,17 @@ function environmentName(value: unknown): string {
 
 export function manifestToLlm(source: string): LlmProvider {
   const { metadata, data } = parseResourceManifest(source, 'LLMProvider')
+  const legacyProvider = String(data.provider ?? '')
+  const requestedType = String(data.type ?? legacyProvider).toLowerCase()
+  const type =
+    requestedType === 'anthropic' || requestedType === 'gemini' ? requestedType : 'openai'
   return {
     ...emptyAudit,
     ...(data as unknown as LlmProvider),
     id: '',
+    name: metadata.name ?? '',
+    type,
+    provider: metadata.name ?? '',
     namespace_id: metadata.namespace ?? 'default',
     description: metadata.description ?? '',
     labels: metadata.labels ?? {},

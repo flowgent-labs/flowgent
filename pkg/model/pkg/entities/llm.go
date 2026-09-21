@@ -5,6 +5,10 @@ package entities
 type LlmProviderInfo struct {
 	BaseEntity
 
+	// Name is the user-managed identifier. Provider is retained as the
+	// backwards-compatible runtime alias used by existing manifests.
+	Name          string            `json:"name" yaml:"name" db:"name"`
+	Type          string            `json:"type" yaml:"type" db:"type"`
 	Provider      string            `json:"provider" yaml:"provider" db:"provider"`
 	Enabled       bool              `json:"enabled" yaml:"enabled" db:"-"`
 	Status        string            `json:"status" yaml:"status" db:"status"`
@@ -18,6 +22,8 @@ type LlmProviderInfo struct {
 	ApiKey        string            `json:"-" yaml:"-" db:"apikey"`
 	ApiKeyEnv     string            `json:"api_key_env,omitempty" yaml:"api_key_env,omitempty" db:"-"`
 	KeyConfigured bool              `json:"key_configured" yaml:"-" db:"-"`
+	Env           map[string]string `json:"-" yaml:"-" db:"env"`
+	EnvRefs       map[string]string `json:"env_refs,omitempty" yaml:"env_refs,omitempty" db:"-"`
 	Labels        map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 }
 

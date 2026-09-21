@@ -110,6 +110,14 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
+	if !resourceNamePattern.MatchString(m.Name) {
+		http.Error(w, "name may contain only letters, digits, hyphens, and underscores", http.StatusBadRequest)
+		return
+	}
+	if existing, err := h.store.Get(r.Context(), namespace, m.Name); err == nil && existing != nil {
+		http.Error(w, "MCP server already exists", http.StatusConflict)
+		return
+	}
 	m.ID = uuid.New().String()
 	m.Namespace = namespace
 	if !strings.EqualFold(m.Type, "streamable-http") {
@@ -164,10 +172,6 @@ func (h *McpHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	if updates.Name != "" && updates.Name != name {
-		http.Error(w, "name mismatch", http.StatusBadRequest)
-		return
-	}
 	if updates.Namespace != "" && updates.Namespace != namespace {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
@@ -176,13 +180,25 @@ func (h *McpHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only streamable-http MCP transport is supported", http.StatusBadRequest)
 		return
 	}
+	if updates.Name == "" {
+		updates.Name = name
+	}
+	if !resourceNamePattern.MatchString(updates.Name) {
+		http.Error(w, "name may contain only letters, digits, hyphens, and underscores", http.StatusBadRequest)
+		return
+	}
+	if updates.Name != name {
+		if duplicate, err := h.store.Get(r.Context(), namespace, updates.Name); err == nil && duplicate != nil {
+			http.Error(w, "MCP server already exists", http.StatusConflict)
+			return
+		}
+	}
 	if err := normalizeMcpSecrets(&updates); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	updates.ID = existing.ID
-	updates.Name = name
 	updates.Namespace = namespace
 	updates.Status = existing.Status
 	updates.CreatedAt = existing.CreatedAt

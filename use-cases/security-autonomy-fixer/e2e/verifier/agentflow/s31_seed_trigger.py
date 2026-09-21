@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 
 from common import project as common_api
-from common.model import RunContext, VerificationResult
+from common.model import VerificationResult
 from common.project import RUN_ID_PATH
-from verifier.agentflow.support import SecurityAutonomyFixture as flow
+from common.agentflow import SecurityAutonomyFixture as flow
 from verifier import BaseVerifier
 
 
@@ -134,7 +134,3 @@ class SeedTriggerVerifier(BaseVerifier):
         print(f"\n{'=' * 60}\n  Scenario 31 Summary\n  Seed:  {passed}/{total}\n  Run ID: {run_id}\n  Stored in: .last_run_id\n{'=' * 60}")
         if passed < total:
             raise AssertionError(f"Seed verification failed: {passed}/{total}")
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the seed-and-trigger scenario."""
-    return SeedTriggerVerifier(context).run()

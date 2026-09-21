@@ -11,6 +11,7 @@ import type {
   RunFilters,
   RunMetrics,
   RunTrace,
+  SkillDefinition,
   TaskRun,
   NotificationChannel,
   NotificationDelivery,
@@ -73,13 +74,18 @@ export interface KnowledgeRepository {
 
 export interface AgentRepository {
   list(namespace: string, signal?: AbortSignal): Promise<Agent[]>
-  save(namespace: string, agent: Agent, isNew: boolean): Promise<Agent>
+  save(namespace: string, agent: Agent, isNew: boolean, originalName?: string): Promise<Agent>
   remove(namespace: string, name: string): Promise<void>
 }
 
 export interface McpRepository {
   list(namespace: string, signal?: AbortSignal): Promise<McpServer[]>
-  save(namespace: string, item: McpServer, isNew: boolean): Promise<McpServer>
+  save(
+    namespace: string,
+    item: McpServer,
+    isNew: boolean,
+    originalName?: string,
+  ): Promise<McpServer>
   remove(namespace: string, name: string): Promise<void>
 }
 
@@ -100,6 +106,23 @@ export interface RuntimeSkillRepository {
   list(namespace: string, signal?: AbortSignal): Promise<Flow[]>
   save(namespace: string, skill: Flow, isNew: boolean): Promise<Flow>
   remove(namespace: string, id: string): Promise<void>
+}
+
+export interface SkillRepository {
+  list(namespace: string, signal?: AbortSignal): Promise<SkillDefinition[]>
+  save(
+    namespace: string,
+    item: SkillDefinition,
+    isNew: boolean,
+    originalName?: string,
+  ): Promise<SkillDefinition>
+  upload(
+    namespace: string,
+    name: string,
+    kind: 'assets' | 'scripts',
+    file: File,
+  ): Promise<SkillDefinition>
+  remove(namespace: string, name: string): Promise<void>
 }
 
 export interface RuntimeConfigRepository {
@@ -133,5 +156,6 @@ export interface Repositories {
   llms: LlmRepository
   notifications: NotificationRepository
   runtimeSkills: RuntimeSkillRepository
+  skills: SkillRepository
   runtimeConfig: RuntimeConfigRepository
 }

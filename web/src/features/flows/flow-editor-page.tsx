@@ -410,7 +410,7 @@ function FlowEditor() {
             <ArrowLeft size={18} />
           </IconButton>
           <div>
-            <span className="editor-header__eyebrow">
+            <span className="editor-header__eyebrow" data-testid="flow-version">
               {isNew
                 ? t('flows.newEyebrow')
                 : t('flows.flowVersion', { version: flow.version ?? 1 })}
@@ -418,7 +418,7 @@ function FlowEditor() {
             <h1>{flow.id || t('flows.editor')}</h1>
           </div>
           {dirty && (
-            <span className="dirty-indicator">
+            <span className="dirty-indicator" data-testid="flow-unsaved">
               <span />
               {t('flows.unsaved')}
             </span>
@@ -442,7 +442,7 @@ function FlowEditor() {
             <Braces size={15} />
             {t('flows.preview')}
           </Button>
-          <Button onClick={saveFlow} disabled={save.isPending}>
+          <Button data-testid="flow-editor-save" onClick={saveFlow} disabled={save.isPending}>
             <Save size={15} />
             {t('common.save')}
           </Button>
@@ -471,6 +471,7 @@ function FlowEditor() {
                     type="button"
                     draggable
                     key={kind}
+                    data-testid={`flow-node-add-${kind}`}
                     onDragStart={(event) => {
                       event.dataTransfer.setData('application/flowgent-node', kind)
                       event.dataTransfer.effectAllowed = 'move'
@@ -685,6 +686,7 @@ function FlowInspector({
       <label>
         <span>{t('flows.flowId')}</span>
         <input
+          data-testid="flow-id"
           value={flow.id}
           disabled={existing}
           maxLength={RESOURCE_NAME_MAX_LENGTH}
@@ -697,6 +699,7 @@ function FlowInspector({
       <label>
         <span>{t('flows.summary')}</span>
         <input
+          data-testid="flow-summary"
           value={flow.summary ?? ''}
           disabled={existing}
           onChange={(event) => onChange({ summary: event.target.value })}
@@ -705,6 +708,7 @@ function FlowInspector({
       <label>
         <span>{t('common.description')}</span>
         <textarea
+          data-testid="flow-description"
           rows={5}
           value={flow.description ?? ''}
           onChange={(event) => onChange({ description: event.target.value })}
@@ -713,6 +717,7 @@ function FlowInspector({
       <label>
         <span>{t('flows.runtimeMode', { defaultValue: 'Runtime mode' })}</span>
         <select
+          data-testid="flow-runtime-mode"
           value={flow.runtime_mode}
           onChange={(event) => {
             const runtimeMode = event.target.value as Flow['runtime_mode']
@@ -825,6 +830,7 @@ function NodeInspector({
       <label>
         <span>{t('flows.nodeId')}</span>
         <input
+          data-testid="flow-node-id"
           value={node.id}
           onChange={(event) => onChange({ id: event.target.value.replace(/[^a-zA-Z0-9-_]/g, '') })}
         />
@@ -884,6 +890,7 @@ function NodeInspector({
           <label>
             <span>{t('flows.script')}</span>
             <textarea
+              data-testid="flow-node-script"
               className="code-input"
               rows={8}
               value={node.script ?? ''}

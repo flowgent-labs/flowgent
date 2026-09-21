@@ -20,6 +20,8 @@ import { manifestToLlm } from '../resources/manifest'
 
 const blankLlm = (): LlmProvider => ({
   id: '',
+  name: '',
+  type: 'openai',
   provider: '',
   enabled: true,
   endpoint: '',
@@ -59,7 +61,7 @@ export function LlmsPage() {
   const rows = useMemo(
     () =>
       query.data?.filter((item) =>
-        `${item.provider} ${item.endpoint} ${item.defaultModel}`
+        `${item.name} ${item.type} ${item.endpoint} ${item.defaultModel}`
           .toLowerCase()
           .includes(search.toLowerCase()),
       ) ?? [],
@@ -83,7 +85,7 @@ export function LlmsPage() {
                 }
               }}
             />
-            <Button onClick={() => setSelected(blankLlm())}>
+            <Button data-testid="llm-create" onClick={() => setSelected(blankLlm())}>
               <Plus size={16} />
               {t('llms.new')}
             </Button>
@@ -114,7 +116,11 @@ export function LlmsPage() {
       ) : (
         <div className="integration-grid">
           {rows.map((item) => (
-            <article className="integration-card llm-card" key={item.id}>
+            <article
+              className="integration-card llm-card"
+              data-testid={`llm-card-${item.name || item.id}`}
+              key={item.id}
+            >
               <header>
                 <span className="resource-card__icon resource-card__icon--purple">
                   <BrainCircuit size={20} />
@@ -122,10 +128,10 @@ export function LlmsPage() {
                 <StatusBadge status={item.enabled ? 'ACTIVE' : 'INACTIVE'} />
               </header>
               <button type="button" onClick={() => setSelected(structuredClone(item))}>
-                <h2>{item.provider}</h2>
+                <h2>{item.name || item.provider}</h2>
                 <p>
                   <Sparkles size={14} />
-                  {item.defaultModel}
+                  {item.type} · {item.defaultModel}
                 </p>
                 <dl>
                   <div>
@@ -152,6 +158,7 @@ export function LlmsPage() {
               <footer>
                 <code>{endpointHostname(item.endpoint)}</code>
                 <IconButton
+                  data-testid={`llm-delete-${item.name || item.id}`}
                   label={t('common.delete')}
                   onClick={() => {
                     if (window.confirm(t('common.confirmDelete'))) remove.mutate(item.id)
@@ -197,9 +204,9 @@ function LlmDrawer({
   const current = draft
   const update = (updates: Partial<LlmProvider>) => current && setDraft({ ...current, ...updates })
   const submit = () => {
-    if (!current?.provider || !current.endpoint || !current.defaultModel) return
+    if (!current?.name || !current.endpoint || !current.defaultModel) return
     try {
-      onSave({ ...current, models: JSON.parse(models) }, !current.id)
+      onSave({ ...current, provider: current.name, models: JSON.parse(models) }, !current.id)
     } catch {
       window.alert(t('errors.invalidJson'))
     }
@@ -207,14 +214,18 @@ function LlmDrawer({
   return (
     <Drawer
       open={Boolean(value)}
-      title={current?.id ? current.provider : t('llms.new')}
+      title={current?.id ? current.name || current.provider : t('llms.new')}
       onClose={onClose}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button disabled={saving || !current?.provider || !current.endpoint} onClick={submit}>
+          <Button
+            data-testid="llm-save"
+            disabled={saving || !current?.name || !current.endpoint}
+            onClick={submit}
+          >
             {t('common.save')}
           </Button>
         </>
@@ -227,15 +238,30 @@ function LlmDrawer({
           <span>{t('llms.secretNotice')}</span>
         </div>
         <label className="field">
-          <span className="field__label">{t('llms.provider')}</span>
+          <span className="field__label">{t('common.name')}</span>
           <input
-            value={current?.provider ?? ''}
-            onChange={(event) => update({ provider: event.target.value })}
+            data-testid="llm-name"
+            pattern="[a-zA-Z0-9_-]+"
+            value={current?.name ?? ''}
+            onChange={(event) => update({ name: event.target.value })}
           />
+        </label>
+        <label className="field">
+          <span className="field__label">{t('llms.type')}</span>
+          <select
+            data-testid="llm-type"
+            value={current?.type ?? 'openai'}
+            onChange={(event) => update({ type: event.target.value as LlmProvider['type'] })}
+          >
+            <option value="openai">OpenAI-compatible</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Gemini</option>
+          </select>
         </label>
         <label className="field">
           <span className="field__label">{t('llms.endpoint')}</span>
           <input
+            data-testid="llm-endpoint"
             type="url"
             value={current?.endpoint ?? ''}
             onChange={(event) => update({ endpoint: event.target.value })}
@@ -244,6 +270,7 @@ function LlmDrawer({
         <label className="field">
           <span className="field__label">{t('llms.defaultModel')}</span>
           <input
+            data-testid="llm-default-model"
             value={current?.defaultModel ?? ''}
             onChange={(event) => update({ defaultModel: event.target.value })}
           />
@@ -258,6 +285,10 @@ function LlmDrawer({
           />
           <span className="field__hint">{t('llms.environmentReferenceHint')}</span>
         </label>
+        <EnvReferences
+          value={current?.env_refs ?? {}}
+          onChange={(env_refs) => update({ env_refs })}
+        />
         <div className="form-grid">
           <label className="field">
             <span className="field__label">{t('llms.rateLimit')}</span>
@@ -307,6 +338,38 @@ function capabilities(provider: LlmProvider) {
     if (model.thinking) result.add('thinking')
   })
   return [...result]
+}
+
+function EnvReferences({
+  value,
+  onChange,
+}: {
+  value: Record<string, string>
+  onChange: (value: Record<string, string>) => void
+}) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState(() => JSON.stringify(value, null, 2))
+  return (
+    <label className="field">
+      <span className="field__label">{t('skills.environment')} (JSON)</span>
+      <textarea
+        data-testid="llm-env-refs"
+        className="code-input"
+        rows={5}
+        value={draft}
+        onChange={(event) => {
+          const next = event.target.value
+          setDraft(next)
+          try {
+            onChange(JSON.parse(next) as Record<string, string>)
+          } catch {
+            // Do not overwrite the last valid value while the JSON is edited.
+          }
+        }}
+      />
+      <span className="field__hint">{t('llms.environmentReferenceHint')}</span>
+    </label>
+  )
 }
 
 function endpointHostname(endpoint: string) {

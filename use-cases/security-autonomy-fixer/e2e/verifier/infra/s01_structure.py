@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from common.config import E2E_DIR, SCENARIOS
-from common.model import RunContext, VerificationResult
+from common.model import VerificationResult
 from verifier import BaseVerifier
 
 
@@ -39,12 +39,18 @@ class E2EStructureVerifier(BaseVerifier):
             "deploy/sonarqube/__init__.py",
             "deploy/docker/compose.yml",
             "config/envoy/envoy.yaml",
+            "verifier/web/browser.py",
+            "verifier/web/s41_flow_crud.py",
+            "verifier/web/s42_agent_crud.py",
+            "verifier/web/s43_skill_crud.py",
+            "verifier/web/s44_integrations_crud.py",
+            "verifier/web/s45_knowledge_notifications.py",
         )
         for relative in required:
             if not (E2E_DIR / relative).is_file():
                 raise AssertionError(f"missing deployer layer: {relative}")
         fixture = self._class(
-            self._tree(E2E_DIR / "verifier/agentflow/support.py"),
+            self._tree(E2E_DIR / "common/agentflow.py"),
             "SecurityAutonomyFixture",
         )
         fixture_api = {
@@ -93,27 +99,26 @@ class E2EStructureVerifier(BaseVerifier):
                 raise AssertionError(f"{class_name} misses topology lifecycle methods: {sorted(missing)}")
 
     def _verify_verifiers(self) -> None:
-        scenario_paths = {
-            E2E_DIR / f"{module_name.replace('.', '/')}.py"
-            for _, module_name in SCENARIOS.values()
-        }
         procedural_modules = []
         for path in sorted(E2E_DIR.rglob("*.py")):
+            # The browser suite has an isolated virtual environment below the
+            # E2E root. Its third-party implementation files are not verifier
+            # modules and must not participate in the source-structure audit.
+            if ".venv" in path.relative_to(E2E_DIR).parts:
+                continue
             tree = self._tree(path)
             functions = [
                 node.name
                 for node in tree.body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-            allowed_functions = ["verifier"] if path in scenario_paths else []
-            unexpected_functions = [name for name in functions if name not in allowed_functions]
-            if unexpected_functions:
+            if functions:
                 procedural_modules.append(
-                    f"{path.relative_to(E2E_DIR)}: {', '.join(unexpected_functions)}"
+                    f"{path.relative_to(E2E_DIR)}: {', '.join(functions)}"
                 )
         if procedural_modules:
             raise AssertionError(
-                "only scenario verifier(context) entrypoints may be procedural; found: "
+                "all E2E module behavior must be class-owned; procedural functions found: "
                 + "; ".join(procedural_modules)
             )
         for scenario_id, (_, module_name) in SCENARIOS.items():
@@ -129,9 +134,17 @@ class E2EStructureVerifier(BaseVerifier):
                 raise AssertionError(
                     f"scenario {scenario_id} must declare exactly one XxxVerifier(BaseVerifier): {path}"
                 )
-            legacy_classes = [node.name for node in classes if node.name.endswith("Checks")]
+            if len(classes) != 1:
+                raise AssertionError(
+                    f"scenario {scenario_id} must not retain helper or wrapper classes: {path}"
+                )
+            legacy_classes = [
+                node.name
+                for node in classes
+                if node.name.endswith(("Checks", "Operations"))
+            ]
             if legacy_classes:
-                raise AssertionError(f"scenario {scenario_id} retains legacy Checks classes: {legacy_classes}")
+                raise AssertionError(f"scenario {scenario_id} retains legacy class names: {legacy_classes}")
             methods = {
                 method.name
                 for method in verifier_classes[0].body
@@ -141,8 +154,6 @@ class E2EStructureVerifier(BaseVerifier):
                 raise AssertionError(
                     f"scenario {scenario_id} must keep its execution boundary inside its Verifier class: {path}"
                 )
-            if "verify" in methods:
-                raise AssertionError(f"scenario {scenario_id} must use verifier(context), not {verifier_classes[0].name}.verify(context)")
             legacy_entry = any(
                 isinstance(node, ast.Assign)
                 and any(
@@ -153,13 +164,6 @@ class E2EStructureVerifier(BaseVerifier):
             )
             if legacy_entry:
                 raise AssertionError(f"scenario {scenario_id} retains legacy VERIFIER_CLASS entry: {path}")
-            entries = [
-                node
-                for node in tree.body
-                if isinstance(node, ast.FunctionDef) and node.name == "verifier"
-            ]
-            if len(entries) != 1 or len(entries[0].args.args) != 1:
-                raise AssertionError(f"scenario {scenario_id} must export exactly verifier(context): {path}")
 
     def _verify_parity(self) -> None:
         compose_path = E2E_DIR / "deploy/docker/compose.yml"
@@ -233,7 +237,6 @@ class E2EStructureVerifier(BaseVerifier):
             "verifier/agentflow/base.py",
             "verifier/core/base.py",
             "verifier/infra/base.py",
-            "verifier/web",
         )
         existing = [relative for relative in forbidden if (E2E_DIR / relative).exists()]
         if existing:
@@ -257,7 +260,3 @@ class E2EStructureVerifier(BaseVerifier):
         if isinstance(node, ast.Attribute):
             return f"{cls._name(node.value)}.{node.attr}"
         return ""
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the E2E structure scenario."""
-    return E2EStructureVerifier(context).run()

@@ -10,6 +10,7 @@ import {
   HttpMcpRepository,
   HttpNotificationRepository,
   HttpRunRepository,
+  HttpSkillRepository,
   HttpRuntimeSkillRepository,
   HttpTraceRepository,
 } from './http-repositories'
@@ -27,6 +28,7 @@ export function createRepositories(): Repositories {
     llms: new HttpLlmRepository(api),
     notifications: new HttpNotificationRepository(api),
     runtimeSkills: new HttpRuntimeSkillRepository(api),
+    skills: new HttpSkillRepository(api),
     runtimeConfig: new HttpRuntimeConfigRepository(api),
   }
 }

@@ -1,18 +1,21 @@
 """Scenario 34 — Delivery & Report: branch/commit/PR creation, SonarQube re-scan, compare, report, PG final."""
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import requests
 from common import project as common_api
 import sys
 import os
 import json
 
-from verifier.agentflow.support import SecurityAutonomyFixture as c
+from common.agentflow import SecurityAutonomyFixture as c
 from common.project import RUN_ID_PATH
 
 COMPLETED_SET = c.COMPLETED_STATUSES
 
-class DeliveryReportOperations:
+class DeliveryReportVerifier(BaseVerifier):
     """Class-owned operations for s34 delivery report."""
 
     @staticmethod
@@ -21,7 +24,7 @@ class DeliveryReportOperations:
 
     @staticmethod
     def _tool_task_ok(task, node_id):
-        if not task or not DeliveryReportOperations._is_completed(task.get("status", "")):
+        if not task or not DeliveryReportVerifier._is_completed(task.get("status", "")):
             return False
         output = task.get("output") or {}
         parsed = c.parse_output(task)
@@ -47,7 +50,7 @@ class DeliveryReportOperations:
 
         for node_id in ["check-existing-pr", "pr-exists"]:
             task = c.node_task(tasks_by_node, node_id)
-            if task and DeliveryReportOperations._is_completed(task.get("status", "")):
+            if task and DeliveryReportVerifier._is_completed(task.get("status", "")):
                 passed += 1
                 print(f"  OK {node_id}: {task.get('status')}")
             else:
@@ -64,9 +67,9 @@ class DeliveryReportOperations:
             failed = []
             for node_id in node_ids:
                 task = c.node_task(tasks_by_node, node_id)
-                if DeliveryReportOperations._tool_task_ok(task, node_id):
+                if DeliveryReportVerifier._tool_task_ok(task, node_id):
                     completed.append(node_id)
-                elif task and DeliveryReportOperations._is_completed(task.get("status", "")):
+                elif task and DeliveryReportVerifier._is_completed(task.get("status", "")):
                     failed.append(node_id)
             print(f"  Branch {branch_name}: completed={completed}/{node_ids}")
             if failed:
@@ -89,7 +92,7 @@ class DeliveryReportOperations:
 
         for node_id in rescan_nodes:
             task = c.node_task(tasks_by_node, node_id)
-            if task and DeliveryReportOperations._is_completed(task.get("status", "")):
+            if task and DeliveryReportVerifier._is_completed(task.get("status", "")):
                 passed += 1
                 output = c.parse_output(task)
                 extra = ""
@@ -112,7 +115,7 @@ class DeliveryReportOperations:
         total = 3
 
         summary = c.node_task(tasks_by_node, "summary-report")
-        if summary and DeliveryReportOperations._is_completed(summary.get("status", "")):
+        if summary and DeliveryReportVerifier._is_completed(summary.get("status", "")):
             output = c.parse_output(summary)
             report = output.get("report") or output.get("summary") or str(output)[:100]
             if isinstance(report, str) and len(report) > 20:
@@ -127,7 +130,7 @@ class DeliveryReportOperations:
 
         for node_id in ["notify-pr", "end"]:
             task = c.node_task(tasks_by_node, node_id)
-            if task and DeliveryReportOperations._is_completed(task.get("status", "")):
+            if task and DeliveryReportVerifier._is_completed(task.get("status", "")):
                 print(f"  OK {node_id}: {task.get('status')}")
                 passed += 1
             else:
@@ -161,7 +164,7 @@ class DeliveryReportOperations:
             )
             rows = cur.fetchall()
             if rows:
-                completed = [r for r in rows if DeliveryReportOperations._is_completed(r[1])]
+                completed = [r for r in rows if DeliveryReportVerifier._is_completed(r[1])]
                 if completed:
                     print(f"  OK {phase_name:<12}: {len(completed)} completed task(s)")
                     passed += 1
@@ -204,10 +207,10 @@ class DeliveryReportOperations:
         conn = c.pg_connect()
 
         results = []
-        results.append(("CommitPR", *DeliveryReportOperations.verify_commit_pr(tbn)))
-        results.append(("Rescan", *DeliveryReportOperations.verify_rescan(tbn)))
-        results.append(("Report", *DeliveryReportOperations.verify_report(tbn)))
-        results.append(("PG Final", *DeliveryReportOperations.verify_pg_final(conn, run_id)))
+        results.append(("CommitPR", *DeliveryReportVerifier.verify_commit_pr(tbn)))
+        results.append(("Rescan", *DeliveryReportVerifier.verify_rescan(tbn)))
+        results.append(("Report", *DeliveryReportVerifier.verify_report(tbn)))
+        results.append(("PG Final", *DeliveryReportVerifier.verify_pg_final(conn, run_id)))
 
         print("\n-- [34 MQTT Audit] Sandbox result and final execution callbacks --")
         c.assert_runtime_execution_evidence(
@@ -242,6 +245,16 @@ class DeliveryReportOperations:
         if passed_checks < total_checks:
             raise AssertionError(f"Delivery/Report failed: {passed_checks}/{total_checks}")
 
+    scenario_id = "34"
+    title = "E2E Fixer — Delivery & Report"
+
+    def run(self) -> VerificationResult:
+        return self.execute(lambda: self.step("verify PR delivery, rescan, final report, and persistence", self._verify_execution))
+
+    @staticmethod
+    def _verify_execution() -> None:
+        DeliveryReportVerifier._verify_scenario()
+
 
 
 
@@ -262,24 +275,3 @@ class DeliveryReportOperations:
 
 
 # ── Orchestration ──
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class DeliveryReportVerifier(BaseVerifier):
-    scenario_id = "34"
-    title = "E2E Fixer — Delivery & Report"
-
-    def run(self) -> VerificationResult:
-        return self.execute(lambda: self.step("verify PR delivery, rescan, final report, and persistence", self._verify_execution))
-
-    @staticmethod
-    def _verify_execution() -> None:
-        DeliveryReportOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the delivery-and-report scenario."""
-    return DeliveryReportVerifier(context).run()

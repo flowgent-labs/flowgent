@@ -39,3 +39,4 @@ __pycache__/
 # E2E verification reports (archived directories are gitignored)
 use-cases/*/e2e/reports/*
 use-cases/*/e2e/.last_*
+use-cases/*/e2e/.venv/

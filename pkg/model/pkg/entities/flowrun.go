@@ -43,22 +43,24 @@ type FlowRunInfo struct {
 // Buckets are ordered, gap-filled UTC windows so clients never aggregate a
 // truncated Run page or guess missing intervals.
 type RunMetrics struct {
-	Total       int64             `json:"total"`
-	Running     int64             `json:"running"`
-	Completed   int64             `json:"completed"`
-	Failed      int64             `json:"failed"`
-	Cancelled   int64             `json:"cancelled"`
-	SuccessRate float64           `json:"success_rate"`
-	FailureRate float64           `json:"failure_rate"`
-	Buckets     []RunMetricBucket `json:"buckets"`
+	Total             int64             `json:"total"`
+	Running           int64             `json:"running"`
+	Completed         int64             `json:"completed"`
+	Failed            int64             `json:"failed"`
+	Cancelled         int64             `json:"cancelled"`
+	SuccessRate       float64           `json:"success_rate"`
+	FailureRate       float64           `json:"failure_rate"`
+	AverageDurationMs int64             `json:"average_duration_ms"`
+	Buckets           []RunMetricBucket `json:"buckets"`
 }
 
 type RunMetricBucket struct {
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time"`
-	Running   int64     `json:"running"`
-	Completed int64     `json:"completed"`
-	Failed    int64     `json:"failed"`
+	StartTime         time.Time `json:"start_time"`
+	EndTime           time.Time `json:"end_time"`
+	Running           int64     `json:"running"`
+	Completed         int64     `json:"completed"`
+	Failed            int64     `json:"failed"`
+	AverageDurationMs int64     `json:"average_duration_ms"`
 }
 
 // RunLifecycleUpdate is the narrow JobMaster-owned persistence contract for a

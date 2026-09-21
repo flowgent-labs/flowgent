@@ -203,7 +203,9 @@ export interface Agent extends BaseEntity {
   model: string
   soul: string
   instruction: string
+  input_schema?: Record<string, unknown>
   output_schema?: Record<string, unknown>
+  version: number
   temperature?: number
   max_tokens?: number
   labels?: Record<string, string>
@@ -242,6 +244,8 @@ export interface LlmModel {
 }
 
 export interface LlmProvider extends BaseEntity {
+  name: string
+  type: 'openai' | 'anthropic' | 'gemini'
   provider: string
   enabled: boolean
   timeout?: string
@@ -253,7 +257,26 @@ export interface LlmProvider extends BaseEntity {
   models: LlmModel[]
   api_key_env?: string
   key_configured?: boolean
+  env_refs?: Record<string, string>
   labels?: Record<string, string>
+}
+
+export interface SkillFile {
+  name: string
+  content_type: string
+  size: number
+}
+
+export interface SkillDefinition extends BaseEntity {
+  name: string
+  instruction: string
+  model?: string
+  temperature?: number
+  max_tokens?: number
+  tools?: string[]
+  version: number
+  assets: SkillFile[]
+  scripts: SkillFile[]
 }
 
 export type NotificationProvider = 'telegram' | 'dingtalk' | 'slack' | 'email' | 'webhook'
@@ -290,11 +313,13 @@ export interface RunMetrics {
   cancelled: number
   success_rate: number
   failure_rate: number
+  average_duration_ms: number
   buckets: Array<{
     start_time: string
     end_time: string
     running: number
     completed: number
     failed: number
+    average_duration_ms: number
   }>
 }

@@ -113,6 +113,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	healthHandler := &handler.HealthHandler{}
 	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, runtimeSessionNamespace(cfg), mqttPub)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
+	skillHandler := handler.NewSkillHandler(storeImpl)
 	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
 	runHandler := handler.NewFlowRunHandler(storeImpl, payloadProvider, mqttPub, logger)
 	notifHandler, err := handler.NewNotifierHandler(storeImpl, cfg.Notifier, mqttPub, logger)
@@ -144,7 +145,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Routes ──
-	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
+	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler, skillHandler,
 		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, flowReleaseHandler, runtimeConfigHandler)
 	adapter, err := authz.NewAdapter(cfg.AuthGuardAdapter)
 	if err != nil {

@@ -1,5 +1,7 @@
 .app-shell {
   min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 .brand-mark {
   position: relative;
@@ -43,13 +45,28 @@
   top: 0;
   z-index: 20;
   display: flex;
-  height: var(--topbar-height);
-  align-items: center;
-  gap: 20px;
-  padding: 0 clamp(16px, 3vw, 32px);
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+  height: 100vh;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 22px;
+  padding: 24px 14px 16px;
+  border-right: 1px solid var(--border);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-elevated) 96%, transparent),
+      var(--bg-elevated)
+    ),
+    radial-gradient(circle at 8% 0%, var(--primary-soft), transparent 34%);
   backdrop-filter: blur(16px);
+}
+.topbar::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  content: '';
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  opacity: 0.72;
 }
 .topbar__brand {
   display: flex;
@@ -59,17 +76,18 @@
 }
 .global-nav {
   display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-  overflow-x: auto;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
 }
 .global-nav a {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 10px;
+  padding: 10px 11px;
   color: var(--muted);
   border-radius: 7px;
   font-size: 12px;
@@ -79,16 +97,18 @@
 .global-nav a:hover,
 .global-nav a.active {
   color: var(--text);
-  background: var(--surface-2);
+  background: linear-gradient(90deg, var(--primary-soft), var(--surface-2));
+  box-shadow: inset 2px 0 var(--primary);
 }
 .account {
   position: relative;
-  height: 100%;
+  margin-top: auto;
   display: flex;
   align-items: center;
 }
 .account__button {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: 9px;
   padding: 5px 8px 5px 5px;
@@ -133,8 +153,8 @@
 }
 .account-menu {
   position: absolute;
-  top: 57px;
-  right: 0;
+  right: -8px;
+  bottom: 48px;
   z-index: 40;
   width: 310px;
   padding: 9px;
@@ -227,7 +247,7 @@
 }
 .page {
   width: min(100%, 1580px);
-  margin: 0 auto;
+  margin: 0;
   padding: 32px clamp(20px, 3vw, 44px) 60px;
 }
 .page-stack {
@@ -241,8 +261,19 @@
   background: none;
 }
 @media (max-width: 900px) {
+  .app-shell {
+    display: block;
+  }
   .topbar {
+    position: sticky;
     padding: 0 16px;
+    height: var(--topbar-height);
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
   }
   .global-nav {
     position: absolute;
@@ -276,6 +307,17 @@
   }
   .page {
     padding: 24px 16px 48px;
+  }
+  .account {
+    margin-top: 0;
+  }
+  .account__button {
+    width: auto;
+  }
+  .account-menu {
+    top: 57px;
+    right: 0;
+    bottom: auto;
   }
 }
 @media (max-width: 560px) {

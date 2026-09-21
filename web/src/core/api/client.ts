@@ -20,12 +20,13 @@ export class ApiClient {
   constructor(private readonly baseUrl = import.meta.env.VITE_API_BASE_URL ?? '') {}
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       credentials: init.credentials ?? 'same-origin',
       headers: {
         Accept: 'application/json',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
         ...init.headers,
       },
     })

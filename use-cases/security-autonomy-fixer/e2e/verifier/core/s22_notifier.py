@@ -1,6 +1,9 @@
 """Scenario 22 — encrypted notification CRUD and real MQTT→HTTP delivery."""
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import base64
 import json
 import os
@@ -23,7 +26,7 @@ CHANNEL_NAME = "security-autonomy-alerts"
 RECEIVER = f"{config.RESOURCE_PREFIX}-webhook"
 
 
-class NotifierOperations:
+class NotifierVerifier(BaseVerifier):
     """Class-owned operations for s22 notifier."""
 
     @staticmethod
@@ -128,7 +131,7 @@ class NotifierOperations:
 
         def on_message(_client, _userdata, message):
             try:
-                received.append(NotifierOperations._decode_delivery(message.payload))
+                received.append(NotifierVerifier._decode_delivery(message.payload))
             except Exception as exc:  # keep a diagnostic without printing payload/secrets
                 received.append({"status": "DECODE_FAILED", "error": str(exc)})
 
@@ -166,23 +169,12 @@ class NotifierOperations:
             raise AssertionError(f"real notification delivery failed: {result.get('error', 'unknown')}")
         print("  ✓ Notifier decrypted the DB secret and emitted DELIVERED")
 
-        receipts = NotifierOperations._receiver_receipts()
+        receipts = NotifierVerifier._receiver_receipts()
         if int(receipts.get("authorized_count", 0)) < 1:
             raise AssertionError("authenticated webhook receiver has no accepted delivery")
         print("  ✓ Authenticated HTTP receiver accepted the real webhook")
         print("\n  ✓ All encrypted Notifier checks passed")
 
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class NotifierVerifier(BaseVerifier):
     scenario_id = "22"
     title = "Notifier — Multi-Channel Delivery"
 
@@ -191,8 +183,4 @@ class NotifierVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_delivery() -> None:
-        NotifierOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the notifier scenario."""
-    return NotifierVerifier(context).run()
+        NotifierVerifier._verify_scenario()

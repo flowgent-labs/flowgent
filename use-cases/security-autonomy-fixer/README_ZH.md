@@ -67,7 +67,9 @@ security-autonomy-fixer/
 │   │   ├── notifiers/             # 投递 Channel 定义
 │   │   └── envoy/                 # Envoy 边缘代理声明配置
 │   ├── common/
-│   │   └── project.py              # Flowgent API、数据库、状态与验证编排
+│   │   ├── agentflow.py            # 共享 Flow fixture 与 MQTT 证据操作
+│   │   ├── mqtt.py                 # 可复用的生命周期与 InterMessage 探针
+│   │   └── project.py              # Flowgent API、数据库、状态与 verifier 编排
 │   ├── deploy/
 │   │   ├── __init__.py             # BaseDeployer 与后端工厂
 │   │   ├── base/                   # Kubernetes 与 Docker Compose 后端实现
@@ -268,10 +270,21 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 统一 runner 会构建 Flowgent 镜像，通过根 Helm Chart 或功能等价的 Compose
 拓扑部署 AuthGuard/Envoy，导入 `e2e/config`，并验证基础设施、LDAP Principal 发现、
 GitHub OAuth、边缘 allow/deny 策略、Telemetry、API Server、Notifier、Controller、
-MQTT、A2A、修复、PR 交付、Knowledge 与共享 Workspace。常用模式：
+MQTT、A2A、修复、PR 交付、Knowledge、共享 Workspace，以及通过已发布 Web UI
+完成 sandbox Flow 的真实 Chromium 创建、执行、更新与删除。CI 外执行浏览器场景前，
+请安装 E2E 依赖和 Chromium：
+
+```bash
+python3 -m venv use-cases/security-autonomy-fixer/e2e/.venv
+use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m pip install -r use-cases/security-autonomy-fixer/e2e/requirements.txt
+use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m playwright install chromium
+```
+
+常用模式：
 
 ```bash
 E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
+E2E_ARGS="--scenario 41 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
 python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
 E2E_ARGS="--clean-after-run" make e2e-security-autonomy-fixer-with-helm
 make e2e-security-autonomy-fixer-with-docker

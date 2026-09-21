@@ -59,14 +59,14 @@ func (s *FlowPostgresStore) Select(ctx context.Context, namespace string, req en
 	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).PostgresWhere(2)
 	countArgs := append([]any{namespace}, scopeArgs...)
 	if err := s.inner.Pool.QueryRow(ctx,
-		"SELECT COUNT(1) FROM orh_agentflow WHERE namespace_id=$1 AND del_flag=false AND ("+scopeWhere+")", countArgs...).Scan(&total); err != nil {
+		"SELECT COUNT(DISTINCT agentflow_id) FROM orh_agentflow WHERE namespace_id=$1 AND del_flag=false AND ("+scopeWhere+")", countArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 	offset := (req.Page - 1) * req.Size
 	limitParameter := len(countArgs) + 1
 	queryArgs := append(countArgs, req.Size, offset)
 	rows, err := s.inner.Pool.Query(ctx,
-		fmt.Sprintf("SELECT %s FROM orh_agentflow WHERE namespace_id=$1 AND del_flag=false AND (%s) ORDER BY created_at DESC LIMIT $%d OFFSET $%d", cols, scopeWhere, limitParameter, limitParameter+1),
+		fmt.Sprintf("SELECT DISTINCT ON (agentflow_id) %s FROM orh_agentflow WHERE namespace_id=$1 AND del_flag=false AND (%s) ORDER BY agentflow_id, version DESC LIMIT $%d OFFSET $%d", cols, scopeWhere, limitParameter, limitParameter+1),
 		queryArgs...)
 	if err != nil {
 		return nil, err
@@ -121,13 +121,29 @@ func (s *FlowPostgresStore) SaveSpec(ctx context.Context, spec *entities.FlowInf
 	if !visible {
 		return storage.ErrFlowgentSqlScopeDenied
 	}
-	_, err = s.inner.Pool.Exec(ctx,
+	tx, err := s.inner.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).PostgresWhere(3)
+	versionArgs := append([]any{spec.Namespace, spec.ID}, scopeArgs...)
+	var nextVersion int64
+	if err := tx.QueryRow(ctx,
+		"SELECT COALESCE(MAX(version), 0) + 1 FROM orh_agentflow WHERE namespace_id=$1 AND agentflow_id=$2 AND ("+scopeWhere+")",
+		versionArgs...).Scan(&nextVersion); err != nil {
+		return err
+	}
+	spec.Version = nextVersion
+	_, err = tx.Exec(ctx,
 		`INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,namespace_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)
-		 ON CONFLICT (namespace_id,agentflow_id,version) DO UPDATE SET
-		   definition=$4,comment=$6,status='ACTIVE',del_flag=false,updated_at=NOW()`,
-		uuid.New().String(), spec.ID, int64(1), b, createdBy, comment, spec.Namespace)
-	return err
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		uuid.New().String(), spec.ID, nextVersion, b, createdBy, comment, spec.Namespace)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *FlowPostgresStore) CreateSpec(ctx context.Context, spec *entities.FlowInfo, createdBy, comment string) error {

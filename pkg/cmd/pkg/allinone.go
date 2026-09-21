@@ -249,6 +249,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 
 	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, "default", mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
+	skillHandler := handler.NewSkillHandler(state.store)
 	humanHandler := handler.NewHumanHandler(state.store, mqttPub, state.logger)
 	runHandler := handler.NewFlowRunHandler(state.store, state.payloads, mqttPub, state.logger)
 	notifHandler, err := handler.NewNotifierHandler(state.store, state.cfg.Notifier, mqttPub, state.logger)
@@ -275,7 +276,7 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 		return nil, nil, fmt.Errorf("runtime configuration secrets: %w", err)
 	}
 	restMux := api.RegisterRESTRoutes(
-		&handler.HealthHandler{}, flowHandler, agentHandler,
+		&handler.HealthHandler{}, flowHandler, agentHandler, skillHandler,
 		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, flowReleaseHandler, runtimeConfigHandler)
 
 	adapter, err := authz.NewAdapter(state.cfg.AuthGuardAdapter)

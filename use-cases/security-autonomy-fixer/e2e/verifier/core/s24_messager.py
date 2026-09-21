@@ -26,23 +26,17 @@ Test Strategy:
 """
 from __future__ import annotations
 
-import sys
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import time
 import json
 import uuid
-import base64
-import requests
-from typing import Dict, Any, Optional, List
+from typing import Dict
 
 from common import config
+from common.mqtt import FlowgentMqttClient
 
-try:
-    import paho.mqtt.client as mqtt
-    MQTT_AVAILABLE = True
-except ImportError:
-    print("ERROR: paho-mqtt required for this scenario")
-    print("Install: pip install paho-mqtt")
-    sys.exit(1)
 
 API_BASE = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
@@ -50,7 +44,7 @@ EMQX_HOST = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 
 
-class MessagerOperations:
+class MessagerVerifier(BaseVerifier):
     """Class-owned operations for s24 messager."""
 
     @staticmethod
@@ -58,7 +52,7 @@ class MessagerOperations:
         return str(uuid.uuid4())[:8]
 
     @staticmethod
-    def test_topic_pair(tester: MQTTTester, name: str, publish_topic: str, 
+    def test_topic_pair(tester: FlowgentMqttClient, name: str, publish_topic: str,
                         subscribe_topic: str, test_payload: Dict) -> bool:
         """Test a single request/response topic pair"""
         print(f"\n    • Testing {name}...")
@@ -93,15 +87,15 @@ class MessagerOperations:
             return False
 
     @staticmethod
-    def test_sandbox_e2e_chain(tester: MQTTTester) -> bool:
+    def test_sandbox_e2e_chain(tester: FlowgentMqttClient) -> bool:
         """Test complete Sandbox execution chain: JM → TM → Sandbox → TM → JM"""
         print(f"\n  → Testing Sandbox E2E Chain...")
     
         namespace = NAMESPACE
-        flow_id = "test-flow-" + MessagerOperations.rand_id()
-        run_id = "run-" + MessagerOperations.rand_id()
-        plan_id = "plan-" + MessagerOperations.rand_id()
-        task_id = "task-" + MessagerOperations.rand_id()
+        flow_id = "test-flow-" + MessagerVerifier.rand_id()
+        run_id = "run-" + MessagerVerifier.rand_id()
+        plan_id = "plan-" + MessagerVerifier.rand_id()
+        task_id = "task-" + MessagerVerifier.rand_id()
         cluster_id = "test-cluster"
     
         try:
@@ -263,13 +257,13 @@ class MessagerOperations:
         print("  Scenario 24: Messager — MQTT Topics + Sandbox Chain")
         print("="*60)
     
-        tester = MQTTTester()
+        tester = FlowgentMqttClient(EMQX_HOST, EMQX_PORT)
         results = {}
     
         namespace = NAMESPACE
-        flow_id = "test-flow-" + MessagerOperations.rand_id()
-        run_id = "run-" + MessagerOperations.rand_id()
-        tm_id = "tm-" + MessagerOperations.rand_id()
+        flow_id = "test-flow-" + MessagerVerifier.rand_id()
+        run_id = "run-" + MessagerVerifier.rand_id()
+        tm_id = "tm-" + MessagerVerifier.rand_id()
         cluster_id = "test-cluster"
 
         # Test topic pairs
@@ -278,13 +272,13 @@ class MessagerOperations:
                 "name": "exec/plans (JM → TM)",
                 "publish": f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
                 "subscribe": "flowgent/v1/+/clusters/+/flows/+/runs/+/exec/plans",
-                "payload": {"plan_id": MessagerOperations.rand_id(), "task_type": "agent", "runtime_cluster_id": cluster_id},
+                "payload": {"plan_id": MessagerVerifier.rand_id(), "task_type": "agent", "runtime_cluster_id": cluster_id},
             },
             {
                 "name": "exec/results (TM → JM, state-only)",
                 "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results",
                 "subscribe": f"flowgent/v1/+/flows/+/runs/+/exec/results",
-                "payload": {"plan_id": MessagerOperations.rand_id(), "node_id": "n1", "state": "COMPLETED"},
+                "payload": {"plan_id": MessagerVerifier.rand_id(), "node_id": "n1", "state": "COMPLETED"},
             },
             {
                 "name": "notify/event (Publisher → Notifier)",
@@ -332,7 +326,7 @@ class MessagerOperations:
     
         print(f"\n  → Testing MQTT Topic Pairs...")
         for test in topic_tests:
-            results[test["name"]] = MessagerOperations.test_topic_pair(
+            results[test["name"]] = MessagerVerifier.test_topic_pair(
                 tester,
                 test["name"],
                 test["publish"],
@@ -341,7 +335,7 @@ class MessagerOperations:
             )
     
         # Test Sandbox E2E chain
-        results["Sandbox E2E Chain"] = MessagerOperations.test_sandbox_e2e_chain(tester)
+        results["Sandbox E2E Chain"] = MessagerVerifier.test_sandbox_e2e_chain(tester)
     
         # Cleanup
         tester.close()
@@ -360,126 +354,6 @@ class MessagerOperations:
     
         print(f"\n  ✓ All Messager tests passed")
 
-
-
-class MQTTTester:
-    """MQTT test client with message collection"""
-    
-    def __init__(self):
-        self.client = mqtt.Client()
-        self.messages = {}  # topic -> [messages]
-        self.client.on_message = self._on_message
-        
-        try:
-            self.client.connect(EMQX_HOST, EMQX_PORT, 60)
-            self.client.loop_start()
-            time.sleep(0.5)  # Wait for connection
-            print(f"  ✓ Connected to MQTT broker: {EMQX_HOST}:{EMQX_PORT}")
-        except Exception as e:
-            raise Exception(f"MQTT connection failed: {e}")
-    
-    def _on_message(self, client, userdata, msg):
-        topic = msg.topic
-        try:
-            envelope = json.loads(msg.payload.decode())
-        except Exception:
-            payload = msg.payload.decode()
-        else:
-            # Decode InterMessage envelope: extract inner JSON payload
-            if isinstance(envelope, dict) and "payload" in envelope:
-                try:
-                    inner = json.loads(base64.b64decode(envelope["payload"]).decode())
-                    envelope = inner
-                except Exception:
-                    pass  # Not base64-encoded JSON — leave as-is
-            payload = envelope
-
-        if topic not in self.messages:
-            self.messages[topic] = []
-
-        self.messages[topic].append({
-            "payload": payload,
-            "timestamp": time.time(),
-        })
-    
-    def subscribe(self, topic: str):
-        """Subscribe to topic"""
-        self.client.subscribe(topic)
-    
-    def publish(self, topic: str, inner_payload: Dict, envelope_id: str = None):
-        """Publish message with InterMessage envelope (base64-encoded inner payload).
-
-        This mirrors the real InterMessage wire format used by all Flowgent
-        components (messager.go InterMessage struct with Payload []byte).
-        """
-        inner_json = json.dumps(inner_payload)
-        envelope = {
-            "id": envelope_id or str(uuid.uuid4())[:8],
-            "payload": base64.b64encode(inner_json.encode()).decode(),
-        }
-        self.client.publish(topic, json.dumps(envelope), qos=1)
-    
-    def wait_for_message(self, topic_filter: str, timeout: int = 5) -> Optional[Dict]:
-        """Wait for message matching topic filter.
-
-        Strips $share/{group}/ prefix before matching because MQTT brokers
-        deliver messages with the actual publish topic, not the subscription
-        topic that includes $share/.
-        """
-        # Normalize: strip $share/{group}/ prefix for matching
-        match_filter = topic_filter
-        if topic_filter.startswith('$share/'):
-            # $share/{group}/rest/of/topic → rest/of/topic
-            parts = topic_filter.split('/', 2)
-            match_filter = parts[2] if len(parts) > 2 else topic_filter
-
-        start = time.time()
-
-        while time.time() - start < timeout:
-            for topic, msgs in self.messages.items():
-                if match_filter in topic or self._topic_matches(match_filter, topic):
-                    if msgs:
-                        msg = msgs.pop(0)
-                        return {"topic": topic, **msg}
-            time.sleep(0.1)
-
-        return None
-    
-    def _topic_matches(self, pattern: str, topic: str) -> bool:
-        """Check if topic matches pattern (supports + wildcard)"""
-        pattern_parts = pattern.split('/')
-        topic_parts = topic.split('/')
-        
-        if len(pattern_parts) != len(topic_parts):
-            return False
-        
-        for p, t in zip(pattern_parts, topic_parts):
-            if p != '+' and p != t:
-                return False
-        
-        return True
-    
-    def clear_messages(self):
-        """Clear message buffer"""
-        self.messages = {}
-    
-    def close(self):
-        """Close connection"""
-        self.client.loop_stop()
-        self.client.disconnect()
-
-
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class MessagerVerifier(BaseVerifier):
     scenario_id = "24"
     title = "Messager — MQTT Topics + Sandbox Chain"
 
@@ -488,8 +362,4 @@ class MessagerVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_mqtt_contract() -> None:
-        MessagerOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the messaging scenario."""
-    return MessagerVerifier(context).run()
+        MessagerVerifier._verify_scenario()

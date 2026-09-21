@@ -1,20 +1,23 @@
 """Scenario 33 — Remediation: fix generation, triple review, committee vote, supervisor gate, human approval."""
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import requests
 from common import project as common_api
 import sys
 import os
 import json
 
-from verifier.agentflow.support import SecurityAutonomyFixture as c
+from common.agentflow import SecurityAutonomyFixture as c
 from common.project import RUN_ID_PATH
 
 COMPLETED_SET = c.COMPLETED_STATUSES
 
 # ── Phase: FIX ──
 
-class RemediationOperations:
+class RemediationVerifier(BaseVerifier):
     """Class-owned operations for s33 remediation."""
 
     @staticmethod
@@ -212,11 +215,11 @@ class RemediationOperations:
         print(f"  {len(tasks)} task(s) fetched, {len(tbn)} unique node(s)")
 
         results = []
-        results.append(("Fix", *RemediationOperations.verify_fix(tbn)))
-        results.append(("Review", *RemediationOperations.verify_review(tbn)))
-        results.append(("Vote", *RemediationOperations.verify_vote(tbn)))
-        results.append(("Supervisor", *RemediationOperations.verify_supervisor(tbn)))
-        results.append(("Gate", *RemediationOperations.verify_condition_human(tbn)))
+        results.append(("Fix", *RemediationVerifier.verify_fix(tbn)))
+        results.append(("Review", *RemediationVerifier.verify_review(tbn)))
+        results.append(("Vote", *RemediationVerifier.verify_vote(tbn)))
+        results.append(("Supervisor", *RemediationVerifier.verify_supervisor(tbn)))
+        results.append(("Gate", *RemediationVerifier.verify_condition_human(tbn)))
 
         print("\n-- [33 MQTT Audit] Slot-worker status and dependency wave order --")
         expected_nodes = ["generate-fixes", "review-security", "review-quality", "review-arch", "committee"]
@@ -235,6 +238,16 @@ class RemediationOperations:
 
         if passed_checks < total_checks:
             raise AssertionError(f"Remediation failed: {passed_checks}/{total_checks}")
+
+    scenario_id = "33"
+    title = "E2E Fixer — Remediation"
+
+    def run(self) -> VerificationResult:
+        return self.execute(lambda: self.step("verify fix, reviews, voting, approval, and MQTT evidence", self._verify_execution))
+
+    @staticmethod
+    def _verify_execution() -> None:
+        RemediationVerifier._verify_scenario()
 
 
 
@@ -255,24 +268,3 @@ class RemediationOperations:
 
 
 # ── Orchestration ──
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class RemediationVerifier(BaseVerifier):
-    scenario_id = "33"
-    title = "E2E Fixer — Remediation"
-
-    def run(self) -> VerificationResult:
-        return self.execute(lambda: self.step("verify fix, reviews, voting, approval, and MQTT evidence", self._verify_execution))
-
-    @staticmethod
-    def _verify_execution() -> None:
-        RemediationOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the remediation scenario."""
-    return RemediationVerifier(context).run()

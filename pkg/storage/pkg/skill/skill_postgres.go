@@ -10,24 +10,26 @@ import (
 
 // SkillPostgresStore wraps storage.PostgresGenericStore[entities.SkillInfo].
 type SkillPostgresStore struct {
-	inner *storage.PostgresGenericStore[entities.SkillInfo]
+	byName *storage.PostgresGenericStore[entities.SkillInfo]
+	byID   *storage.PostgresGenericStore[entities.SkillInfo]
 }
 
 func NewSkillPostgresStore(pool *pgxpool.Pool) *SkillPostgresStore {
 	return &SkillPostgresStore{
-		inner: &storage.PostgresGenericStore[entities.SkillInfo]{Pool: pool, Table: "llm_skill", IDCol: "name"},
+		byName: &storage.PostgresGenericStore[entities.SkillInfo]{Pool: pool, Table: "llm_skill", IDCol: "name"},
+		byID:   &storage.PostgresGenericStore[entities.SkillInfo]{Pool: pool, Table: "llm_skill", IDCol: "id"},
 	}
 }
 
-func (s *SkillPostgresStore) Get(ctx context.Context, name string) (*entities.SkillInfo, error) {
-	return s.inner.Get(ctx, name)
+func (s *SkillPostgresStore) Get(ctx context.Context, namespace, name string) (*entities.SkillInfo, error) {
+	return s.byName.GetScoped(ctx, namespace, name)
 }
-func (s *SkillPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.SkillInfo], error) {
-	return s.inner.Select(ctx, req)
+func (s *SkillPostgresStore) List(ctx context.Context, namespace string, req entities.PageRequest) (*entities.Page[entities.SkillInfo], error) {
+	return s.byID.SelectScoped(ctx, namespace, req)
 }
 func (s *SkillPostgresStore) Save(ctx context.Context, e *entities.SkillInfo) error {
-	return s.inner.Save(ctx, e)
+	return s.byID.Save(ctx, e)
 }
-func (s *SkillPostgresStore) Delete(ctx context.Context, name string) error {
-	return s.inner.Delete(ctx, name)
+func (s *SkillPostgresStore) Delete(ctx context.Context, namespace, name string) error {
+	return s.byName.DeleteScoped(ctx, namespace, name)
 }

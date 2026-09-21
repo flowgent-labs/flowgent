@@ -52,16 +52,21 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if agent.Name == "" {
-		http.Error(w, "agent name is required", http.StatusBadRequest)
+	if !resourceNamePattern.MatchString(agent.Name) {
+		http.Error(w, "name may contain only letters, digits, hyphens, and underscores", http.StatusBadRequest)
 		return
 	}
 	if agent.Namespace != "" && agent.Namespace != namespace {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
+	if existing, err := h.store.Get(r.Context(), namespace, agent.Name); err == nil && existing != nil {
+		http.Error(w, "agent already exists", http.StatusConflict)
+		return
+	}
 	agent.ID = uuid.New().String()
 	agent.Namespace = namespace
+	agent.Version = 1
 	if agent.Status == "" {
 		agent.Status = "ACTIVE"
 	}
@@ -106,10 +111,6 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if updates.Name != "" && updates.Name != name {
-		http.Error(w, "name mismatch", http.StatusBadRequest)
-		return
-	}
 	if updates.Namespace != "" && updates.Namespace != namespace {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
@@ -118,9 +119,22 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "model is required", http.StatusBadRequest)
 		return
 	}
+	if updates.Name == "" {
+		updates.Name = name
+	}
+	if !resourceNamePattern.MatchString(updates.Name) {
+		http.Error(w, "name may contain only letters, digits, hyphens, and underscores", http.StatusBadRequest)
+		return
+	}
+	if updates.Name != name {
+		if duplicate, err := h.store.Get(r.Context(), namespace, updates.Name); err == nil && duplicate != nil {
+			http.Error(w, "agent already exists", http.StatusConflict)
+			return
+		}
+	}
 	updates.ID = existing.ID
-	updates.Name = name
 	updates.Namespace = namespace
+	updates.Version = existing.Version + 1
 	updates.Status = existing.Status
 	updates.CreatedAt = existing.CreatedAt
 	updates.CreatedBy = existing.CreatedBy

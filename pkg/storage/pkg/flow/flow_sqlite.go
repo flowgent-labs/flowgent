@@ -50,13 +50,13 @@ func (s *FlowSQLiteStore) Select(ctx context.Context, namespace string, req enti
 	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).SQLiteWhere()
 	countArgs := append([]any{namespace}, scopeArgs...)
 	if err := s.inner.Conn.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM orh_agentflow WHERE namespace_id=?1 AND del_flag=0 AND ("+scopeWhere+")", countArgs...).Scan(&total); err != nil {
+		"SELECT COUNT(DISTINCT agentflow_id) FROM orh_agentflow WHERE namespace_id=?1 AND del_flag=0 AND ("+scopeWhere+")", countArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 	offset := (req.Page - 1) * req.Size
 	queryArgs := append(countArgs, req.Size, offset)
 	rows, err := s.inner.Conn.QueryContext(ctx,
-		"SELECT "+cols+" FROM orh_agentflow WHERE namespace_id=?1 AND del_flag=0 AND ("+scopeWhere+") ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT "+cols+" FROM (SELECT "+cols+", ROW_NUMBER() OVER (PARTITION BY agentflow_id ORDER BY version DESC) AS version_rank FROM orh_agentflow WHERE namespace_id=?1 AND del_flag=0 AND ("+scopeWhere+")) WHERE version_rank=1 ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		queryArgs...)
 	if err != nil {
 		return nil, err
@@ -103,9 +103,18 @@ func (s *FlowSQLiteStore) SaveSpec(ctx context.Context, spec *entities.FlowInfo,
 	if !visible {
 		return storage.ErrFlowgentSqlScopeDenied
 	}
+	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).SQLiteWhere()
+	versionArgs := append([]any{spec.Namespace, spec.ID}, scopeArgs...)
+	var nextVersion int64
+	if err := s.inner.Conn.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(version), 0) + 1 FROM orh_agentflow WHERE namespace_id=?1 AND agentflow_id=?2 AND ("+scopeWhere+")",
+		versionArgs...).Scan(&nextVersion); err != nil {
+		return err
+	}
+	spec.Version = nextVersion
 	_, err = s.inner.Conn.ExecContext(ctx,
-		"INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,namespace_id) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT (namespace_id,agentflow_id,version) DO UPDATE SET definition=?4,comment=?6,status='ACTIVE',del_flag=0,updated_at=CURRENT_TIMESTAMP",
-		uuid.New().String(), spec.ID, int64(1), b, createdBy, comment, spec.Namespace)
+		"INSERT INTO orh_agentflow (id,agentflow_id,version,definition,created_by,comment,namespace_id) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+		uuid.New().String(), spec.ID, nextVersion, b, createdBy, comment, spec.Namespace)
 	return err
 }
 

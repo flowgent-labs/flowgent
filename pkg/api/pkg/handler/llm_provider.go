@@ -17,6 +17,10 @@ import (
 	"github.com/flowgent-labs/flowgent/storage/pkg/llmprovider"
 )
 
+var supportedLlmTypes = map[string]struct{}{
+	"openai": {}, "anthropic": {}, "gemini": {},
+}
+
 // publicLlmProvider returns the browser-safe resource projection. The API key
 // is persisted only as an env:// reference and is never serialized back to a
 // client. api_key_env is safe configuration metadata, not a credential value.
@@ -31,6 +35,19 @@ func publicLlmProvider(p *entities.LlmProviderInfo) *entities.LlmProviderInfo {
 		result.ApiKeyEnv = envName
 	}
 	result.ApiKey = ""
+	result.EnvRefs = make(map[string]string, len(result.Env))
+	for key, value := range result.Env {
+		if _, ok := secretref.EnvName(value); ok {
+			result.EnvRefs[key] = value
+		}
+	}
+	result.Env = nil
+	if result.Name == "" {
+		result.Name = result.Provider
+	}
+	if result.Type == "" {
+		result.Type = legacyLlmType(result.Provider)
+	}
 	return &result
 }
 
@@ -44,7 +61,49 @@ func normalizeLlmSecret(p *entities.LlmProviderInfo) error {
 		p.ApiKey = normalized
 	}
 	p.ApiKeyEnv = ""
+	if p.EnvRefs != nil {
+		env := make(map[string]string, len(p.EnvRefs))
+		for key, value := range p.EnvRefs {
+			name, ok := secretref.EnvName(strings.TrimSpace(value))
+			if !ok {
+				return fmt.Errorf("environment value %q must be an injected secret reference", key)
+			}
+			env[key] = "${" + name + "}"
+		}
+		p.Env = env
+	}
+	p.EnvRefs = nil
 	return nil
+}
+
+func normalizeLlmIdentity(p *entities.LlmProviderInfo) error {
+	p.Name = strings.TrimSpace(p.Name)
+	if p.Name == "" {
+		p.Name = strings.TrimSpace(p.Provider)
+	}
+	if !resourceNamePattern.MatchString(p.Name) {
+		return fmt.Errorf("name may contain only letters, digits, hyphens, and underscores")
+	}
+	p.Type = strings.ToLower(strings.TrimSpace(p.Type))
+	if p.Type == "" {
+		p.Type = legacyLlmType(p.Provider)
+	}
+	if _, ok := supportedLlmTypes[p.Type]; !ok {
+		return fmt.Errorf("type must be one of openai, anthropic, or gemini")
+	}
+	// The runtime has historically used Provider as a lookup alias. Preserve
+	// that contract while storing the protocol separately in Type.
+	p.Provider = p.Name
+	return nil
+}
+
+func legacyLlmType(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "anthropic", "gemini":
+		return strings.ToLower(strings.TrimSpace(provider))
+	default:
+		return "openai"
+	}
 }
 
 // LlmProviderHandler serves DB-backed LLM provider definitions.
@@ -90,6 +149,18 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if p.Namespace != "" && p.Namespace != namespace {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
+	}
+	if err := normalizeLlmIdentity(&p); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if existing, err := h.store.List(r.Context(), namespace, entities.PageRequest{Page: 1, Size: 1000}); err == nil {
+		for _, item := range existing.Items {
+			if strings.EqualFold(item.Name, p.Name) || (item.Name == "" && strings.EqualFold(item.Provider, p.Name)) {
+				http.Error(w, "LLM provider name already exists", http.StatusConflict)
+				return
+			}
+		}
 	}
 	p.ID = uuid.New().String()
 	p.Namespace = namespace
@@ -162,6 +233,18 @@ func (h *LlmProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if updates.Namespace != "" && updates.Namespace != namespace {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
+	}
+	if err := normalizeLlmIdentity(&updates); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if existingItems, err := h.store.List(r.Context(), namespace, entities.PageRequest{Page: 1, Size: 1000}); err == nil {
+		for _, item := range existingItems.Items {
+			if item.ID != id && (strings.EqualFold(item.Name, updates.Name) || (item.Name == "" && strings.EqualFold(item.Provider, updates.Name))) {
+				http.Error(w, "LLM provider name already exists", http.StatusConflict)
+				return
+			}
+		}
 	}
 	updates.ID = id
 	updates.Namespace = namespace

@@ -1,7 +1,7 @@
 """Scenario 14 — real LDAP, GitHub OAuth, Envoy, and AuthGuard E2E."""
 from __future__ import annotations
 
-from common.model import RunContext, VerificationResult
+from common.model import VerificationResult
 from verifier import BaseVerifier
 
 
@@ -17,7 +17,3 @@ class AuthGuardVerifier(BaseVerifier):
             "verify LDAP federation, GitHub OAuth, Envoy, and resource-level policy",
             self.infrastructure.verify_authguard,
         )
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the AuthGuard scenario."""
-    return AuthGuardVerifier(context).run()

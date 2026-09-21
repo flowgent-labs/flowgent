@@ -77,7 +77,7 @@ export function MemoryPage() {
         title={t('memory.title')}
         description={subtitle}
         actions={
-          <Button onClick={() => setDraft(blankEntry())}>
+          <Button data-testid="memory-create" onClick={() => setDraft(blankEntry())}>
             <Plus size={16} />
             {t('memory.new')}
           </Button>
@@ -119,7 +119,11 @@ export function MemoryPage() {
       ) : (
         <div className="knowledge-grid">
           {rows.map((entry) => (
-            <article className="knowledge-card" key={entry.id}>
+            <article
+              className="knowledge-card"
+              data-testid={`memory-card-${entry.title}`}
+              key={entry.id}
+            >
               <button
                 type="button"
                 className="knowledge-card__main"
@@ -143,6 +147,7 @@ export function MemoryPage() {
                 </div>
               </button>
               <IconButton
+                data-testid={`memory-delete-${entry.title}`}
                 label={t('common.delete')}
                 onClick={() => {
                   if (window.confirm(t('common.confirmDelete'))) remove.mutate(entry.id)
@@ -210,7 +215,11 @@ function KnowledgeDrawer({
           <Button variant="secondary" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button disabled={saving || (!current?.title && !current?.content)} onClick={submit}>
+          <Button
+            data-testid="memory-save"
+            disabled={saving || (!current?.title && !current?.content)}
+            onClick={submit}
+          >
             {t('common.save')}
           </Button>
         </>
@@ -220,6 +229,7 @@ function KnowledgeDrawer({
         <label className="field">
           <span className="field__label">{t('memory.entryTitle')}</span>
           <input
+            data-testid="memory-title"
             value={current?.title ?? ''}
             onChange={(event) => update({ title: event.target.value })}
           />
@@ -227,6 +237,7 @@ function KnowledgeDrawer({
         <label className="field">
           <span className="field__label">{t('memory.content')}</span>
           <textarea
+            data-testid="memory-content"
             rows={13}
             value={current?.content ?? ''}
             onChange={(event) => update({ content: event.target.value })}
@@ -236,6 +247,7 @@ function KnowledgeDrawer({
           <label className="field">
             <span className="field__label">{t('memory.contentType')}</span>
             <select
+              data-testid="memory-content-type"
               value={current?.content_type ?? 'text/markdown'}
               onChange={(event) => update({ content_type: event.target.value })}
             >
@@ -247,6 +259,7 @@ function KnowledgeDrawer({
           <label className="field">
             <span className="field__label">{t('common.source')}</span>
             <input
+              data-testid="memory-source-ref"
               value={current?.source_ref ?? ''}
               onChange={(event) => update({ source_ref: event.target.value })}
               placeholder={
@@ -262,6 +275,7 @@ function KnowledgeDrawer({
         <label className="field">
           <span className="field__label">{t('memory.tags')}</span>
           <input
+            data-testid="memory-tags"
             value={current?.tags.join(', ') ?? ''}
             onChange={(event) =>
               update({
@@ -277,6 +291,7 @@ function KnowledgeDrawer({
         <label className="field">
           <span className="field__label">{t('memory.metadata')}</span>
           <textarea
+            data-testid="memory-metadata"
             className="code-input"
             rows={8}
             value={metadataText}

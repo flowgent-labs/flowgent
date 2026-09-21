@@ -71,6 +71,9 @@ func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 	pc := newProvider(&dbP)
 	if pc != nil {
 		m.providers[dbP.ID] = pc
+		if dbP.Name != "" && dbP.Name != dbP.ID {
+			m.providers[dbP.Name] = pc
+		}
 		if dbP.Provider != "" && dbP.Provider != dbP.ID {
 			m.providers[dbP.Provider] = pc
 		}
@@ -78,10 +81,14 @@ func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 }
 
 func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
+	providerType := p.Type
+	if providerType == "" {
+		providerType = p.Provider
+	}
 	switch {
-	case strings.EqualFold(p.Provider, "anthropic"):
+	case strings.EqualFold(providerType, "anthropic"):
 		return newAnthropicProvider(p)
-	case strings.EqualFold(p.Provider, "gemini"):
+	case strings.EqualFold(providerType, "gemini"):
 		return newGeminiProvider(p)
 	default:
 		return newOpenAIProvider(p)

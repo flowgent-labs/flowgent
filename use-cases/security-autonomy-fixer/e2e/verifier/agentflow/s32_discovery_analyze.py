@@ -1,6 +1,9 @@
 """Scenario 32 — Discovery & Analyze: commit fetch, SonarQube scan, issue aggregation."""
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import requests
 from common import project as common_api
 import time
@@ -8,12 +11,12 @@ import sys
 import os
 import json
 
-from verifier.agentflow.support import SecurityAutonomyFixture as c
+from common.agentflow import SecurityAutonomyFixture as c
 from common.project import RUN_ID_PATH
 
 # ── Phase: DISCOVERY ──
 
-class DiscoveryAnalyzeOperations:
+class DiscoveryAnalyzeVerifier(BaseVerifier):
     """Class-owned operations for s32 discovery analyze."""
 
     @staticmethod
@@ -195,8 +198,8 @@ class DiscoveryAnalyzeOperations:
 
         # Run verifications
         results = []
-        results.append(("Discovery", *DiscoveryAnalyzeOperations.verify_discovery(tbn)))
-        results.append(("Analyze", *DiscoveryAnalyzeOperations.verify_analyze(tbn)))
+        results.append(("Discovery", *DiscoveryAnalyzeVerifier.verify_discovery(tbn)))
+        results.append(("Analyze", *DiscoveryAnalyzeVerifier.verify_analyze(tbn)))
 
         print("\n-- [32 MQTT Audit] JM/TM/Sandbox message chain --")
         c.assert_runtime_execution_evidence(run_id, tasks, require_sandbox=True)
@@ -215,21 +218,6 @@ class DiscoveryAnalyzeOperations:
         if passed_checks < total_checks:
             raise AssertionError(f"Discovery/Analyze failed: {passed_checks}/{total_checks}")
 
-
-
-# ── Phase: ANALYZE ──
-
-
-
-# ── Orchestration ──
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class DiscoveryAnalyzeVerifier(BaseVerifier):
     scenario_id = "32"
     title = "E2E Fixer — Discovery & Analyze"
 
@@ -238,8 +226,12 @@ class DiscoveryAnalyzeVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_execution() -> None:
-        DiscoveryAnalyzeOperations._verify_scenario()
+        DiscoveryAnalyzeVerifier._verify_scenario()
 
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the discovery-and-analysis scenario."""
-    return DiscoveryAnalyzeVerifier(context).run()
+
+
+# ── Phase: ANALYZE ──
+
+
+
+# ── Orchestration ──

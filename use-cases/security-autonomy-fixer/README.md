@@ -65,7 +65,9 @@ security-autonomy-fixer/
 │   │   ├── notifiers/             # delivery-channel definitions
 │   │   └── envoy/                 # Envoy edge-proxy declaration
 │   ├── common/
-│   │   └── project.py              # Flowgent API, database, state, and suite operations
+│   │   ├── agentflow.py            # shared Flow fixture and MQTT evidence operations
+│   │   ├── mqtt.py                 # reusable lifecycle and InterMessage probes
+│   │   └── project.py              # Flowgent API, database, state, and verifier orchestration
 │   ├── deploy/
 │   │   ├── __init__.py             # BaseDeployer and backend factory
 │   │   ├── base/                   # Kubernetes and Docker Compose backend implementations
@@ -281,10 +283,21 @@ chart or the equivalent Compose topology with AuthGuard/Envoy, imports
 `e2e/config`, and verifies
 infrastructure, LDAP discovery, GitHub OAuth, edge allow/deny policy, telemetry,
 API Server, Notifier, Controller, MQTT, A2A, remediation, PR delivery, knowledge,
-and the shared workspace. Useful focused modes are:
+the shared workspace, and a real Chromium console lifecycle (create, execute,
+update, and delete a sandbox Flow through the shipped Web UI). Install the E2E
+requirements and Chromium before running the browser scenario outside CI:
+
+```bash
+python3 -m venv use-cases/security-autonomy-fixer/e2e/.venv
+use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m pip install -r use-cases/security-autonomy-fixer/e2e/requirements.txt
+use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m playwright install chromium
+```
+
+Useful focused modes are:
 
 ```bash
 E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
+E2E_ARGS="--scenario 41 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
 python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
 E2E_ARGS="--clean-after-run" make e2e-security-autonomy-fixer-with-helm
 make e2e-security-autonomy-fixer-with-docker

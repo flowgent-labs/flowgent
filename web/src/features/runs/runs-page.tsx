@@ -92,7 +92,11 @@ export function RunsPage() {
         description={t('runs.subtitle')}
         actions={
           flowId && (
-            <Button onClick={() => triggerRun.mutate()} disabled={triggerRun.isPending}>
+            <Button
+              data-testid="flow-run"
+              onClick={() => triggerRun.mutate()}
+              disabled={triggerRun.isPending}
+            >
               <Play size={16} />
               {t('common.run')}
             </Button>

@@ -86,7 +86,10 @@ func (s *FlowRunPostgresStore) Metrics(ctx context.Context, req MetricRequest) (
 	args := append([]any{req.Namespace, req.Since, req.Until, widthSeconds}, scopeArgs...)
 	rows, err := s.inner.Pool.Query(ctx, `SELECT
 		FLOOR(EXTRACT(EPOCH FROM (created_at - $2::timestamptz)) / $4)::int AS bucket,
-		status, COUNT(1)
+		status, COUNT(1),
+		COALESCE(SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
+			THEN EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000 ELSE 0 END), 0)::bigint,
+		SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN 1 ELSE 0 END)
 		FROM orh_flowrun
 		WHERE del_flag=FALSE AND namespace_id=$1 AND created_at >= $2 AND created_at < $3 AND (`+scopeWhere+`)
 		GROUP BY bucket, status ORDER BY bucket`, args...)
@@ -97,7 +100,7 @@ func (s *FlowRunPostgresStore) Metrics(ctx context.Context, req MetricRequest) (
 	counts := make([]metricRow, 0)
 	for rows.Next() {
 		var row metricRow
-		if err := rows.Scan(&row.bucket, &row.status, &row.count); err != nil {
+		if err := rows.Scan(&row.bucket, &row.status, &row.count, &row.durationTotalMs, &row.durationCount); err != nil {
 			return nil, err
 		}
 		counts = append(counts, row)

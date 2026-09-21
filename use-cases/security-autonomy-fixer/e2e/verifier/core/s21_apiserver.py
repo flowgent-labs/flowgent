@@ -64,7 +64,9 @@ Steps with Expected I/O:
 """
 from __future__ import annotations
 
-import sys
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import time
 import json
 import uuid
@@ -72,16 +74,9 @@ import requests
 from typing import Dict, Any, Optional
 
 from common import config
+from common.mqtt import ApiLifecycleMqttClient
 from common import project as common_api
 from common.project import FlowgentE2EProject
-
-# Try importing MQTT client
-try:
-    import paho.mqtt.client as mqtt
-    MQTT_AVAILABLE = True
-except ImportError:
-    print("Warning: paho-mqtt not installed, MQTT tests will be skipped")
-    MQTT_AVAILABLE = False
 
 # Try importing psycopg2
 try:
@@ -95,7 +90,7 @@ API_BASE = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
 
 
-class ApiServerOperations:
+class ApiServerVerifier(BaseVerifier):
     """Class-owned operations for s21 apiserver."""
 
     @staticmethod
@@ -181,12 +176,12 @@ class ApiServerOperations:
         pg_id_col = pg_id_col or id_field
         list_search_field = list_search_field or id_field
         created_id = None
-        pg_conn = ApiServerOperations.get_pg_connection()
+        pg_conn = ApiServerVerifier.get_pg_connection()
 
         try:
             # CREATE
             print(f"    • CREATE...")
-            resp = ApiServerOperations.http_request("POST", base_path, create_payload)
+            resp = ApiServerVerifier.http_request("POST", base_path, create_payload)
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"CREATE failed: {resp['status_code']} {resp.get('text')}")
 
@@ -207,7 +202,7 @@ class ApiServerOperations:
 
             # READ (single)
             print(f"    • READ...")
-            resp = ApiServerOperations.http_request("GET", f"{base_path}/{created_id}")
+            resp = ApiServerVerifier.http_request("GET", f"{base_path}/{created_id}")
             if resp["status_code"] != 200:
                 raise AssertionError(f"GET failed: {resp['status_code']}")
 
@@ -218,7 +213,7 @@ class ApiServerOperations:
 
             # LIST
             print(f"    • LIST...")
-            resp = ApiServerOperations.http_request("GET", f"{base_path}?limit=10")
+            resp = ApiServerVerifier.http_request("GET", f"{base_path}?limit=10")
             if resp["status_code"] != 200:
                 raise AssertionError(f"LIST failed: {resp['status_code']}")
 
@@ -234,7 +229,7 @@ class ApiServerOperations:
 
             # UPDATE
             print(f"    • UPDATE...")
-            resp = ApiServerOperations.http_request("PUT", f"{base_path}/{created_id}", update_payload)
+            resp = ApiServerVerifier.http_request("PUT", f"{base_path}/{created_id}", update_payload)
             if resp["status_code"] != 200:
                 raise AssertionError(f"UPDATE failed: {resp['status_code']}")
 
@@ -256,7 +251,7 @@ class ApiServerOperations:
         
             # DELETE (soft delete)
             print(f"    • DELETE...")
-            resp = ApiServerOperations.http_request("DELETE", f"{base_path}/{created_id}")
+            resp = ApiServerVerifier.http_request("DELETE", f"{base_path}/{created_id}")
             if resp["status_code"] not in [200, 204]:
                 raise AssertionError(f"DELETE failed: {resp['status_code']}")
         
@@ -269,11 +264,11 @@ class ApiServerOperations:
                     raise AssertionError(f"Soft delete failed")
         
             # Verify GET returns 404
-            resp = ApiServerOperations.http_request("GET", f"{base_path}/{created_id}")
+            resp = ApiServerVerifier.http_request("GET", f"{base_path}/{created_id}")
             if resp["status_code"] != 404:
                 raise AssertionError(f"DELETE did not hide item from GET (got {resp['status_code']})")
 
-            resp = ApiServerOperations.http_request("GET", f"{base_path}?limit=10")
+            resp = ApiServerVerifier.http_request("GET", f"{base_path}?limit=10")
             if resp["status_code"] != 200:
                 raise AssertionError(f"LIST after DELETE failed: {resp['status_code']}")
             items = resp["data"] if isinstance(resp["data"], list) else (resp["data"].get("items") or [])
@@ -299,7 +294,7 @@ class ApiServerOperations:
         """Test flow lifecycle MQTT event publishing"""
         print(f"\n  → Testing Flow Lifecycle Events...")
     
-        mqtt_client = MQTTTestClient()
+        mqtt_client = ApiLifecycleMqttClient(config.EMQX_HOST, config.EMQX_PORT)
         if not mqtt_client.client:
             print(f"    ⚠ MQTT not available, skipping event tests")
             return True
@@ -313,11 +308,11 @@ class ApiServerOperations:
         
             # Test 1: CREATE → ctrl/flow/updated (action=created)
             print(f"    • Testing CREATE event...")
-            flow_id = "test-flow-" + ApiServerOperations.rand_id()
+            flow_id = "test-flow-" + ApiServerVerifier.rand_id()
             # Flat FlowInfo shape — see test_crud_entity's AgentFlow comment above.
-            payload = ApiServerOperations.canonical_flow(flow_id)
+            payload = ApiServerVerifier.canonical_flow(flow_id)
         
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/flows", payload)
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", payload)
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"Flow creation failed: {resp['status_code']}")
         
@@ -338,9 +333,9 @@ class ApiServerOperations:
         
             # Test 2: UPDATE → ctrl/flow/updated (action=updated, version++)
             print(f"    • Testing UPDATE event...")
-            update_payload = ApiServerOperations.canonical_flow(flow_id, "updated description")
+            update_payload = ApiServerVerifier.canonical_flow(flow_id, "updated description")
         
-            resp = ApiServerOperations.http_request("PUT", f"/api/v1/{NAMESPACE}/flows/{created_id}", update_payload)
+            resp = ApiServerVerifier.http_request("PUT", f"/api/v1/{NAMESPACE}/flows/{created_id}", update_payload)
             if resp["status_code"] != 200:
                 raise AssertionError(f"Flow update failed: {resp['status_code']}")
         
@@ -352,7 +347,7 @@ class ApiServerOperations:
         
             # Test 3: DELETE → ctrl/flow/deleted
             print(f"    • Testing DELETE event...")
-            resp = ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}")
+            resp = ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}")
             if resp["status_code"] not in [200, 204]:
                 raise AssertionError(f"Flow deletion failed: {resp['status_code']}")
         
@@ -371,22 +366,22 @@ class ApiServerOperations:
     
         finally:
             if created_id:
-                ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
+                ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
             mqtt_client.close()
 
     @staticmethod
     def test_flow_run_crud() -> bool:
         """Test FlowRun CRUD via /runs."""
         print(f"\n  → Testing FlowRun CRUD...")
-        flow_id = f"test-flow-{ApiServerOperations.rand_id()}"
+        flow_id = f"test-flow-{ApiServerVerifier.rand_id()}"
         created_run_id = None
-        pg_conn = ApiServerOperations.get_pg_connection()
+        pg_conn = ApiServerVerifier.get_pg_connection()
         try:
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerOperations.canonical_flow(flow_id))
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerVerifier.canonical_flow(flow_id))
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"setup flow failed: {resp['status_code']}")
 
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
                 "agentflow_id": flow_id,
                 "status": "PENDING",
                 "runtime_mode": "session",
@@ -398,11 +393,11 @@ class ApiServerOperations:
             if not created_run_id:
                 raise AssertionError("no run id in response")
 
-            resp = ApiServerOperations.http_request("GET", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
+            resp = ApiServerVerifier.http_request("GET", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
             if resp["status_code"] != 200 or resp["data"].get("id") != created_run_id:
                 raise AssertionError("GET run failed")
 
-            resp = ApiServerOperations.http_request("PUT", f"/api/v1/{NAMESPACE}/runs/{created_run_id}", {"status": "RUNNING"})
+            resp = ApiServerVerifier.http_request("PUT", f"/api/v1/{NAMESPACE}/runs/{created_run_id}", {"status": "RUNNING"})
             if resp["status_code"] != 200:
                 raise AssertionError(f"UPDATE run failed: {resp['status_code']}")
 
@@ -412,7 +407,7 @@ class ApiServerOperations:
                 if cursor.fetchone()[0] != 1:
                     raise AssertionError("PG persistence failed for orh_flowrun")
 
-            resp = ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
+            resp = ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
             if resp["status_code"] not in [200, 204]:
                 raise AssertionError(f"DELETE run failed: {resp['status_code']}")
 
@@ -422,7 +417,7 @@ class ApiServerOperations:
             print(f"    ✗ FlowRun CRUD failed: {e}")
             return False
         finally:
-            ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
+            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
             if pg_conn:
                 pg_conn.close()
 
@@ -430,16 +425,16 @@ class ApiServerOperations:
     def test_task_run_nested() -> bool:
         """Test nested TaskRun CRUD under /runs/{id}/tasks."""
         print(f"\n  → Testing TaskRun nested CRUD...")
-        flow_id = f"test-flow-{ApiServerOperations.rand_id()}"
-        pg_conn = ApiServerOperations.get_pg_connection()
+        flow_id = f"test-flow-{ApiServerVerifier.rand_id()}"
+        pg_conn = ApiServerVerifier.get_pg_connection()
         run_id = None
         task_id = None
         try:
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerOperations.canonical_flow(flow_id))
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerVerifier.canonical_flow(flow_id))
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"setup flow failed: {resp['status_code']}")
 
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
                 "agentflow_id": flow_id,
                 "status": "PENDING",
                 "runtime_mode": "session",
@@ -455,20 +450,20 @@ class ApiServerOperations:
                 "sequence": 1,
             }
             base = f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks"
-            resp = ApiServerOperations.http_request("POST", base, task_payload)
+            resp = ApiServerVerifier.http_request("POST", base, task_payload)
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"CREATE task failed: {resp['status_code']} {resp.get('text')}")
             task_id = resp["data"].get("id")
             if not task_id:
                 raise AssertionError("no task id")
 
-            resp = ApiServerOperations.http_request("GET", f"{base}/{task_id}")
+            resp = ApiServerVerifier.http_request("GET", f"{base}/{task_id}")
             if resp["status_code"] != 200 or not isinstance(resp["data"], dict):
                 raise AssertionError(f"GET task failed: {resp['status_code']} {resp.get('text')}")
             if resp["data"].get("node_id") != "test-node":
                 raise AssertionError(f"GET task returned wrong node_id: {resp['data']}")
 
-            resp = ApiServerOperations.http_request("PUT", f"{base}/{task_id}", {
+            resp = ApiServerVerifier.http_request("PUT", f"{base}/{task_id}", {
                 "node_id": "test-node",
                 "status": "COMPLETED",
                 "output": {"result": "ok"},
@@ -487,7 +482,7 @@ class ApiServerOperations:
                 if not row or not row[0]:
                     raise AssertionError("task output not persisted in PG")
 
-            resp = ApiServerOperations.http_request("GET", base)
+            resp = ApiServerVerifier.http_request("GET", base)
             if resp["status_code"] != 200:
                 raise AssertionError(f"LIST tasks failed: {resp['status_code']} {resp.get('text')}")
             if isinstance(resp["data"], list):
@@ -505,7 +500,7 @@ class ApiServerOperations:
             print(f"    ✗ TaskRun nested CRUD failed: {e}")
             return False
         finally:
-            ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
+            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
             if pg_conn:
                 pg_conn.close()
 
@@ -513,15 +508,15 @@ class ApiServerOperations:
     def test_approval_lifecycle() -> bool:
         """Test human approval create + list + approve by token."""
         print(f"\n  → Testing Approval lifecycle...")
-        token = f"test-token-{ApiServerOperations.rand_id()}"
+        token = f"test-token-{ApiServerVerifier.rand_id()}"
         run_id = str(uuid.uuid4())
         task_id = str(uuid.uuid4())
-        flow_id = f"test-flow-{ApiServerOperations.rand_id()}"
+        flow_id = f"test-flow-{ApiServerVerifier.rand_id()}"
         try:
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerOperations.canonical_flow(flow_id))
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerVerifier.canonical_flow(flow_id))
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"setup flow failed: {resp['status_code']} {resp.get('text')}")
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
                 "id": run_id,
                 "agentflow_id": flow_id,
                 "status": "PENDING",
@@ -532,7 +527,7 @@ class ApiServerOperations:
             run_id = resp["data"].get("id")
             if not run_id:
                 raise AssertionError(f"setup run omitted id: {resp['data']}")
-            resp = ApiServerOperations.http_request("POST", f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks", {
+            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks", {
                 "node_id": "n1",
                 "status": "PENDING",
                 "sequence": 1,
@@ -544,21 +539,21 @@ class ApiServerOperations:
                 raise AssertionError(f"setup task omitted id: {resp['data']}")
 
             approval_path = f"/api/v1/{NAMESPACE}/runs/{run_id}/approvals"
-            resp = ApiServerOperations.http_request("POST", approval_path, {
+            resp = ApiServerVerifier.http_request("POST", approval_path, {
                 "task_run_id": task_id,
                 "token": token,
             })
             if resp["status_code"] not in [200, 201]:
                 raise AssertionError(f"CREATE approval failed: {resp['status_code']} {resp.get('text')}")
 
-            resp = ApiServerOperations.http_request("GET", approval_path)
+            resp = ApiServerVerifier.http_request("GET", approval_path)
             if resp["status_code"] != 200:
                 raise AssertionError(f"LIST approvals failed: {resp['status_code']}")
             items = resp["data"] if isinstance(resp["data"], list) else []
             if not any(a.get("token") == token for a in items):
                 print(f"      ⚠ created approval not in pending list (may already be resolved)")
 
-            resp = ApiServerOperations.http_request("POST", f"{approval_path}/{token}/approve", {"comment": "e2e approved"})
+            resp = ApiServerVerifier.http_request("POST", f"{approval_path}/{token}/approve", {"comment": "e2e approved"})
             if resp["status_code"] != 200:
                 raise AssertionError(f"APPROVE failed: {resp['status_code']} {resp.get('text')}")
 
@@ -568,15 +563,15 @@ class ApiServerOperations:
             print(f"    ✗ Approval lifecycle failed: {e}")
             return False
         finally:
-            ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{run_id}", timeout=5)
-            ApiServerOperations.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
+            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{run_id}", timeout=5)
+            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
 
     @staticmethod
     def test_skill_api_availability() -> bool:
         """Skill REST API is planned but may not be registered; verify and skip gracefully."""
         print(f"\n  → Testing Skill API availability...")
         for path in (f"/api/v1/{NAMESPACE}/llm/skills", f"/api/v1/{NAMESPACE}/skills"):
-            resp = ApiServerOperations.http_request("GET", path)
+            resp = ApiServerVerifier.http_request("GET", path)
             if resp["status_code"] == 404:
                 continue
             if resp["status_code"] == 200:
@@ -597,6 +592,7 @@ class ApiServerOperations:
         results = {}
     
         # Entity test definitions
+        provider_name = f"test-llm-{ApiServerVerifier.rand_id()}"
         entities = [
             {
                 # POST /flows decodes the request body directly into
@@ -616,7 +612,7 @@ class ApiServerOperations:
                 "pg_id_col": "agentflow_id",
                 "list_search_field": "flow_id",
                 "create": {
-                    "id": f"test-flow-{ApiServerOperations.rand_id()}",
+                    "id": f"test-flow-{ApiServerVerifier.rand_id()}",
                     "kind": "flow",
                     "nodes": [],
                     "edges": [],
@@ -630,9 +626,9 @@ class ApiServerOperations:
                     "runtime_mode": "session",
                 },
                 "update_check_sql": (
-                    "SELECT COUNT(*) = 1 "
+                    "SELECT COUNT(*) = 1 AND MAX(version) = 2 "
                     "AND COALESCE(MAX(definition->>'description'), '') = 'updated' "
-                    "FROM orh_agentflow WHERE agentflow_id=%s AND version=1 AND del_flag=false"
+                    "FROM orh_agentflow WHERE agentflow_id=%s AND version=2 AND del_flag=false"
                 ),
             },
             {
@@ -641,7 +637,7 @@ class ApiServerOperations:
                 "base_path": f"/api/v1/{NAMESPACE}/agents",
                 "id_field": "name",
                 "create": {
-                    "name": f"test-agent-{ApiServerOperations.rand_id()}",
+                    "name": f"test-agent-{ApiServerVerifier.rand_id()}",
                     "model": "gpt-4",
                     "soul": "You are a test agent",
                     "instruction": "Test instruction",
@@ -659,7 +655,7 @@ class ApiServerOperations:
                 "base_path": f"/api/v1/{NAMESPACE}/mcp",
                 "id_field": "name",
                 "create": {
-                    "name": f"test-mcp-{ApiServerOperations.rand_id()}",
+                    "name": f"test-mcp-{ApiServerVerifier.rand_id()}",
                     "type": "streamable-http",
                     "url": "https://example.com/mcp",
                     "enabled": True,
@@ -676,14 +672,16 @@ class ApiServerOperations:
                 "base_path": f"/api/v1/{NAMESPACE}/llm/providers",
                 "id_field": "id",
                 "create": {
-                    "provider": "openai",
+                    "name": provider_name,
+                    "type": "openai",
                     "endpoint": "https://api.openai.com/v1",
                     "api_key_env": "FLOWGENT_E2E_TEST_LLM_KEY",
                     "defaultModel": "gpt-4",
                     "enabled": True,
                 },
                 "update": {
-                    "provider": "openai",
+                    "name": provider_name,
+                    "type": "openai",
                     "endpoint": "https://api.openai.com/v1",
                     "defaultModel": "gpt-4",
                     "enabled": True,
@@ -696,7 +694,7 @@ class ApiServerOperations:
                 "base_path": f"/api/v1/{NAMESPACE}/notifications/channels",
                 "id_field": "id",
                 "create": {
-                    "name": f"test-channel-{ApiServerOperations.rand_id()}",
+                    "name": f"test-channel-{ApiServerVerifier.rand_id()}",
                     "provider": "webhook",
                     "config": {"url": "https://example.com/hook"},
                     "enabled": True,
@@ -712,7 +710,7 @@ class ApiServerOperations:
     
         # Run entity tests
         for entity in entities:
-            results[entity["name"]] = ApiServerOperations.test_crud_entity(
+            results[entity["name"]] = ApiServerVerifier.test_crud_entity(
                 entity["name"],
                 entity["table"],
                 entity["base_path"],
@@ -725,11 +723,11 @@ class ApiServerOperations:
             )
     
         # Run lifecycle event tests
-        results["LifecycleEvents"] = ApiServerOperations.test_flow_lifecycle_events()
-        results["FlowRun"] = ApiServerOperations.test_flow_run_crud()
-        results["TaskRun"] = ApiServerOperations.test_task_run_nested()
-        results["Approval"] = ApiServerOperations.test_approval_lifecycle()
-        results["SkillAPI"] = ApiServerOperations.test_skill_api_availability()
+        results["LifecycleEvents"] = ApiServerVerifier.test_flow_lifecycle_events()
+        results["FlowRun"] = ApiServerVerifier.test_flow_run_crud()
+        results["TaskRun"] = ApiServerVerifier.test_task_run_nested()
+        results["Approval"] = ApiServerVerifier.test_approval_lifecycle()
+        results["SkillAPI"] = ApiServerVerifier.test_skill_api_availability()
     
         # Summary
         passed = sum(1 for v in results.values() if v)
@@ -745,90 +743,6 @@ class ApiServerOperations:
     
         print(f"\n  ✓ All API Server tests passed")
 
-
-
-
-
-
-
-
-
-class MQTTTestClient:
-    """MQTT test client for event verification"""
-    
-    def __init__(self):
-        if not MQTT_AVAILABLE:
-            self.client = None
-            return
-        
-        self.client = mqtt.Client()
-        self.messages = []
-        self.client.on_message = self._on_message
-        
-        try:
-            self.client.connect(config.EMQX_HOST, config.EMQX_PORT, 60)
-            self.client.loop_start()
-        except Exception as e:
-            print(f"  ⚠ MQTT connection failed: {e}")
-            self.client = None
-    
-    def _on_message(self, client, userdata, msg):
-        """Store received messages"""
-        try:
-            payload = json.loads(msg.payload.decode())
-            self.messages.append({
-                "topic": msg.topic,
-                "payload": payload,
-                "timestamp": time.time(),
-            })
-        except:
-            pass
-    
-    def subscribe(self, topic: str):
-        """Subscribe to topic"""
-        if self.client:
-            self.client.subscribe(topic)
-    
-    def wait_for_message(self, topic_pattern: str, timeout: int = 5) -> Optional[Dict]:
-        """Wait for message matching topic pattern"""
-        if not self.client:
-            return None
-        
-        start = time.time()
-        while time.time() - start < timeout:
-            for msg in self.messages:
-                if topic_pattern in msg["topic"]:
-                    self.messages.remove(msg)
-                    return msg
-            time.sleep(0.1)
-        return None
-    
-    def close(self):
-        """Close connection"""
-        if self.client:
-            self.client.loop_stop()
-            self.client.disconnect()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class ApiServerVerifier(BaseVerifier):
     scenario_id = "21"
     title = "API Server — REST CRUD + Lifecycle Events"
 
@@ -837,8 +751,4 @@ class ApiServerVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_api_contract() -> None:
-        ApiServerOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the API-server scenario."""
-    return ApiServerVerifier(context).run()
+        ApiServerVerifier._verify_scenario()

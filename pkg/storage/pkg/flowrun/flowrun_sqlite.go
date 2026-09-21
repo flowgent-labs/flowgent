@@ -85,7 +85,10 @@ func (s *FlowRunSQLiteStore) Metrics(ctx context.Context, req MetricRequest) (*e
 	args := append([]any{req.Namespace, req.Since, req.Until, widthSeconds}, scopeArgs...)
 	rows, err := s.inner.Conn.QueryContext(ctx, `SELECT
 		CAST(((julianday(created_at) - julianday(?2)) * 86400.0) / ?4 AS INTEGER) AS bucket,
-		status, COUNT(1)
+		status, COUNT(1),
+		COALESCE(SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
+			THEN CAST((julianday(finished_at) - julianday(started_at)) * 86400000 AS INTEGER) ELSE 0 END), 0),
+		SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN 1 ELSE 0 END)
 		FROM orh_flowrun
 		WHERE del_flag=0 AND namespace_id=?1 AND created_at >= ?2 AND created_at < ?3 AND (`+scopeWhere+`)
 		GROUP BY bucket, status ORDER BY bucket`, args...)
@@ -96,7 +99,7 @@ func (s *FlowRunSQLiteStore) Metrics(ctx context.Context, req MetricRequest) (*e
 	counts := make([]metricRow, 0)
 	for rows.Next() {
 		var row metricRow
-		if err := rows.Scan(&row.bucket, &row.status, &row.count); err != nil {
+		if err := rows.Scan(&row.bucket, &row.status, &row.count, &row.durationTotalMs, &row.durationCount); err != nil {
 			return nil, err
 		}
 		counts = append(counts, row)

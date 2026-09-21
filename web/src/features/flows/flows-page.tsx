@@ -128,7 +128,7 @@ export function FlowsPage() {
               </thead>
               <tbody>
                 {filtered.map((flow) => (
-                  <tr key={flow.id}>
+                  <tr key={flow.id} data-testid={`flow-row-${flow.id}`}>
                     <td>
                       <button
                         type="button"
@@ -169,6 +169,7 @@ export function FlowsPage() {
                       </Button>
                       <div className="more-menu">
                         <IconButton
+                          data-testid={`flow-actions-${flow.id}`}
                           label={t('common.actions')}
                           onClick={() => setMenu(menu === flow.id ? null : flow.id)}
                         >
@@ -189,6 +190,7 @@ export function FlowsPage() {
                             <button
                               type="button"
                               className="danger"
+                              data-testid={`flow-delete-${flow.id}`}
                               onClick={() => {
                                 setDeleteFlow(flow)
                                 setMenu(null)
@@ -219,6 +221,7 @@ export function FlowsPage() {
               {t('common.cancel')}
             </Button>
             <Button
+              data-testid="flow-delete-confirm"
               variant="danger"
               disabled={remove.isPending}
               onClick={() => deleteFlow && remove.mutate(deleteFlow.id)}

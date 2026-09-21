@@ -15,6 +15,9 @@ This is a real E2E — no local mocks. Every call goes through the live API serv
 """
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import requests
 import json
 import time
@@ -32,7 +35,7 @@ SESSION = common_api.FlowgentE2EProject.session()
 SEED_TITLE = "SQL Injection Prevention in Java"
 
 
-class KnowledgeOperations:
+class KnowledgeVerifier(BaseVerifier):
     """Class-owned operations for s36 knowledge."""
 
     @staticmethod
@@ -51,7 +54,7 @@ class KnowledgeOperations:
             "source_ref": "e2e:36",
             "tags": ["security", "java", "sql-injection"],
         }
-        resp = SESSION.post(KnowledgeOperations._kw_path(), json=payload, timeout=10)
+        resp = SESSION.post(KnowledgeVerifier._kw_path(), json=payload, timeout=10)
         assert resp.status_code in (200, 201), f"Create knowledge failed: {resp.status_code} {resp.text}"
         entry = resp.json()
         assert "id" in entry, f"No id in response: {entry}"
@@ -61,7 +64,7 @@ class KnowledgeOperations:
     @staticmethod
     def list_knowledge():
         """Phase 1: List knowledge entries."""
-        resp = SESSION.get(KnowledgeOperations._kw_path(), timeout=10)
+        resp = SESSION.get(KnowledgeVerifier._kw_path(), timeout=10)
         assert resp.status_code == 200, f"List knowledge failed: {resp.status_code}"
         entries = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", [])
         print(f"  PASS: Listed {len(entries)} knowledge entries")
@@ -70,7 +73,7 @@ class KnowledgeOperations:
     @staticmethod
     def get_knowledge(kid: str):
         """Phase 1: Get a single knowledge entry."""
-        resp = SESSION.get(KnowledgeOperations._kw_path(kid), timeout=10)
+        resp = SESSION.get(KnowledgeVerifier._kw_path(kid), timeout=10)
         assert resp.status_code == 200, f"Get knowledge failed: {resp.status_code}"
         entry = resp.json()
         assert entry["title"] == SEED_TITLE, f"Title mismatch: {entry['title']}"
@@ -80,7 +83,7 @@ class KnowledgeOperations:
     @staticmethod
     def update_knowledge(kid: str):
         """Phase 1: Update a knowledge entry."""
-        resp = SESSION.put(KnowledgeOperations._kw_path(kid), json={
+        resp = SESSION.put(KnowledgeVerifier._kw_path(kid), json={
             "title": SEED_TITLE,
             "content": "Updated: Always use parameterized queries.",
             "content_type": "markdown",
@@ -125,10 +128,10 @@ class KnowledgeOperations:
     @staticmethod
     def delete_knowledge(kid: str):
         """Phase 1: Delete a knowledge entry."""
-        resp = SESSION.delete(KnowledgeOperations._kw_path(kid), timeout=10)
+        resp = SESSION.delete(KnowledgeVerifier._kw_path(kid), timeout=10)
         assert resp.status_code in (200, 204), f"Delete failed: {resp.status_code}"
         # Verify it's gone
-        resp2 = SESSION.get(KnowledgeOperations._kw_path(kid), timeout=10)
+        resp2 = SESSION.get(KnowledgeVerifier._kw_path(kid), timeout=10)
         assert resp2.status_code in (404, 200), f"Expected not-found after delete: {resp2.status_code}"
         print(f"  PASS: Deleted knowledge entry")
 
@@ -144,51 +147,24 @@ class KnowledgeOperations:
     def _verify_scenario():
         print("  Scenario 36: Knowledge RAG — Retrieval & Injection")
         print("Phase 1: Knowledge CRUD")
-        kid = KnowledgeOperations.seed_knowledge()
-        KnowledgeOperations.list_knowledge()
-        KnowledgeOperations.get_knowledge(kid)
-        KnowledgeOperations.update_knowledge(kid)
+        kid = KnowledgeVerifier.seed_knowledge()
+        KnowledgeVerifier.list_knowledge()
+        KnowledgeVerifier.get_knowledge(kid)
+        KnowledgeVerifier.update_knowledge(kid)
 
         print("\nPhase 2: Search & Tags")
-        KnowledgeOperations.search_knowledge()
-        KnowledgeOperations.search_by_tags()
-        KnowledgeOperations.list_tags()
+        KnowledgeVerifier.search_knowledge()
+        KnowledgeVerifier.search_by_tags()
+        KnowledgeVerifier.list_tags()
 
         print("\nPhase 4: Post-Handle Verification")
-        KnowledgeOperations.verify_post_handle()
+        KnowledgeVerifier.verify_post_handle()
 
         print("\nPhase 1 (cleanup): Delete")
-        KnowledgeOperations.delete_knowledge(kid)
+        KnowledgeVerifier.delete_knowledge(kid)
 
         print("\n  All Knowledge RAG phases passed.")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class KnowledgeVerifier(BaseVerifier):
     scenario_id = "36"
     title = "Knowledge — RAG Retrieval & Injection"
 
@@ -197,8 +173,4 @@ class KnowledgeVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_knowledge() -> None:
-        KnowledgeOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the knowledge scenario."""
-    return KnowledgeVerifier(context).run()
+        KnowledgeVerifier._verify_scenario()

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
-import re
 import time
 import traceback
+from pathlib import Path
 from typing import Callable, TypeVar
 
-from common.config import REPORTS_DIR
 from common.model import EvidenceArtifact, RunContext, VerificationResult
+from common.report import E2EReportWriter
 from deploy import E2EDeployerFactory
 
 
@@ -79,10 +79,7 @@ class BaseVerifier(ABC):
         duration_seconds: float,
         assertions: list[str],
     ) -> None:
-        slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")[:80]
-        directory = REPORTS_DIR / f"round-{self.context.round_number:02d}" / "evidence" / self.scenario_id
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{case_id.replace('.', '_')}_{slug}.json"
+        path = self.evidence_path(case_id, title, "json")
         payload = {
             "scenarioId": self.scenario_id,
             "caseId": case_id,
@@ -92,7 +89,21 @@ class BaseVerifier(ABC):
             "assertions": assertions or ["scenario operation completed without assertion failure: PASS"],
         }
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        self.evidence.append(EvidenceArtifact(case_id, title, "application/json", path))
+        self.record_evidence(case_id, title, "application/json", path)
+
+    def evidence_path(self, case_id: str, title: str, suffix: str) -> Path:
+        """Allocate a report-owned path for a verifier artifact."""
+        return E2EReportWriter.evidence_path(
+            self.context.round_number,
+            self.scenario_id,
+            case_id,
+            title,
+            suffix,
+        )
+
+    def record_evidence(self, case_id: str, title: str, kind: str, path: Path) -> None:
+        """Attach a verifier artifact to the scenario report."""
+        self.evidence.append(EvidenceArtifact(case_id, title, kind, path))
 
 
 __all__ = ["BaseVerifier"]

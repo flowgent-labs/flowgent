@@ -19,10 +19,13 @@ Verification Strategy:
 """
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import os
 
 from common import config
-from verifier.agentflow.support import SecurityAutonomyFixture as c
+from common.agentflow import SecurityAutonomyFixture as c
 
 GITHUB_API = c.GITHUB_API
 REPO = c.PR_REPO
@@ -62,7 +65,7 @@ FLOWGENT_CI_PATTERNS = [
 HISTORICAL_COMMIT_SAMPLE_SIZE = 3
 
 
-class PullRequestCommitOperations:
+class PullRequestCommitVerifier(BaseVerifier):
     """Class-owned operations for s35 pr commit."""
 
     @staticmethod
@@ -96,7 +99,7 @@ class PullRequestCommitOperations:
 
         # 1. Get PR metadata
         print(f"\n  -> Querying PR #{PR_NUMBER} on {REPO}...")
-        pr = PullRequestCommitOperations._gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}")
+        pr = PullRequestCommitVerifier._gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}")
         if pr is None:
             raise AssertionError(
                 f"Cannot access GitHub API for PR #{PR_NUMBER}. "
@@ -177,28 +180,28 @@ class PullRequestCommitOperations:
             else:
                 other_commits.append(entry)
 
-        PullRequestCommitOperations._print_commits(
+        PullRequestCommitVerifier._print_commits(
             "Flowgent security-fix commits",
             flowgent_security_fixes,
             historical=True,
         )
         if flowgent_security_fixes:
             print(f"  ✓ These are commits produced by the security-autonomy-fixer pipeline")
-        PullRequestCommitOperations._print_commits("New commits since s31 baseline", new_commits)
-        PullRequestCommitOperations._print_commits(
+        PullRequestCommitVerifier._print_commits("New commits since s31 baseline", new_commits)
+        PullRequestCommitVerifier._print_commits(
             "New Flowgent security-fix commits this run",
             new_flowgent_security_fixes,
         )
-        PullRequestCommitOperations._print_commits(
+        PullRequestCommitVerifier._print_commits(
             "Flowgent CI/workflow commits (NOT security fixes)",
             flowgent_ci_commits,
             historical=True,
         )
-        PullRequestCommitOperations._print_commits("Other commits", other_commits[:5])
+        PullRequestCommitVerifier._print_commits("Other commits", other_commits[:5])
 
         # 4. Check files in PR for test coverage
         print(f"\n  -> Checking PR files for test coverage changes...")
-        files_data = PullRequestCommitOperations._gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}/files?per_page=100")
+        files_data = PullRequestCommitVerifier._gh_get(f"/repos/{REPO}/pulls/{PR_NUMBER}/files?per_page=100")
         if isinstance(files_data, list):
             test_files = []
             src_files = []
@@ -277,17 +280,6 @@ class PullRequestCommitOperations:
         print(f"  Review at: {pr_url}")
         print(f"  PASS")
 
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class PullRequestCommitVerifier(BaseVerifier):
     scenario_id = "35"
     title = "PR Commits — Verify Fix Commits on Target PR"
 
@@ -296,8 +288,4 @@ class PullRequestCommitVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_commits() -> None:
-        PullRequestCommitOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the pull-request commit scenario."""
-    return PullRequestCommitVerifier(context).run()
+        PullRequestCommitVerifier._verify_scenario()

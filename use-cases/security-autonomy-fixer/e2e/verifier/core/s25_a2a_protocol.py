@@ -7,6 +7,9 @@ passing result.
 """
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import base64
 import hashlib
 import hmac
@@ -28,7 +31,7 @@ FLOW_ID = "a2a-e2e-" + uuid.uuid4().hex[:8]
 SESSION = common_api.FlowgentE2EProject.session()
 
 
-class A2AProtocolOperations:
+class A2AProtocolVerifier(BaseVerifier):
     """Class-owned operations for s25 a2a protocol."""
 
     @staticmethod
@@ -71,9 +74,9 @@ class A2AProtocolOperations:
             "issued_at_epoch_seconds": now,
             "expires_at_epoch_seconds": now + 900,
         }
-        encoded = A2AProtocolOperations._b64url(json.dumps(access_context, separators=(",", ":")).encode())
+        encoded = A2AProtocolVerifier._b64url(json.dumps(access_context, separators=(",", ":")).encode())
         signing_input = f"agctx1.{encoded}"
-        signature = A2AProtocolOperations._b64url(
+        signature = A2AProtocolVerifier._b64url(
             hmac.new(signing_key.encode(), signing_input.encode(), hashlib.sha256).digest()
         )
         return f"{signing_input}.{signature}"
@@ -107,7 +110,7 @@ class A2AProtocolOperations:
     @staticmethod
     def _action(action: str, **values) -> tuple[dict, Any]:
         data = {"action": action, "namespace": NAMESPACE, **values}
-        task = A2AProtocolOperations._rpc(
+        task = A2AProtocolVerifier._rpc(
             "message/send",
             {
                 "message": {
@@ -126,17 +129,17 @@ class A2AProtocolOperations:
         task_id = task.get("id")
         assert task_id, f"A2A action {action} did not return a protocol task id"
 
-        persisted = A2AProtocolOperations._rpc("tasks/get", {"id": task_id, "historyLength": 5})
+        persisted = A2AProtocolVerifier._rpc("tasks/get", {"id": task_id, "historyLength": 5})
         assert persisted.get("id") == task_id, "A2A task was not readable from the shared store"
         assert (persisted.get("status") or {}).get("state") == "completed"
-        return task, A2AProtocolOperations._result_payload(task)
+        return task, A2AProtocolVerifier._result_payload(task)
 
     @staticmethod
     def _wait_run(run_id: str):
         deadline = time.time() + 5 * 60
         last = ""
         while time.time() < deadline:
-            _, run = A2AProtocolOperations._action("get_run", run_id=run_id)
+            _, run = A2AProtocolVerifier._action("get_run", run_id=run_id)
             last = run.get("status", "")
             if last == "COMPLETED":
                 return
@@ -149,7 +152,7 @@ class A2AProtocolOperations:
     def _verify_scenario():
         print("  Scenario 25: standard A2A JSON-RPC + real FlowRun")
 
-        SESSION.headers["x-authguard-context"] = A2AProtocolOperations._authguard_context()
+        SESSION.headers["x-authguard-context"] = A2AProtocolVerifier._authguard_context()
 
         health = SESSION.get(f"{A2A}/_/healthz", timeout=5)
         assert health.status_code == 200, f"A2A health failed: {health.status_code}"
@@ -162,7 +165,7 @@ class A2AProtocolOperations:
         assert len(card.get("skills") or []) >= 9, card
         print(f"  agent card OK: protocol={card['protocolVersion']} skills={len(card['skills'])}")
 
-        _, flows = A2AProtocolOperations._action("list_flows")
+        _, flows = A2AProtocolVerifier._action("list_flows")
         assert isinstance(flows, list), f"A2A list_flows returned {type(flows).__name__}, want list"
         flow_spec = {
             "id": FLOW_ID,
@@ -181,50 +184,31 @@ class A2AProtocolOperations:
             "edges": [],
         }
         try:
-            _, created = A2AProtocolOperations._action("create_flow", spec=flow_spec)
+            _, created = A2AProtocolVerifier._action("create_flow", spec=flow_spec)
             assert created.get("agentflow_id") == FLOW_ID, created
 
-            _, triggered = A2AProtocolOperations._action(
+            _, triggered = A2AProtocolVerifier._action(
                 "start_run",
                 agentflow_id=FLOW_ID,
                 vars={"verification": "security-autonomy-fixer/a2a"},
             )
             run_id = triggered.get("run_id")
             assert run_id, f"A2A start_run response omitted run_id: {triggered}"
-            A2AProtocolOperations._wait_run(run_id)
+            A2AProtocolVerifier._wait_run(run_id)
             print(f"  real A2A FlowRun completed: run_id={run_id}")
 
-            _, runs = A2AProtocolOperations._action("list_runs", agentflow_id=FLOW_ID)
+            _, runs = A2AProtocolVerifier._action("list_runs", agentflow_id=FLOW_ID)
             items = runs.get("items") if isinstance(runs, dict) else runs
             assert isinstance(items, list), f"A2A list_runs returned {type(runs).__name__}, want list"
             assert any(item.get("id") == run_id for item in (items or [])), runs
         finally:
             try:
-                A2AProtocolOperations._action("delete_flow", agentflow_id=FLOW_ID)
+                A2AProtocolVerifier._action("delete_flow", agentflow_id=FLOW_ID)
             except Exception as exc:
                 print(f"  WARN: A2A verifier cleanup failed: {exc}")
 
         print("  PASS: authenticated standard A2A, shared tasks, and real execution verified")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class A2AProtocolVerifier(BaseVerifier):
     scenario_id = "25"
     title = "A2A Protocol — Agent Card & Task Submit"
 
@@ -233,8 +217,4 @@ class A2AProtocolVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_protocol() -> None:
-        A2AProtocolOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the A2A-protocol scenario."""
-    return A2AProtocolVerifier(context).run()
+        A2AProtocolVerifier._verify_scenario()

@@ -9,6 +9,8 @@ WEB_LOCAL_IMAGE ?= localhost/flowgent-web:latest
 WEB_BUILD_TARGET ?= runtime-dist
 WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
 WEB_NGINX_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginx:1.27-alpine
+E2E_VENV_PYTHON := use-cases/security-autonomy-fixer/e2e/.venv/bin/python
+E2E_PYTHON ?= $(if $(wildcard $(E2E_VENV_PYTHON)),$(E2E_VENV_PYTHON),python3)
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # IN_CN_GFW controls whether to route Go module downloads through a proxy/CDN.
 #   IN_CN_GFW=true  → prefer HTTPS_PROXY if set, otherwise use goproxy.cn
@@ -175,9 +177,9 @@ test-runtime-isolation:
 	cd pkg/core && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/engine/resourcemanager
 
 test-e2e-runner:
-	python3 -m compileall -q use-cases/security-autonomy-fixer/e2e
-	python3 use-cases/security-autonomy-fixer/e2e/runner.py --help >/dev/null
-	python3 use-cases/security-autonomy-fixer/e2e/runner.py --list
+	$(E2E_PYTHON) -m compileall -q use-cases/security-autonomy-fixer/e2e
+	$(E2E_PYTHON) use-cases/security-autonomy-fixer/e2e/runner.py --help >/dev/null
+	$(E2E_PYTHON) use-cases/security-autonomy-fixer/e2e/runner.py --list
 	helm lint deploy/helm/flowgent
 	@_rendered="$$(mktemp)"; \
 	trap 'rm -f "$$_rendered"' EXIT; \
@@ -199,10 +201,10 @@ test-e2e-runner:
 	grep -A1 '^[[:space:]]*- name: e2e-flowgent-apiserver$$' "$$_rendered" | grep -q 'port: 9999'
 
 e2e-security-autonomy-fixer-with-helm:
-	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s $(E2E_ARGS)
+	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" $(E2E_PYTHON) -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s $(E2E_ARGS)
 
 e2e-security-autonomy-fixer-with-docker:
-	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" python3 -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker $(E2E_ARGS)
+	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" $(E2E_PYTHON) -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker $(E2E_ARGS)
 
 fmt:
 	gofmt -w $$(rg --files pkg tests -g '*.go')

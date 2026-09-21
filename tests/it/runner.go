@@ -201,6 +201,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 		&handler.HealthHandler{},
 		flowHandler,
 		handler.NewAgentDefHandler(storeImpl, logger),
+		handler.NewSkillHandler(storeImpl),
 		handler.NewFlowRunHandler(storeImpl, nil, nil, logger),
 		handler.NewHumanHandler(storeImpl, nil, logger),
 		notifierHandler,

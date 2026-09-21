@@ -66,6 +66,9 @@ Steps with Expected I/O:
 """
 from __future__ import annotations
 
+from common.model import VerificationResult
+from verifier import BaseVerifier
+
 import subprocess
 import sys
 import os
@@ -79,7 +82,7 @@ NAMESPACE = config.K8S_NAMESPACE
 RELEASE = config.RELEASE_NAME
 
 
-class InfrastructureReadinessOperations:
+class InfrastructureReadinessVerifier(BaseVerifier):
     """Class-owned operations for s11 infrastructure."""
 
     @staticmethod
@@ -95,7 +98,7 @@ class InfrastructureReadinessOperations:
     @staticmethod
     def kubectl_json(args):
         """Run kubectl and parse JSON output."""
-        result = InfrastructureReadinessOperations.kubectl(args + ["-o", "json"], check=False)
+        result = InfrastructureReadinessVerifier.kubectl(args + ["-o", "json"], check=False)
         if result.returncode != 0:
             return None
         try:
@@ -109,7 +112,7 @@ class InfrastructureReadinessOperations:
 
         # ── L1.1: K8S cluster health ───────────────────────────
         print("\n── L1: Pre-Deployment ──")
-        result = InfrastructureReadinessOperations.kubectl(["get", "nodes"])
+        result = InfrastructureReadinessVerifier.kubectl(["get", "nodes"])
         if "Ready" in result.stdout:
             print("  [1.1] K8S nodes OK (Ready found)")
         else:
@@ -117,7 +120,7 @@ class InfrastructureReadinessOperations:
             failures.append("no Ready K8S node found")
 
         # ── L1.2: System pods healthy ──────────────────────────
-        result = InfrastructureReadinessOperations.kubectl(["get", "pods", "-n", "kube-system"])
+        result = InfrastructureReadinessVerifier.kubectl(["get", "pods", "-n", "kube-system"])
         print(f"  [1.2] kube-system pods: {result.stdout.count('Running')} Running of {max(1, len(result.stdout.splitlines()) - 1)} total")
 
         # ── L1.3: SonarQube reachable ──────────────────────────
@@ -187,7 +190,7 @@ class InfrastructureReadinessOperations:
             print("  [2.5] SKIP: helm not installed")
 
         # ── L2.6: K8s resources ────────────────────────────────
-        result = InfrastructureReadinessOperations.kubectl(["get", "deploy,svc,configmap", "-n", NAMESPACE,
+        result = InfrastructureReadinessVerifier.kubectl(["get", "deploy,svc,configmap", "-n", NAMESPACE,
                            "-l", f"app.kubernetes.io/instance={RELEASE}"])
         output_lines = result.stdout.strip().split("\n")
         print(f"  [2.6] K8s resources: {max(0, len(output_lines) - 1)} items (deploy/svc/configmap)")
@@ -195,7 +198,7 @@ class InfrastructureReadinessOperations:
         # ── L3: Pod Readiness ──────────────────────────────────
         print("\n── L3: Pod Readiness ──")
 
-        pods_data = InfrastructureReadinessOperations.kubectl_json(["get", "pods", "-n", NAMESPACE,
+        pods_data = InfrastructureReadinessVerifier.kubectl_json(["get", "pods", "-n", NAMESPACE,
                                    "-l", f"app.kubernetes.io/instance={RELEASE}"])
         if pods_data:
             items = pods_data.get("items", [])
@@ -274,7 +277,7 @@ class InfrastructureReadinessOperations:
                 failures.append(f"A2A healthz HTTP {r.status_code}")
         except Exception as e:
             failures.append(f"A2A healthz not reachable: {e}")
-        a2a_deployment = InfrastructureReadinessOperations.kubectl_json([
+        a2a_deployment = InfrastructureReadinessVerifier.kubectl_json([
             "get", "deployment", f"{RELEASE}-a2a", "-n", NAMESPACE,
         ])
         if a2a_deployment:
@@ -295,7 +298,7 @@ class InfrastructureReadinessOperations:
             # Deployments are labeled app.kubernetes.io/component={component}, not
             # app.kubernetes.io/name (which is always the chart name "flowgent" —
             # see deploy/helm/flowgent/templates/apiserver.yaml etc).
-            result = InfrastructureReadinessOperations.kubectl(["logs", "-l", f"app.kubernetes.io/component={component}",
+            result = InfrastructureReadinessVerifier.kubectl(["logs", "-l", f"app.kubernetes.io/component={component}",
                                "-n", NAMESPACE, "--tail=20"], check=False)
             if not result.stdout.strip():
                 print(f"  [3.9] {component} logs: no matching pods (may not be enabled) — SKIP")
@@ -329,7 +332,7 @@ class InfrastructureReadinessOperations:
         # Flow imports are metadata only. Flow JobManager resources should
         # exist only while real runs are active; test-flow-* leftovers are always
         # leaks after a full redeploy/import cycle.
-        app_pods = InfrastructureReadinessOperations.kubectl_json(["get", "pods", "-n", config.K8S_WORKLOAD_NAMESPACE, "-l", "flowgent.io/runtime-boundary=flow-jobmanager"])
+        app_pods = InfrastructureReadinessVerifier.kubectl_json(["get", "pods", "-n", config.K8S_WORKLOAD_NAMESPACE, "-l", "flowgent.io/runtime-boundary=flow-jobmanager"])
         leaked_pods = []
         if app_pods and app_pods.get("items"):
             for pod in app_pods["items"]:
@@ -343,7 +346,7 @@ class InfrastructureReadinessOperations:
         if leaked_pods:
             failures.append(f"leaked test-flow JobManager pods: {leaked_pods}")
 
-        app_deployments = InfrastructureReadinessOperations.kubectl_json(["get", "deployments", "-n", config.K8S_WORKLOAD_NAMESPACE, "-l", "flowgent.io/runtime-boundary=flow-jobmanager"])
+        app_deployments = InfrastructureReadinessVerifier.kubectl_json(["get", "deployments", "-n", config.K8S_WORKLOAD_NAMESPACE, "-l", "flowgent.io/runtime-boundary=flow-jobmanager"])
         leaked_deployments = []
         if app_deployments and app_deployments.get("items"):
             for deployment in app_deployments["items"]:
@@ -364,17 +367,6 @@ class InfrastructureReadinessOperations:
         if failures:
             raise AssertionError(f"Infrastructure readiness failed: {failures}")
 
-
-
-
-
-
-
-from common.model import RunContext, VerificationResult
-from verifier import BaseVerifier
-
-
-class InfrastructureReadinessVerifier(BaseVerifier):
     scenario_id = "11"
     title = "Infrastructure — Pre-Deployment & Pod Readiness"
 
@@ -392,8 +384,4 @@ class InfrastructureReadinessVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_kubernetes() -> None:
-        InfrastructureReadinessOperations._verify_scenario()
-
-def verifier(context: RunContext) -> VerificationResult:
-    """Run the infrastructure-readiness scenario."""
-    return InfrastructureReadinessVerifier(context).run()
+        InfrastructureReadinessVerifier._verify_scenario()

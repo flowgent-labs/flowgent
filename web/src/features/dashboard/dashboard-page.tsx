@@ -99,6 +99,7 @@ export function DashboardPage() {
             {ranges.map((range) => (
               <button
                 key={range.hours}
+                data-testid={`dashboard-range-${range.hours}`}
                 type="button"
                 className={hours === range.hours ? 'is-active' : ''}
                 onClick={() => setHours(range.hours)}
@@ -166,8 +167,15 @@ export function DashboardPage() {
                 accent="warning"
                 onClick={() => goToRuns('FAILED')}
               />
+              <Kpi
+                label={t('dashboard.averageDuration')}
+                value={formatDuration(data.average_duration_ms)}
+                icon={<Clock3 />}
+                accent="blue"
+                onClick={() => goToRuns()}
+              />
             </section>
-            <section className="surface chart-panel">
+            <section className="surface chart-panel" data-testid="dashboard-telemetry">
               <header className="surface__header">
                 <div>
                   <span className="surface__eyebrow">{t('dashboard.telemetry')}</span>
@@ -307,4 +315,11 @@ function timeAgo(value: string, language: string) {
   } catch {
     return '—'
   }
+}
+
+function formatDuration(milliseconds: number) {
+  if (!milliseconds || milliseconds < 0) return '—'
+  if (milliseconds < 1000) return `${milliseconds} ms`
+  if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(1)} s`
+  return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`
 }

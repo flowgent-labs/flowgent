@@ -13,6 +13,7 @@ func RegisterRESTRoutes(
 	health *handler.HealthHandler,
 	flowDef *handler.FlowDefHandler,
 	agentDef *handler.AgentDefHandler,
+	skillDef *handler.SkillHandler,
 	flowRun *handler.FlowRunHandler,
 	human *handler.HumanHandler,
 	notif *handler.NotifierHandler,
@@ -39,6 +40,15 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/agents/{name}", agentDef.Get)
 	mux.HandleFunc("PUT /api/v1/{namespace}/agents/{name}", agentDef.Update)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/agents/{name}", agentDef.Delete)
+
+	// ── Reusable Skill Definitions (namespace-scoped) ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/skill-definitions", skillDef.List)
+	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions", skillDef.Create)
+	mux.HandleFunc("GET /api/v1/{namespace}/skill-definitions/{name}", skillDef.Get)
+	mux.HandleFunc("PUT /api/v1/{namespace}/skill-definitions/{name}", skillDef.Update)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/skill-definitions/{name}", skillDef.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions/{name}/assets", skillDef.UploadAsset)
+	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions/{name}/scripts", skillDef.UploadScript)
 
 	// ── AgentFlows (namespace-scoped) ─────────────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/flows", flowDef.List)
