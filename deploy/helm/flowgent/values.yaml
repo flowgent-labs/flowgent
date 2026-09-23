@@ -140,6 +140,14 @@ web:
     port: 8080
     targetPort: 8080
     nodePort: 30080
+  # Optional public SPA route for same-origin AuthGuard integration. Business
+  # API routes remain separately protected by Envoy jwt_authn + ext_authz.
+  route:
+    enabled: false
+    name: flowgent-web
+    gatewayName: ""
+    sectionName: http
+    hostnames: []
   resources:
     requests: { cpu: "50m", memory: "64Mi" }
     limits:   { cpu: "250m", memory: "256Mi" }
@@ -609,6 +617,7 @@ authguard-middleware:
         enabled: true
         name: flowgent-api
         hostnames: [flowgent.wl4g.com]
+        path: /api/
         backend:
           name: flowgent-apiserver
           port: 9999

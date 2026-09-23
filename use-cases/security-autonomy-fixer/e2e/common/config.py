@@ -27,6 +27,7 @@ SCENARIOS = {
     "43": ("Web Console — Skill CRUD and Workspace Uploads", "verifier.web.s43_skill_crud"),
     "44": ("Web Console — MCP and LLM CRUD", "verifier.web.s44_integrations_crud"),
     "45": ("Web Console — Knowledge and Notification CRUD", "verifier.web.s45_knowledge_notifications"),
+    "46": ("Hosted Login — OAuth Session and Business Sign-out", "verifier.web.s46_hosted_login"),
     "31": ("E2E Fixer — Seed & Trigger", "verifier.agentflow.s31_seed_trigger"),
     "32": ("E2E Fixer — Discovery & Analyze", "verifier.agentflow.s32_discovery_analyze"),
     "33": ("E2E Fixer — Remediation", "verifier.agentflow.s33_remediation"),
@@ -81,6 +82,7 @@ LOCAL_JAEGER_PORT = int(os.getenv("FLOWGENT_E2E_JAEGER_PORT", "16688"))
 LOCAL_AUTHN_PORT = int(os.getenv("FLOWGENT_E2E_AUTHN_PORT", "18082"))
 LOCAL_AUTHZ_MGMT_PORT = int(os.getenv("FLOWGENT_E2E_AUTHZ_MGMT_PORT", "19091"))
 LOCAL_GATEWAY_PORT = int(os.getenv("FLOWGENT_E2E_GATEWAY_PORT", "18089"))
+LOCAL_MOCK_GITHUB_PORT = int(os.getenv("FLOWGENT_E2E_MOCK_GITHUB_PORT", "18087"))
 LOCAL_PG_PORT = int(os.getenv("FLOWGENT_E2E_PG_PORT", "25432"))
 
 # ── K8S / K8s API ───────────────────────────────────────────────

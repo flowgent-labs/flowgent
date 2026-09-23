@@ -37,6 +37,8 @@ GATEWAY_CONTROLLER = f"flowgent.authguard.io/{config.RESOURCE_PREFIX}-gateway-co
 # port 80 and this use case's host-side SonarQube MCP bridge on port 18080.
 GATEWAY_LISTENER_PORT = 28080
 APPLICATION_HOST = "authn.flowgent.local"
+BROWSER_HOST = "localhost"
+APPLICATION_DISPLAY_NAME = "Flowgent Security Autonomy Fixer"
 AUTHN_ISSUER = f"urn:authguard:{config.RESOURCE_PREFIX}:authn"
 AUDIENCE = "flowgent"
 AUTHGUARD_DATABASE = "flowgent"
@@ -334,7 +336,10 @@ class AuthGuardRuntime:
                         "issuer": "https://github.com",
                         "clientId": GITHUB_CLIENT_ID,
                         "clientSecret": "${AUTHGUARD_GITHUB_CLIENT_SECRET}",
-                        "callbackUrl": f"http://{APPLICATION_HOST}:8082/auth/oauth2/github/callback",
+                        "callbackUrl": (
+                            f"http://{BROWSER_HOST}:{config.LOCAL_GATEWAY_PORT}"
+                            "/auth/oauth2/github/callback"
+                        ),
                         "authorization": {"endpoint": f"{mock_url}/github/login/oauth/authorize", "scopes": ["read:user", "user:email"]},
                         "token": {"endpoint": f"{mock_url}/github/login/oauth/access_token", "method": "POST"},
                         "identity": {
@@ -470,10 +475,15 @@ class AuthGuardRuntime:
                         "authguardRoute": {
                             "enabled": True,
                             "name": f"{config.RESOURCE_PREFIX}-api",
-                            "hostnames": [APPLICATION_HOST],
+                            "hostnames": [APPLICATION_HOST, BROWSER_HOST],
+                            "path": "/api/",
                             "backend": {"name": f"{config.RELEASE_NAME}-apiserver", "port": 9999},
                         },
-                        "authnRoute": {"enabled": True, "name": f"{config.RESOURCE_PREFIX}-authn", "hostnames": [APPLICATION_HOST]},
+                        "authnRoute": {
+                            "enabled": True,
+                            "name": f"{config.RESOURCE_PREFIX}-authn",
+                            "hostnames": [APPLICATION_HOST, BROWSER_HOST],
+                        },
                     },
                 },
                 "authguard": {
@@ -482,9 +492,12 @@ class AuthGuardRuntime:
                         "replicaCount": 1,
                         "applications": {
                             "flowgent": {
-                                "hosts": [APPLICATION_HOST],
-                                "displayName": "Flowgent Security Autonomy Fixer",
-                                "returnUris": [f"https://{APPLICATION_HOST}/**"],
+                                "hosts": [APPLICATION_HOST, BROWSER_HOST],
+                                "displayName": APPLICATION_DISPLAY_NAME,
+                                "returnUris": [
+                                    f"https://{APPLICATION_HOST}/**",
+                                    f"https://{BROWSER_HOST}/**",
+                                ],
                             }
                         },
                         "image": {"repository": AUTHGUARD_IMAGE.rsplit(":", 1)[0], "tag": AUTHGUARD_IMAGE.rsplit(":", 1)[1], "pullPolicy": "Never"},
@@ -506,13 +519,22 @@ class AuthGuardRuntime:
                         },
                         "route": {
                             "enabled": True,
-                            "hostnames": [APPLICATION_HOST],
+                            "hostnames": [APPLICATION_HOST, BROWSER_HOST],
                             "console": {"enabled": False, "hostnames": []},
                         },
                     },
                     "authz": {"replicaCount": 1, "image": {"repository": AUTHGUARD_IMAGE.rsplit(":", 1)[0], "tag": AUTHGUARD_IMAGE.rsplit(":", 1)[1], "pullPolicy": "Never"}, "disruptionBudget": {"enabled": False}, "networkPolicy": {"enabled": False}},
                     "authguard-config": AuthGuardRuntime.runtime_config(namespace, pg_host, pg_port, pg_user),
                 },
+            },
+            "web": {
+                "route": {
+                    "enabled": True,
+                    "name": f"{config.RESOURCE_PREFIX}-web",
+                    "gatewayName": GATEWAY_NAME,
+                    "sectionName": "http",
+                    "hostnames": [APPLICATION_HOST, BROWSER_HOST],
+                }
             },
         }
 

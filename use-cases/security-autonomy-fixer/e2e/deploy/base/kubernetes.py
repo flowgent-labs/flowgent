@@ -104,32 +104,10 @@ class KubernetesImageRuntime:
     @staticmethod
     def _run_manual_access(context: RunContext) -> None:
         """Keep the K8s endpoints for the retained Flowgent deployment available."""
-        from deploy.authguard import GATEWAY_LISTENER_PORT
-
         core = PortForwards(context).start()
-        result = CommandRunner.run(
-            (
-                "kubectl",
-                "get",
-                "service",
-                "-n",
-                context.namespace,
-                "-l",
-                f"gateway.envoyproxy.io/owning-gateway-name={config.RESOURCE_PREFIX}-gateway",
-                "-o",
-                "jsonpath={.items[0].metadata.name}",
-            ),
-            timeout_seconds=20,
-            stream=False,
-        )
-        envoy_service = result.output.strip()
-        if not result.passed or not envoy_service:
-            core.stop()
-            raise RuntimeError("Envoy data-plane Service not found; deploy Flowgent E2E first")
         specs = (
             (f"{context.release}-authguard-authn", config.LOCAL_AUTHN_PORT, 8082),
             (f"{context.release}-authguard", config.LOCAL_AUTHZ_MGMT_PORT, 9091),
-            (envoy_service, config.LOCAL_GATEWAY_PORT, GATEWAY_LISTENER_PORT),
         )
         processes = [
             subprocess.Popen(
@@ -151,9 +129,8 @@ class KubernetesImageRuntime:
             if any(process.poll() is not None for process in processes):
                 raise RuntimeError("one or more manual-access tunnels failed to bind")
             print("Flowgent/AuthGuard manual access is ready (Ctrl-C only closes tunnels):")
-            print("  UI:              http://127.0.0.1:31080")
+            print(f"  UI and Gateway:  http://127.0.0.1:{config.LOCAL_GATEWAY_PORT}")
             print(f"  Internal API:    http://127.0.0.1:{config.LOCAL_API_PORT}")
-            print(f"  Protected API:   http://127.0.0.1:{config.LOCAL_GATEWAY_PORT}")
             print(f"  AuthN:           http://127.0.0.1:{config.LOCAL_AUTHN_PORT}")
             print(f"  AuthZ management:http://127.0.0.1:{config.LOCAL_AUTHZ_MGMT_PORT}")
             signal.pause()
@@ -282,9 +259,22 @@ class KubernetesLocalImageLoader:
             raise RuntimeError(f"unsupported Kubernetes image loader: {self.kind}")
         exporter = ("docker", "save", image)
         importer = (*self.ctr_command, "-n", "k8s.io", "images", "import", "-")
-        KubernetesImageRuntime._image_command(
-            ("bash", "-o", "pipefail", "-c", f"{shlex.join(exporter)} | {shlex.join(importer)}")
-        )
+        for _ in range(2):
+            KubernetesImageRuntime._image_command(
+                (
+                    "bash",
+                    "-o",
+                    "pipefail",
+                    "-c",
+                    f"{shlex.join(exporter)} | {shlex.join(importer)}",
+                )
+            )
+            references = KubernetesImageRuntime._image_command(
+                (*self.ctr_command, "-n", "k8s.io", "images", "list", "-q")
+            ).output.splitlines()
+            if image in references:
+                return
+        raise RuntimeError(f"containerd did not retain imported image reference: {image}")
 
 
 
@@ -325,6 +315,8 @@ class PortForwards:
     """Own only the localhost tunnels required by black-box verifiers."""
 
     def __init__(self, context: RunContext) -> None:
+        from deploy.authguard import GATEWAY_LISTENER_PORT, MOCK_GITHUB_NAME
+
         self.context = context
         self.processes: dict[str, subprocess.Popen] = {}
         release = context.release
@@ -339,6 +331,28 @@ class PortForwards:
                 ),
             ),
             (f"{release}-jaeger", (f"{config.LOCAL_JAEGER_PORT}:16686",)),
+            (
+                MOCK_GITHUB_NAME,
+                (f"{config.LOCAL_MOCK_GITHUB_PORT}:8080",),
+            ),
+        )
+        gateway = KubernetesImageRuntime._image_command(
+            (
+                "kubectl",
+                "get",
+                "service",
+                "-n",
+                context.namespace,
+                "-l",
+                f"gateway.envoyproxy.io/owning-gateway-name={config.RESOURCE_PREFIX}-gateway",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+            )
+        ).output.strip()
+        if not gateway:
+            raise RuntimeError("Envoy Gateway data-plane Service was not created")
+        self.specs += (
+            (gateway, (f"{config.LOCAL_GATEWAY_PORT}:{GATEWAY_LISTENER_PORT}",)),
         )
 
     @staticmethod

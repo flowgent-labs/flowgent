@@ -23,6 +23,7 @@ class E2EStructureVerifier(BaseVerifier):
         self.step("verify shared deployer abstraction and both backends", self._verify_deployers)
         self.step("verify direct BaseVerifier scenario classes", self._verify_verifiers)
         self.step("verify Docker and K8s functional matrix parity", self._verify_parity)
+        self.step("verify same-origin Hosted Login and sign-out routing", self._verify_gateway_browser)
         self.step("verify K8s image-runtime discovery contract", self._verify_image_importer)
         self.step("verify obsolete procedural modules are absent", self._verify_forbidden_paths)
 
@@ -45,6 +46,7 @@ class E2EStructureVerifier(BaseVerifier):
             "verifier/web/s43_skill_crud.py",
             "verifier/web/s44_integrations_crud.py",
             "verifier/web/s45_knowledge_notifications.py",
+            "verifier/web/s46_hosted_login.py",
         )
         for relative in required:
             if not (E2E_DIR / relative).is_file():
@@ -215,6 +217,37 @@ class E2EStructureVerifier(BaseVerifier):
         required_methods = {"import_core", "import_web", "import_authguard", "import_authguard_web"}
         if missing := required_methods - manager_methods:
             raise AssertionError(f"K8s image manager misses methods: {sorted(missing)}")
+
+    def _verify_gateway_browser(self) -> None:
+        browser = (E2E_DIR / "verifier/web/browser.py").read_text(encoding="utf-8")
+        hosted_login = (E2E_DIR / "verifier/web/browser.py").read_text(
+            encoding="utf-8"
+        )
+        envoy = (E2E_DIR / "config/envoy/envoy.yaml").read_text(encoding="utf-8")
+        chart = (E2E_DIR.parents[2] / "deploy/helm/flowgent/templates/web.yaml").read_text(
+            encoding="utf-8"
+        )
+        values = (E2E_DIR.parents[2] / "deploy/helm/flowgent/values.yaml").read_text(
+            encoding="utf-8"
+        )
+        if "LOCAL_GATEWAY_PORT" not in browser or "/auth/login?return_to=" not in browser:
+            raise AssertionError("browser scenarios must enter Hosted Login through Envoy Gateway")
+        if any(port in browser for port in ("21080", "31080")):
+            raise AssertionError("browser scenarios must not bypass Gateway through a Web NodePort")
+        for proof in (
+            'fetch(\'/auth/session\')',
+            'response.url.endswith("/auth/logout")',
+            "session_before != 200",
+            "session_after != 401",
+        ):
+            if proof not in hosted_login:
+                raise AssertionError(f"real browser sign-out proof is missing: {proof}")
+        if "cluster: flowgent_web" not in envoy or 'prefix: "/api/"' not in envoy:
+            raise AssertionError("Docker edge must separate the public SPA from protected /api/")
+        if "kind: HTTPRoute" not in chart or "value: /" not in chart:
+            raise AssertionError("Flowgent Helm must expose its public SPA through the shared Gateway")
+        if "path: /api/" not in values:
+            raise AssertionError("AuthGuard's protected Flowgent route must be scoped to /api/")
 
     def _verify_forbidden_paths(self) -> None:
         forbidden = (

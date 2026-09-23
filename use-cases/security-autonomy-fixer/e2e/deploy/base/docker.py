@@ -348,7 +348,7 @@ class DockerDeployer(BaseDeployer):
         authguard_document["authn"]["applications"] = {
             "flowgent": {
                 "hosts": [authguard.APPLICATION_HOST, "localhost"],
-                "displayName": "Flowgent Security Autonomy",
+                "displayName": authguard.APPLICATION_DISPLAY_NAME,
                 "returnUris": ["https://authn.flowgent.local/**", "https://localhost/**"],
             }
         }

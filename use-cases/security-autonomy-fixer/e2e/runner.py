@@ -144,8 +144,10 @@ class E2ERunner:
     @staticmethod
     def print_access(context: RunContext) -> int:
         if context.deployer == "docker":
-            print(f"Flowgent Web: http://127.0.0.1:21080")
-            print(f"AuthGuard Gateway: http://127.0.0.1:{config.LOCAL_GATEWAY_PORT}")
+            print(
+                "Flowgent Web and AuthGuard Gateway: "
+                f"http://127.0.0.1:{config.LOCAL_GATEWAY_PORT}"
+            )
             print(f"Jaeger: http://127.0.0.1:{config.LOCAL_JAEGER_PORT}")
             return 0
         from deploy.base.kubernetes import KubernetesManualAccess

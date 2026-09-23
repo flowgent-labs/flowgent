@@ -39,8 +39,12 @@ Namespace: {{ .Release.Namespace }}
 {{- end }}
 {{- if .Values.web.enabled }}
   Web              — {{ .Values.web.replicas }} replicas, {{ .Values.web.service.type | default "ClusterIP" }}, :{{ .Values.web.service.port }}
+{{- if .Values.web.route.enabled }}
+  Web Gateway      — shared-origin route{{ with .Values.web.route.hostnames }} for {{ join ", " . }}{{ end }}
+  Hosted Login     — <scheme>://<configured-host>/auth/login
+{{- end }}
 {{- if eq (.Values.web.service.type | default "ClusterIP") "NodePort" }}
-  Web NodePort     — :{{ .Values.web.service.nodePort }}
+  Web NodePort     — :{{ .Values.web.service.nodePort }} (diagnostics only; does not serve /auth/*)
 {{- end }}
 {{- end }}
   Controller       — {{ .Values.controller.replicas }} replicas
@@ -50,10 +54,14 @@ Namespace: {{ .Release.Namespace }}
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   curl http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.restPort }}/_/healthz
 {{- if .Values.web.enabled }}
+{{- if .Values.web.route.enabled }}
+  curl -H 'Host: <configured-host>' http://<gateway-address>/healthz
+{{- else }}
 {{- if eq (.Values.web.service.type | default "ClusterIP") "NodePort" }}
   curl http://<node-ip>:{{ .Values.web.service.nodePort }}/healthz
 {{- else }}
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "flowgent.fullname" . }}-web 8080:{{ .Values.web.service.port }}
+{{- end }}
 {{- end }}
 {{- end }}
 

@@ -63,7 +63,7 @@ static_resources:
                         - match: {prefix: "/api/"}
                           route: {cluster: flowgent}
                         - match: {prefix: "/"}
-                          route: {cluster: authguard_web}
+                          route: {cluster: flowgent_web}
                           typed_per_filter_config:
                             envoy.filters.http.jwt_authn:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
@@ -133,3 +133,9 @@ static_resources:
       load_assignment:
         cluster_name: flowgent
         endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: flowgent, port_value: 9999}}}}]}]
+    - name: flowgent_web
+      type: STRICT_DNS
+      connect_timeout: 2s
+      load_assignment:
+        cluster_name: flowgent_web
+        endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: web, port_value: 8080}}}}]}]
