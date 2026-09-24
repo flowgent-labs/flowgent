@@ -20,11 +20,11 @@ import (
 
 // consoleState holds the runtime state of the interactive console.
 type consoleState struct {
-	cfg    *config.FlowgentConfig
-	fc     *FlowgentConsole
+	cfg       *config.FlowgentConfig
+	fc        *FlowgentConsole
 	namespace string
-	rl     *liner.State
-	ctx    context.Context
+	rl        *liner.State
+	ctx       context.Context
 }
 
 // RunREPL runs the interactive management console.
@@ -141,8 +141,6 @@ func (s *consoleState) dispatch(line string) {
 		s.resourceCmd(args, "llm", s.llmList, s.llmGet, s.llmAdd, s.llmRemove)
 	case "channel":
 		s.resourceCmd(args, "channel", s.channelList, s.channelGet, s.channelAdd, s.channelRemove)
-	case "wallet":
-		s.resourceCmd(args, "wallet", s.walletList, s.walletGet, s.walletAdd, s.walletRemove)
 
 	case "export":
 		s.cmdExport(args)
@@ -196,11 +194,7 @@ func (s *consoleState) cmdHelp(args []string) {
   skill   [list | get <id> | add | remove <id>]
   llm     [list | get <id> | add | remove <id>]
   channel [list | get <id> | add | remove <id>]
-  wallet  [list | get <name> | add <name> | remove <name>]
-                wallet add <name> — generates a new Ed25519 keypair
-                wallet add <name> <hex-private-key> — imports an existing keypair
-
-  export [--kind <kinds>] --output <filepath>   Export resources (wallet excluded)
+  export [--kind <kinds>] --output <filepath>   Export Flowgent resources
   import <pattern...>                           Import resources from JSON/YAML files
 
   help                     Show this help
@@ -787,105 +781,6 @@ func (s *consoleState) channelRemove(args []string) {
 	fmt.Printf("Deleted channel: %s\n", args[0])
 }
 
-// ─── Wallet ─────────────────────────────────────────────────────
-
-func (s *consoleState) walletList(args []string) {
-	if !s.requireNamespace() {
-		return
-	}
-	if !s.fc.HasSecretStore() {
-		fmt.Println("Error: wallet secret store not available. Check master key configuration.")
-		return
-	}
-	names, err := s.fc.ListWalletKeys()
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	if len(names) == 0 {
-		fmt.Println("No wallets found.")
-		return
-	}
-	fmt.Printf("%-48s %s\n", "WALLET NAME", "ADDRESS")
-	fmt.Println(strings.Repeat("-", 80))
-	for _, name := range names {
-		addr, err := s.fc.GetWalletKey(name)
-		if err != nil {
-			continue
-		}
-		fmt.Printf("%-48s %s\n", name, addr)
-	}
-	fmt.Printf("(%d wallets)\n", len(names))
-}
-
-func (s *consoleState) walletGet(args []string) {
-	if !s.requireNamespace() {
-		return
-	}
-	if !s.fc.HasSecretStore() {
-		fmt.Println("Error: wallet secret store not available.")
-		return
-	}
-	if len(args) < 1 {
-		fmt.Println("Usage: wallet get <name>")
-		return
-	}
-	addr, err := s.fc.GetWalletKey(args[0])
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	printJSON(map[string]string{
-		"name":    args[0],
-		"address": addr,
-	})
-}
-
-func (s *consoleState) walletAdd(args []string) {
-	if !s.requireNamespace() {
-		return
-	}
-	if !s.fc.HasSecretStore() {
-		fmt.Println("Error: wallet secret store not available.")
-		return
-	}
-	if len(args) < 1 {
-		fmt.Println("Usage: wallet add <name> [hex-private-key]")
-		return
-	}
-	name := args[0]
-	hexKey := ""
-	if len(args) >= 2 {
-		hexKey = args[1]
-	}
-	addr, err := s.fc.CreateWalletKey(name, hexKey)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	fmt.Printf("Wallet created: %s\n", name)
-	fmt.Printf("Address: %s\n", addr)
-}
-
-func (s *consoleState) walletRemove(args []string) {
-	if !s.requireNamespace() {
-		return
-	}
-	if !s.fc.HasSecretStore() {
-		fmt.Println("Error: wallet secret store not available.")
-		return
-	}
-	if len(args) < 1 {
-		fmt.Println("Usage: wallet remove <name>")
-		return
-	}
-	if err := s.fc.DeleteWalletKey(args[0]); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	fmt.Printf("Deleted wallet: %s\n", args[0])
-}
-
 // ─── Import/Export ──────────────────────────────────────────────
 
 func (s *consoleState) cmdExport(args []string) {
@@ -925,7 +820,7 @@ func (s *consoleState) cmdExport(args []string) {
 	if output == "" {
 		fmt.Println("Usage: export [--kind <kinds>] --output <filepath>")
 		fmt.Println("  --kind, -k     Comma-separated resource kinds: llm,channel,mcp,skill,agent,flow,flowrun")
-		fmt.Println("                 Default: all kinds (wallet is never exported)")
+		fmt.Println("                 Default: all supported Flowgent resource kinds")
 		fmt.Println("  --output, -o   Output file path (.json or .yaml/.yml)")
 		fmt.Println()
 		fmt.Println("Examples:")

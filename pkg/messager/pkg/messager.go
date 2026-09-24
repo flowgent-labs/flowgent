@@ -1,25 +1,23 @@
 // Package messager defines the inter-component messaging contract for Flowgent.
 //
 // All inter-component communication uses MQTT topics under the flowgent/v1/ prefix
-// with a hierarchical namespace/flow/run structure for observability and multi-tenancy.
+// with a hierarchical namespace/cluster/flow/run structure for work dispatch and a
+// namespace/flow/run structure for point-to-point callbacks and control events.
 //
 // Topic hierarchy:
 //
+//	flowgent/v1/{namespaceId}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/
+//	  ├── exec/plans          ← JM→TM: cluster-routed dispatch       ($share/tm-{namespaceId}-{clusterId})
+//	  └── sandbox/trigger     ← TM→Sandbox: cluster-routed trigger   ($share/sandbox-{namespaceId}-{clusterId})
+//
 //	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/
-//	  ├── exec/plans          ← JM→TM: dispatch ExecutionPlans  ($share/tm-pool)
-//	  ├── exec/results        ← TM→JM: execution results         (point-to-point)
-//	  ├── sandbox/trigger     ← TM→Sandbox: script trigger       ($share/sandbox-pool)
-//	  ├── sandbox/result      ← Sandbox→TM: execution result     (point-to-point)
-//	  ├── notify/event        ← Publisher→Notifier              ($share/notify-pool)
-//	  └── notify/result       ← Notifier→Publisher               (point-to-point)
+//	  ├── exec/results        ← TM→JM: execution results          (point-to-point)
+//	  ├── sandbox/result      ← Sandbox→TM: execution result      (point-to-point)
+//	  ├── notify/event        ← Publisher→Notifier                ($share/notify-pool)
+//	  └── notify/result       ← Notifier→Publisher                (point-to-point)
 //
 //	flowgent/v1/{namespaceId}/flows/{flowId}/
 //	  └── ctrl/jm/create      ← Controller→JM leader
-//
-//	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/
-//	  ├── sign/request         ← TM→Wallet: unsigned payment     ($share/wallet-pool)
-//	  └── sign/response        ← Wallet→TM: signed result        (point-to-point)
-//
 //	flowgent/v1/heartbeat/{tmId}  ← TM→JM: liveness signals
 package messager
 
@@ -46,15 +44,16 @@ const (
 // Shared-subscription variants prepend $share/{group}/ for load-balanced
 // consumption across multiple pods.
 
-// ExecPlansTopic builds the topic for JM→TM execution plan dispatch.
-// TMs subscribe with SharedExecPlans() for load-balanced consumption.
-func ExecPlansTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, namespaceID, flowID, runID)
+// ExecPlansTopic builds the cluster-routed JM→TM dispatch topic. Flow and Run
+// remain in the path for observability while cluster is the consumer boundary.
+func ExecPlansTopic(namespaceID, clusterID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, namespaceID, clusterID, flowID, runID)
 }
 
-// SharedExecPlans is the $share subscription for TM slot workers.
-func SharedExecPlans() string {
-	return "$share/tm-pool/" + TopicPrefix + "/+/flows/+/runs/+/exec/plans"
+// SharedExecPlans load-balances only within one runtime cluster.
+func SharedExecPlans(namespaceID, clusterID string) string {
+	group := fmt.Sprintf("tm-%s-%s", namespaceID, clusterID)
+	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/flows/+/runs/+/exec/plans", group, TopicPrefix, namespaceID, clusterID)
 }
 
 // ExecResultsTopic builds the topic for TM→JM execution result callback.
@@ -64,13 +63,14 @@ func ExecResultsTopic(namespaceID, flowID, runID string) string {
 
 // SandboxTriggerTopic builds the topic for TM→Sandbox script trigger dispatch.
 // Sandbox pods subscribe with SharedSandboxTrigger() for load-balanced consumption.
-func SandboxTriggerTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, namespaceID, flowID, runID)
+func SandboxTriggerTopic(namespaceID, clusterID, flowID, runID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, namespaceID, clusterID, flowID, runID)
 }
 
-// SharedSandboxTrigger is the $share subscription for sandbox runner pods.
-func SharedSandboxTrigger() string {
-	return "$share/sandbox-pool/" + TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
+// SharedSandboxTrigger load-balances only within one runtime cluster.
+func SharedSandboxTrigger(namespaceID, clusterID string) string {
+	group := fmt.Sprintf("sandbox-%s-%s", namespaceID, clusterID)
+	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/flows/+/runs/+/sandbox/trigger", group, TopicPrefix, namespaceID, clusterID)
 }
 
 // SandboxResultTopic builds the topic for Sandbox→TM result callback.
@@ -86,6 +86,18 @@ func HeartbeatTopic(tmID string) string {
 // HeartbeatWildcard is the wildcard subscription for JM to monitor all TMs.
 func HeartbeatWildcard() string {
 	return TopicPrefix + "/heartbeat/+"
+}
+
+// RuntimeReadyTopic is published by a runtime worker only after its work
+// subscription is active. JobManager subscribes before scaling from zero, so
+// the first execution plan cannot race ahead of its consumer.
+func RuntimeReadyTopic(namespaceID, clusterID, role, workerID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/runtime/%s/%s/ready", TopicPrefix, namespaceID, clusterID, role, workerID)
+}
+
+// RuntimeReadyWildcard matches all workers for one runtime cluster role.
+func RuntimeReadyWildcard(namespaceID, clusterID, role string) string {
+	return RuntimeReadyTopic(namespaceID, clusterID, role, "+")
 }
 
 // CtrlJMCreateTopic builds the topic for Controller→JM dedicated JM creation.
@@ -122,47 +134,6 @@ func NotifyPodWSWildcard(podID string) string {
 // NotifyQueueWildcard builds the wildcard subscription for notifier queue consumers.
 func NotifyQueueWildcard() string {
 	return "$share/notify-pool/" + TopicPrefix + "/+/flows/+/runs/+/notify/event"
-}
-
-// SignRequestTopic builds the topic for TM→Wallet payment signing requests.
-// Wallet daemons subscribe with SharedSignRequest() for load-balanced consumption.
-func SignRequestTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/request", TopicPrefix, namespaceID, flowID, runID)
-}
-
-// SharedSignRequest is the $share subscription for wallet daemon pods.
-func SharedSignRequest() string {
-	return "$share/wallet-pool/" + TopicPrefix + "/+/flows/+/runs/+/sign/request"
-}
-
-// SignResponseTopic builds the topic for Wallet→TM signed payment result.
-func SignResponseTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sign/response", TopicPrefix, namespaceID, flowID, runID)
-}
-
-// SignResponseSubscription is the per-run subscription for TM to receive the signed result.
-func SignResponseSubscription(namespaceID, flowID, runID string) string {
-	return TopicPrefix + "/" + namespaceID + "/flows/" + flowID + "/runs/" + runID + "/sign/response"
-}
-
-// ─── Payment Signing Types ──────────────────────────────────────
-
-// SignRequest is the MQTT payload for an unsigned payment authorization request.
-type SignRequest struct {
-	RequestID string `json:"request_id"`
-	Wallet    string `json:"wallet"`
-	Payload   string `json:"payload"`
-	Namespace  string `json:"namespace_id"`
-	FlowID    string `json:"flow_id"`
-	RunID     string `json:"run_id"`
-}
-
-// SignResponse is the MQTT payload for a signed payment authorization result.
-type SignResponse struct {
-	RequestID string `json:"request_id"`
-	Wallet    string `json:"wallet"`
-	Signature string `json:"signature,omitempty"`
-	Error     string `json:"error,omitempty"`
 }
 
 // ─── InterMessage ──────────────────────────────────────────────
@@ -209,7 +180,7 @@ func SharedCtrlEvents() string {
 type FlowEvent struct {
 	EventType string `json:"event_type"` // CREATED | UPDATED | DELETED
 	FlowID    string `json:"flow_id"`
-	Namespace  string `json:"namespace_id"`
+	Namespace string `json:"namespace_id"`
 	Version   int64  `json:"version,omitempty"`
 }
 
@@ -218,7 +189,7 @@ type RunEvent struct {
 	EventType string `json:"event_type"` // CREATED | STATUS_CHANGED
 	RunID     string `json:"run_id"`
 	FlowID    string `json:"flow_id"`
-	Namespace  string `json:"namespace_id"`
+	Namespace string `json:"namespace_id"`
 	Status    string `json:"status"`
 }
 
@@ -238,6 +209,17 @@ type SandboxHeartbeat struct {
 	Timestamp time.Time `json:"timestamp"`
 	Load      int       `json:"load"`
 	Capacity  int       `json:"capacity"`
+}
+
+// RuntimeReady is a scoped readiness lease for TaskManager and Sandbox
+// consumers. Workers refresh it periodically after their MQTT work
+// subscription succeeds; Deployment Ready alone is not a messaging barrier.
+type RuntimeReady struct {
+	WorkerID  string    `json:"worker_id"`
+	Role      string    `json:"role"`
+	Namespace string    `json:"namespace_id"`
+	ClusterID string    `json:"runtime_cluster_id"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // ─── SubHandler ────────────────────────────────────────────────

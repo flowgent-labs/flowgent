@@ -92,6 +92,20 @@ func (l *LLMCallLog) Count() int {
 	return len(l.Calls)
 }
 
+// ContainsSystem reports whether any captured request received the fragment in
+// its system prompt. It keeps RAG integration assertions race-free while the
+// in-process mock server may still be serving concurrent agent nodes.
+func (l *LLMCallLog) ContainsSystem(fragment string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, call := range l.Calls {
+		if strings.Contains(call.System, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
 // ─── Mock LLM (OpenAI-compatible) ─────────────────────────────────────
 
 // NewMockLLMServer returns an httptest server that speaks the OpenAI
@@ -176,10 +190,10 @@ type MCPBridge struct {
 }
 
 type mcpToolDef struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]any         `json:"inputSchema"`
-	RestAction  string                 // REST path + method, e.g. "GET /repos/{repo}/commits"
+	Name        string                         `json:"name"`
+	Description string                         `json:"description"`
+	InputSchema map[string]any                 `json:"inputSchema"`
+	RestAction  string                         // REST path + method, e.g. "GET /repos/{repo}/commits"
 	RestParser  func(body []byte) (any, error) // extracts useful result from mocked REST response
 }
 

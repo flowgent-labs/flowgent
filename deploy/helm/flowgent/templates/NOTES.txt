@@ -1,16 +1,8 @@
+{{- if .Values.application.enabled }}
 Flowgent is deploying!
 
 Release: {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
-
-{{- if .Values.wallet.generatedMasterKey }}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Wallet Root Private Key (auto-generated)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{{ .Values.wallet.generatedMasterKey }}
-SAVE THIS KEY. Not stored in plaintext after install.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{{- end }}
 
 ━━━ Middleware ━━━
 {{- if .Values.postgresql.enabled }}
@@ -25,24 +17,53 @@ SAVE THIS KEY. Not stored in plaintext after install.
 {{- end }}
 {{- if .Values.redis.enabled }}
   Redis            — in-cluster
-{{- else }}
+{{- else if .Values.redis.externalSecret }}
   Redis            — external (secret: {{ .Values.redis.externalSecret }})
+{{- else }}
+  Redis            — disabled
 {{- end }}
 
 ━━━ Components ━━━
-  API Server      — {{ .Values.apiserver.replicas }} replicas, :{{ .Values.apiserver.service.restPort }}
+  API Server       — {{ .Values.apiserver.replicas }} replicas, {{ .Values.apiserver.service.type | default "ClusterIP" }}, :{{ .Values.apiserver.service.restPort }}
+  API Internal     — trusted control plane only, :{{ .Values.apiserver.service.internalPort }}
+{{- if eq (.Values.apiserver.service.type | default "ClusterIP") "NodePort" }}
+  API REST NodePort — :{{ .Values.apiserver.service.nodePorts.rest }}
+  API Internal NodePort — :{{ .Values.apiserver.service.nodePorts.internal }}
+  API MGMT NodePort — :{{ .Values.apiserver.service.nodePorts.mgmt }}
+{{- end }}
+{{- if .Values.a2a.enabled }}
+  A2A              — {{ .Values.a2a.replicas }} replicas, {{ .Values.a2a.service.type | default "ClusterIP" }}, :{{ .Values.a2a.service.port }}
+{{- if eq (.Values.a2a.service.type | default "ClusterIP") "NodePort" }}
+  A2A NodePort     — :{{ .Values.a2a.service.nodePort }}
+{{- end }}
+{{- end }}
+{{- if .Values.web.enabled }}
+  Web              — {{ .Values.web.replicas }} replicas, {{ .Values.web.service.type | default "ClusterIP" }}, :{{ .Values.web.service.port }}
+{{- if .Values.web.route.enabled }}
+  Web Gateway      — shared-origin route{{ with .Values.web.route.hostnames }} for {{ join ", " . }}{{ end }}
+  Hosted Login     — <scheme>://<configured-host>/auth/login
+{{- end }}
+{{- if eq (.Values.web.service.type | default "ClusterIP") "NodePort" }}
+  Web NodePort     — :{{ .Values.web.service.nodePort }} (diagnostics only; does not serve /auth/*)
+{{- end }}
+{{- end }}
   Controller       — {{ .Values.controller.replicas }} replicas
   Notifier         — {{ .Values.notifier.replicas }} replicas, :{{ .Values.notifier.service.port }}
-{{- if .Values.a2a.enabled }}
-  A2A             — {{ .Values.a2a.replicas }} replicas, :{{ .Values.a2a.service.port }}
-{{- end }}
-{{- if .Values.wallet.enabled }}
-  Wallet           — {{ .Values.wallet.replicas }} replicas, :{{ .Values.wallet.service.port }}
-{{- end }}
 
 ━━━ Quick Checks ━━━
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   curl http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.restPort }}/_/healthz
+{{- if .Values.web.enabled }}
+{{- if .Values.web.route.enabled }}
+  curl -H 'Host: <configured-host>' http://<gateway-address>/healthz
+{{- else }}
+{{- if eq (.Values.web.service.type | default "ClusterIP") "NodePort" }}
+  curl http://<node-ip>:{{ .Values.web.service.nodePort }}/healthz
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "flowgent.fullname" . }}-web 8080:{{ .Values.web.service.port }}
+{{- end }}
+{{- end }}
+{{- end }}
 
 {{- if not .Values.postgresql.enabled }}
 ━━━ Create External PG Secret ━━━
@@ -54,9 +75,12 @@ SAVE THIS KEY. Not stored in plaintext after install.
   kubectl create secret generic {{ include "flowgent.mqttSecretName" . }} \
     --from-literal=broker='tcp://host:1883'
 {{- end }}
-{{- if not .Values.redis.enabled }}
+{{- if and (not .Values.redis.enabled) .Values.redis.externalSecret }}
 ━━━ Create External Redis Secret ━━━
   kubectl create secret generic {{ .Values.redis.externalSecret }} \
     --from-literal=nodes='redis://host:6379' \
     --from-literal=password='your-password'
+{{- end }}
+{{- else }}
+Flowgent application workloads are disabled for this middleware release.
 {{- end }}

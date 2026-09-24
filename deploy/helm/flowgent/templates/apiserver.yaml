@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.apiserver.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -17,28 +18,35 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: apiserver
-{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+{{ if and .Values.runtime.secrets.vault.enabled .Values.runtime.secrets.vault.injectAnnotations }}
       annotations:
         {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
 {{ end }}
     spec:
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled .Values.runtime.secrets.vault.enabled }}
+      serviceAccountName: {{ include "flowgent.fullname" . }}-engine
+{{ end }}
       containers:
         - name: apiserver
-          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          image: {{ include "flowgent.image" . | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
           args: ["apiserver", "start", "-c", "/etc/flowgent/flowgent.yaml"]
           ports:
             - name: rest
               containerPort: {{ .Values.apiserver.service.restPort }}
+            - name: internal
+              containerPort: {{ .Values.apiserver.service.internalPort }}
             - name: mgmt
               containerPort: {{ .Values.apiserver.service.mgmtPort }}
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
+            {{- include "flowgent.authguardAdapterEnv" . | nindent 12 }}
+            {{- include "flowgent.notificationSecretEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
             {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
 {{ end }}
           resources:
@@ -53,7 +61,7 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
         {{- include "flowgent.credentialVolumes" . | nindent 8 }}
 {{ end }}
 ---
@@ -65,12 +73,28 @@ metadata:
     {{- include "flowgent.labels" . | nindent 4 }}
     app.kubernetes.io/component: apiserver
 spec:
+  type: {{ .Values.apiserver.service.type | default "ClusterIP" }}
   selector:
     {{- include "flowgent.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: apiserver
   ports:
     - name: rest
       port: {{ .Values.apiserver.service.restPort }}
+      targetPort: rest
+{{- if and (eq (.Values.apiserver.service.type | default "ClusterIP") "NodePort") .Values.apiserver.service.nodePorts.rest }}
+      nodePort: {{ .Values.apiserver.service.nodePorts.rest }}
+{{- end }}
+    - name: internal
+      port: {{ .Values.apiserver.service.internalPort }}
+      targetPort: internal
+{{- if and (eq (.Values.apiserver.service.type | default "ClusterIP") "NodePort") .Values.apiserver.service.nodePorts.internal }}
+      nodePort: {{ .Values.apiserver.service.nodePorts.internal }}
+{{- end }}
     - name: mgmt
       port: {{ .Values.apiserver.service.mgmtPort }}
+      targetPort: mgmt
+{{- if and (eq (.Values.apiserver.service.type | default "ClusterIP") "NodePort") .Values.apiserver.service.nodePorts.mgmt }}
+      nodePort: {{ .Values.apiserver.service.nodePorts.mgmt }}
+{{- end }}
+{{- end }}
 {{- end }}

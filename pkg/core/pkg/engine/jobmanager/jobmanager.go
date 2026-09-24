@@ -21,10 +21,10 @@ type JobManagerConfig struct {
 	FlowExecutionTimeout time.Duration
 	MaxNodeRetries       int
 	MaxConcurrentFlows   int
+	RuntimeClusterID     string
 }
 
-// JobManager is the singleton JobManager (like Flink's Dispatcher in session mode).
-// It receives agentflow run submissions and spawns a JobMaster per run.
+// JobManager receives one flow's run submissions and spawns a JobMaster per run.
 type JobManager struct {
 	state           RunStateStore
 	rm              resourcemanager.ResourceManager
@@ -36,6 +36,9 @@ type JobManager struct {
 
 // NewJobManager creates the shared JobManager singleton.
 func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
+	if cfg == nil {
+		cfg = &JobManagerConfig{}
+	}
 	if errs := resourcemanager.ValidateComponents(rm); len(errs) > 0 {
 		for _, e := range errs {
 			logger.Error("component validation failed", "error", e.Error())
@@ -53,61 +56,94 @@ func (m *JobManager) SetRunLock(l lock.DistributedLock) { m.runLock = l }
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
 func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
+	mode := run.RuntimeMode
+	if mode == "" {
+		mode = spec.RuntimeMode
+	}
+	if err := entities.ValidateRuntimeMode(mode); err != nil {
+		return err
+	}
+	run.RuntimeMode = mode
+	if run.K8sNamespace == "" {
+		run.K8sNamespace = spec.K8sNamespace
+	}
+	if run.Namespace == "" {
+		run.Namespace = spec.Namespace
+	}
+
 	m.logger.Info("jobmanager submit",
 		"run_id", run.ID,
-		"agentflow_id", spec.ID,
-		"priority", spec.Priority,
-		"namespace_id", spec.Namespace,
-		"k8s_namespace", spec.K8sNamespace,
+		"agentflow_id", spec.ResourceName(),
+		"runtime_mode", mode,
+		"runtime_cluster_id", m.cfg.RuntimeClusterID,
+		"namespace_id", run.Namespace,
+		"k8s_namespace", run.K8sNamespace,
 	)
 
-	run.Priority = spec.Priority
-	run.K8sNamespace = spec.K8sNamespace
-	run.Namespace = spec.Namespace
+	// Scheduling metadata is immutable for a run. Work from a shallow copy so
+	// a later Flow update cannot retarget already-created execution plans.
+	runSpec := *spec
+	runSpec.RuntimeMode = mode
+	runSpec.Namespace = run.Namespace
+	runSpec.K8sNamespace = run.K8sNamespace
 
 	master := NewJobMaster(m.state, m.rm, m.logger, m.cfg)
 	if m.knowledgeClient != nil {
 		master.SetKnowledgeWriter(m.knowledgeClient)
 	}
-	return master.Execute(ctx, run, spec)
+	return master.Execute(ctx, run, &runSpec)
 }
 
-// StartRunPoller polls for pending AgentFlowRuns via the apiserver API
-// and dispatches them via the JobManager.
+type RunPollerConfig struct {
+	RuntimeNamespace string
+	AgentFlowID      string
+	AgentFlowRunID   string
+	RuntimeMode      entities.RuntimeMode
+}
+
+// StartRunPoller polls for pending AgentFlowRuns via the apiserver API and
+// dispatches only the runs matching this JobManager's runtime boundary.
 func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace string,
-	jm *JobManager, flows map[string]*entities.FlowInfo,
-	k8sNamespace, agentFlowID string) {
+	jm *JobManager, flows map[string]*entities.FlowInfo, cfg RunPollerConfig) {
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	if cfg.RuntimeMode == "" {
+		slog.Error("poller runtime_mode is required")
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), k8sNamespace, agentFlowID, 1, 50)
+			// The physical Kubernetes namespace is a deployment concern and is
+			// deliberately absent from the durable Run schema. Runtime mode plus
+			// Flow/Run identity selects the work; the owning JM then injects its
+			// configured namespace before dispatch.
+			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), string(cfg.RuntimeMode), "", cfg.AgentFlowID, 1, 50)
 			if err != nil {
 				slog.Warn("poller ListRuns failed", "err", err)
 				continue
 			}
 			for _, run := range page.Items {
-				if run.Status != entities.RunPending {
+				if !preparePolledRun(run, cfg) {
 					continue
 				}
-				if k8sNamespace != "" && run.K8sNamespace != k8sNamespace {
-					continue
-				}
+				// Resolve the durable definition for every new run. The initial map is
+				// only a startup fallback; keeping it authoritative would make local
+				// all-in-one execution ignore Flow edits made through the API/UI.
 				spec := flows[run.AgentFlowID]
-				if spec == nil {
-					if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
-						spec = apiSpec
-						slog.Debug("poller loaded flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
-					}
+				if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
+					spec = apiSpec
+					slog.Debug("poller loaded current flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
+				} else if spec == nil {
+					slog.Warn("poller flow spec unavailable", "agentFlowID", run.AgentFlowID, "err", err)
 				}
 				if spec == nil {
 					continue
 				}
-				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "priority", run.Priority)
+				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "runtime_mode", run.RuntimeMode)
 				runCtx, release, claimed, err := jm.claimRun(ctx, run.ID)
 				if err != nil {
 					slog.Warn("poller run lock failed", "run", run.ID, "err", err)
@@ -124,6 +160,22 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 			}
 		}
 	}
+}
+
+func preparePolledRun(run *entities.FlowRunInfo, cfg RunPollerConfig) bool {
+	if run == nil || run.Status != entities.RunPending {
+		return false
+	}
+	if cfg.AgentFlowRunID != "" && run.ID != cfg.AgentFlowRunID {
+		return false
+	}
+	if run.RuntimeMode != cfg.RuntimeMode {
+		return false
+	}
+	if run.K8sNamespace == "" {
+		run.K8sNamespace = cfg.RuntimeNamespace
+	}
+	return true
 }
 
 func (m *JobManager) claimRun(ctx context.Context, runID string) (context.Context, func(), bool, error) {

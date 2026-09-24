@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+ARG NODE_IMAGE=docker.io/library/node:22-alpine
+ARG NGINX_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/nginx:1.27-alpine
+
+FROM ${NGINX_IMAGE} AS runtime-base
+
+ENV FLOWGENT_API_UPSTREAM=http://flowgent-apiserver:9999
+ENV NGINX_ENVSUBST_FILTER=FLOWGENT_API_UPSTREAM
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+
+FROM runtime-base AS runtime-dist
+COPY dist /usr/share/nginx/html
+
+FROM ${NODE_IMAGE} AS builder
+
+ARG HTTPS_PROXY
+ARG HTTP_PROXY
+ARG NO_PROXY
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV NO_PROXY=${NO_PROXY}
+
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+RUN npm run build
+
+FROM runtime-base AS runtime
+COPY --from=builder /build/dist /usr/share/nginx/html

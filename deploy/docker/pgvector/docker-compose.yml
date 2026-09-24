@@ -1,7 +1,7 @@
 version: "3.9"
 services:
   pgvector:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/pgvector_pgvector:pg16
+    image: docker.io/pgvector/pgvector:pg16
     container_name: flowgent-test-pgvector
     environment:
       POSTGRES_USER: flowgent

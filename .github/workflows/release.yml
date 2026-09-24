@@ -1,229 +1,232 @@
-# Release workflow — triggered when code lands on main.
-#
-# Event matrix:
-#   pull_request:closed + merged → PR title drives semver bump + release notes
-#   push:main                     → commit message drives semver bump (squash merge
-#                                   message = PR title; regular merge = second line)
-#
-# Dual trigger rationale:
-#   - pull_request:closed is the canonical "PR merged" signal with rich PR metadata
-#     (title, body, html_url).
-#   - push:main ensures the release run appears on the main-branch commit status
-#     (green check / red cross / yellow dot).
-#
-# Concurrency: same ref serialises runs so the two events for a single merge don't
-# race. If the tag already exists the second arrival is a no-op.
-#
-# Job DAG:
-#   release (bump + tag, outputs new_tag)
-#      ├─ build-binaries (checkout tag, build flowgent-core + flowgent-wallet)
-#      │    └─ upload-release (GitHub Release + binaries)
-#      └─ build-images (checkout tag, docker build + push to ghcr.io)
-#
-#   build-binaries and build-images run in parallel; build-images pushes directly.
-
 name: Release
 
 on:
   pull_request:
     branches: [main]
     types: [closed]
-  push:
-    branches: [main]
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: flowgent-release
   cancel-in-progress: false
 
 jobs:
-  release:
-    # For pull_request events, only proceed if the PR was actually merged.
-    # For push events, all pushes to main are candidates.
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
-      (github.event_name == 'push')
+  prepare:
+    name: Prepare release
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    outputs:
-      new_tag: ${{ steps.bump.outputs.new_tag }}
     permissions:
       contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.version.outputs.should_release }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine version bump
-        id: bump
+      - name: Update release comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          FLOWGENT_COMMENT_KIND: release
+          FLOWGENT_COMMENT_PHASE: started
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            if git rev-parse HEAD^2 >/dev/null 2>&1; then
-              COMMIT_MSG=$(git log -1 --format=%s HEAD^2)
-            else
-              COMMIT_MSG="${{ github.event.head_commit.message }}"
-              COMMIT_MSG=$(echo "${COMMIT_MSG}" | head -1)
-            fi
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=Flowgent Release comment::Could not publish the release status comment."
+
+      - name: Determine release version
+        id: version
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if grep -qiE '^refactor:' <<< "${PR_TITLE}"; then
+            bump=major
+          elif grep -qiE '^feat:' <<< "${PR_TITLE}"; then
+            bump=minor
+          elif grep -qiE '^fix:' <<< "${PR_TITLE}"; then
+            bump=patch
           else
-            COMMIT_MSG="${{ github.event.pull_request.title }}"
-          fi
-
-          SHOULD_RELEASE=false
-          BUMP_LEVEL=""
-          if echo "${COMMIT_MSG}" | grep -qiE "^refactor:"; then
-            SHOULD_RELEASE=true
-            BUMP_LEVEL="major"
-          elif echo "${COMMIT_MSG}" | grep -qiE "^feat:"; then
-            SHOULD_RELEASE=true
-            BUMP_LEVEL="minor"
-          elif echo "${COMMIT_MSG}" | grep -qiE "^fix:"; then
-            SHOULD_RELEASE=true
-            BUMP_LEVEL="patch"
-          fi
-
-          if [ "${SHOULD_RELEASE}" != "true" ]; then
-            echo "Commit type does not trigger a release (only feat:, fix:, refactor:). Skipping."
-            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "PR title does not trigger a release (only refactor:, feat:, fix:)."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname 2>/dev/null | head -1)
-          if [ -z "${LATEST_TAG}" ]; then LATEST_TAG="v0.0.0"; fi
-          echo "Latest tag: ${LATEST_TAG}"
-
-          MAJOR=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f1)
-          MINOR=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f2)
-          PATCH=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f3)
-
-          case "${BUMP_LEVEL}" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-          esac
-          echo "Bump: ${BUMP_LEVEL} (${COMMIT_MSG})"
-
-          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "New tag: ${NEW_TAG}"
-          echo "should_release=true" >> $GITHUB_OUTPUT
-          echo "new_tag=${NEW_TAG}" >> $GITHUB_OUTPUT
-
-      - name: Create Git Tag
-        if: steps.bump.outputs.should_release == 'true'
-        run: |
-          if git rev-parse "${{ steps.bump.outputs.new_tag }}" >/dev/null 2>&1; then
-            echo "Tag ${{ steps.bump.outputs.new_tag }} already exists, skipping tag creation."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "${{ steps.bump.outputs.new_tag }}" -m "Release ${{ steps.bump.outputs.new_tag }}"
-            git push origin "${{ steps.bump.outputs.new_tag }}"
+          head_tag=$(git tag --points-at HEAD -l 'v[0-9]*' --sort=-v:refname | head -1)
+          if [[ -n "${head_tag}" ]]; then
+            echo "version=${head_tag#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${head_tag}" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-  build-binaries:
-    needs: release
-    if: needs.release.outputs.new_tag != ''
+          latest=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+          latest=${latest:-v0.0.0}
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          case "${bump}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Tag release commit
+        if: steps.version.outputs.should_release == 'true' && steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Release tag ${TAG} already exists."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+  publish:
+    name: Publish official artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout tag
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.release.outputs.new_tag }}
-
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.25'
-
-      - name: Build flowgent-core
-        run: make build-core
-
-      - name: Build flowgent-wallet
-        run: make build-wallet
-
-      - name: Upload Binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries
-          path: bin/flowgent-*
-
-  build-images:
-    needs: release
-    if: needs.release.outputs.new_tag != ''
-    runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
-      contents: read
+      contents: write
       packages: write
-    strategy:
-      matrix:
-        image: [core, wallet]
     steps:
-      - name: Checkout tag
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release.outputs.new_tag }}
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push flowgent-${{ matrix.image }}
+      - name: Build and publish runtime image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/Dockerfile.${{ matrix.image }}
+          file: deploy/docker/Dockerfile.core
           push: true
-          tags: |
-            ghcr.io/flowgent-labs/flowgent-${{ matrix.image }}:${{ needs.release.outputs.new_tag }}
-            ghcr.io/flowgent-labs/flowgent-${{ matrix.image }}:latest
           platforms: linux/amd64,linux/arm64
+          build-args: BUILD_TAGS=x402
+          labels: |
+            org.opencontainers.image.revision=${{ github.event.pull_request.merge_commit_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          tags: |
+            ghcr.io/flowgent-labs/flowgent:${{ needs.prepare.outputs.version }}
+            ghcr.io/flowgent-labs/flowgent:latest
+          cache-from: type=gha,scope=flowgent-runtime
+          cache-to: type=gha,mode=max,scope=flowgent-runtime,ignore-error=true
 
-  upload-release:
-    needs: [release, build-binaries]
-    if: needs.release.outputs.new_tag != ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download Binaries
-        uses: actions/download-artifact@v4
+      - name: Build and publish web image
+        uses: docker/build-push-action@v6
         with:
-          name: binaries
-          path: bin/
+          context: web
+          file: deploy/docker/Dockerfile.web
+          push: true
+          platforms: linux/amd64,linux/arm64
+          labels: |
+            org.opencontainers.image.revision=${{ github.event.pull_request.merge_commit_sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          tags: |
+            ghcr.io/flowgent-labs/flowgent-web:${{ needs.prepare.outputs.version }}
+            ghcr.io/flowgent-labs/flowgent-web:latest
+          cache-from: type=gha,scope=flowgent-web
+          cache-to: type=gha,mode=max,scope=flowgent-web,ignore-error=true
 
-      - name: Create GitHub Release
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.0
+
+      - name: Package, publish, and pull-verify chart
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GH_TOKEN}" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          mkdir -p dist verify
+          helm dependency list deploy/helm/flowgent
+          helm lint deploy/helm/flowgent
+          helm package deploy/helm/flowgent --destination dist --version "${VERSION}" --app-version "${VERSION}"
+          helm push "dist/flowgent-${VERSION}.tgz" oci://ghcr.io/flowgent-labs/charts
+          helm pull oci://ghcr.io/flowgent-labs/charts/flowgent --version "${VERSION}" --destination verify
+          helm show chart "verify/flowgent-${VERSION}.tgz" >/dev/null
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release.outputs.new_tag }}
-          name: ${{ needs.release.outputs.new_tag }}
-          body: |
-            ## Release ${{ needs.release.outputs.new_tag }}
-
-            ${{ github.event_name == 'pull_request' && format('PR: {0}', github.event.pull_request.html_url) || format('Commit: {0}', github.event.head_commit.url) }}
-
-            ### Changes
-            ${{ github.event_name == 'pull_request' && github.event.pull_request.body || github.event.head_commit.message }}
-
-            ### Binaries
-            flowgent-core and flowgent-wallet built from main.
-          files: bin/flowgent-*
+          tag_name: ${{ needs.prepare.outputs.tag }}
           generate_release_notes: true
+          files: dist/flowgent-${{ needs.prepare.outputs.version }}.tgz
+
+  cleanup-dirty-images:
+    name: Clean merged PR dirty images
+    needs: publish
+    if: ${{ always() && needs.publish.result == 'success' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Delete all dirty images produced by this PR
+        continue-on-error: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .github/scripts/cleanup-ghcr-dirty-images.sh \
+            "${GITHUB_REPOSITORY}" \
+            "${{ github.event.pull_request.number }}" \
+            "${GITHUB_REPOSITORY_OWNER}" \
+            flowgent flowgent-web
+
+  comment-final:
+    name: Report release result
+    needs: [prepare, publish, cleanup-dirty-images]
+    if: always() && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Update release comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          FLOWGENT_COMMENT_KIND: release
+          FLOWGENT_COMMENT_PHASE: final
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FLOWGENT_PREPARE_RESULT: ${{ needs.prepare.result }}
+          FLOWGENT_RELEASE_RESULT: ${{ needs.publish.result }}
+          FLOWGENT_SHOULD_RELEASE: ${{ needs.prepare.outputs.should_release }}
+          FLOWGENT_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          FLOWGENT_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          node .github/scripts/upsert-pr-status-comment.mjs || \
+            echo "::warning title=Flowgent Release comment::Could not publish the release status comment."

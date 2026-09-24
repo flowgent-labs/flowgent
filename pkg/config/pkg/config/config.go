@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,7 +13,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // ─── Top-level config ────────────────────────────────────────
@@ -23,22 +21,22 @@ import (
 // All resource definitions (agents, agentflows, MCPs, skills, LLM providers, channels)
 // are now DB-backed and managed via the management console or REST API.
 type FlowgentConfig struct {
-	ServiceName         string              `json:"service_name" yaml:"service_name"`
-	Server              ServerConfig        `json:"server" yaml:"server"`
-	A2A                 A2AConfig           `json:"a2a" yaml:"a2a"`
-	Mgmt                MgmtConfig          `json:"mgmt" yaml:"mgmt"`
-	Logging             LoggingConfig       `json:"logging" yaml:"logging"`
-	Auth                AuthConfig          `json:"auth" yaml:"auth"`
-	Cache               CacheConfig         `json:"cache" yaml:"cache"`
-	Storage             StorageConfig       `json:"storage" yaml:"storage"`
-	Orchestration       OrchestrationConfig `json:"orchestration" yaml:"orchestration"`
-	Messager            MessagerConfig      `json:"messager" yaml:"messager"`
-	Lock                LockConfig          `json:"lock" yaml:"lock"`
-	Sandbox             SandboxConfig       `json:"sandbox" yaml:"sandbox"`
-	Wallet              *WalletConfig       `json:"wallet" yaml:"wallet"`
-	Notifier            NotifierConfig      `json:"notifier" yaml:"notifier"`
-	Runtime             RuntimeConfig       `json:"runtime" yaml:"runtime"`
-	ResolvedCredentials map[string]string   `json:"-" yaml:"-"`
+	ServiceName         string                 `json:"service_name" yaml:"service_name"`
+	Server              ServerConfig           `json:"server" yaml:"server"`
+	A2A                 A2AConfig              `json:"a2a" yaml:"a2a"`
+	Mgmt                MgmtConfig             `json:"mgmt" yaml:"mgmt"`
+	Logging             LoggingConfig          `json:"logging" yaml:"logging"`
+	AuthGuardAdapter    AuthGuardAdapterConfig `json:"authguard_adapter" yaml:"authguard_adapter"`
+	Cache               CacheConfig            `json:"cache" yaml:"cache"`
+	Storage             StorageConfig          `json:"storage" yaml:"storage"`
+	Orchestration       OrchestrationConfig    `json:"orchestration" yaml:"orchestration"`
+	Messager            MessagerConfig         `json:"messager" yaml:"messager"`
+	Lock                LockConfig             `json:"lock" yaml:"lock"`
+	Sandbox             SandboxConfig          `json:"sandbox" yaml:"sandbox"`
+	Wallet              *WalletConfig          `json:"wallet" yaml:"wallet"`
+	Notifier            NotifierConfig         `json:"notifier" yaml:"notifier"`
+	Runtime             RuntimeConfig          `json:"runtime" yaml:"runtime"`
+	ResolvedCredentials map[string]string      `json:"-" yaml:"-"`
 }
 
 // ─── Server ──────────────────────────────────────────────────
@@ -53,6 +51,7 @@ type A2AConfig struct {
 type ServerConfig struct {
 	Host            string `json:"host" yaml:"host"`
 	Port            int    `json:"port" yaml:"port"`
+	InternalPort    int    `json:"internal_port" yaml:"internal_port"`
 	ContextPath     string `json:"context_path" yaml:"context_path"`
 	ShutdownTimeout string `json:"shutdown_timeout" yaml:"shutdown_timeout"`
 	MaxBodyBytes    int    `json:"max_body_bytes" yaml:"max_body_bytes"`
@@ -75,11 +74,15 @@ type PProfConfig struct {
 }
 
 type OTELConfig struct {
-	Enabled    bool    `json:"enabled" yaml:"enabled"`
-	Endpoint   string  `json:"endpoint" yaml:"endpoint"`
-	Protocol   string  `json:"protocol" yaml:"protocol"`
-	Timeout    int     `json:"timeout" yaml:"timeout"`
-	SampleRate float64 `json:"sample_rate" yaml:"sample_rate"`
+	Enabled       bool    `json:"enabled" yaml:"enabled"`
+	Endpoint      string  `json:"endpoint" yaml:"endpoint"`
+	Protocol      string  `json:"protocol" yaml:"protocol"`
+	Timeout       int     `json:"timeout" yaml:"timeout"`
+	SampleRate    float64 `json:"sample_rate" yaml:"sample_rate"`
+	QueryEndpoint string  `json:"query_endpoint" yaml:"query_endpoint"`
+	QueryTimeout  int     `json:"query_timeout" yaml:"query_timeout"`
+	QueryLookback string  `json:"query_lookback" yaml:"query_lookback"`
+	QueryLimit    int     `json:"query_limit" yaml:"query_limit"`
 }
 
 type MetricsConfig struct {
@@ -96,101 +99,22 @@ type MetricsBoundaries struct {
 	Queue []float64 `json:"queue" yaml:"queue"`
 }
 
-// ─── Logging / Auth ──────────────────────────────────────────
+// ─── Logging / AuthGuard Adapter ─────────────────────────────
 
 type LoggingConfig struct {
 	Mode  string `json:"mode" yaml:"mode"`
 	Level string `json:"level" yaml:"level"`
 }
 
-type AuthConfig struct {
-	JWTValidityAK  int              `json:"jwt_validity_ak" yaml:"jwt_validity_ak"`
-	JWTValidityRK  int              `json:"jwt_validity_rk" yaml:"jwt_validity_rk"`
-	JWTAlgorithm   string           `json:"jwt_algorithm" yaml:"jwt_algorithm"`
-	JWTPrivateKey  string           `json:"jwt_private_key" yaml:"jwt_private_key"`
-	JWTPublicKey   string           `json:"jwt_public_key" yaml:"jwt_public_key"`
-	AnonymousPaths []string         `json:"anonymous_paths" yaml:"anonymous_paths"`
-	OIDC           OIDCConfig       `json:"oidc" yaml:"oidc"`
-	LDAP           LDAPConfig       `json:"ldap" yaml:"ldap"`
-	GitHub         GitHubAuthConfig `json:"github" yaml:"github"`
-}
-
-type OIDCConfig struct {
-	Enabled      bool   `json:"enabled" yaml:"enabled"`
-	ClientID     string `json:"client_id" yaml:"client_id"`
-	ClientSecret string `json:"client_secret" yaml:"client_secret"`
-	IssueURL     string `json:"issue_url" yaml:"issue_url"`
-	RedirectURL  string `json:"redirect_url" yaml:"redirect_url"`
-	Scope        string `json:"scope" yaml:"scope"`
-}
-
-// LDAPConfig configures enterprise LDAP/AD authentication.
-//
-// Field naming mirrors Spring's LdapContextSource + LdapTemplate patterns.
-//
-// # Connection (like Spring's LdapContextSource)
-//
-//	url:      ldaps://aa-lds-prod.us.mycompany:3269  (Global Catalog SSL)
-//	base_dn:  DC=InfoDir,DC=Prod,DC=MyCompany
-//	user_dn:  CN=GB-MyAPP-AD-OPS,OU=Alternate Accounts,OU=MyCompanyPeople,DC=…
-//	password: "${LDAP_PASSWORD}"
-//	referral: follow  (≡ LdapContextSource.setReferral("follow"))
-//
-// # User search (like Spring's EqualsFilter + SUBTREE_SCOPE + countLimit=1)
-//
-//	user_search_filter: (CN=%s)
-//	username_attribute: CN
-//
-// # Attribute mapping (like Spring's CustomLdapContextMapper)
-//
-// Maps internal field names to LDAP attribute names configured per deployment.
-//
-//	user_attr_mapping:
-//	  identifier:   "cn"
-//	  display_name: "displayName"
-//	  email:        "mail"
-//	  groups:       "memberOf"
-type LDAPConfig struct {
-	Enabled              bool               `json:"enabled" yaml:"enabled"`
-	URL                  string             `json:"url" yaml:"url"`                                       // ldap[s]://host:port
-	BaseDN               string             `json:"base_dn" yaml:"base_dn"`                               // root base DN
-	UserDN               string             `json:"user_dn" yaml:"user_dn"`                               // service account DN
-	Password             string             `json:"password" yaml:"password"`                             // service account password
-	Domains              []LDAPDomainConfig `json:"domains" yaml:"domains"`                               // AD multi-domain search
-	RoleMapping          []LDAPRoleMapping  `json:"role_mapping" yaml:"role_mapping"`                     // AD group/domain → role
-	UserSearchFilter     string             `json:"user_search_filter" yaml:"user_search_filter"`         // default: (cn=%s)
-	UsernameAttribute    string             `json:"username_attribute" yaml:"username_attribute"`         // default: cn
-	EmailAttribute       string             `json:"email_attribute" yaml:"email_attribute"`               // default: mail
-	DisplayNameAttribute string             `json:"display_name_attribute" yaml:"display_name_attribute"` // default: cn
-	GroupSearchBase      string             `json:"group_search_base" yaml:"group_search_base"`           // optional: for group→role resolution
-	GroupSearchFilter    string             `json:"group_search_filter" yaml:"group_search_filter"`       // default: (member=%s)
-	GroupNameAttribute   string             `json:"group_name_attribute" yaml:"group_name_attribute"`     // default: cn
-	UserAttrMapping      map[string]string  `json:"user_attr_mapping" yaml:"user_attr_mapping"`           // internal name → LDAP attribute name
-	Referral             string             `json:"referral" yaml:"referral"`                             // "follow" or "throw" (for AD multi-domain GC)
-	InsecureSkipVerify   bool               `json:"insecure_skip_verify" yaml:"insecure_skip_verify"`
-}
-
-// LDAPDomainConfig defines an AD domain to search for users.
-type LDAPDomainConfig struct {
-	BaseDN           string `json:"base_dn" yaml:"base_dn"`
-	UserSearchFilter string `json:"user_search_filter" yaml:"user_search_filter"` // e.g. (sAMAccountName=%s)
-}
-
-// LDAPRoleMapping maps an AD group DN or domain base DN to a Flowgent built-in role.
-type LDAPRoleMapping struct {
-	Match string `json:"match" yaml:"match"` // AD group DN or domain base DN
-	Role  string `json:"role" yaml:"role"`   // admin | operator | viewer
-}
-
-type GitHubAuthConfig struct {
-	Enabled      bool   `json:"enabled" yaml:"enabled"`
-	ClientID     string `json:"client_id" yaml:"client_id"`
-	ClientSecret string `json:"client_secret" yaml:"client_secret"`
-	AuthURL      string `json:"auth_url" yaml:"auth_url"`
-	TokenURL     string `json:"token_url" yaml:"token_url"`
-	RedirectURL  string `json:"redirect_url" yaml:"redirect_url"`
-	Scope        string `json:"scope" yaml:"scope"`
-	UserInfoURL  string `json:"user_info_url" yaml:"user_info_url"`
+// AuthGuardAdapterConfig contains only the business-resource mapping required
+// by the AuthGuard Go adapter SDK. Authentication, identity federation, policy
+// evaluation, and credential lifecycle are owned by AuthGuard.
+type AuthGuardAdapterConfig struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Partition string `json:"partition" yaml:"partition"`
+	Service   string `json:"service" yaml:"service"`
+	Region    string `json:"region" yaml:"region"`
+	Tenant    string `json:"tenant" yaml:"tenant"`
 }
 
 // ─── Cache ───────────────────────────────────────────────────
@@ -224,9 +148,10 @@ type RedisCacheConfig struct {
 // ─── Storage ─────────────────────────────────────────────────
 
 type StorageConfig struct {
-	Type     string         `json:"type" yaml:"type"`
-	SQLite   SQLiteConfig   `json:"sqlite" yaml:"sqlite"`
-	Postgres PostgresConfig `json:"postgres" yaml:"postgres"`
+	Type      string                `json:"type" yaml:"type"`
+	SQLite    SQLiteConfig          `json:"sqlite" yaml:"sqlite"`
+	Postgres  PostgresConfig        `json:"postgres" yaml:"postgres"`
+	Artifacts ArtifactStorageConfig `json:"artifacts" yaml:"artifacts"`
 }
 
 type SQLiteConfig struct {
@@ -244,6 +169,45 @@ type PostgresConfig struct {
 	MinConnections int    `json:"min_connections" yaml:"min_connections"`
 	MaxConnections int    `json:"max_connections" yaml:"max_connections"`
 	UseSSL         bool   `json:"use_ssl" yaml:"use_ssl"`
+}
+
+// ArtifactStorageConfig controls storage for large, immutable runtime artifacts.
+// TaskRun input/output is the first artifact kind. The DB always retains either
+// the complete inline JSON value or a versioned reference that the API Server
+// resolves before returning the TaskRun REST resource.
+type ArtifactStorageConfig struct {
+	Provider        string            `json:"provider" yaml:"provider"` // default | s3 | gcs
+	InlineMaxBytes  int64             `json:"inline_max_bytes" yaml:"inline_max_bytes"`
+	MaxPayloadBytes int64             `json:"max_payload_bytes" yaml:"max_payload_bytes"`
+	Compression     string            `json:"compression" yaml:"compression"` // none | gzip
+	Prefix          string            `json:"prefix" yaml:"prefix"`
+	PutTimeout      string            `json:"put_timeout" yaml:"put_timeout"`
+	GetTimeout      string            `json:"get_timeout" yaml:"get_timeout"`
+	VerifyChecksum  bool              `json:"verify_checksum" yaml:"verify_checksum"`
+	S3              S3ArtifactConfig  `json:"s3" yaml:"s3"`
+	GCS             GCSArtifactConfig `json:"gcs" yaml:"gcs"`
+}
+
+// S3ArtifactConfig supports AWS S3 and S3-compatible services. Credentials are
+// optional; when omitted, the AWS SDK default credential chain is used.
+type S3ArtifactConfig struct {
+	Bucket          string `json:"bucket" yaml:"bucket"`
+	Region          string `json:"region" yaml:"region"`
+	Endpoint        string `json:"endpoint" yaml:"endpoint"`
+	ForcePathStyle  bool   `json:"force_path_style" yaml:"force_path_style"`
+	AccessKeyID     string `json:"access_key_id" yaml:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key" yaml:"secret_access_key"`
+	SessionToken    string `json:"session_token" yaml:"session_token"`
+}
+
+// GCSArtifactConfig uses Application Default Credentials unless a credentials
+// file is explicitly configured. Anonymous must only be enabled for an emulator
+// or another trusted GCS-compatible endpoint.
+type GCSArtifactConfig struct {
+	Bucket          string `json:"bucket" yaml:"bucket"`
+	Endpoint        string `json:"endpoint" yaml:"endpoint"`
+	CredentialsFile string `json:"credentials_file" yaml:"credentials_file"`
+	Anonymous       bool   `json:"anonymous" yaml:"anonymous"`
 }
 
 // ─── Orchestration ────────────────────────────────────────────
@@ -291,23 +255,27 @@ type RedisLockConfig struct {
 	Password string   `json:"password" yaml:"password"`
 }
 
-// AgentInfo is the DB-backed agent definition type.
-type AgentInfo = entities.AgentInfo
-
-// McpInfo is the DB-backed MCP definition type.
-type McpInfo = entities.McpInfo
-
 // ─── Notifier ─────────────────────────────────────────────────
 
 // NotifierConfig configures the notifier service (always-on daemon like apiserver).
 // Channels are managed via DB CRUD API; this struct holds low-level tech settings.
 type NotifierConfig struct {
-	ScanInterval    string              `json:"scan_interval" yaml:"scan_interval"`
-	CleanupInterval string              `json:"cleanup_interval" yaml:"cleanup_interval"`
-	RouteTimeout    string              `json:"route_timeout" yaml:"route_timeout"`
-	WebSocket       NotifierWSConfig    `json:"websocket" yaml:"websocket"`
-	Telegram        NotifierTelegramCfg `json:"telegram" yaml:"telegram"`
-	Email           NotifierEmailCfg    `json:"email" yaml:"email"`
+	ScanInterval     string                         `json:"scan_interval" yaml:"scan_interval"`
+	CleanupInterval  string                         `json:"cleanup_interval" yaml:"cleanup_interval"`
+	RouteTimeout     string                         `json:"route_timeout" yaml:"route_timeout"`
+	SecretEncryption NotifierSecretEncryptionConfig `json:"secret_encryption" yaml:"secret_encryption"`
+	WebSocket        NotifierWSConfig               `json:"websocket" yaml:"websocket"`
+	Telegram         NotifierTelegramCfg            `json:"telegram" yaml:"telegram"`
+	Email            NotifierEmailCfg               `json:"email" yaml:"email"`
+}
+
+// NotifierSecretEncryptionConfig configures encryption-at-rest for dynamic
+// per-channel connection secrets. Values in Keys must come from environment or
+// a CSI-mounted credential; only encrypted envelopes are persisted in DB.
+type NotifierSecretEncryptionConfig struct {
+	Provider    string            `json:"provider" yaml:"provider"`
+	ActiveKeyID string            `json:"active_key_id" yaml:"active_key_id"`
+	Keys        map[string]string `json:"keys" yaml:"keys"`
 }
 
 // NotifierWSConfig holds WebSocket push notification settings for the notifier.
@@ -343,11 +311,20 @@ type RuntimeConfig struct {
 	APIServerURL        string                `json:"api_server_url" yaml:"api_server_url"`
 	K8sNamespace        string                `json:"k8s_namespace" yaml:"k8s_namespace"`
 	SystemNamespace     string                `json:"system_namespace" yaml:"system_namespace"`
+	Mode                string                `json:"mode" yaml:"mode"`
+	RuntimeClusterID    string                `json:"runtime_cluster_id" yaml:"runtime_cluster_id"`
 	AgentFlowID         string                `json:"agent_flow_id" yaml:"agent_flow_id"`
+	AgentFlowRunID      string                `json:"agent_flow_run_id" yaml:"agent_flow_run_id"`
+	SessionClusterID    string                `json:"session_cluster_id" yaml:"session_cluster_id"`
+	Session             RuntimeClusterConfig  `json:"session" yaml:"session"`
+	Application         RuntimeClusterConfig  `json:"application" yaml:"application"`
 	TMID                string                `json:"tm_id" yaml:"tm_id"`
 	TMDeploy            string                `json:"tm_deploy" yaml:"tm_deploy"`
+	SandboxDeploy       string                `json:"sandbox_deploy" yaml:"sandbox_deploy"`
+	TMReplicas          int                   `json:"tm_replicas" yaml:"tm_replicas"`
 	TMSlots             int                   `json:"tm_slots" yaml:"tm_slots"`
 	TMOrphanTimeout     string                `json:"tm_orphan_timeout" yaml:"tm_orphan_timeout"`
+	ResourceOwner       string                `json:"resource_owner" yaml:"resource_owner"`
 	CredentialEnvSecret string                `json:"credential_env_secret" yaml:"credential_env_secret"`
 	ControllerLabel     string                `json:"controller_label" yaml:"controller_label"`
 	JMImage             string                `json:"jm_image" yaml:"jm_image"`
@@ -357,6 +334,34 @@ type RuntimeConfig struct {
 	PodTotal            int                   `json:"pod_total" yaml:"pod_total"`
 	Namespace           NamespaceConfig       `json:"namespace" yaml:"namespace"`
 	CredentialPaths     CredentialPathsConfig `json:"credential_paths" yaml:"credential_paths"`
+}
+
+// RuntimeClusterConfig configures one Flink-style runtime cluster topology.
+// Session values are supplied by the Helm release. Application values are
+// defaults; a Flow definition can override only pod resources via its top-level
+// resources block.
+type RuntimeClusterConfig struct {
+	ClusterID   string               `json:"cluster_id,omitempty" yaml:"cluster_id,omitempty"`
+	JobManager  RuntimePodConfig     `json:"jobmanager" yaml:"jobmanager"`
+	TaskManager RuntimeWorkerConfig  `json:"taskmanager" yaml:"taskmanager"`
+	Sandbox     RuntimeSandboxConfig `json:"sandbox" yaml:"sandbox"`
+}
+
+type RuntimePodConfig struct {
+	Resources *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
+
+type RuntimeWorkerConfig struct {
+	Replicas  int                     `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	Slots     int                     `json:"slots,omitempty" yaml:"slots,omitempty"`
+	Resources *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
+
+type RuntimeSandboxConfig struct {
+	MinReplicas int                     `json:"min_replicas,omitempty" yaml:"min_replicas,omitempty"`
+	MaxReplicas int                     `json:"max_replicas,omitempty" yaml:"max_replicas,omitempty"`
+	Slots       int                     `json:"slots,omitempty" yaml:"slots,omitempty"`
+	Resources   *model.SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.
@@ -637,10 +642,15 @@ func expandStringWithCreds(s string, creds map[string]string) string {
 // ── Wallet config types ─────────────────────────────────────
 
 type WalletConfig struct {
-	Enabled     bool           `json:"enabled" yaml:"enabled"`
-	Policies    PoliciesConfig `json:"policies" yaml:"policies"`
-	SecretStore SecretStoreCfg `json:"secret_store" yaml:"secret_store"`
-	X402        X402Cfg        `json:"x402" yaml:"x402"`
+	Enabled        bool           `json:"enabled" yaml:"enabled"`
+	Transport      string         `json:"transport" yaml:"transport"`
+	ClientIDPrefix string         `json:"client_id_prefix" yaml:"client_id_prefix"`
+	KeyID          string         `json:"key_id" yaml:"key_id"`
+	PublicAddress  string         `json:"public_address" yaml:"public_address"`
+	SignTimeout    string         `json:"sign_timeout" yaml:"sign_timeout"`
+	LocalSocket    string         `json:"local_socket" yaml:"local_socket"`
+	Policies       PoliciesConfig `json:"policies" yaml:"policies"`
+	X402           X402Cfg        `json:"x402" yaml:"x402"`
 }
 
 type PoliciesConfig struct {
@@ -653,26 +663,8 @@ type PoliciesConfig struct {
 	AllowedChains                []string `json:"allowed_chains" yaml:"allowed_chains"`
 }
 
-type SecretStoreCfg struct {
-	Provider      string   `json:"provider" yaml:"provider"`
-	MasterKey     string   `json:"master_key" yaml:"master_key"`
-	MasterKeyFile string   `json:"master_key_file" yaml:"master_key_file"`
-	Vault         VaultCfg `json:"vault" yaml:"vault"`
-}
-
-type VaultCfg struct {
-	Address    string `json:"address" yaml:"address"`
-	Token      string `json:"token" yaml:"token"`
-	TokenFile  string `json:"token_file" yaml:"token_file"`
-	MountPath  string `json:"mount_path" yaml:"mount_path"`
-	SecretPath string `json:"secret_path" yaml:"secret_path"`
-	Role       string `json:"role" yaml:"role"`
-}
-
 type X402Cfg struct {
-	DefaultFacilitator string `json:"default_facilitator" yaml:"default_facilitator"`
-	Timeout            string `json:"timeout" yaml:"timeout"`
-	MaxRetries         int    `json:"max_retries" yaml:"max_retries"`
+	Timeout string `json:"timeout" yaml:"timeout"`
 }
 
 // expandEnvVars recursively walks a struct and replaces ${VAR} placeholders
@@ -730,18 +722,6 @@ func expandString(s string) string {
 
 // ── Config display ──────────────────────────────────────────────
 
-// ── Deprecated: static resource loading stubs ───────────────────
-// These exist for backward compatibility. All resources are now DB-backed.
-// New code should load from the management console or REST API.
-
-func LoadAgents(cfg *FlowgentConfig, cfgPath string) ([]AgentInfo, error) { return nil, nil }
-func LoadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
-	return nil, make(map[string]entities.FlowInfo), nil
-}
-func ReloadAgentFlows(cfg *FlowgentConfig, cfgPath string) ([]entities.FlowInfo, map[string]entities.FlowInfo, error) {
-	return nil, make(map[string]entities.FlowInfo), nil
-}
-
 // LogConfig prints key configuration details (masks sensitive fields).
 func LogConfig(cfg *FlowgentConfig) {
 	switch cfg.Storage.Type {
@@ -756,9 +736,10 @@ func LogConfig(cfg *FlowgentConfig) {
 		}
 		slog.Info("Storage", "type", "SQLite", "dir", dir)
 	}
+	slog.Info("Artifact storage", "provider", cfg.Storage.Artifacts.Provider, "inline_max_bytes", cfg.Storage.Artifacts.InlineMaxBytes, "max_payload_bytes", cfg.Storage.Artifacts.MaxPayloadBytes, "compression", cfg.Storage.Artifacts.Compression)
 
 	slog.Info("Cache", "provider", cfg.Cache.Provider)
-	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "context", cfg.Server.ContextPath)
+	slog.Info("REST API", "host", cfg.Server.Host, "port", cfg.Server.Port, "internal_port", cfg.Server.InternalPort, "context", cfg.Server.ContextPath)
 	if cfg.A2A.Enabled {
 		slog.Info("A2A API", "host", cfg.A2A.Host, "port", cfg.A2A.Port)
 	} else {
@@ -769,31 +750,4 @@ func LogConfig(cfg *FlowgentConfig) {
 	}
 
 	slog.Info("Engine", "max_concurrent", cfg.Orchestration.MaxConcurrentFlows, "timeout", cfg.Orchestration.FlowExecutionTimeout, "max_retries", cfg.Orchestration.MaxNodeRetries)
-}
-
-// ── Auth middleware ──────────────────────────────────────────────
-
-// AuthMiddleware creates a simple auth middleware that skips anonymous paths.
-func AuthMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, p := range cfg.AnonymousPaths {
-			if MatchGlob(p, r.URL.Path) {
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// MatchGlob matches a path against a glob-like pattern.
-func MatchGlob(pattern, path string) bool {
-	if pattern == path {
-		return true
-	}
-	if len(pattern) >= 3 && pattern[len(pattern)-3:] == "/**" {
-		pfx := pattern[:len(pattern)-3]
-		return len(path) >= len(pfx) && path[:len(pfx)] == pfx
-	}
-	return false
 }

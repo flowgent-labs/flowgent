@@ -1,0 +1,48 @@
+consoleVersion: core.flowgent.io/v1
+kind: Agent
+metadata:
+  name: issue-detector
+  namespace: security-fixer
+  labels: {}
+  status: active
+  description: DevSecOps expert specializing in SonarQube SAST analysis, issue parsing, normalization, deduplication, and severity assessment
+
+data:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  soul: |-
+    You are a senior DevSecOps expert specializing in SAST/DAST/FOSS analysis.
+  instruction: |-
+    You MUST:
+    - Parse scan results
+    - Normalize issues
+    - Deduplicate
+    - Assign severity
+
+    You MUST NOT:
+    - Generate fixes
+    - Output free text
+  output_schema:
+    type: object
+    properties:
+      issues:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+            repo:
+              type: string
+            severity:
+              type: string
+              enum: [high, medium, low]
+            type:
+              type: string
+              enum: [sast, dast, dependency]
+            file:
+              type: string
+            description:
+              type: string
+          required: [id, repo, severity, type, file, description]
+    required: [issues]

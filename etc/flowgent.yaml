@@ -13,6 +13,7 @@ service_name: flowgent
 server:
   host: 0.0.0.0
   port: 9999
+  internal_port: 9990             # trusted Flowgent control-plane only
   context_path: "/"
   shutdown_timeout: 15s
   max_body_bytes: 10485760   # 10 MiB
@@ -35,10 +36,14 @@ mgmt:
     server_bind: "0.0.0.0:6669"
   otel:
     enabled: true
-    endpoint: "localhost:4317"
-    protocol: grpc                # http/protobuf | http/json | grpc
+    endpoint: "http://localhost:4318"
+    protocol: http/protobuf
     timeout: 10000
     sample_rate: 1.0
+    query_endpoint: "http://localhost:16686"
+    query_timeout: 10000
+    query_lookback: "24h"
+    query_limit: 20
   metrics:
     enabled: false                # prometheus metrics (otel SDK)
     prometheus: true
@@ -54,66 +59,13 @@ logging:
   mode: JSON                      # HUMAN | JSON
   level: DEBUG                    # DEBUG | INFO | WARN | ERROR
 
-# ── Authentication ───────────────────────────────────────────────────────────
-auth:
-  jwt_validity_ak: 3600
-  jwt_validity_rk: 86400
-  jwt_algorithm: "ES256"           # ES256 | RS256 | EdDSA
-  jwt_private_key: "<YOUR_PRIVATE_KEY>"
-  jwt_public_key: "<YOUR_PUBLIC_KEY>"
-  anonymous_paths:
-    - "/public/**"
-    - "/static/**"
-    - "/_/healthz"
-    - "/_/healthz/**"
-    - "/swagger-ui/**"
-    - "/.well-known/**"
-    - "/a2a/**"
-    - "/api/v1/**"
-    - "/api/v1/human/**"
-  oidc:
-    enabled: false
-    client_id: "<YOUR_OIDC_CLIENT_ID>"
-    client_secret: "<YOUR_OIDC_CLIENT_SECRET>"
-    issue_url: "https://iam.wl4g.com/realms/master"
-    redirect_url: "http://wl4g.local:10000/serve/auth/callback/oidc"
-    scope: "openid profile email"
-  ldap:
-    enabled: false
-    url: "ldap://ad.example.com:389"               # LDAP server URL (ldap:// or ldaps://)
-    base_dn: "dc=example,dc=com"                     # root base DN
-    bind_dn: "cn=admin,dc=example,dc=com"            # service account DN
-    bind_password: "${LDAP_BIND_PASSWORD}"           # service account password
-    domains:                                         # AD multi-domain search
-      - base_dn: "dc=corp,dc=example,dc=com"
-        user_search_filter: "(sAMAccountName=%s)"
-      - base_dn: "dc=eng,dc=example,dc=com"
-        user_search_filter: "(uid=%s)"
-    role_mapping:                                     # AD group/domain → Flowgent role
-      - match: "cn=FlowgentAdmins,ou=groups,dc=corp,dc=example,dc=com"
-        role: "admin"
-      - match: "cn=FlowgentOps,ou=groups,dc=corp,dc=example,dc=com"
-        role: "operator"
-      - match: "dc=eng,dc=example,dc=com"
-        role: "viewer"
-    # ── Optional (defaults shown) ──
-    user_search_filter: "(uid=%s)"                     # default: (cn=%s)
-    username_attribute: "uid"                         # default: cn
-    email_attribute: "mail"                           # default: mail
-    display_name_attribute: "cn"                       # default: cn
-    group_search_base: "ou=groups,dc=example,dc=com"   # for group→role resolution
-    group_search_filter: "(member=%s)"                 # default: (member=%s)
-    group_name_attribute: "cn"                         # default: cn
-    insecure_skip_verify: false
-  github:
-    enabled: true
-    client_id: "<YOUR_GITHUB_CLIENT_ID>"
-    client_secret: "<YOUR_GITHUB_CLIENT_SECRET>"
-    auth_url: "https://github.com/login/oauth/authorize"
-    token_url: "https://github.com/login/oauth/access_token"
-    redirect_url: "http://wl4g.local:10000/serve/auth/callback/github"
-    scope: "user"
-    user_info_url: "https://api.github.com/user"
+# ── AuthGuard Adapter ────────────────────────────────────────────────────────
+authguard_adapter:
+  enabled: false
+  partition: "prod"
+  service: "flowgent"
+  region: "global"
+  tenant: "example-corp"
 
 # ── Cache ────────────────────────────────────────────────────────────────────
 #    Provider: Memory (all-in-one/dev) | Redis (production/distributed)
@@ -153,6 +105,31 @@ storage:
     min_connections: 2
     max_connections: 20
     use_ssl: false
+  # Complete TaskRun input/output remains part of the REST resource. The
+  # default provider stores JSON inline in the DB; S3/GCS keep only a versioned,
+  # checksummed reference in JSONB and the API Server transparently hydrates it.
+  artifacts:
+    provider: default             # default | s3 | gcs
+    inline_max_bytes: 262144      # S3/GCS: keep values up to 256 KiB inline
+    max_payload_bytes: 67108864   # reject a single JSON payload above 64 MiB
+    compression: gzip             # none | gzip (external objects only)
+    prefix: flowgent/task-runs
+    put_timeout: 30s
+    get_timeout: 30s
+    verify_checksum: true
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""               # optional S3-compatible endpoint
+      force_path_style: false
+      access_key_id: ""          # empty = AWS SDK default credential chain
+      secret_access_key: ""
+      session_token: ""
+    gcs:
+      bucket: ""
+      endpoint: ""               # optional emulator/compatible endpoint
+      credentials_file: ""       # empty = Application Default Credentials
+      anonymous: false
 
 # ── Messager ─────────────────────────────────────────────────────────────────
 #    Inter-component message queue. All non-apiserver components (controller,
@@ -245,6 +222,14 @@ notifier:
   cleanup_interval: 30s
   # Max age for subscription routes before they are considered orphaned.
   route_timeout: 5m
+  # Dynamic notification credentials are UI-managed and stored in DB only as
+  # authenticated ciphertext. Inject the 32-byte base64 master key through a
+  # Kubernetes Secret/environment variable; keep old keys during rotation.
+  secret_encryption:
+    provider: "aesgcm"
+    active_key_id: "v1"
+    keys:
+      v1: "${FLOWGENT_NOTIFICATION_KEY_V1}"
   # WebSocket push notification settings.
   websocket:
     ping_interval: 30s
@@ -261,6 +246,8 @@ notifier:
 #    Operational parameters typically set via FLOWGENT__RUNTIME__* env vars
 #    rather than in the static config file.
 runtime:
+  # Installation ownership boundary for controller-created K8s resources.
+  resource_owner: "flowgent"
   # Namespace isolation defaults
   namespace:
     default_namespace: "default"
@@ -271,53 +258,84 @@ runtime:
   # Flow-level credentials override namespace-level.
   credential_paths:
     base_path: "/var/flowgent"
-  api_server_url: "http://apiserver:9999"
-  system_namespace: "flowgen-system"
-  k8s_namespace: "flowgen-system"
+  api_server_url: "http://127.0.0.1:9990"
+  system_namespace: "flowgent-system"
+  k8s_namespace: "flowgent-system"
+  mode: "session"
+  runtime_cluster_id: "session"
+  session_cluster_id: "session"
   tm_orphan_timeout: "3m"
   credential_env_secret: ""
-  # agentFlowId: ""              # set by JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
-  # tmId: ""                     # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
+  # agent_flow_id: ""            # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
+  # agent_flow_run_id: ""        # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID)
+  # tm_id: ""                    # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
   tm_deploy: "flowgent-taskmanager"
+  sandbox_deploy: "flowgent-sandbox"
+  tm_replicas: 1
   tm_slots: 4
-  # controllerLabel: ""          # set per controller pod (FLOWGENT__RUNTIME__CONTROLLER_LABEL)
-  # jmImage: ""                  # JM container image (FLOWGENT__RUNTIME__JM_IMAGE)
-  # jmConfigMap: ""              # ConfigMap mounted into dedicated per-flow JM pods (FLOWGENT__RUNTIME__JM_CONFIG_MAP)
-  # podIndex: 0                  # set by K8s downward API (FLOWGENT__RUNTIME__POD_INDEX)
-  # podTotal: 1                  # set by K8s downward API (FLOWGENT__RUNTIME__POD_TOTAL)
+  # controller_label: ""         # set per controller pod (FLOWGENT__RUNTIME__CONTROLLER_LABEL)
+  # jm_image: ""                 # JM container image (FLOWGENT__RUNTIME__JM_IMAGE)
+  # jm_config_map: ""            # ConfigMap mounted into runtime pods (FLOWGENT__RUNTIME__JM_CONFIG_MAP)
+  # pod_index: 0                 # set by K8s downward API (FLOWGENT__RUNTIME__POD_INDEX)
+  # pod_total: 1                 # set by K8s downward API (FLOWGENT__RUNTIME__POD_TOTAL)
+  session:
+    cluster_id: "session"
+    jobmanager:
+      resources:
+        cpu: "500m"
+        memory: "512Mi"
+    taskmanager:
+      replicas: 1
+      slots: 4
+      resources:
+        cpu: "500m"
+        memory: "512Mi"
+    sandbox:
+      min_replicas: 0
+      max_replicas: 10
+      slots: 4
+      resources:
+        cpu: "500m"
+        memory: "512Mi"
+  application:
+    jobmanager:
+      resources:
+        cpu: ""
+        memory: ""
+    taskmanager:
+      replicas: 1
+      slots: 4
+      resources:
+        cpu: ""
+        memory: ""
+    sandbox:
+      min_replicas: 0
+      max_replicas: 10
+      slots: 4
+      resources:
+        cpu: ""
+        memory: ""
 
-# ── Wallet (x402) ────────────────────────────────────────────────────────────
-#    Optional economic layer. Disabled by default — flowgent runs as a pure
-#    orchestration engine without payment features.
-#
-#    Architecture: The wallet manager subscribes to unsigned x402 payment
-#    messages via the messager (MQTT or local queue), signs them using the
-#    EOA private key from the secret store, and publishes the signed messages
-#    back. No HTTP endpoint is needed — all communication is through the
-#    messager message bus.
+# ── External Wallet client (optional x402) ──────────────────────────────────
+#    Flowgent owns payment policy and x402 orchestration. The independently
+#    deployed Wallet owns its listener, master key, encrypted store, and EOA
+#    private keys; none of those server settings belong in this file.
 wallet:
   enabled: false
+  transport: mqtt                       # mqtt | local
+  client_id_prefix: flowgent-           # must match a Wallet client policy
+  key_id: ""                            # Wallet key alias, for example payer
+  public_address: ""                    # Expected 0x-prefixed EOA address
+  sign_timeout: 30s
+  local_socket: /run/wallet/wallet.sock # used only when transport=local
   policies:
     max_single_payment_usd: 1
     max_daily_budget_usd: 50
     allowed_domains: ["*.googleapis.com", "*.openai.com"]
     blocked_domains: ["*.unknown.xyz"]
     require_human_approval_above_usd: 5
-    allowed_assets: [USDC]
-    allowed_chains: [base, solana]
-  secret_store:
-    provider: default                  # default | vault | csi
-    master_key: ""
-    master_key_file: /var/secrets/master.key
-    # Vault backend (provider: vault)
-    vault:
-      address: ""                      # https://vault.example.com:8200
-      token: ""                        # Vault token (or use tokenFile)
-      token_file: ""                    # path to file containing Vault token
-      mount_path: "secret"              # KV v2 mount path
-      secret_path: "wallet"             # path under mount for wallet keys
-      role: "flowgent"                 # Vault role for AppRole auth
+    # x402 v2 uses token contract addresses; this is USDC on Base.
+    allowed_assets: ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"]
+    allowed_chains: ["eip155:8453"]
   x402:
-    default_facilitator: "http://localhost:8085"
     timeout: 30s
-    max_retries: 3

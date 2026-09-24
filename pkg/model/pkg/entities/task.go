@@ -26,20 +26,26 @@ const (
 
 // ExecutionPlan is the primary runtime object in the system.
 type ExecutionPlan struct {
-	PlanID                string   `json:"plan_id"`
-	AgentFlowRunID        string   `json:"agentflow_run_id"`
-	AgentFlowDefinitionID string   `json:"agentflow_definition_id"`
-	Namespace             string   `json:"namespace_id,omitempty"`
-	TaskID                string   `json:"task_id"`
-	TaskType              TaskType `json:"task_type"`
-	NodeID                string   `json:"node_id"`
+	PlanID                string            `json:"plan_id"`
+	AgentFlowRunID        string            `json:"agentflow_run_id"`
+	AgentFlowDefinitionID string            `json:"agentflow_definition_id"`
+	Namespace             string            `json:"namespace_id,omitempty"`
+	RuntimeMode           RuntimeMode       `json:"runtime_mode"`
+	RuntimeClusterID      string            `json:"runtime_cluster_id"`
+	TaskID                string            `json:"task_id"`
+	ParentTaskRunID       string            `json:"parent_task_run_id,omitempty"`
+	TaskType              TaskType          `json:"task_type"`
+	NodeID                string            `json:"node_id"`
+	TraceContext          map[string]string `json:"trace_context,omitempty"`
 
 	State      TaskStatus `json:"state"`
 	RetryCount int        `json:"retry_count"`
 	MaxRetries int        `json:"max_retries"`
 
-	AssignedTMID  string     `json:"assigned_tm_id,omitempty"`
-	LeaseExpireAt *time.Time `json:"lease_expire_at,omitempty"`
+	AssignedTMID     string     `json:"assigned_tm_id,omitempty"`
+	LeaseExpireAt    *time.Time `json:"lease_expire_at,omitempty"`
+	FencingToken     int64      `json:"fencing_token"`
+	WorkspaceVersion string     `json:"workspace_version,omitempty"`
 
 	Input      map[string]any  `json:"input"`
 	Result     *TaskResult     `json:"result,omitempty"`
@@ -55,8 +61,7 @@ type ExecutionPlan struct {
 // NodeSpec is the simplified node definition embedded in an ExecutionPlan.
 type NodeSpec struct {
 	ID               string                  `json:"id"`
-	Kind             NodeType                `json:"kind,omitempty"`
-	Type             NodeType                `json:"type"`
+	Kind             NodeType                `json:"kind"`
 	Solution         string                  `json:"solution,omitempty"`
 	Agent            string                  `json:"agent,omitempty"`
 	Skill            string                  `json:"skill,omitempty"`
@@ -71,7 +76,6 @@ type NodeSpec struct {
 	Approval         *HumanApprovalConfig    `json:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig       `json:"supervisor_config,omitempty"`
 	ChildNode        *NodeSpec               `json:"child_node,omitempty"`
-	RawInput         map[string]any          `json:"raw_input,omitempty"`
 	Args             map[string]any          `json:"args,omitempty"`
 	OutputSchema     map[string]any          `json:"output_schema,omitempty"`
 	Runtime          string                  `json:"runtime,omitempty"`
@@ -123,19 +127,65 @@ const (
 type TaskRunInfo struct {
 	BaseEntity
 
-	AgentFlowRunID  string         `json:"agentflow_run_id" yaml:"agentflow_run_id"`
-	NodeID          string         `json:"node_id" yaml:"node_id"`
-	Status          TaskStatus     `json:"status" yaml:"status"`
-	Input           map[string]any `json:"input" yaml:"input"`
-	Output          map[string]any `json:"output" yaml:"output"`
-	Error           string         `json:"error" yaml:"error"`
-	RetryCount      int            `json:"retry_count" yaml:"retry_count"`
-	MaxRetries      int            `json:"max_retries" yaml:"max_retries"`
-	ExecID          string         `json:"exec_id" yaml:"exec_id"`
-	ParentTaskRunID string         `json:"parent_task_run_id" yaml:"parent_task_run_id"`
-	Sequence        int            `json:"sequence" yaml:"sequence"`
-	StartedAt       *time.Time     `json:"started_at" yaml:"started_at"`
-	FinishedAt      *time.Time     `json:"finished_at" yaml:"finished_at"`
+	RunID            string         `json:"run_id" yaml:"run_id" db:"run_id"`
+	AgentFlowRunID   string         `json:"-" yaml:"-" db:"-"` // deprecated runtime alias
+	NodeKey          string         `json:"node_key" yaml:"node_key" db:"node_key"`
+	NodeID           string         `json:"-" yaml:"-" db:"-"` // deprecated runtime alias
+	Attempt          int            `json:"attempt" yaml:"attempt"`
+	AgentRevisionID  string         `json:"agent_revision_id,omitempty" yaml:"agent_revision_id,omitempty"`
+	Status           TaskStatus     `json:"status" yaml:"status"`
+	Input            map[string]any `json:"input" yaml:"input"`
+	Output           map[string]any `json:"output" yaml:"output"`
+	Error            string         `json:"error" yaml:"error"`
+	RetryCount       int            `json:"-" yaml:"-" db:"-"` // attempt-1 alias
+	MaxRetries       int            `json:"max_retries" yaml:"max_retries" db:"-"`
+	ExecutionID      string         `json:"execution_id" yaml:"execution_id" db:"execution_id"`
+	ExecID           string         `json:"-" yaml:"-" db:"-"` // deprecated runtime alias
+	ParentNodeRunID  string         `json:"parent_node_run_id,omitempty" yaml:"parent_node_run_id,omitempty"`
+	ParentTaskRunID  string         `json:"-" yaml:"-" db:"-"` // deprecated runtime alias
+	Sequence         int            `json:"sequence" yaml:"sequence" db:"-"`
+	ExecutionMemory  map[string]any `json:"execution_memory,omitempty" yaml:"execution_memory,omitempty"`
+	Checkpoint       map[string]any `json:"checkpoint,omitempty" yaml:"checkpoint,omitempty"`
+	WorkspaceVersion string         `json:"workspace_version,omitempty" yaml:"workspace_version,omitempty"`
+	LeaseOwner       string         `json:"lease_owner,omitempty" yaml:"lease_owner,omitempty"`
+	LeaseExpiresAt   *time.Time     `json:"lease_expires_at,omitempty" yaml:"lease_expires_at,omitempty"`
+	FencingToken     int64          `json:"fencing_token" yaml:"fencing_token"`
+	LastHeartbeatAt  *time.Time     `json:"last_heartbeat_at,omitempty" yaml:"last_heartbeat_at,omitempty"`
+	StartedAt        *time.Time     `json:"started_at" yaml:"started_at"`
+	FinishedAt       *time.Time     `json:"finished_at" yaml:"finished_at"`
+}
+
+func (t *TaskRunInfo) NormalizeAliases() {
+	if t.RunID == "" {
+		t.RunID = t.AgentFlowRunID
+	}
+	if t.AgentFlowRunID == "" {
+		t.AgentFlowRunID = t.RunID
+	}
+	if t.NodeKey == "" {
+		t.NodeKey = t.NodeID
+	}
+	if t.NodeID == "" {
+		t.NodeID = t.NodeKey
+	}
+	if t.Attempt == 0 {
+		t.Attempt = t.RetryCount + 1
+	}
+	if t.Attempt > 0 {
+		t.RetryCount = t.Attempt - 1
+	}
+	if t.ExecutionID == "" {
+		t.ExecutionID = t.ExecID
+	}
+	if t.ExecID == "" {
+		t.ExecID = t.ExecutionID
+	}
+	if t.ParentNodeRunID == "" {
+		t.ParentNodeRunID = t.ParentTaskRunID
+	}
+	if t.ParentTaskRunID == "" {
+		t.ParentTaskRunID = t.ParentNodeRunID
+	}
 }
 
 // NodeSpecFromNode converts a full Node to the lightweight NodeSpec.
@@ -146,7 +196,6 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 	spec := &NodeSpec{
 		ID:               n.ID,
 		Kind:             n.Kind,
-		Type:             n.Type,
 		Solution:         n.Solution,
 		Agent:            n.Agent,
 		Skill:            n.Skill,
@@ -166,15 +215,11 @@ func NodeSpecFromNode(n *Node) *NodeSpec {
 		Resources:        n.Resources,
 		NetworkPolicy:    n.NetworkPolicy,
 		Workspace:        n.Workspace,
-		RawInput:         n.Input,
 		Args:             n.Args,
 		OutputSchema:     n.OutputSchema,
 	}
 	if n.Node != nil {
 		spec.ChildNode = NodeSpecFromNode(n.Node)
-	}
-	if spec.Kind == "" {
-		spec.Kind = spec.Type
 	}
 	return spec
 }

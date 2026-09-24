@@ -43,6 +43,9 @@ func startA2AService(cfgPath string) error {
 
 	slog.Info(fmt.Sprintf("Flowgent A2A Server starting (pid=%d)", os.Getpid()))
 
-	srv := a2apkg.NewFlowgentA2AServer(cfg)
+	srv, err := a2apkg.NewFlowgentA2AServer(cfg)
+	if err != nil {
+		return fmt.Errorf("create A2A server: %w", err)
+	}
 	return srv.Start(context.Background())
 }

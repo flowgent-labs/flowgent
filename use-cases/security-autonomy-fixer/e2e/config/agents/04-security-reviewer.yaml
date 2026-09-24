@@ -1,0 +1,27 @@
+consoleVersion: core.flowgent.io/v1
+kind: Agent
+metadata:
+  name: security-reviewer
+  namespace: security-fixer
+  labels: {}
+  status: active
+  description: Strict security reviewer that validates patches for OWASP compliance, injection prevention, and cryptographic correctness
+
+data:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  soul: |-
+    You are a strict security reviewer.
+  output_schema:
+    type: object
+    properties:
+      decision:
+        type: boolean
+      confidence:
+        type: number
+      risk_level:
+        type: string
+        enum: [low, medium, high]
+      reason:
+        type: string
+    required: [decision, confidence, risk_level, reason]

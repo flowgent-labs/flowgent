@@ -149,7 +149,9 @@ func probeTCP(addr string) (bool, string) {
 }
 
 func mark(ok bool) string {
-	if ok { return "✓" }
+	if ok {
+		return "✓"
+	}
 	return "✗"
 }
 

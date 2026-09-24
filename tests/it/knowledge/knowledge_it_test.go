@@ -2,7 +2,9 @@ package knowledge
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -12,125 +14,156 @@ import (
 	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
 )
 
-func TestKnowledge_CRUD(t *testing.T) {
-	fs := it.New(t, it.SecurityFixerFlow())
-	namespace := fs.Namespace
-	base := fs.APIURL + "/api/v1/" + namespace + "/knowledge"
+type candidateEnvelope struct {
+	Candidate entities.KnowledgeCandidate `json:"candidate"`
+	Approval  entities.ApprovalInfo       `json:"approval"`
+}
 
-	body := map[string]any{
-		"title": "SQL Injection Prevention", "content": "Use PreparedStatement.",
-		"content_type": "text", "source": "manual", "tags": []string{"security", "java"},
+type publicationEnvelope struct {
+	Status    string                      `json:"status"`
+	Candidate entities.KnowledgeCandidate `json:"candidate"`
+}
+
+func requestJSON(t *testing.T, method, url string, payload any, expectedStatus int, target any) {
+	t.Helper()
+	var body io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal %s %s: %v", method, url, err)
+		}
+		body = bytes.NewReader(encoded)
 	}
-	b, _ := json.Marshal(body)
-	resp, err := http.Post(base, "application/json", bytes.NewReader(b))
+	req, err := http.NewRequest(method, url, body)
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatalf("request %s %s: %v", method, url, err)
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s %s: %v", method, url, err)
 	}
-	var created entities.KnowledgeEntry
-	json.NewDecoder(resp.Body).Decode(&created)
-	if created.ID == "" {
-		t.Fatal("create returned no id")
+	if resp.StatusCode != expectedStatus {
+		t.Fatalf("%s %s status=%d want=%d body=%s", method, url, resp.StatusCode, expectedStatus, data)
+	}
+	if target != nil && len(data) > 0 {
+		if err := json.Unmarshal(data, target); err != nil {
+			t.Fatalf("decode %s %s: %v; body=%s", method, url, err, data)
+		}
+	}
+}
+
+func completedManualRun(t *testing.T, fs *it.ITRunner) string {
+	t.Helper()
+	runIDs := fs.TriggerManual(nil)
+	if len(runIDs) != 1 {
+		t.Fatalf("manual trigger returned %d runs", len(runIDs))
+	}
+	if status := fs.WaitRun(runIDs[0], 30*time.Second); status != string(entities.RunCompleted) {
+		t.Fatalf("source run status=%s, want COMPLETED", status)
+	}
+	return runIDs[0]
+}
+
+func publishKnowledge(t *testing.T, fs *it.ITRunner, runID, scope, flowName, documentID,
+	description, content, idempotencyKey string, expectedRevision int64, metadata map[string]any,
+) entities.KnowledgeEntry {
+	t.Helper()
+	base := fs.APIURL + "/api/v1/" + fs.Namespace
+	payload := map[string]any{
+		"source_run_id": runID, "target_scope": scope, "type": "knowledge",
+		"content": content, "description": description,
+		"provenance":        map[string]any{"origin": "integration_test", "source_run_id": runID},
+		"expected_revision": expectedRevision, "idempotency_key": idempotencyKey,
+		"metadata": metadata,
+	}
+	if flowName != "" {
+		payload["target_flow_name"] = flowName
+	}
+	if documentID != "" {
+		payload["target_document_id"] = documentID
+	}
+	var created candidateEnvelope
+	requestJSON(t, http.MethodPost, base+"/knowledge/candidates", payload, http.StatusCreated, &created)
+	if created.Candidate.Status != "unpublished" || created.Approval.Status != "pending" || created.Approval.ID == "" {
+		t.Fatalf("candidate was not frozen behind one pending approval: %+v", created)
+	}
+	var published publicationEnvelope
+	requestJSON(t, http.MethodPost,
+		base+"/runs/"+runID+"/approvals/"+created.Approval.ID+"/approve",
+		map[string]any{}, http.StatusOK, &published)
+	if published.Status != "published" || published.Candidate.Status != "published" {
+		t.Fatalf("candidate was not published after approval: %+v", published)
+	}
+	publishedID, _ := published.Candidate.Metadata["published_id"].(string)
+	if publishedID == "" {
+		t.Fatalf("published candidate has no stable document id: %+v", published.Candidate)
+	}
+	var entry entities.KnowledgeEntry
+	requestJSON(t, http.MethodGet, base+"/knowledge/"+publishedID, nil, http.StatusOK, &entry)
+	return entry
+}
+
+func TestKnowledge_ApprovedImmutableRevisions(t *testing.T) {
+	flow := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "knowledge-revisions", Namespace: "test"},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication, SummarizeEnabled: true,
+		Nodes: []entities.Node{{ID: "source", Kind: entities.NoopNode}},
+	}
+	fs := it.New(t, flow)
+	runID := completedManualRun(t, fs)
+	base := fs.APIURL + "/api/v1/" + fs.Namespace + "/knowledge"
+
+	created := publishKnowledge(t, fs, runID, "namespace", "", "",
+		"SQL Injection Prevention", "Use PreparedStatement.", "it:knowledge:create", 0,
+		map[string]any{"title": "SQL Injection Prevention", "tags": []string{"security", "java"}})
+	if created.ID == "" || created.Revision != 1 || created.Title != "SQL Injection Prevention" {
+		t.Fatalf("unexpected first immutable revision: %+v", created)
 	}
 
-	resp, err = http.Get(base + "/" + created.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("get status = %d", resp.StatusCode)
-	}
-	var got entities.KnowledgeEntry
-	json.NewDecoder(resp.Body).Decode(&got)
-	if got.Title != "SQL Injection Prevention" {
-		t.Errorf("title = %q, want %q", got.Title, "SQL Injection Prevention")
-	}
-
-	resp, err = http.Get(base)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	defer resp.Body.Close()
 	var page entities.Page[entities.KnowledgeEntry]
-	json.NewDecoder(resp.Body).Decode(&page)
+	requestJSON(t, http.MethodGet, base, nil, http.StatusOK, &page)
 	if len(page.Items) == 0 {
-		t.Fatal("list returned no items")
+		t.Fatal("published knowledge list returned no items")
 	}
-
-	update := map[string]any{"content": "Always use parameterized queries."}
-	b, _ = json.Marshal(update)
-	req, _ := http.NewRequest(http.MethodPut, base+"/"+created.ID, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("update: %v", err)
+	var tagged entities.Page[entities.KnowledgeEntry]
+	requestJSON(t, http.MethodGet, base+"?tags=security,java", nil, http.StatusOK, &tagged)
+	if len(tagged.Items) == 0 {
+		t.Fatal("tag-filtered knowledge list returned no items")
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("update status = %d", resp.StatusCode)
-	}
-	var updated entities.KnowledgeEntry
-	json.NewDecoder(resp.Body).Decode(&updated)
-	if updated.Content != "Always use parameterized queries." {
-		t.Errorf("content not updated: %q", updated.Content)
-	}
-
-	search := map[string]any{"query": "SQL Injection", "top_k": 5}
-	b, _ = json.Marshal(search)
-	resp, err = http.Post(base+"/search", "application/json", bytes.NewReader(b))
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	defer resp.Body.Close()
-	var results []*entities.KnowledgeEntry
-	json.NewDecoder(resp.Body).Decode(&results)
-	if len(results) == 0 {
-		t.Error("search returned no results")
-	}
-
-	resp, err = http.Get(base + "?tags=security,java")
-	if err != nil {
-		t.Fatalf("list by tags: %v", err)
-	}
-	defer resp.Body.Close()
-	var tagged []*entities.KnowledgeEntry
-	json.NewDecoder(resp.Body).Decode(&tagged)
-	if len(tagged) == 0 {
-		t.Error("tag-filtered list returned no results")
-	}
-
-	resp, err = http.Get(base + "/tags")
-	if err != nil {
-		t.Fatalf("tags: %v", err)
-	}
-	defer resp.Body.Close()
 	var tags []string
-	json.NewDecoder(resp.Body).Decode(&tags)
-	if len(tags) == 0 {
-		t.Error("tags returned empty")
+	requestJSON(t, http.MethodGet, base+"/tags", nil, http.StatusOK, &tags)
+	if len(tags) < 2 {
+		t.Fatalf("knowledge tags=%v, want security and java", tags)
 	}
 
-	req, _ = http.NewRequest(http.MethodDelete, base+"/"+created.ID, nil)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("delete: %v", err)
+	updated := publishKnowledge(t, fs, runID, "namespace", "", created.ID,
+		"SQL Injection Prevention", "Always use parameterized queries.", "it:knowledge:update", 1,
+		map[string]any{"title": "SQL Injection Prevention", "tags": []string{"security", "java"}})
+	if updated.ID != created.ID || updated.Revision != 2 || updated.Content != "Always use parameterized queries." {
+		t.Fatalf("unexpected second immutable revision: %+v", updated)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete status = %d", resp.StatusCode)
+	var results []*entities.KnowledgeEntry
+	requestJSON(t, http.MethodPost, base+"/search",
+		map[string]any{"query": "parameterized queries", "scope": "namespace", "top_k": 5},
+		http.StatusOK, &results)
+	if len(results) == 0 || results[0].Revision != 2 {
+		t.Fatalf("search did not return current approved revision: %+v", results)
 	}
 
-	resp, err = http.Get(base + "/" + created.ID)
-	if err != nil {
-		t.Fatalf("get after delete: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("get after delete status = %d, want 404", resp.StatusCode)
+	requestJSON(t, http.MethodPut, base+"/"+created.ID, map[string]any{"content": "tampered"}, http.StatusMethodNotAllowed, nil)
+	requestJSON(t, http.MethodDelete, base+"/"+created.ID, nil, http.StatusMethodNotAllowed, nil)
+	var stillPublished entities.KnowledgeEntry
+	requestJSON(t, http.MethodGet, base+"/"+created.ID, nil, http.StatusOK, &stillPublished)
+	if stillPublished.Revision != 2 {
+		t.Fatalf("published knowledge changed after rejected mutable CRUD: %+v", stillPublished)
 	}
 }
 
@@ -138,64 +171,61 @@ func TestKnowledge_RAGRetrieverWiring(t *testing.T) {
 	llmLog := &externalmock.LLMCallLog{}
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "rag-wiring", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector"}, {ID: "fix", Type: entities.AgentNode, Agent: "fixer-agent"}},
-		Edges:      []entities.Edge{{From: "detect", To: "fix"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication, SummarizeEnabled: true,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes: []entities.Node{
+			{ID: "detect", Kind: entities.AgentNode, Agent: "issue-detector", Instruction: "Apply the DevSecOps SQL Injection Best Practice."},
+			{ID: "fix", Kind: entities.AgentNode, Agent: "fixer-agent", Instruction: "Use the DevSecOps SQL Injection guidance."},
+		},
+		Edges: []entities.Edge{{From: "detect", To: "fix"}},
 	}
 	fs := it.NewWithLLMLog(t, flow, llmLog)
-	namespace := fs.Namespace
-	base := fs.APIURL + "/api/v1/" + namespace + "/knowledge"
+	base := fs.APIURL + "/api/v1/" + fs.Namespace + "/knowledge"
+	sourceRunID := completedManualRun(t, fs)
+	published := publishKnowledge(t, fs, sourceRunID, "namespace", "", "",
+		"DevSecOps SQL Injection Best Practice",
+		"DevSecOps SQL Injection Best Practice: Use PreparedStatement.",
+		"it:knowledge:rag", 0,
+		map[string]any{"title": "DevSecOps SQL Injection Best Practice", "tags": []string{"security", "java"}})
 
-	seed := map[string]any{
-		"title": "DevSecOps SQL Injection Best Practice", "content": "Use PreparedStatement.",
-		"content_type": "text", "source": "manual", "tags": []string{"security", "java"},
-	}
-	b, _ := json.Marshal(seed)
-	resp, err := http.Post(base, "application/json", bytes.NewReader(b))
-	if err != nil {
-		t.Fatalf("seed knowledge: %v", err)
-	}
-	resp.Body.Close()
-
-	search := map[string]any{"query": "DevSecOps", "top_k": 3}
-	b, _ = json.Marshal(search)
-	resp, err = http.Post(base+"/search", "application/json", bytes.NewReader(b))
-	if err != nil {
-		t.Fatalf("verify search: %v", err)
-	}
-	defer resp.Body.Close()
 	var results []*entities.KnowledgeEntry
-	json.NewDecoder(resp.Body).Decode(&results)
-	if len(results) == 0 {
+	requestJSON(t, http.MethodPost, base+"/search",
+		map[string]any{"query": "DevSecOps", "scope": "namespace", "top_k": 3},
+		http.StatusOK, &results)
+	if len(results) == 0 || results[0].ID != published.ID {
 		t.Fatal("search for 'DevSecOps' returned no results — search API broken")
 	}
 
-	ids := fs.TriggerGitHubPR(42, "abc12345")
-	if len(ids) == 0 {
-		t.Fatal("webhook triggered no runs")
+	baselineCalls := llmLog.Count()
+	ids := fs.TriggerManual(map[string]any{"question": "DevSecOps SQL Injection Best Practice"})
+	if len(ids) != 1 {
+		t.Fatalf("manual trigger returned %d runs", len(ids))
 	}
 	runID := ids[0]
-
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) && llmLog.Count() == 0 {
-		time.Sleep(300 * time.Millisecond)
-	}
 	status := fs.WaitRun(runID, 60*time.Second)
-	if llmLog.Count() == 0 {
+	if status != string(entities.RunCompleted) {
+		t.Fatalf("RAG run status=%s, want COMPLETED", status)
+	}
+	if llmLog.Count() <= baselineCalls {
 		t.Fatal("LLM was never called — flow did not reach agent node")
 	}
-	t.Logf("flow status=%s, LLM called %d times, retriever active", status, llmLog.Count())
+	if !llmLog.ContainsSystem("Use PreparedStatement.") {
+		t.Fatal("approved Knowledge was not injected into the agent system prompt")
+	}
+	t.Logf("flow status=%s, LLM calls=%d, approved Knowledge injected", status, llmLog.Count())
 	fs.ExpectTaskCount(runID, 2)
 }
 
 func TestKnowledge_PostHandle(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "knowledge-posthandle", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "step-a", Type: entities.NoopNode}, {ID: "step-b", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{{From: "step-a", To: "step-b"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication, SummarizeEnabled: true,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes: []entities.Node{
+			{ID: "summarizable", Kind: entities.AgentNode, Agent: "issue-detector", Instruction: "Return a safe operational summary."},
+		},
 	}
 	fs := it.New(t, flow)
 	namespace := fs.Namespace
@@ -213,23 +243,36 @@ func TestKnowledge_PostHandle(t *testing.T) {
 		t.Fatalf("run status = %q, want COMPLETED", status)
 	}
 
-	time.Sleep(2 * time.Second)
+	var candidateCount, pendingCount int
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		err := fs.Pool().QueryRow(context.Background(), `SELECT COUNT(*),
+			COUNT(*) FILTER (WHERE c.status='unpublished' AND a.status='pending')
+			FROM knw_candidate c JOIN orh_approval a ON a.id=c.approval_id
+			WHERE c.source_run_id=$1`, runID).Scan(&candidateCount, &pendingCount)
+		if err != nil {
+			t.Fatalf("query summary candidates: %v", err)
+		}
+		if candidateCount > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if candidateCount == 0 || pendingCount != candidateCount {
+		t.Fatalf("post-handle candidates=%d pending approvals=%d", candidateCount, pendingCount)
+	}
 
-	resp, err := http.Get(base + "?source=flow_run")
+	resp, err := http.Get(base)
 	if err != nil {
-		t.Fatalf("list by source: %v", err)
+		t.Fatalf("list published knowledge: %v", err)
 	}
 	defer resp.Body.Close()
 
 	var page entities.Page[entities.KnowledgeEntry]
 	json.NewDecoder(resp.Body).Decode(&page)
-	if page.TotalCount > 0 {
-		t.Logf("post-handle created %d knowledge entries from flow run", page.TotalCount)
-		for _, e := range page.Items {
-			t.Logf("  entry: title=%q tags=%v", e.Title, e.Tags)
-		}
-	} else {
-		t.Log("no post-handle knowledge entries yet (async)")
+	if page.TotalCount != 0 {
+		t.Fatalf("unapproved summaries became retrieval-visible: %+v", page.Items)
 	}
-	fs.ExpectTaskCount(runID, 2)
+	t.Logf("post-handle created %d candidate(s), all gated by pending approval", candidateCount)
+	fs.ExpectTaskCount(runID, 1)
 }

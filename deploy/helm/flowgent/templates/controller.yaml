@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.controller.rbac.create }}
 apiVersion: v1
 kind: ServiceAccount
@@ -18,7 +19,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -33,12 +34,12 @@ subjects:
     name: {{ .Values.controller.serviceAccount.name }}
     namespace: {{ .Release.Namespace }}
 ---
-# Dedicated per-flow JM Deployments (Application mode) land in their
+# Dedicated active-run Flow JobManagers land in their
 # namespace's namespace (flowgent-{namespaceID} — every flow of the same namespace
 # shares one namespace), so the Controller needs a ClusterRole to
-# create/list/delete Deployments across namespaces (buildJMDeployment /
+# create/list/update/delete Deployments across namespaces (buildJMDeployment /
 # gcOrphanedJMDeployments in pkg/controller), plus get/create on namespaces
-# themselves — ensureApplicationInfra lazily creates the namespace namespace on
+# themselves — the Controller lazily creates the workload namespace on
 # first dispatch of any of its flows, since Helm does not pre-create it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -47,7 +48,7 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "update", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "update"]
@@ -59,7 +60,10 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "create"]
@@ -99,7 +103,7 @@ spec:
       labels:
         {{- include "flowgent.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: controller
-{{ if and .Values.credentialProviders.vault.enabled .Values.credentialProviders.vault.injectAnnotations }}
+{{ if and .Values.runtime.secrets.vault.enabled .Values.runtime.secrets.vault.injectAnnotations }}
       annotations:
         {{- include "flowgent.vaultAnnotations" . | nindent 8 }}
 {{ end }}
@@ -107,7 +111,7 @@ spec:
       serviceAccountName: {{ .Values.controller.serviceAccount.name }}
       containers:
         - name: controller
-          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          image: {{ include "flowgent.image" . | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
           args: ["controller", "start", "-c", "/etc/flowgent/flowgent.yaml"]
@@ -116,7 +120,7 @@ spec:
             - name: FLOWGENT__RUNTIME__CONTROLLER_LABEL
               value: "app.kubernetes.io/component=controller"
             - name: FLOWGENT__RUNTIME__JM_IMAGE
-              value: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+              value: {{ include "flowgent.image" . | quote }}
             - name: FLOWGENT__RUNTIME__JM_CONFIG_MAP
               value: "{{ include "flowgent.fullname" . }}-config"
             - name: POD_NAME
@@ -130,7 +134,7 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/flowgent
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
             {{- include "flowgent.credentialVolumeMounts" . | nindent 12 }}
 {{ end }}
           resources:
@@ -139,6 +143,7 @@ spec:
         - name: config
           configMap:
             name: {{ include "flowgent.fullname" . }}-config
-{{ if or .Values.credentialProviders.gcp.enabled .Values.credentialProviders.aws.enabled }}
+{{ if or .Values.runtime.secrets.gcp.enabled .Values.runtime.secrets.aws.enabled }}
         {{- include "flowgent.credentialVolumes" . | nindent 8 }}
 {{ end }}
+{{- end }}

@@ -14,27 +14,30 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"github.com/flowgent-labs/flowgent/api/pkg/auth"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth/ldap"
-	"github.com/flowgent-labs/flowgent/api/pkg/auth/oidc"
+	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
+	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
+	tracequery "github.com/flowgent-labs/flowgent/api/pkg/trace"
 	tracing "github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	flowreleasestore "github.com/flowgent-labs/flowgent/storage/pkg/flowrelease"
 )
 
 // FlowgentApiServer is the sole DB client and REST API server. It serves
 // CRUD endpoints for agents, flows, runs, tasks, and notifications.
 type FlowgentApiServer struct {
 	cfg   *config.FlowgentConfig
-	store storepkg.IStore
+	store storage.IStorage
 
-	restServer   *http.Server
-	ppServer     *http.Server
-	otelProvider *tracing.Provider
+	restServer     *http.Server
+	internalServer *http.Server
+	ppServer       *http.Server
+	otelProvider   *tracing.Provider
+	taskPayloads   taskpayload.ITaskPayloadProvider
 
 	// Handlers (set during construction)
 	agentFlowHandler *handler.FlowDefHandler
@@ -47,12 +50,12 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	config.LogConfig(cfg)
 
 	// ── Database ──
-	storeImpl := storepkg.InitStore(cfg)
+	storeImpl := storage.InitStorage(cfg)
 
 	// ── Load agentflows from DB ──
 	var agentFlows []entities.FlowInfo
 	subAgentFlows := make(map[string]entities.FlowInfo)
-	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), storeImpl); dberr != nil {
+	if dbFlows, dbSubFlows, dberr := flow.LoadFromDB(context.Background(), storeImpl, cfg.Runtime.Namespace.DefaultNamespace); dberr != nil {
 		slog.Warn("Failed to load agentflows from DB", "error", dberr)
 	} else {
 		agentFlows = append(agentFlows, dbFlows...)
@@ -62,6 +65,12 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	}
 
 	logger := utils.NewLogger(cfg.Logging.Mode, cfg.Logging.Level)
+	payloadProvider, err := taskpayload.NewProvider(context.Background(), cfg.Storage.Artifacts)
+	if err != nil {
+		_ = storeImpl.Close()
+		return nil, fmt.Errorf("create task payload provider: %w", err)
+	}
+	slog.Info("Task payload storage configured", "provider", payloadProvider.Name())
 
 	// ── OTEL Tracing ──
 	var otelProvider *tracing.Provider
@@ -81,6 +90,15 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 			slog.Info("OTEL tracing enabled", "endpoint", cfg.Mgmt.OTEL.Endpoint)
 		}
 	}
+	cleanupConstruction := func() {
+		if otelProvider != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = otelProvider.Shutdown(shutdownCtx)
+			cancel()
+		}
+		_ = payloadProvider.Close()
+		_ = storeImpl.Close()
+	}
 
 	// ── MQTT Publisher (optional) ──
 	var mqttPub handler.MQTTPublisher
@@ -93,29 +111,48 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 
 	// ── Handlers ──
 	healthHandler := &handler.HealthHandler{}
-	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, mqttPub)
+	agentFlowHandler := handler.NewFlowDefHandler(storeImpl, logger, agentFlows, subAgentFlows, cfg.Runtime.Namespace.NamespacePrefix, cfg.Runtime.Namespace.DefaultNamespace, runtimeSessionNamespace(cfg), mqttPub)
 	agentHandler := handler.NewAgentDefHandler(storeImpl, logger)
+	skillHandler := handler.NewSkillHandler(storeImpl)
 	humanHandler := handler.NewHumanHandler(storeImpl, mqttPub, logger)
-	runHandler := handler.NewFlowRunHandler(storeImpl, mqttPub, logger)
-	notifHandler := handler.NewNotifierHandler(storeImpl, logger)
+	runHandler := handler.NewFlowRunHandler(storeImpl, payloadProvider, mqttPub, logger)
+	notifHandler, err := handler.NewNotifierHandler(storeImpl, cfg.Notifier, mqttPub, logger)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("notification secret encryption: %w", err)
+	}
 	llmProviderHandler := handler.NewLlmProviderHandler(storeImpl)
 	mcpHandler := handler.NewMcpHandler(storeImpl)
 	webhookHandler := handler.NewWebhookHandler(agentFlowHandler, logger, cfg.Runtime.Namespace.DefaultNamespace)
 	knowledgeHandler := handler.NewKnowledgeHandler(storeImpl)
-
+	jaegerClient, err := tracequery.NewJaegerClientFromConfig(cfg.Mgmt.OTEL)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("create Jaeger query client: %w", err)
+	}
+	traceHandler := handler.NewTraceHandler(storeImpl, jaegerClient)
+	flowReleaseRepository, err := flowreleasestore.NewRepository(storeImpl)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("flow release repository: %w", err)
+	}
+	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, agentFlowHandler)
+	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(storeImpl, cfg.Notifier.SecretEncryption)
+	if err != nil {
+		cleanupConstruction()
+		return nil, fmt.Errorf("runtime configuration secrets: %w", err)
+	}
 	slog.Info("AgentFlows registered", "count", len(agentFlows)+len(subAgentFlows))
 
 	// ── Routes ──
-	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler,
-		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler)
-	var restHandler http.Handler = restMux
-	authSvc, err := auth.NewService(cfg.Auth)
+	restMux := RegisterRESTRoutes(healthHandler, agentFlowHandler, agentHandler, skillHandler,
+		runHandler, humanHandler, notifHandler, nil, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, flowReleaseHandler, runtimeConfigHandler)
+	adapter, err := authz.NewAdapter(cfg.AuthGuardAdapter)
 	if err != nil {
-		return nil, fmt.Errorf("auth service: %w", err)
+		cleanupConstruction()
+		return nil, fmt.Errorf("AuthGuard adapter: %w", err)
 	}
-	authSvc.Register(oidc.NewService(cfg.Auth.OIDC, authSvc.TokenService()))
-	authSvc.Register(ldap.NewService(cfg.Auth.LDAP, authSvc.TokenService()))
-	restHandler = authSvc.Middleware()(restMux)
+	var restHandler http.Handler = adapter.Middleware(restMux)
 
 	readTO, _ := time.ParseDuration(cfg.Server.ReadTimeout)
 	if readTO == 0 {
@@ -134,12 +171,28 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 		WriteTimeout:   writeTO,
 		MaxHeaderBytes: cfg.Server.MaxBodyBytes,
 	}
+	var internalSrv *http.Server
+	if cfg.Server.InternalPort > 0 {
+		if cfg.Server.InternalPort == cfg.Server.Port {
+			cleanupConstruction()
+			return nil, fmt.Errorf("server.internal_port must differ from server.port")
+		}
+		internalSrv = &http.Server{
+			Addr:           fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.InternalPort),
+			Handler:        adapter.InternalMiddleware(restMux),
+			ReadTimeout:    readTO,
+			WriteTimeout:   writeTO,
+			MaxHeaderBytes: cfg.Server.MaxBodyBytes,
+		}
+	}
 
 	srv := &FlowgentApiServer{
 		cfg:              cfg,
 		store:            storeImpl,
 		restServer:       restSrv,
+		internalServer:   internalSrv,
 		otelProvider:     otelProvider,
+		taskPayloads:     payloadProvider,
 		agentFlowHandler: agentFlowHandler,
 	}
 
@@ -170,6 +223,14 @@ func (s *FlowgentApiServer) Start(ctx context.Context) error {
 			log.Fatalf("REST server: %v", err)
 		}
 	}()
+	if s.internalServer != nil {
+		go func() {
+			slog.Info("Internal control-plane API server", "addr", s.internalServer.Addr)
+			if err := s.internalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("internal control-plane server: %v", err)
+			}
+		}()
+	}
 
 	if s.ppServer != nil {
 		go func() {
@@ -210,6 +271,11 @@ func (s *FlowgentApiServer) Shutdown() error {
 			slog.Error("REST server shutdown", "error", err)
 		}
 	}
+	if s.internalServer != nil {
+		if err := s.internalServer.Shutdown(shutdownCtx); err != nil {
+			slog.Error("internal control-plane server shutdown", "error", err)
+		}
+	}
 	if s.ppServer != nil {
 		s.ppServer.Close()
 	}
@@ -221,6 +287,11 @@ func (s *FlowgentApiServer) Shutdown() error {
 	if s.otelProvider != nil {
 		if err := s.otelProvider.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("OTEL provider shutdown", "error", err)
+		}
+	}
+	if s.taskPayloads != nil {
+		if err := s.taskPayloads.Close(); err != nil {
+			slog.Warn("task payload provider shutdown", "error", err)
 		}
 	}
 	return nil
@@ -283,4 +354,19 @@ func uniqueRawMQTTClientID(base string) string {
 		return base
 	}
 	return fmt.Sprintf("%s-%s", base, host)
+}
+
+func runtimeSessionNamespace(cfg *config.FlowgentConfig) string {
+	if cfg != nil {
+		if cfg.Runtime.K8sNamespace != "" {
+			return cfg.Runtime.K8sNamespace
+		}
+		if cfg.Runtime.SystemNamespace != "" {
+			return cfg.Runtime.SystemNamespace
+		}
+	}
+	if podNS := os.Getenv("POD_NAMESPACE"); podNS != "" {
+		return podNS
+	}
+	return "default"
 }

@@ -14,12 +14,13 @@ import (
 func TestTM_TaskLifecycle(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "tm-lifecycle", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{
-			{ID: "detect", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "fix", Type: entities.AgentNode, Agent: "fixer-agent"},
-			{ID: "verify", Type: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "detect", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "fix", Kind: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "verify", Kind: entities.AgentNode, Agent: "security-reviewer"},
 		},
 		Edges: []entities.Edge{entities.Edge{From: "detect", To: "fix"}, entities.Edge{From: "fix", To: "verify"}},
 	}
@@ -39,10 +40,11 @@ func TestTM_TaskLifecycle(t *testing.T) {
 func TestTM_ExecResultStateOnly(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "tm-state-only", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{entities.Node{ID: "step-a", Type: entities.NoopNode}, entities.Node{ID: "step-b", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{entities.Edge{From: "step-a", To: "step-b"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{entities.Node{ID: "step-a", Kind: entities.NoopNode}, entities.Node{ID: "step-b", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{entities.Edge{From: "step-a", To: "step-b"}},
 	}
 
 	fs := it.New(t, flow)

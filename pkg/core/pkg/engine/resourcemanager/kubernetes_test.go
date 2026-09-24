@@ -2,6 +2,8 @@ package resourcemanager
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -9,8 +11,12 @@ import (
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestKubernetesResourceManager_Creation(t *testing.T) {
@@ -59,6 +65,32 @@ func TestKubernetesResourceManager_Validate_WithQueue(t *testing.T) {
 	err := rm.Validate(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestKubernetesResourceManagerWaitsForScopedRuntimeReady(t *testing.T) {
+	q := messager.NewLocalMessager(10)
+	rm := &KubernetesResourceManager{
+		q: q, ownerNamespaceID: "default", runtimeClusterID: "cluster-a",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := rm.ensureRuntimeReadySubscription(ctx, "taskmanager"); err != nil {
+		t.Fatalf("subscribe readiness: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- rm.waitForRuntimeReady(ctx, "taskmanager") }()
+
+	ready := messager.RuntimeReady{
+		WorkerID: "tm-1", Role: "taskmanager", Namespace: "default",
+		ClusterID: "cluster-a", Timestamp: time.Now(),
+	}
+	payload, _ := json.Marshal(ready)
+	if err := q.Publish(ctx, messager.RuntimeReadyTopic("default", "cluster-a", "taskmanager", "tm-1"), &messager.InterMessage{Payload: payload}); err != nil {
+		t.Fatalf("publish readiness: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("wait readiness: %v", err)
 	}
 }
 
@@ -117,7 +149,7 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	rm := &KubernetesResourceManager{
 		kubeClient:               fakeClient,
 		namespace:                "default",
-		deployName:               "flowgent-taskmanager-default-sec-fix",
+		deployName:               "flowgent-taskmanager-default-critical",
 		tmImage:                  "flowgent:test",
 		slotsPerTM:               4,
 		minTMs:                   2,
@@ -126,8 +158,11 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 		idleTimeout:              5 * time.Minute,
 		planTimeout:              5 * time.Minute,
 		ownerNamespaceID:         "default",
+		runtimeClusterID:         "app-run-1",
+		ownerRunID:               "run-1",
+		runtimeMode:              "application",
 		ownerFlowID:              "sec-fix",
-		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix",
+		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix-run-1",
 		ownerJobManagerNamespace: "flowgent-default",
 		credentialEnvSecret:      "flowgent-runtime-env",
 	}
@@ -137,31 +172,143 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	}
 
 	dep, err := fakeClient.AppsV1().Deployments("default").
-		Get(context.Background(), "flowgent-taskmanager-default-sec-fix", metav1.GetOptions{})
+		Get(context.Background(), "flowgent-taskmanager-default-critical", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get deployment: %v", err)
 	}
-	if got := dep.Labels[LabelManagedBy]; got != LabelValueJobManager {
-		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueJobManager)
+	if got := dep.Labels[LabelManagedBy]; got != LabelValueRuntimeCluster {
+		t.Fatalf("LabelManagedBy = %q, want %q", got, LabelValueRuntimeCluster)
 	}
-	if got := dep.Labels[LabelParentJobManager]; got != "flowgent-jobmanager-default-sec-fix" {
-		t.Fatalf("LabelParentJobManager = %q", got)
+	if got := dep.Spec.Selector.MatchLabels[LabelRuntimeClusterID]; got != "app-run-1" {
+		t.Fatalf("selector runtime cluster label = %q, want app-run-1", got)
 	}
-	if got := dep.Labels[LabelParentJobManagerNamespace]; got != "flowgent-default" {
-		t.Fatalf("LabelParentJobManagerNamespace = %q", got)
-	}
-	if got := dep.Spec.Selector.MatchLabels[LabelFlowID]; got != "sec-fix" {
-		t.Fatalf("selector flow label = %q, want sec-fix", got)
+	if got := dep.Spec.Selector.MatchLabels[LabelRunID]; got != "run-1" {
+		t.Fatalf("selector run label = %q, want run-1", got)
 	}
 	container := dep.Spec.Template.Spec.Containers[0]
 	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef == nil {
-		t.Fatalf("expected TM credential envFrom secret ref, got %#v", container.EnvFrom)
+		t.Fatalf("expected only namespace worker credential ref, got %#v", container.EnvFrom)
 	}
 	if got := container.EnvFrom[0].SecretRef.Name; got != "flowgent-runtime-env" {
 		t.Fatalf("TM credential secret = %q, want flowgent-runtime-env", got)
 	}
 	if container.EnvFrom[0].SecretRef.Optional == nil || !*container.EnvFrom[0].SecretRef.Optional {
 		t.Fatal("TM credential secret ref should be optional")
+	}
+	var slots string
+	for i := range container.Env {
+		if container.Env[i].Name == "FLOWGENT__RUNTIME__TM_SLOTS" {
+			slots = container.Env[i].Value
+		}
+	}
+	if slots != "4" {
+		t.Fatalf("TM slots env = %q, want 4", slots)
+	}
+
+}
+
+func TestManagedByLabelValueIsInstallationScoped(t *testing.T) {
+	if got := ManagedByLabelValue(""); got != LabelValueRuntimeCluster {
+		t.Fatalf("default managed-by label = %q", got)
+	}
+	if got := ManagedByLabelValue("e2e-flowgent"); got != "e2e-flowgent-runtime-cluster" {
+		t.Fatalf("isolated managed-by label = %q", got)
+	}
+}
+
+func TestKubernetesResourceManager_ReconcilesRuntimeDeploymentTemplate(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	rm := &KubernetesResourceManager{
+		kubeClient: fakeClient, namespace: "runtime", deployName: "cluster-a",
+		tmImage: "flowgent:v1", slotsPerTM: 2, minTMs: 1, maxTMs: 1,
+		ownerNamespaceID: "team-a", runtimeClusterID: "cluster-a", runtimeMode: "session",
+	}
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("initial ensureDeployment: %v", err)
+	}
+	rm.tmImage = "flowgent:v2"
+	rm.slotsPerTM = 8
+	rm.nodeSelector = map[string]string{"workload": "critical"}
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("reconcile ensureDeployment: %v", err)
+	}
+	dep, err := fakeClient.AppsV1().Deployments("runtime").Get(context.Background(), "cluster-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep.Spec.Template.Spec.Containers[0].Image != "flowgent:v2" {
+		t.Fatalf("image was not reconciled: %q", dep.Spec.Template.Spec.Containers[0].Image)
+	}
+	if dep.Spec.Template.Spec.NodeSelector["workload"] != "critical" {
+		t.Fatalf("node selector was not reconciled: %#v", dep.Spec.Template.Spec.NodeSelector)
+	}
+
+	// The same helper reconciles sandbox Deployments. It must fetch the
+	// Deployment passed by the caller, not the ResourceManager's TM name.
+	rm.sandboxDeployName = "cluster-a-sandbox"
+	rm.sandboxImage = "flowgent-sandbox:v1"
+	if err := rm.ensureSandboxDeployment(context.Background()); err != nil {
+		t.Fatalf("initial ensureSandboxDeployment: %v", err)
+	}
+	rm.sandboxImage = "flowgent-sandbox:v2"
+	if err := rm.ensureSandboxDeployment(context.Background()); err != nil {
+		t.Fatalf("reconcile ensureSandboxDeployment: %v", err)
+	}
+	sandboxDep, err := fakeClient.AppsV1().Deployments("runtime").
+		Get(context.Background(), "cluster-a-sandbox", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sandboxDep.Spec.Template.Spec.Containers[0].Image; got != "flowgent-sandbox:v2" {
+		t.Fatalf("sandbox image was not reconciled: %q", got)
+	}
+	tmDep, err := fakeClient.AppsV1().Deployments("runtime").
+		Get(context.Background(), "cluster-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tmDep.Spec.Template.Labels["flowgent/role"]; got != "worker" {
+		t.Fatalf("TM labels were overwritten during sandbox reconcile: role=%q", got)
+	}
+}
+
+func TestKubernetesResourceManager_ReconcileRetriesConflict(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	rm := &KubernetesResourceManager{
+		kubeClient: fakeClient, namespace: "runtime", deployName: "cluster-conflict",
+		tmImage: "flowgent:v1", slotsPerTM: 2, minTMs: 1, maxTMs: 1,
+		ownerNamespaceID: "team-a", runtimeClusterID: "cluster-conflict", runtimeMode: "application",
+	}
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("initial ensureDeployment: %v", err)
+	}
+
+	updates := 0
+	fakeClient.PrependReactor("update", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		updates++
+		if updates == 1 {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Group: "apps", Resource: "deployments"},
+				"cluster-conflict", errors.New("object has been modified"),
+			)
+		}
+		return false, nil, nil
+	})
+
+	rm.tmImage = "flowgent:v2"
+	if err := rm.ensureDeployment(context.Background()); err != nil {
+		t.Fatalf("reconcile after conflict: %v", err)
+	}
+	if updates < 2 {
+		t.Fatalf("update attempts = %d, want at least 2", updates)
+	}
+	dep, err := fakeClient.AppsV1().Deployments("runtime").
+		Get(context.Background(), "cluster-conflict", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dep.Spec.Template.Spec.Containers[0].Image; got != "flowgent:v2" {
+		t.Fatalf("image after conflict retry = %q, want flowgent:v2", got)
 	}
 }
 

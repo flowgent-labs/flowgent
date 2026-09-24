@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.postgresql.enabled }}
 apiVersion: v1
 kind: Service
@@ -47,4 +48,5 @@ spec:
       volumes:
         - name: data
           emptyDir: {}
+{{- end }}
 {{- end }}

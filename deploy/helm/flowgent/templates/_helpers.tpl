@@ -23,6 +23,15 @@ app.kubernetes.io/name: {{ include "flowgent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/* Official releases inherit the chart appVersion; local/E2E values may pin a tag. */}}
+{{- define "flowgent.image" -}}
+{{- printf "%s:%s" .Values.global.image.repository (.Values.global.image.tag | default .Chart.AppVersion) -}}
+{{- end }}
+
+{{- define "flowgent.webImage" -}}
+{{- printf "%s:%s" .Values.web.image.repository (.Values.web.image.tag | default .Chart.AppVersion) -}}
+{{- end }}
+
 {{/* PG secret name: auto-generated when enabled, externalSecret when disabled */}}
 {{- define "flowgent.pgSecretName" -}}
 {{- if .Values.postgresql.externalSecret }}
@@ -41,21 +50,52 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{/* Notification DB encryption key; mounted only into API server + Notifier. */}}
+{{- define "flowgent.notificationSecretName" -}}
+{{- if .Values.notifier.secretEncryption.existingSecret }}
+{{- .Values.notifier.secretEncryption.existingSecret }}
+{{- else }}
+{{- printf "%s-notification-encryption" (include "flowgent.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "flowgent.notificationSecretEnv" -}}
+- name: FLOWGENT_NOTIFICATION_KEY_V1
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "flowgent.notificationSecretName" . | quote }}
+      key: {{ .Values.notifier.secretEncryption.keyName | quote }}
+{{- end }}
+
+{{/* Shared HMAC verifier for contexts produced by the AuthGuard edge. */}}
+{{- define "flowgent.authguardAdapterEnv" -}}
+{{- $middleware := index .Values "authguard-middleware" -}}
+{{- if or $middleware.enabled $middleware.adapter.enabled }}
+- name: AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "authguard-middleware.adapter.existingSecret is required when AuthGuard integration is enabled" $middleware.adapter.existingSecret | quote }}
+      key: {{ $middleware.adapter.hmacKey | quote }}
+{{- end }}
+{{- end }}
+
 {{/*
-extraSecretEnv iterates over .Values.secrets.extraSecrets and emits env: entries.
+extraSecretEnv iterates over runtime.secrets.kubernetes.env and emits env: entries.
 Each entry maps a K8s Secret key to an optional env var name.
 
 Format:
-  secrets:
-    extraSecrets:
-      - name: "my-k8s-secret"
-        optional: true
-        mappings:
-          - key: apikey
-            env: DEEPSEEK_APIKEY   # optional, defaults to key
+  runtime:
+    secrets:
+      kubernetes:
+        env:
+          - name: "my-k8s-secret"
+            optional: true
+            mappings:
+              - key: apikey
+                env: DEEPSEEK_APIKEY   # optional, defaults to key
 */}}
 {{- define "flowgent.extraSecretEnv" -}}
-{{- range .Values.secrets.extraSecrets }}
+{{- range .Values.runtime.secrets.kubernetes.env }}
 {{- $secretName := .name }}
 {{- $optional := .optional | default false }}
 {{- range .mappings }}
@@ -84,6 +124,7 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 - name: FLOWGENT__MESSAGER__MQTT__BROKER
   value: {{ include "flowgent.mqttBroker" . | quote }}
 {{- end }}
+{{- include "flowgent.extraSecretEnv" . }}
 {{- end }}
 
 {{/* Database URL — only used when postgresql.enabled=true (internal) */}}
@@ -96,9 +137,9 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 {{- printf "tcp://%s-emqx:1883" (include "flowgent.fullname" .) }}
 {{- end }}
 
-{{/* ── Credential Provider: CSI volumes (GCP / AWS) ── */}}
+{{/* ── Runtime Secret Providers: CSI volumes (GCP / AWS) ── */}}
 {{- define "flowgent.credentialVolumes" -}}
-{{- if .Values.credentialProviders.gcp.enabled }}
+{{- if .Values.runtime.secrets.gcp.enabled }}
 - name: gcp-secrets
   csi:
     driver: secrets-store.csi.k8s.io
@@ -106,7 +147,7 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
     volumeAttributes:
       secretProviderClass: {{ include "flowgent.fullname" . }}-gcp-secrets
 {{- end }}
-{{- if .Values.credentialProviders.aws.enabled }}
+{{- if .Values.runtime.secrets.aws.enabled }}
 - name: aws-secrets
   csi:
     driver: secrets-store.csi.k8s.io
@@ -116,26 +157,26 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 {{- end }}
 {{- end }}
 
-{{/* ── Credential Provider: CSI volumeMounts (GCP / AWS) ── */}}
+{{/* ── Runtime Secret Providers: CSI volumeMounts (GCP / AWS) ── */}}
 {{- define "flowgent.credentialVolumeMounts" -}}
-{{- if .Values.credentialProviders.gcp.enabled }}
+{{- if .Values.runtime.secrets.gcp.enabled }}
 - name: gcp-secrets
-  mountPath: {{ .Values.credentialProviders.gcp.mountPath }}
+  mountPath: {{ .Values.runtime.secrets.gcp.mountPath }}
   readOnly: true
 {{- end }}
-{{- if .Values.credentialProviders.aws.enabled }}
+{{- if .Values.runtime.secrets.aws.enabled }}
 - name: aws-secrets
-  mountPath: {{ .Values.credentialProviders.aws.mountPath }}
+  mountPath: {{ .Values.runtime.secrets.aws.mountPath }}
   readOnly: true
 {{- end }}
 {{- end }}
 
-{{/* ── Credential Provider: Vault Agent annotations ── */}}
+{{/* ── Runtime Secret Providers: Vault Agent annotations ── */}}
 {{- define "flowgent.vaultAnnotations" -}}
 vault.hashicorp.com/agent-inject: "true"
-vault.hashicorp.com/role: {{ .Values.credentialProviders.vault.vaultRole | quote }}
+vault.hashicorp.com/role: {{ .Values.runtime.secrets.vault.vaultRole | quote }}
 vault.hashicorp.com/agent-init-first: "true"
-{{- range .Values.credentialProviders.vault.secrets }}
+{{- range .Values.runtime.secrets.vault.secrets }}
 vault.hashicorp.com/agent-inject-secret-{{ .fileName }}: {{ .secretPath | quote }}
 vault.hashicorp.com/agent-inject-template-{{ .fileName }}: |
   {{ print "{{-" }} with secret {{ .secretPath | quote }} {{ print "-}}" }}
@@ -144,16 +185,9 @@ vault.hashicorp.com/agent-inject-template-{{ .fileName }}: |
 {{- end }}
 {{- end }}
 
-{{/* ── Credential Provider: ServiceAccount annotations ── */}}
+{{/* ── Runtime Secret Providers: ServiceAccount annotations ── */}}
 {{- define "flowgent.credentialServiceAccountAnnotations" -}}
-{{- range $k, $v := .Values.credentialProviders.serviceAccount.annotations }}
+{{- range $k, $v := .Values.runtime.secrets.serviceAccount.annotations }}
 {{ $k }}: {{ $v | quote }}
 {{- end }}
-{{- end }}
-
-{{/* Wallet master key generation (Ed25519) */}}
-{{- define "flowgent.generateWalletKey" -}}
-{{- $key := genPrivateKey "ed25519" }}
-{{- $_ := set .Values.wallet "generatedMasterKey" ($key | b64enc) }}
-{{- $key | b64enc }}
 {{- end }}

@@ -11,10 +11,11 @@ import (
 func TestSandbox_ExecutorWiring(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "sb-wiring", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
 		Nodes: []entities.Node{{
-			ID: "shell-step", Type: entities.SandboxNode,
+			ID: "shell-step", Kind: entities.SandboxNode,
 			Skill: "shell", Script: "echo 'sandbox ok' && exit 0", Timeout: "10s",
 		}},
 		Edges: []entities.Edge{},
@@ -35,10 +36,11 @@ func TestSandbox_ExecutorWiring(t *testing.T) {
 func TestSandbox_NoopFallback(t *testing.T) {
 	flow := &entities.FlowInfo{
 		BaseEntity: entities.BaseEntity{ID: "sb-noop", Namespace: "test"},
-		Vars:       map[string]any{"repo": "wl4g/rengine"},
-		Triggers:   []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
-		Nodes:      []entities.Node{{ID: "pre-sandbox", Type: entities.NoopNode}, {ID: "post-sandbox", Type: entities.NoopNode}},
-		Edges:      []entities.Edge{{From: "pre-sandbox", To: "post-sandbox"}},
+		Kind:       "flow", RuntimeMode: entities.RuntimeModeApplication,
+		Vars:     map[string]any{"repo": "wl4g/rengine"},
+		Triggers: []entities.TriggerDef{{Type: "webhook", Provider: "github", Events: []string{"pull_request"}}},
+		Nodes:    []entities.Node{{ID: "pre-sandbox", Kind: entities.NoopNode}, {ID: "post-sandbox", Kind: entities.NoopNode}},
+		Edges:    []entities.Edge{{From: "pre-sandbox", To: "post-sandbox"}},
 	}
 
 	fs := it.New(t, flow)

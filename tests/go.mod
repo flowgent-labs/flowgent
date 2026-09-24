@@ -13,8 +13,7 @@ replace (
 	github.com/flowgent-labs/flowgent/model => ../pkg/model
 	github.com/flowgent-labs/flowgent/notifier => ../pkg/notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../pkg/sandbox
-	github.com/flowgent-labs/flowgent/store => ../pkg/store
-	github.com/flowgent-labs/flowgent/wallet => ../pkg/wallet
+	github.com/flowgent-labs/flowgent/storage => ../pkg/storage
 )
 
 require (
@@ -23,12 +22,11 @@ require (
 	github.com/flowgent-labs/flowgent/config v0.0.0
 	github.com/flowgent-labs/flowgent/core v0.0.0-00010101000000-000000000000
 	github.com/flowgent-labs/flowgent/model v0.0.0
-	github.com/flowgent-labs/flowgent/store v0.0.0
+	github.com/flowgent-labs/flowgent/storage v0.0.0
 	github.com/jackc/pgx/v5 v5.7.6
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.46.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
@@ -45,8 +43,6 @@ require (
 	github.com/flowgent-labs/flowgent/sandbox v0.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.7 // indirect
-	github.com/go-ldap/ldap/v3 v3.4.10 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
@@ -54,7 +50,6 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect

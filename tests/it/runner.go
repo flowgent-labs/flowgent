@@ -9,6 +9,7 @@ package it
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,8 +32,9 @@ import (
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	storepkg "github.com/flowgent-labs/flowgent/store/pkg"
+	storage "github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/tests/it/externalmock"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -145,6 +148,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	sqURL, ghURL, llmURL string) *ITRunner {
 
 	t.Helper()
+	t.Setenv("FLOWGENT_IT_LLM_API_KEY", "test-key")
 	namespace := "test"
 	flow.Namespace = namespace
 
@@ -166,29 +170,49 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	}
 
 	logProgress("[store] connecting to PostgreSQL at %s:%s", host, port)
-	storeImpl := storepkg.InitStore(cfg)
+	storeImpl := storage.InitStorage(cfg)
 	t.Cleanup(func() { _ = storeImpl.Close() })
 
 	pool, ok := storeImpl.DB().(*pgxpool.Pool)
 	if !ok {
 		t.Fatalf("store.DB() is %T, want *pgxpool.Pool — is PostgreSQL running? (cd deploy/docker/pgvector && docker compose up -d)", storeImpl.DB())
 	}
+	resetITDatabase(t, pool)
 
 	// ── apiserver (no auth) ──
-	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", namespace, nil)
+	flowHandler := handler.NewFlowDefHandler(storeImpl, logger, []entities.FlowInfo{*flow}, map[string]entities.FlowInfo{}, "flowgent-", namespace, "default", nil)
+	if err := flowHandler.FlowStore().SaveSpec(context.Background(), flow, "integration-test", "integration test fixture"); err != nil {
+		t.Fatalf("persist integration test flow: %v", err)
+	}
 	nw := handler.NewNotifierWSBridge(nil)
+	notifierCfg := config.NotifierConfig{SecretEncryption: config.NotifierSecretEncryptionConfig{
+		Provider: "aesgcm", ActiveKeyID: "it-v1",
+		Keys: map[string]string{"it-v1": base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}}
+	notifierHandler, err := handler.NewNotifierHandler(storeImpl, notifierCfg, nil, logger)
+	if err != nil {
+		t.Fatalf("create notifier handler: %v", err)
+	}
+	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(storeImpl, notifierCfg.SecretEncryption)
+	if err != nil {
+		t.Fatalf("create runtime configuration handler: %v", err)
+	}
 	restMux := api.RegisterRESTRoutes(
 		&handler.HealthHandler{},
 		flowHandler,
 		handler.NewAgentDefHandler(storeImpl, logger),
-		handler.NewFlowRunHandler(storeImpl, nil, logger),
+		handler.NewSkillHandler(storeImpl),
+		handler.NewFlowRunHandler(storeImpl, nil, nil, logger),
 		handler.NewHumanHandler(storeImpl, nil, logger),
-		handler.NewNotifierHandler(storeImpl, logger),
+		notifierHandler,
 		nw,
 		handler.NewLlmProviderHandler(storeImpl),
 		handler.NewMcpHandler(storeImpl),
 		handler.NewWebhookHandler(flowHandler, logger, namespace),
 		handler.NewKnowledgeHandler(storeImpl),
+		nil,
+		nil,
+		runtimeConfigHandler,
 	)
 	srv := httptest.NewServer(restMux)
 	t.Cleanup(srv.Close)
@@ -217,14 +241,15 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	inMemQ := messager.NewLocalMessager(1000)
 
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
-		Provider:     engine.ProviderStandalone,
-		PoolSize:     8,
-		TaskState:    &client.TaskStateClient{Client: apiClient, Namespace: namespace},
-		ApprovalInfo: &client.HumanApprovalClient{Client: apiClient},
-		Logger:       logger,
-		APIServerURL: srv.URL,
-		Namespace:    namespace,
-		Messager:     inMemQ,
+		Provider:         engine.ProviderStandalone,
+		PoolSize:         8,
+		TaskState:        &client.TaskStateClient{Client: apiClient, Namespace: namespace},
+		ApprovalInfo:     &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
+		Logger:           logger,
+		APIServerURL:     srv.URL,
+		Namespace:        namespace,
+		Messager:         inMemQ,
+		RuntimeClusterID: "local",
 		SandboxWorkspace: sbWorkspace,
 		SandboxPolicy:    &model.SandboxPolicy{},
 	})
@@ -234,21 +259,54 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	jm, err := jobmanager.NewJobManager(
 		&client.RunStateClient{Client: apiClient, Namespace: namespace},
 		rm, logger,
-		&jobmanager.JobManagerConfig{FlowExecutionTimeout: 120 * time.Second, MaxNodeRetries: 2, MaxConcurrentFlows: 8},
+		&jobmanager.JobManagerConfig{FlowExecutionTimeout: 120 * time.Second, MaxNodeRetries: 2, MaxConcurrentFlows: 8, RuntimeClusterID: "local"},
 	)
 	if err != nil {
 		t.Fatalf("create job manager: %v", err)
 	}
+	jm.SetKnowledgeClient(apiClient)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), "", flow.ID)
+	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flowHandler.AgentFlows(), jobmanager.RunPollerConfig{
+		AgentFlowID: flow.ID,
+		RuntimeMode: entities.RuntimeModeApplication,
+	})
 
 	logProgress("[runner] stack ready at %s", srv.URL)
 	return r
 }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+func resetITDatabase(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT tablename
+		FROM pg_catalog.pg_tables
+		WHERE schemaname = 'public' AND tablename <> 'schema_migrations'`)
+	if err != nil {
+		t.Fatalf("list integration-test tables: %v", err)
+	}
+	defer rows.Close()
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatalf("scan integration-test table: %v", err)
+		}
+		tables = append(tables, pgx.Identifier{table}.Sanitize())
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("list integration-test tables: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+	if _, err := pool.Exec(context.Background(), "TRUNCATE TABLE "+strings.Join(tables, ", ")+" RESTART IDENTITY CASCADE"); err != nil {
+		t.Fatalf("reset integration-test database: %v", err)
+	}
+}
 
 // ─── seeding ─────────────────────────────────────────────────────────────────
 
@@ -282,17 +340,17 @@ func (r *ITRunner) SeedAgents() {
 func (r *ITRunner) SeedLLMProvider(endpoint string) {
 	// Clean up stale mock providers from previous test runs so the engine
 	// doesn't pick up a URL whose httptest server has already been closed.
-	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_providers WHERE provider = 'mock'`)
+	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_provider WHERE name = 'mock'`)
 	r.Post("/api/v1/"+r.Namespace+"/llm/providers", entities.LlmProviderInfo{
-		Provider: "mock", Endpoint: endpoint, ApiKey: "test-key",
-		Status: "ACTIVE", Enabled: true, RateLimit: 100000,
+		Name: "mock", Type: "openai", BaseURI: endpoint, DefaultModel: "mock/echo",
+		ApiKeyEnv: "FLOWGENT_IT_LLM_API_KEY", Status: "ACTIVE", Enabled: true, RateLimit: 100000,
 	})
 }
 
 func (r *ITRunner) SeedMCP(name, url string) {
 	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_mcp WHERE name = $1 AND namespace_id = $2`, name, r.Namespace)
 	r.Post("/api/v1/"+r.Namespace+"/mcp", entities.McpInfo{
-		Name: name, Type: "http", URL: url, Enabled: true,
+		Name: name, Transport: "http", RPCURL: url, Enabled: true,
 	})
 }
 
@@ -300,12 +358,12 @@ func (r *ITRunner) SeedMCP(name, url string) {
 
 func (r *ITRunner) TriggerManual(vars map[string]any) []string {
 	r.T.Helper()
-	payload := map[string]any{"vars": vars}
-	if payload["vars"] == nil {
-		payload["vars"] = map[string]any{}
+	payload := map[string]any{"input": vars}
+	if payload["input"] == nil {
+		payload["input"] = map[string]any{}
 	}
 	b, _ := json.Marshal(payload)
-	resp, err := http.Post(r.APIURL+"/api/v1/"+r.Namespace+"/flows/"+r.Flow.ID+"/trigger", "application/json", bytes.NewReader(b))
+	resp, err := http.Post(r.APIURL+"/api/v1/"+r.Namespace+"/flows/"+r.Flow.ResourceName()+"/trigger", "application/json", bytes.NewReader(b))
 	if err != nil {
 		r.T.Fatalf("trigger POST: %v", err)
 	}
@@ -321,7 +379,7 @@ func (r *ITRunner) TriggerManual(vars map[string]any) []string {
 	if out.RunID == "" {
 		r.T.Fatalf("trigger: no run_id in response")
 	}
-	logProgress("[trigger] flow %s → run %s", r.Flow.ID, out.RunID)
+	logProgress("[trigger] flow %s → run %s", r.Flow.ResourceName(), out.RunID)
 	return []string{out.RunID}
 }
 
@@ -403,44 +461,44 @@ func (r *ITRunner) RunStatus(runID string) string {
 	return run.Status
 }
 
-
-
 // ─── shared fixtures ─────────────────────────────────────────────────────
 
 // SecurityFixerFlow returns the canonical security-autonomy-fixer flow used across
 // apiserver, knowledge, and notifier IT tests. It models the full DevSecOps pipeline.
 func SecurityFixerFlow() *entities.FlowInfo {
 	return &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "security-autonomy-fixer"},
-		Vars:       map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
+		BaseEntity:  entities.BaseEntity{ID: "security-autonomy-fixer"},
+		Kind:        "flow",
+		RuntimeMode: entities.RuntimeModeApplication,
+		Vars:        map[string]any{"repo": "wl4g/rengine", "project_key": "rengine"},
 		Triggers: []entities.TriggerDef{
 			{Type: "webhook", Provider: "github", Events: []string{"pull_request", "push"}},
 		},
 		Nodes: []entities.Node{
-			{ID: "get-commit", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "get_latest_commit", "repo": "${vars.repo}"}},
-			{ID: "scan-sonarqube", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_issues", "project_key": "${vars.project_key}", "severities": "BLOCKER,CRITICAL,MAJOR"}},
-			{ID: "aggregate-issues", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "generate-fixes", Type: entities.AgentNode, Agent: "fixer-agent"},
-			{ID: "review-security", Type: entities.AgentNode, Agent: "security-reviewer"},
-			{ID: "review-quality", Type: entities.AgentNode, Agent: "quality-reviewer"},
-			{ID: "review-arch", Type: entities.AgentNode, Agent: "arch-reviewer"},
+			{ID: "get-commit", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "get_latest_commit", "repo": "${vars.repo}"}},
+			{ID: "scan-sonarqube", Kind: entities.ToolNode, Tool: "sonarqube", Args: map[string]any{"action": "get_issues", "project_key": "${vars.project_key}", "severities": "BLOCKER,CRITICAL,MAJOR"}},
+			{ID: "aggregate-issues", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "generate-fixes", Kind: entities.AgentNode, Agent: "fixer-agent"},
+			{ID: "review-security", Kind: entities.AgentNode, Agent: "security-reviewer"},
+			{ID: "review-quality", Kind: entities.AgentNode, Agent: "quality-reviewer"},
+			{ID: "review-arch", Kind: entities.AgentNode, Agent: "arch-reviewer"},
 			{
-				ID: "committee", Type: entities.CommitteeNode,
+				ID: "committee", Kind: entities.CommitteeNode,
 				Strategy: map[string]any{"type": "majority"},
-				Input:    map[string]any{"votes": []any{"${review-security}", "${review-quality}", "${review-arch}"}},
+				Args:     map[string]any{"votes": []any{"${review-security}", "${review-quality}", "${review-arch}"}},
 			},
 			{
-				ID: "is-approved", Type: entities.ConditionNode,
+				ID: "is-approved", Kind: entities.ConditionNode,
 				Expression: "${input.approved == true}",
-				Input:      map[string]any{"approved": "${committee.decision}"},
+				Args:       map[string]any{"approved": "${committee.decision}"},
 			},
-			{ID: "commit-fixes", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "commit_and_push", "branch": "fix/flowgent_sec_auto_fix"}},
-			{ID: "create-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_pull_request", "base": "main", "head": "fix/flowgent_sec_auto_fix"}},
-			{ID: "rescan", Type: entities.ToolNode, Tool: "sonarqube", Input: map[string]any{"action": "get_jobs_by_commit", "repo": "${vars.repo}"}},
-			{ID: "compare-results", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "summary-report", Type: entities.AgentNode, Agent: "issue-detector"},
-			{ID: "notify-pr", Type: entities.ToolNode, Tool: "github", Input: map[string]any{"action": "create_issue_comment", "pr_number": 4}},
-			{ID: "end", Type: entities.NoopNode},
+			{ID: "commit-fixes", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "commit_and_push", "branch": "fix/flowgent_sec_auto_fix"}},
+			{ID: "create-pr", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "create_pull_request", "base": "main", "head": "fix/flowgent_sec_auto_fix"}},
+			{ID: "rescan", Kind: entities.ToolNode, Tool: "sonarqube", Args: map[string]any{"action": "get_jobs_by_commit", "repo": "${vars.repo}"}},
+			{ID: "compare-results", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "summary-report", Kind: entities.AgentNode, Agent: "issue-detector"},
+			{ID: "notify-pr", Kind: entities.ToolNode, Tool: "github", Args: map[string]any{"action": "create_issue_comment", "pr_number": 4}},
+			{ID: "end", Kind: entities.NoopNode},
 		},
 		Edges: []entities.Edge{
 			{From: "get-commit", To: "scan-sonarqube"},
@@ -474,12 +532,12 @@ func (r *ITRunner) ExpectTaskCount(runID string, min int) {
 	r.T.Helper()
 	var n int
 	if err := r.pool.QueryRow(r.T.Context(),
-		`SELECT COUNT(*) FROM task_runs WHERE agentflow_run_id = $1`, runID,
+		`SELECT COUNT(*) FROM orh_node_run WHERE run_id = $1 AND status<>'DELETED'`, runID,
 	).Scan(&n); err != nil {
-		r.T.Fatalf("count task_runs: %v", err)
+		r.T.Fatalf("count orh_node_run: %v", err)
 	}
 	if n < min {
 		r.T.Fatalf("task count for run %s = %d, want >= %d", runID, n, min)
 	}
-	r.T.Logf("task_runs count = %d (min %d)", n, min)
+	r.T.Logf("orh_node_run count = %d (min %d)", n, min)
 }

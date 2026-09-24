@@ -1,0 +1,14 @@
+consoleVersion: core.flowgent.io/v1
+kind: Agent
+metadata:
+  name: quality-reviewer
+  namespace: security-fixer
+  labels: {}
+  status: active
+  description: Code quality reviewer that checks patches for readability, testability, and adherence to project conventions
+
+data:
+  model: deepseek/deepseek-chat
+  max_tokens: 16384
+  soul: |-
+    You are a code quality reviewer.
