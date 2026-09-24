@@ -114,17 +114,24 @@ class SonarQubeRuntime:
                     status = data.get("status", "UNKNOWN")
                     print(f"  SonarQube status: {status}")
                     if status == "UP":
-                        resp2 = requests.get(API_HEALTH, timeout=10)
-                        if resp2.status_code == 200:
-                            health = resp2.json()
-                            print(f"  SonarQube health: {health.get('health', 'UNKNOWN')}")
-                            print(f"  SonarQube ready at {SONARQUBE_URL}")
-                            return True
-                        if SONARQUBE_URL != "http://localhost:9000" and resp2.status_code == 403:
-                            # The public status endpoint already proved the service is UP;
-                            # external deployments may restrict the diagnostic health API.
-                            print(f"  SonarQube ready at {SONARQUBE_URL} (health API access restricted)")
-                            return True
+                        # /api/system/status is SonarQube's unauthenticated readiness
+                        # contract and is also what the compose healthcheck uses. The
+                        # richer /api/system/health endpoint requires admin permission
+                        # on current releases, so treat it as diagnostic-only.
+                        try:
+                            health_resp = requests.get(API_HEALTH, timeout=10)
+                            if health_resp.status_code == 200:
+                                health = health_resp.json()
+                                print(f"  SonarQube health: {health.get('health', 'UNKNOWN')}")
+                            else:
+                                print(
+                                    "  SonarQube health details unavailable "
+                                    f"(status={health_resp.status_code})"
+                                )
+                        except requests.RequestException as exc:
+                            print(f"  SonarQube health details unavailable: {exc}")
+                        print(f"  SonarQube ready at {SONARQUBE_URL}")
+                        return True
                 else:
                     print(f"  API returned {resp.status_code}, retrying...")
             except requests.ConnectionError:
