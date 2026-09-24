@@ -34,7 +34,7 @@ services:
       - sonarqube_postgres_data:/bitnami/postgresql
   sonarqube:
     # issue:https://github.com/docker/for-mac/issues/7410
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/sonarqube:26.4.0.121862-community-amd64 # 26.4.0.121862-community-amd64
+    image: &sonarqube-image registry.cn-shenzhen.aliyuncs.com/wl4g/sonarqube:26.4.0.121862-community-amd64 # 26.4.0.121862-community-amd64
     container_name: sonarqube
     restart: unless-stopped
     deploy:
@@ -63,7 +63,11 @@ services:
       sonarqube-postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/api/system/status || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS --max-time 10 http://localhost:9000/api/system/status | grep -Eq '\"status\"[[:space:]]*:[[:space:]]*\"UP\"'",
+        ]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -76,7 +80,7 @@ services:
   # Auto-reset admin password to fixed value on first startup.
   # Uses SonarQube REST API: POST /api/users/change_password
   sonarqube-init:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
+    image: *sonarqube-image
     container_name: sonarqube-init
     depends_on:
       sonarqube:
@@ -88,14 +92,17 @@ services:
         echo '>> Resetting SonarQube admin password...'
         STATUS=''
         for i in $$(seq 1 30); do
-          STATUS=$$(wget -qO- --post-data="" http://sonarqube:9000/api/system/status 2>/dev/null || echo '')
-          if echo "$$STATUS" | grep -q '"UP"'; then break; fi
+          STATUS=$$(curl -fsS http://sonarqube:9000/api/system/status 2>/dev/null || true)
+          if echo "$$STATUS" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"'; then break; fi
           echo "  waiting for SonarQube API... ($$i)"
           sleep 5
         done
         # Change admin password via API
-        curl -s -u admin:admin -X POST \
-          'http://sonarqube:9000/api/users/change_password?login=admin&password=Abcd1234@sonar&previousPassword=admin' \
+        curl -fsS -u admin:admin -X POST \
+          --data-urlencode 'login=admin' \
+          --data-urlencode 'password=Abcd1234@sonar' \
+          --data-urlencode 'previousPassword=admin' \
+          'http://sonarqube:9000/api/users/change_password' \
           || echo 'WARN: Password may already be set (non-default)'
         echo ">> SonarQube init done. Admin password: Abcd1234@sonar"
     networks:
