@@ -67,7 +67,7 @@ class SonarQubeRuntime:
     """Class-owned operations for sonarqube."""
 
     @staticmethod
-    def compose_up(compose_file=None):
+    def compose_up(compose_file=None, timeout=DEFAULT_TIMEOUT):
         """
         Bring up the SonarQube + PostgreSQL stack via docker compose.
 
@@ -90,7 +90,10 @@ class SonarQubeRuntime:
         if rc != 0:
             print(f"  WARN: docker compose down returned non-zero (may be first run)")
 
-        rc, _ = CommandRunner.legacy(["docker", "compose", "-f", compose_file, "up", "-d"], timeout=120)
+        rc, _ = CommandRunner.legacy(
+            ["docker", "compose", "-f", compose_file, "up", "-d"],
+            timeout=timeout,
+        )
         if rc != 0:
             print(f"  ERROR: docker compose up failed")
             return False
@@ -164,7 +167,10 @@ class SonarQubeDeployer(BaseDeployer):
     component = "sonarqube"
 
     def deploy(self) -> None:
-        if not self.step("start isolated SonarQube compose stack", SonarQubeRuntime.compose_up):
+        if not self.step(
+            "start isolated SonarQube compose stack",
+            lambda: SonarQubeRuntime.compose_up(timeout=self.context.timeout_seconds),
+        ):
             raise RuntimeError("SonarQube compose deployment failed")
 
     def verify(self) -> None:

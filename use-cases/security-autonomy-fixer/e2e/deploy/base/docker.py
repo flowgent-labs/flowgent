@@ -62,6 +62,14 @@ class DockerDeployer(BaseDeployer):
 
     backend = "docker"
 
+    @staticmethod
+    def _is_accessible_unix_socket(path: Path) -> bool:
+        """Return whether an optional container socket is usable by this process."""
+        try:
+            return path.is_socket() and os.access(path, os.R_OK | os.W_OK)
+        except OSError:
+            return False
+
     def __init__(self, context: RunContext) -> None:
         super().__init__(context)
         self.sonarqube = SonarQubeDeployer(context)
@@ -432,7 +440,10 @@ class DockerDeployer(BaseDeployer):
             compose_environment["DEEPSEEK_API_KEY_FLOWGENT"] = compose_environment.get(
                 "DEEPSEEK_API_KEY", ""
             )
-        if "DOCKER_HOST" not in compose_environment and ROOTFUL_PODMAN_SOCKET.exists():
+        if (
+            "DOCKER_HOST" not in compose_environment
+            and self._is_accessible_unix_socket(ROOTFUL_PODMAN_SOCKET)
+        ):
             # `/usr/bin/docker` is a podman-remote wrapper on the E2E host.  Pin
             # Compose to that same API so it sees the images built/tagged by
             # build_images() instead of attempting to pull localhost/*.
