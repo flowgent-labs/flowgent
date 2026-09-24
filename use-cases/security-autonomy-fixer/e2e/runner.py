@@ -237,6 +237,10 @@ class E2ERunner:
                     details=["Deployment completed successfully; verifier matrix was skipped by --no-verify."],
                 )
             else:
+                # Keep metadata-only CLI operations (--help/--list) independent
+                # from the third-party packages required by real verifiers.
+                from common.project import VerificationRunner
+
                 passed, results = VerificationRunner.run_matrix(
                     context,
                     scenario_ids,
@@ -292,23 +296,7 @@ from common import config
 from common.config import DEFAULT_SCENARIOS, SCENARIOS
 from deploy import E2EDeployerFactory
 from common.model import RunContext, VerificationResult
-from common.project import VerificationRunner
 from common.report import E2EReportWriter
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 if __name__ == "__main__":
     raise SystemExit(E2ERunner.main())
