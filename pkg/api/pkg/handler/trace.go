@@ -42,7 +42,7 @@ func (h *TraceHandler) GetRunTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if flowID := r.PathValue("flow_id"); flowID != "" && run.AgentFlowID != flowID {
+	if flowID := r.PathValue("flow_id"); flowID != "" && run.FlowName != flowID {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}

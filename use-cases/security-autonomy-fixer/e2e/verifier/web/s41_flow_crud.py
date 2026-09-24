@@ -22,6 +22,7 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         super().__init__(context)
         self.flow_id = f"ui-e2e-{uuid.uuid4().hex[:8]}"
         self.node_id = "console-sandbox"
+        self.run_id = ""
         self.flow_created = False
         self.flow_deleted = False
 
@@ -94,6 +95,7 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         expect(page.get_by_test_id("run-status")).to_have_attribute(
             "data-status", "COMPLETED", timeout=180_000
         )
+        self.run_id = page.url.rsplit("/", 1)[-1]
         node = page.locator(f'[data-testid="run-node"][data-node-id="{self.node_id}"]')
         expect(node).to_have_attribute("data-has-task", "true")
         self.screenshot("UI-02", "console displayed the completed sandbox run")
@@ -109,14 +111,41 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
             ),
             timeout=20_000,
         )
-        expect(page.get_by_test_id("trace-source")).to_be_visible(timeout=20_000)
+        trace_source = page.get_by_test_id("trace-source")
+        expect(trace_source).to_be_visible(timeout=20_000)
+        for _ in range(40):
+            if int(trace_source.get_attribute("data-span-count") or "0") > 0:
+                break
+            page.wait_for_timeout(1_500)
+            page.reload(wait_until="domcontentloaded")
+            expect(trace_source).to_be_visible(timeout=20_000)
+        expect(trace_source).to_have_attribute("data-trace-count", re.compile(r"^[1-9]\d*$"))
+        expect(trace_source).to_have_attribute("data-span-count", re.compile(r"^[1-9]\d*$"))
+        expect(page.locator("button.span-row").first).to_be_visible()
+        trace_count = trace_source.get_attribute("data-trace-count")
+        span_count = trace_source.get_attribute("data-span-count")
         self.screenshot("UI-03", "console rendered the Jaeger-style trace view for the completed run")
-        self.details.append("Opened the run Tracking route and rendered trace-source/span-count evidence in the Jaeger-style UI.")
+        self.details.append(
+            f"Opened the run Tracking route and rendered {trace_count} Jaeger trace(s) / "
+            f"{span_count} span(s), correlated with the persisted Run."
+        )
 
     def _inspect_overview(self) -> None:
         page = self.browser_page
         page.goto(f"{self.origin}/dashboard", wait_until="domcontentloaded")
         expect(page.get_by_test_id("dashboard-telemetry")).to_be_visible(timeout=20_000)
+        for label in (
+            "Overview",
+            "Runs",
+            "Flows",
+            "Memory",
+            "Agents",
+            "Skills",
+            "MCPs",
+            "LLMs",
+            "Notifications",
+        ):
+            expect(page.get_by_role("link", name=label, exact=True)).to_be_visible()
         for hours in (24, 168, 720):
             page.get_by_test_id(f"dashboard-range-{hours}").click()
             expect(page.get_by_test_id(f"dashboard-range-{hours}")).to_have_class(re.compile("is-active"))
@@ -136,8 +165,23 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         page.reload(wait_until="domcontentloaded")
         expect(page.get_by_test_id("flow-description")).to_have_value(updated_description, timeout=20_000)
         expect(page.get_by_test_id("flow-version")).to_contain_text("2", timeout=20_000)
+        recent = page.get_by_test_id("flow-recent-runs")
+        expect(recent).to_be_visible(timeout=20_000)
+        expect(page.get_by_test_id(f"flow-recent-run-{self.run_id}")).to_be_visible(
+            timeout=20_000
+        )
+        expect(
+            recent.get_by_role("link", name="Details", exact=True).first
+        ).to_have_attribute(
+            "href", f"/{self.web_namespace}/{self.flow_id}/runs/{self.run_id}"
+        )
+        expect(recent.get_by_role("link", name="Trace", exact=True).first).to_have_attribute(
+            "href", f"/{self.web_namespace}/{self.flow_id}/runs/{self.run_id}/tracking"
+        )
         self.screenshot("UI-05", "console persisted the Flow update")
-        self.details.append("Web console persisted the scenario-owned Flow description update as version 2 after a browser reload.")
+        self.details.append(
+            "Web console persisted Flow revision 2 and embedded its recent Run with direct Details and Trace links."
+        )
 
     def _delete_flow(self) -> None:
         self._delete_from_console(require_row=True)

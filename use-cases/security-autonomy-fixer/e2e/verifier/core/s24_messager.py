@@ -302,25 +302,25 @@ class MessagerVerifier(BaseVerifier):
                 "name": "ctrl/flow/updated (API → Controller)",
                 "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/ctrl/flow/updated",
                 "subscribe": f"flowgent/v1/+/flows/+/ctrl/flow/updated",
-                "payload": {"action": "updated", "agentflow_id": flow_id},
+                "payload": {"event_type": "UPDATED", "flow_id": flow_id, "namespace_id": namespace},
             },
             {
                 "name": "ctrl/flow/deleted (API → Controller)",
                 "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/ctrl/flow/deleted",
                 "subscribe": f"flowgent/v1/+/flows/+/ctrl/flow/deleted",
-                "payload": {"action": "deleted", "agentflow_id": flow_id},
+                "payload": {"event_type": "DELETED", "flow_id": flow_id, "namespace_id": namespace},
             },
             {
                 "name": "ctrl/run/created (API → Controller)",
                 "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/ctrl/run/created",
                 "subscribe": f"flowgent/v1/+/flows/+/runs/+/ctrl/run/created",
-                "payload": {"run_id": run_id, "status": "PENDING"},
+                "payload": {"event_type": "CREATED", "flow_id": flow_id, "run_id": run_id, "status": "PENDING"},
             },
             {
                 "name": "ctrl/run/status (API → Controller)",
                 "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/ctrl/run/status",
                 "subscribe": f"flowgent/v1/+/flows/+/runs/+/ctrl/run/status",
-                "payload": {"run_id": run_id, "status": "RUNNING"},
+                "payload": {"event_type": "STATUS_CHANGED", "flow_id": flow_id, "run_id": run_id, "status": "RUNNING"},
             },
         ]
     

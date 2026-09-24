@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
@@ -11,105 +12,179 @@ import (
 	"github.com/google/uuid"
 )
 
-// ApprovalSQLiteStore wraps storage.SQLiteGenericStore[entities.ApprovalInfo].
-type ApprovalSQLiteStore struct {
-	inner *storage.SQLiteGenericStore[entities.ApprovalInfo]
-}
+type ApprovalSQLiteStore struct{ conn *sql.DB }
 
 func NewApprovalSQLiteStore(conn *sql.DB) *ApprovalSQLiteStore {
-	return &ApprovalSQLiteStore{
-		inner: &storage.SQLiteGenericStore[entities.ApprovalInfo]{
-			Conn: conn, Table: "human_approvals", IDCol: "token",
-		},
-	}
+	return &ApprovalSQLiteStore{conn: conn}
 }
-
-func (s *ApprovalSQLiteStore) Get(ctx context.Context, token string) (*entities.ApprovalInfo, error) {
-	return s.inner.Get(ctx, token)
+func (s *ApprovalSQLiteStore) scan(row interface{ Scan(...any) error }) (*entities.ApprovalInfo, error) {
+	var record approvalRecord
+	if err := utils.ScanStruct(row, &record); err != nil {
+		return nil, err
+	}
+	return record.entity(), nil
+}
+func (s *ApprovalSQLiteStore) Get(ctx context.Context, id string) (*entities.ApprovalInfo, error) {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_approval").SQLiteWhere()
+	args := append([]any{id}, scopeArgs...)
+	return s.scan(s.conn.QueryRowContext(ctx, `SELECT `+utils.Columns[approvalRecord]()+` FROM orh_approval WHERE id=?1 AND (`+scopeWhere+`)`, args...))
 }
 func (s *ApprovalSQLiteStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.ApprovalInfo], error) {
-	return s.inner.Select(ctx, req)
-}
-func (s *ApprovalSQLiteStore) Save(ctx context.Context, e *entities.ApprovalInfo) error {
-	return s.inner.Save(ctx, e)
-}
-func (s *ApprovalSQLiteStore) Delete(ctx context.Context, token string) error {
-	return s.inner.Delete(ctx, token)
-}
-
-// CreateApproval generates id/token and sets timestamps before inserting.
-func (s *ApprovalSQLiteStore) CreateApproval(ctx context.Context, e *entities.ApprovalInfo) error {
-	e.ID = uuid.New().String()
-	if e.Token == "" {
-		e.Token = uuid.New().String()
+	if req.Page < 1 {
+		req.Page = 1
 	}
-	now := time.Now().UTC()
-	e.CreatedAt = now
-	e.UpdatedAt = now
-	return s.inner.Save(ctx, e)
-}
-
-// UpdateApproval performs a targeted update of mutable columns.
-func (s *ApprovalSQLiteStore) UpdateApproval(ctx context.Context, e *entities.ApprovalInfo) error {
-	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).SQLiteWhere()
-	args := append([]any{e.Status, e.Approved, e.Comment, e.ResolvedAt, e.Token}, scopeArgs...)
-	_, err := s.inner.Conn.ExecContext(ctx,
-		`UPDATE human_approvals SET status=?1, approved=?2, comment=?3, resolved_at=?4, updated_at=CURRENT_TIMESTAMP WHERE token=?5 AND (`+scopeWhere+`)`,
-		args...)
-	return err
-}
-
-// ListPending returns all approvals with status 'PENDING'.
-func (s *ApprovalSQLiteStore) ListPending(ctx context.Context, namespace string) ([]*entities.ApprovalInfo, error) {
-	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).SQLiteWhere()
-	args := append([]any{namespace}, scopeArgs...)
-	rows, err := s.inner.Conn.QueryContext(ctx,
-		"SELECT * FROM human_approvals WHERE namespace_id=?1 AND status='PENDING' AND del_flag=0 AND ("+scopeWhere+") ORDER BY created_at DESC", args...)
+	if req.Size < 1 {
+		req.Size = 20
+	}
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_approval").SQLiteWhere()
+	var total int64
+	if err := s.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM orh_approval WHERE (`+scopeWhere+`)`, scopeArgs...).Scan(&total); err != nil {
+		return nil, err
+	}
+	args := append(scopeArgs, req.Size, (req.Page-1)*req.Size)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+utils.Columns[approvalRecord]()+` FROM orh_approval WHERE (`+scopeWhere+`) ORDER BY created_at DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*entities.ApprovalInfo
+	items := make([]*entities.ApprovalInfo, 0)
 	for rows.Next() {
-		e, err := scanApproval(rows)
+		item, err := s.scan(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, e)
+		items = append(items, item)
 	}
-	return out, rows.Err()
+	return entities.NewPage(items, total, req), rows.Err()
 }
-
-type scanner interface{ Scan(dest ...any) error }
-
-func scanApproval(s scanner) (*entities.ApprovalInfo, error) {
-	var e entities.ApprovalInfo
-	var expiresAt, resolvedAt sql.NullTime
-	var createdAtStr, updatedAtStr string
-	err := s.Scan(
-		&e.ID, &e.Token, &e.AgentFlowRunID, &e.TaskRunID, &e.Status,
-		&e.Approved, &e.Comment, &e.Timeout,
-		&expiresAt, &resolvedAt,
-		&e.Description, &e.Namespace,
-		&createdAtStr, &e.CreatedBy, &updatedAtStr, &e.UpdatedBy, &e.DelFlag,
-	)
+func (s *ApprovalSQLiteStore) Save(ctx context.Context, item *entities.ApprovalInfo) error {
+	item.NormalizeAliases()
+	if item.CreatedAt.IsZero() {
+		return s.CreateApproval(ctx, item)
+	}
+	return s.UpdateApproval(ctx, item)
+}
+func (s *ApprovalSQLiteStore) CreateApproval(ctx context.Context, item *entities.ApprovalInfo) error {
+	item.NormalizeAliases()
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+		item.Token = item.ID
+	}
+	if item.Type == "" {
+		item.Type = "human_gate"
+	}
+	if item.SubjectType == "" {
+		if item.NodeRunID != "" {
+			item.SubjectType = "node_run"
+			item.SubjectID = item.NodeRunID
+		} else {
+			item.SubjectType = "run"
+			item.SubjectID = item.RunID
+		}
+	}
+	if item.Request == nil {
+		item.Request = map[string]any{"run_id": item.RunID, "node_run_id": item.NodeRunID}
+	}
+	item.RequestHash = approvalHash(item.Request)
+	if item.IdempotencyKey == "" {
+		item.IdempotencyKey = item.ID
+	}
+	item.Status = "pending"
+	if item.Timeout > 0 && item.ExpiresAt == nil {
+		value := time.Now().UTC().Add(item.Timeout)
+		item.ExpiresAt = &value
+	}
+	var namespace string
+	if err := s.conn.QueryRowContext(ctx, `SELECT namespace_id FROM orh_run WHERE id=?`, item.RunID).Scan(&namespace); err != nil {
+		return err
+	}
+	if item.Namespace != "" && item.Namespace != namespace {
+		return fmt.Errorf("approval namespace mismatch")
+	}
+	item.Namespace = namespace
+	principal := item.CreatedBy
+	if principal == "" {
+		principal = "system:flowgent"
+	}
+	_, err := s.conn.ExecContext(ctx, `INSERT INTO orh_approval(id,namespace_id,run_id,node_run_id,type,subject_type,subject_id,request,request_hash,status,expires_at,idempotency_key,description,created_by,updated_by,metadata) VALUES(?,?,?,NULLIF(?,''),?,?,?,?,?,'pending',?,?,?,?,?,?)`, item.ID, item.Namespace, item.RunID, item.NodeRunID, item.Type, item.SubjectType, item.SubjectID, string(approvalJSON(item.Request)), item.RequestHash, item.ExpiresAt, item.IdempotencyKey, item.Description, principal, principal, jsonString(approvalJSON(item.Metadata)))
+	if err == nil {
+		now := time.Now().UTC()
+		item.CreatedAt = now
+		item.UpdatedAt = now
+		item.RowVersion = 1
+	}
+	return err
+}
+func jsonString(value []byte) any {
+	if value == nil {
+		return nil
+	}
+	return string(value)
+}
+func (s *ApprovalSQLiteStore) UpdateApproval(ctx context.Context, item *entities.ApprovalInfo) error {
+	item.NormalizeAliases()
+	if item.RequestHash == "" || approvalHash(item.Request) != item.RequestHash {
+		return fmt.Errorf("approval request hash mismatch")
+	}
+	status := approvalStatus(item.Status)
+	if status == "" || status == "pending" {
+		return fmt.Errorf("approval decision must be terminal")
+	}
+	if item.Decision == nil {
+		item.Decision = map[string]any{"comment": item.Comment}
+		if item.Approved != nil {
+			item.Decision["approved"] = *item.Approved
+		}
+	}
+	decidedAt := item.DecidedAt
+	if decidedAt == nil {
+		now := time.Now().UTC()
+		decidedAt = &now
+	}
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_approval").SQLiteWhere()
+	args := append([]any{status, string(approvalJSON(item.Decision)), item.DecidedBy, decidedAt, item.ID, item.RowVersion, item.RequestHash}, scopeArgs...)
+	result, err := s.conn.ExecContext(ctx, `UPDATE orh_approval SET status=?1,decision=?2,decided_by=NULLIF(?3,''),decided_at=?4
+		WHERE id=?5 AND status='pending' AND (?6=0 OR row_version=?6) AND request_hash=?7
+		AND (expires_at IS NULL OR datetime(expires_at)>CURRENT_TIMESTAMP) AND (`+scopeWhere+`)`, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		_, _ = s.conn.ExecContext(ctx, `UPDATE orh_approval SET status='expired',decision='{"reason":"expired"}',
+			decided_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND request_hash=?
+			AND expires_at IS NOT NULL AND datetime(expires_at)<=CURRENT_TIMESTAMP`, item.ID, item.RequestHash)
+		return fmt.Errorf("approval is no longer pending or CAS conflict")
+	}
+	item.Status = status
+	item.DecidedAt = decidedAt
+	item.ResolvedAt = decidedAt
+	return nil
+}
+func (s *ApprovalSQLiteStore) ListPending(ctx context.Context, namespace string) ([]*entities.ApprovalInfo, error) {
+	_, _ = s.conn.ExecContext(ctx, `UPDATE orh_approval SET status='expired',decided_at=CURRENT_TIMESTAMP,decision='{"reason":"expired"}' WHERE namespace_id=? AND status='pending' AND expires_at IS NOT NULL AND expires_at<=CURRENT_TIMESTAMP`, namespace)
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_approval").SQLiteWhere()
+	args := append([]any{namespace}, scopeArgs...)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+utils.Columns[approvalRecord]()+` FROM orh_approval WHERE namespace_id=?1 AND status='pending' AND (`+scopeWhere+`) ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
-	if expiresAt.Valid {
-		e.ExpiresAt = &expiresAt.Time
+	defer rows.Close()
+	items := make([]*entities.ApprovalInfo, 0)
+	for rows.Next() {
+		item, err := s.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
 	}
-	if resolvedAt.Valid {
-		e.ResolvedAt = &resolvedAt.Time
+	return items, rows.Err()
+}
+func (s *ApprovalSQLiteStore) Delete(ctx context.Context, id string) error {
+	item, err := s.Get(ctx, id)
+	if err != nil {
+		return err
 	}
-	// created_at/updated_at come back as TEXT (SQLite has no native
-	// timestamp type) — database/sql cannot scan a string directly into
-	// *time.Time, so parse it explicitly (mirrors utils.ScanStruct).
-	if t, err := utils.ParseTime(createdAtStr); err == nil {
-		e.CreatedAt = t
-	}
-	if t, err := utils.ParseTime(updatedAtStr); err == nil {
-		e.UpdatedAt = t
-	}
-	return &e, nil
+	item.Status = "cancelled"
+	item.Decision = map[string]any{"reason": "cancelled"}
+	return s.UpdateApproval(ctx, item)
 }

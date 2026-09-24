@@ -8,16 +8,17 @@ const task = (id: string, sequence: number): TaskRun => ({
   status: sequence === 3 ? 'SUCCESS' : 'FAILED',
   created_at: `2026-08-14T00:00:0${sequence}Z`,
   updated_at: `2026-08-14T00:00:0${sequence}Z`,
-  agentflow_run_id: 'run-1',
-  node_id: 'agent',
+  run_id: 'run-1',
+  node_key: 'agent',
+  attempt: sequence,
   input: { sequence },
   output: {},
   error: '',
-  retry_count: sequence - 1,
   max_retries: 2,
-  exec_id: `exec-${sequence}`,
-  parent_task_run_id: sequence > 1 ? `task-${sequence - 1}` : '',
+  execution_id: `exec-${sequence}`,
+  parent_node_run_id: sequence > 1 ? `task-${sequence - 1}` : undefined,
   sequence,
+  fencing_token: sequence,
 })
 
 const span = (id: string, parent = '', attributes: Record<string, unknown> = {}): TraceSpan => ({

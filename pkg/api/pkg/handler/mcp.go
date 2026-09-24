@@ -22,6 +22,7 @@ func publicMcp(m *entities.McpInfo) *entities.McpInfo {
 		return nil
 	}
 	result := *m
+	result.NormalizeAliases()
 	result.Headers = nil
 	result.HeaderRefs = make(map[string]string, len(m.Headers))
 	for key, value := range m.Headers {
@@ -110,6 +111,7 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
+	m.NormalizeAliases()
 	if !resourceNamePattern.MatchString(m.Name) {
 		http.Error(w, "name may contain only letters, digits, hyphens, and underscores", http.StatusBadRequest)
 		return
@@ -120,7 +122,7 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	m.ID = uuid.New().String()
 	m.Namespace = namespace
-	if !strings.EqualFold(m.Type, "streamable-http") {
+	if m.Transport != "http" {
 		http.Error(w, "only streamable-http MCP transport is supported", http.StatusBadRequest)
 		return
 	}
@@ -130,6 +132,8 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	m.CreatedAt = time.Now()
 	m.UpdatedAt = time.Now()
+	m.CreatedBy = authenticatedUserID(r.Context())
+	m.UpdatedBy = m.CreatedBy
 	if err := h.store.Save(r.Context(), &m); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -176,7 +180,8 @@ func (h *McpHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
-	if !strings.EqualFold(updates.Type, "streamable-http") {
+	updates.NormalizeAliases()
+	if updates.Transport != "http" {
 		http.Error(w, "only streamable-http MCP transport is supported", http.StatusBadRequest)
 		return
 	}
@@ -204,8 +209,8 @@ func (h *McpHandler) Update(w http.ResponseWriter, r *http.Request) {
 	updates.CreatedAt = existing.CreatedAt
 	updates.CreatedBy = existing.CreatedBy
 	updates.UpdatedAt = time.Now()
-	updates.UpdatedBy = existing.UpdatedBy
-	updates.DelFlag = false
+	updates.UpdatedBy = authenticatedUserID(r.Context())
+	updates.RowVersion = existing.RowVersion
 
 	if err := h.store.Save(r.Context(), &updates); err != nil {
 		http.Error(w, "internal", http.StatusInternalServerError)

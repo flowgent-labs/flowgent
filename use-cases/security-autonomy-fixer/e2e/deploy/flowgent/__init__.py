@@ -58,6 +58,8 @@ RUNTIME_PROXY_KEYS = (
 )
 PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
 NOTIFICATION_TOKEN_ENV = "FLOWGENT_E2E_NOTIFICATION_TOKEN"
+NOTIFICATION_KEY_ENV = "FLOWGENT_NOTIFICATION_KEY_V1"
+NOTIFICATION_KEY_NAME = "key-v1"
 NOTIFICATION_RECEIVER = f"{config.RESOURCE_PREFIX}-webhook"
 MOCK_NOTIFICATION_SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -354,6 +356,34 @@ class FlowgentRuntime:
             "-o", "jsonpath={.spec.clusterIP}",
         ], timeout=20)
         return out.strip() if rc == 0 else ""
+
+    @staticmethod
+    def export_notification_encryption_key(namespace: str, release: str) -> None:
+        """Share the release-local encryption domain with the host CLI.
+
+        The console importer writes the same encrypted channel records as the
+        API server and notifier. Keep this key in memory and never print it.
+        """
+        secret_name = f"{release}-notification-encryption"
+        result = subprocess.run(
+            ["kubectl", "get", "secret", secret_name, "-n", namespace, "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"notification encryption Secret is unavailable: {namespace}/{secret_name}"
+            )
+        encoded = json.loads(result.stdout).get("data", {}).get(NOTIFICATION_KEY_NAME, "")
+        try:
+            key = base64.b64decode(encoded, validate=True).decode("ascii")
+            raw_key = base64.b64decode(key, validate=True)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RuntimeError("notification encryption Secret contains an invalid key") from exc
+        if len(raw_key) != 32:
+            raise RuntimeError("notification encryption key must decode to 32 bytes")
+        os.environ[NOTIFICATION_KEY_ENV] = key
 
     @staticmethod
     def _workload_namespace():

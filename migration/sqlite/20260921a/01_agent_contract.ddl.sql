@@ -1,2 +1,0 @@
-ALTER TABLE llm_agent ADD COLUMN input_schema TEXT;
-ALTER TABLE llm_agent ADD COLUMN version INTEGER NOT NULL DEFAULT 1;

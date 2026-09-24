@@ -264,6 +264,7 @@ func newRunner(t *testing.T, flow *entities.FlowInfo, llmLog *externalmock.LLMCa
 	if err != nil {
 		t.Fatalf("create job manager: %v", err)
 	}
+	jm.SetKnowledgeClient(apiClient)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -339,17 +340,17 @@ func (r *ITRunner) SeedAgents() {
 func (r *ITRunner) SeedLLMProvider(endpoint string) {
 	// Clean up stale mock providers from previous test runs so the engine
 	// doesn't pick up a URL whose httptest server has already been closed.
-	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_providers WHERE provider = 'mock'`)
+	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_provider WHERE name = 'mock'`)
 	r.Post("/api/v1/"+r.Namespace+"/llm/providers", entities.LlmProviderInfo{
-		Provider: "mock", Endpoint: endpoint, ApiKeyEnv: "FLOWGENT_IT_LLM_API_KEY",
-		Status: "ACTIVE", Enabled: true, RateLimit: 100000,
+		Name: "mock", Type: "openai", BaseURI: endpoint, DefaultModel: "mock/echo",
+		ApiKeyEnv: "FLOWGENT_IT_LLM_API_KEY", Status: "ACTIVE", Enabled: true, RateLimit: 100000,
 	})
 }
 
 func (r *ITRunner) SeedMCP(name, url string) {
 	_, _ = r.pool.Exec(context.Background(), `DELETE FROM llm_mcp WHERE name = $1 AND namespace_id = $2`, name, r.Namespace)
 	r.Post("/api/v1/"+r.Namespace+"/mcp", entities.McpInfo{
-		Name: name, Type: "streamable-http", URL: url, Enabled: true,
+		Name: name, Transport: "http", RPCURL: url, Enabled: true,
 	})
 }
 
@@ -357,12 +358,12 @@ func (r *ITRunner) SeedMCP(name, url string) {
 
 func (r *ITRunner) TriggerManual(vars map[string]any) []string {
 	r.T.Helper()
-	payload := map[string]any{"vars": vars}
-	if payload["vars"] == nil {
-		payload["vars"] = map[string]any{}
+	payload := map[string]any{"input": vars}
+	if payload["input"] == nil {
+		payload["input"] = map[string]any{}
 	}
 	b, _ := json.Marshal(payload)
-	resp, err := http.Post(r.APIURL+"/api/v1/"+r.Namespace+"/flows/"+r.Flow.ID+"/trigger", "application/json", bytes.NewReader(b))
+	resp, err := http.Post(r.APIURL+"/api/v1/"+r.Namespace+"/flows/"+r.Flow.ResourceName()+"/trigger", "application/json", bytes.NewReader(b))
 	if err != nil {
 		r.T.Fatalf("trigger POST: %v", err)
 	}
@@ -378,7 +379,7 @@ func (r *ITRunner) TriggerManual(vars map[string]any) []string {
 	if out.RunID == "" {
 		r.T.Fatalf("trigger: no run_id in response")
 	}
-	logProgress("[trigger] flow %s → run %s", r.Flow.ID, out.RunID)
+	logProgress("[trigger] flow %s → run %s", r.Flow.ResourceName(), out.RunID)
 	return []string{out.RunID}
 }
 
@@ -531,12 +532,12 @@ func (r *ITRunner) ExpectTaskCount(runID string, min int) {
 	r.T.Helper()
 	var n int
 	if err := r.pool.QueryRow(r.T.Context(),
-		`SELECT COUNT(*) FROM task_runs WHERE agentflow_run_id = $1`, runID,
+		`SELECT COUNT(*) FROM orh_node_run WHERE run_id = $1 AND status<>'DELETED'`, runID,
 	).Scan(&n); err != nil {
-		r.T.Fatalf("count task_runs: %v", err)
+		r.T.Fatalf("count orh_node_run: %v", err)
 	}
 	if n < min {
 		r.T.Fatalf("task count for run %s = %d, want >= %d", runID, n, min)
 	}
-	r.T.Logf("task_runs count = %d (min %d)", n, min)
+	r.T.Logf("orh_node_run count = %d (min %d)", n, min)
 }

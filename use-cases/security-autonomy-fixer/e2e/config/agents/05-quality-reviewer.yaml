@@ -8,7 +8,7 @@ metadata:
   description: Code quality reviewer that checks patches for readability, testability, and adherence to project conventions
 
 data:
-  model: OPENAI/deepseek-chat
+  model: deepseek/deepseek-chat
   max_tokens: 16384
   soul: |-
     You are a code quality reviewer.

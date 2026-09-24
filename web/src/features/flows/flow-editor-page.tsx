@@ -25,6 +25,7 @@ import '@xyflow/react/dist/style.css'
 import clsx from 'clsx'
 import {
   AlertTriangle,
+  Activity,
   ArrowLeft,
   Bot,
   Box,
@@ -41,13 +42,14 @@ import {
   WandSparkles,
   Waypoints,
   Workflow,
+  ExternalLink,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useRepositories } from '../../app/providers'
-import { flowPath } from '../../app/paths'
+import { flowPath, flowRunPath } from '../../app/paths'
 import {
   Button,
   ErrorState,
@@ -56,7 +58,7 @@ import {
   LoadingState,
   StatusBadge,
 } from '../../shared/components/ui'
-import type { Flow, FlowEdge, FlowNode, NodeKind } from '../../core/domain/types'
+import type { Flow, FlowEdge, FlowNode, FlowRun, NodeKind } from '../../core/domain/types'
 import {
   RESOURCE_NAME_MAX_LENGTH,
   RESOURCE_NAME_PATTERN_SOURCE,
@@ -67,6 +69,7 @@ import { validateFlow } from './flow-validation'
 import { graphLayers } from './graph-layout'
 import { ManifestImportButton } from '../resources/manifest-import-button'
 import { manifestToFlow } from '../resources/manifest'
+import { duration, formatDate } from '../runs/run-utils'
 
 interface CanvasData extends Record<string, unknown> {
   domain: FlowNode
@@ -97,6 +100,9 @@ const paletteGroups: Array<{ label: string; kinds: NodeKind[] }> = [
 
 const emptyFlow = (namespace: string): Flow => ({
   id: '',
+  name: '',
+  revision: 1,
+  summarize_enabled: false,
   description: '',
   summary: '',
   namespace_id: namespace,
@@ -163,6 +169,12 @@ function FlowEditor() {
     queryFn: ({ signal }) => repositories.flows.list(namespace, signal),
     enabled: isNew,
   })
+  const recentRuns = useQuery({
+    queryKey: [namespace, 'runs', 'flow-editor', flowId],
+    queryFn: ({ signal }) =>
+      repositories.runs.list(namespace, { flowId, page: 1, size: 5 }, signal),
+    enabled: !isNew,
+  })
   const [flow, setFlow] = useState<Flow>(() => emptyFlow(namespace))
   const [nodes, setNodes] = useState<EditorNode[]>([])
   const [edges, setEdges] = useState<CanvasEdge[]>([])
@@ -176,7 +188,7 @@ function FlowEditor() {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, fitView } = useReactFlow()
   const issues = useMemo(
-    () => validateFlow(flow, isNew ? (existingFlows.data ?? []).map((item) => item.id) : []),
+    () => validateFlow(flow, isNew ? (existingFlows.data ?? []).map((item) => item.name) : []),
     [existingFlows.data, flow, isNew],
   )
   const blockingIssues = useMemo(() => issues.filter((issue) => issue.code !== 'cycle'), [issues])
@@ -386,7 +398,7 @@ function FlowEditor() {
     onSuccess: (saved) => {
       void queryClient.invalidateQueries({ queryKey: [namespace, 'flows'] })
       loadFlow(saved)
-      if (isNew) navigate(flowPath(namespace, saved.id), { replace: true })
+      if (isNew) navigate(flowPath(namespace, saved.name), { replace: true })
     },
   })
   const saveFlow = () => {
@@ -411,11 +423,9 @@ function FlowEditor() {
           </IconButton>
           <div>
             <span className="editor-header__eyebrow" data-testid="flow-version">
-              {isNew
-                ? t('flows.newEyebrow')
-                : t('flows.flowVersion', { version: flow.version ?? 1 })}
+              {isNew ? t('flows.newEyebrow') : t('flows.flowVersion', { version: flow.revision })}
             </span>
-            <h1>{flow.id || t('flows.editor')}</h1>
+            <h1>{flow.name || t('flows.editor')}</h1>
           </div>
           {dirty && (
             <span className="dirty-indicator" data-testid="flow-unsaved">
@@ -613,6 +623,16 @@ function FlowEditor() {
           )}
         </aside>
       </div>
+      {!isNew && flowId && (
+        <RecentFlowRuns
+          namespace={namespace}
+          flowName={flowId}
+          runs={recentRuns.data?.items ?? []}
+          loading={recentRuns.isLoading}
+          error={recentRuns.error}
+          onRetry={() => void recentRuns.refetch()}
+        />
+      )}
       {preview && (
         <div className="preview-panel">
           <header>
@@ -625,6 +645,81 @@ function FlowEditor() {
         </div>
       )}
     </div>
+  )
+}
+
+function RecentFlowRuns({
+  namespace,
+  flowName,
+  runs,
+  loading,
+  error,
+  onRetry,
+}: {
+  namespace: string
+  flowName: string
+  runs: FlowRun[]
+  loading: boolean
+  error: unknown
+  onRetry: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <section className="surface flow-recent-runs" data-testid="flow-recent-runs">
+      <header>
+        <div>
+          <span className="resource-card__icon resource-card__icon--purple">
+            <Activity size={18} />
+          </span>
+          <div>
+            <h2>{t('flows.recentRuns')}</h2>
+            <p>{t('flows.recentRunsHint')}</p>
+          </div>
+        </div>
+        <Link to={flowRunPath(namespace, flowName)}>
+          {t('flows.viewAllRuns')}
+          <ExternalLink size={14} />
+        </Link>
+      </header>
+      {loading ? (
+        <LoadingState rows={2} />
+      ) : error != null ? (
+        <ErrorState error={error} onRetry={onRetry} />
+      ) : runs.length === 0 ? (
+        <p className="flow-recent-runs__empty">{t('flows.noRuns')}</p>
+      ) : (
+        <div className="flow-recent-runs__list">
+          {runs.map((run) => (
+            <article key={run.id} data-testid={`flow-recent-run-${run.id}`}>
+              <div>
+                <StatusBadge status={run.status} />
+                <code>{run.id}</code>
+              </div>
+              <dl>
+                <div>
+                  <dt>{t('common.revision')}</dt>
+                  <dd>v{run.flow_revision}</dd>
+                </div>
+                <div>
+                  <dt>{t('runs.duration')}</dt>
+                  <dd>{duration(run.started_at, run.finished_at)}</dd>
+                </div>
+                <div>
+                  <dt>{t('common.created')}</dt>
+                  <dd>{formatDate(run.created_at)}</dd>
+                </div>
+              </dl>
+              <div className="flow-recent-runs__actions">
+                <Link to={flowRunPath(namespace, flowName, run.id)}>{t('common.details')}</Link>
+                <Link to={flowRunPath(namespace, flowName, run.id, '/tracking')}>
+                  {t('runs.trace')}
+                </Link>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -687,11 +782,13 @@ function FlowInspector({
         <span>{t('flows.flowId')}</span>
         <input
           data-testid="flow-id"
-          value={flow.id}
+          value={flow.name}
           disabled={existing}
           maxLength={RESOURCE_NAME_MAX_LENGTH}
           pattern={RESOURCE_NAME_PATTERN_SOURCE}
-          onChange={(event) => onChange({ id: event.target.value.replace(/[^a-zA-Z0-9-_]/g, '') })}
+          onChange={(event) =>
+            onChange({ name: event.target.value.replace(/[^a-zA-Z0-9-_]/g, '') })
+          }
           placeholder="my-agentflow"
         />
         {!existing && <small>{t('flows.nameHint')}</small>}

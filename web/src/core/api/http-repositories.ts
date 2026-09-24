@@ -41,19 +41,17 @@ function queryString(input: Record<string, string | number | undefined>): string
 
 function withoutAuditFields<T extends object>(
   value: T,
-): Omit<T, 'created_at' | 'updated_at' | 'created_by' | 'updated_by' | 'del_flag'> {
+): Omit<T, 'created_at' | 'updated_at' | 'created_by' | 'updated_by'> {
   const payload = { ...value } as T & {
     created_at?: unknown
     updated_at?: unknown
     created_by?: unknown
     updated_by?: unknown
-    del_flag?: unknown
   }
   delete payload.created_at
   delete payload.updated_at
   delete payload.created_by
   delete payload.updated_by
-  delete payload.del_flag
   return payload
 }
 
@@ -73,7 +71,10 @@ export class HttpFlowRepository implements FlowRepository {
   }
 
   save(namespace: string, flow: Flow, isNew: boolean) {
-    const path = namespacePath(namespace, isNew ? 'flows' : `flows/${encodeURIComponent(flow.id)}`)
+    const path = namespacePath(
+      namespace,
+      isNew ? 'flows' : `flows/${encodeURIComponent(flow.name)}`,
+    )
     return this.api.request<Flow>(path, {
       method: isNew ? 'POST' : 'PUT',
       body: JSON.stringify(withoutAuditFields(flow)),
@@ -91,7 +92,10 @@ export class HttpFlowRepository implements FlowRepository {
       namespacePath(namespace, `flows/${encodeURIComponent(id)}/trigger`),
       {
         method: 'POST',
-        body: JSON.stringify({ vars, trigger: { type: 'manual', source: 'ui', payload: {} } }),
+        body: JSON.stringify({
+          input: vars,
+          trigger: { type: 'manual', source: 'ui', payload: {} },
+        }),
       },
     )
     return result.run_id
@@ -133,7 +137,7 @@ export class HttpRunRepository implements RunRepository {
       size: filters.size ?? 100,
       status: filters.status,
       runtime_mode: filters.runtimeMode,
-      agentflow_id: filters.flowId,
+      flow_id: filters.flowId,
     })
     const resource = filters.flowId
       ? `flows/${encodeURIComponent(filters.flowId)}/runs${query}`
@@ -145,7 +149,7 @@ export class HttpRunRepository implements RunRepository {
   }
   tasks(namespace: string, id: string, flowId?: string, signal?: AbortSignal) {
     return this.api.request<TaskRun[]>(
-      namespacePath(namespace, `${runResource(id, flowId)}/tasks`),
+      namespacePath(namespace, `${runResource(id, flowId)}/node-runs`),
       { signal },
     )
   }
@@ -158,14 +162,14 @@ export class HttpRunRepository implements RunRepository {
   async resolveApproval(
     namespace: string,
     runId: string,
-    token: string,
+    approvalId: string,
     decision: 'approve' | 'reject',
     flowId?: string,
   ) {
     await this.api.request<{ status: string }>(
       namespacePath(
         namespace,
-        `${runResource(runId, flowId)}/approvals/${encodeURIComponent(token)}/${decision}`,
+        `${runResource(runId, flowId)}/approvals/${encodeURIComponent(approvalId)}/${decision}`,
       ),
       { method: 'POST', body: JSON.stringify({}) },
     )
@@ -211,33 +215,12 @@ export class HttpAnalyticsRepository implements AnalyticsRepository {
 
 export class HttpKnowledgeRepository implements KnowledgeRepository {
   constructor(private readonly api: ApiClient) {}
-  async list(namespace: string, scope: 'run' | 'flow' | 'share', signal?: AbortSignal) {
+  async list(namespace: string, scope: 'namespace' | 'flow' | 'run', signal?: AbortSignal) {
     const response = await this.api.request<Page<KnowledgeEntry>>(
       namespacePath(namespace, `knowledge${queryString({ scope, page: 1, size: 500 })}`),
       { signal },
     )
     return response.items
-  }
-  save(namespace: string, scope: 'run' | 'flow' | 'share', entry: KnowledgeEntry, isNew: boolean) {
-    const payload = {
-      title: entry.title,
-      content: entry.content,
-      content_type: entry.content_type,
-      source: entry.source,
-      source_ref: entry.source_ref,
-      tags: entry.tags,
-      metadata: { ...entry.metadata, scope },
-    }
-    return this.api.request<KnowledgeEntry>(
-      namespacePath(namespace, isNew ? 'knowledge' : `knowledge/${entry.id}`),
-      {
-        method: isNew ? 'POST' : 'PUT',
-        body: JSON.stringify(payload),
-      },
-    )
-  }
-  remove(namespace: string, id: string) {
-    return this.api.request<void>(namespacePath(namespace, `knowledge/${id}`), { method: 'DELETE' })
   }
 }
 
@@ -279,7 +262,7 @@ export class HttpMcpRepository implements McpRepository {
         method: isNew ? 'POST' : 'PUT',
         body: JSON.stringify({
           ...withoutAuditFields(item),
-          type: 'streamable-http',
+          transport: 'http',
           header_refs: item.header_refs ?? {},
           env_refs: item.env_refs ?? {},
         }),

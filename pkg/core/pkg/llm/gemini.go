@@ -19,6 +19,7 @@ type GeminiProvider struct {
 }
 
 func newGeminiProvider(p *entities.LlmProviderInfo) *GeminiProvider {
+	p.NormalizeAliases()
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {
@@ -32,7 +33,7 @@ func newGeminiProvider(p *entities.LlmProviderInfo) *GeminiProvider {
 
 	return &GeminiProvider{
 		apiKey:   apiKey,
-		endpoint: p.Endpoint,
+		endpoint: p.BaseURI,
 		limiter:  rate.NewLimiter(rate.Limit(float64(rpm)/60.0), rpm),
 	}
 }

@@ -2,6 +2,7 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,6 +111,104 @@ func activeRuntimeStatus(status string) string {
 	return status
 }
 
+const importLookupPageSize = 10_000
+
+// preserveImportIdentity makes declarative imports idempotent for mutable,
+// unversioned resources. Their namespace-local name is the stable management
+// identity; the generated database ID and creation audit fields must survive
+// subsequent imports.
+func preserveImportIdentity(target, existing *entities.BaseEntity) {
+	if target == nil || existing == nil {
+		return
+	}
+	target.ID = existing.ID
+	target.CreatedAt = existing.CreatedAt
+	target.CreatedBy = existing.CreatedBy
+	target.RowVersion = existing.RowVersion
+}
+
+func existingLLMProvider(ls *lazyStores, ctx context.Context, namespace, name string) (*entities.LlmProviderInfo, error) {
+	page, err := ls.llm.List(ctx, namespace, entities.PageRequest{Page: 1, Size: importLookupPageSize})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range page.Items {
+		if item != nil && strings.EqualFold(item.Name, name) {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
+func existingMCP(ls *lazyStores, ctx context.Context, namespace, name string) (*entities.McpInfo, error) {
+	page, err := ls.mcps.List(ctx, namespace, entities.PageRequest{Page: 1, Size: importLookupPageSize})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range page.Items {
+		if item != nil && strings.EqualFold(item.Name, name) {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
+func existingNotifyChannel(ls *lazyStores, ctx context.Context, namespace, name string) (*entities.NotifyChannelInfo, error) {
+	page, err := ls.channels.List(ctx, namespace, entities.PageRequest{Page: 1, Size: importLookupPageSize})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range page.Items {
+		if item != nil && item.Name == name {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
+func (fc *FlowgentConsole) prepareImportedChannel(
+	ls *lazyStores,
+	ch *entities.NotifyChannelInfo,
+) error {
+	// Bulk backups carry an authenticated envelope rather than plaintext. Open
+	// it before reconciliation, then seal it again after the final identity and
+	// provider are known. A namespace/ID change correctly fails AAD validation.
+	incoming, err := ch.ResolveSecrets(fc.ctx, fc.secretCipher)
+	if err != nil {
+		return err
+	}
+	ch.Config = incoming.Config
+	ch.SealedSecrets = nil
+	ch.ConfiguredSecretFields = nil
+
+	existing, err := existingNotifyChannel(ls, fc.ctx, ch.Namespace, ch.Name)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		preserveImportIdentity(&ch.BaseEntity, &existing.BaseEntity)
+		// Declarative updates retain an existing write-only value when the new
+		// document omits it. Supplying a value replaces it with a fresh envelope.
+		if existing.ChannelType == ch.ChannelType {
+			resolved, resolveErr := existing.ResolveSecrets(fc.ctx, fc.secretCipher)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			if ch.Config == nil {
+				ch.Config = make(map[string]any)
+			}
+			for _, field := range entities.NotifyChannelSecretFields(ch.ChannelType) {
+				if _, supplied := ch.Config[field]; !supplied {
+					if value, configured := resolved.Config[field]; configured {
+						ch.Config[field] = value
+					}
+				}
+			}
+		}
+	}
+	return fc.protectChannelSecrets(ch)
+}
+
 func (ri *ResourceImport) metadataName() string {
 	if ri.Metadata != nil {
 		return ri.Metadata.Name
@@ -168,9 +267,6 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		if m.ID == "" {
 			m.ID = uuid.New().String()
 		}
-		if m.Status == "active" {
-			m.Enabled = true
-		}
 		if m.Name == "" && ri.metadataName() != "" {
 			m.Name = ri.metadataName()
 		}
@@ -198,10 +294,19 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		m.HeaderRefs = nil
 		m.EnvRefs = nil
 		applyWrapperMeta(ri, &m.BaseEntity, &m.Labels, fc.namespace)
+		m.Status = activeRuntimeStatus(m.Status)
 		// Align Enabled with Status so that MCPs imported with status=active are
 		// immediately usable. TM skips MCPs with enabled=false (taskmanager.go:83).
-		if m.Status == "active" {
+		if m.Status == "ACTIVE" {
 			m.Enabled = true
+		}
+		existing, err := existingMCP(ls, fc.ctx, m.Namespace, m.Name)
+		if err != nil {
+			fmt.Printf("Error looking up MCP %s: %v\n", m.Name, err)
+			return false
+		}
+		if existing != nil {
+			preserveImportIdentity(&m.BaseEntity, &existing.BaseEntity)
 		}
 		if err := ls.mcps.Save(fc.ctx, &m); err != nil {
 			fmt.Printf("Error saving MCP %s: %v\n", m.Name, err)
@@ -215,9 +320,14 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			fmt.Printf("Error parsing LLMProvider spec in %s: %v\n", filePath, err)
 			return false
 		}
-		p.ID = uuid.New().String()
+		if p.ID == "" {
+			p.ID = uuid.New().String()
+		}
 		p.CreatedAt = time.Now()
 		p.UpdatedAt = time.Now()
+		if p.Name == "" && ri.metadataName() != "" {
+			p.Name = ri.metadataName()
+		}
 		applyWrapperMeta(ri, &p.BaseEntity, &p.Labels, fc.namespace)
 		if p.Status == "" {
 			p.Status = p.BaseEntity.Status
@@ -232,11 +342,19 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			p.ApiKey = normalized
 		}
 		p.ApiKeyEnv = ""
-		if err := ls.llm.Save(fc.ctx, &p); err != nil {
-			fmt.Printf("Error saving LLMProvider %s: %v\n", p.ID, err)
+		existing, err := existingLLMProvider(ls, fc.ctx, p.Namespace, p.Name)
+		if err != nil {
+			fmt.Printf("Error looking up LLMProvider %s: %v\n", p.Name, err)
 			return false
 		}
-		fmt.Printf("  OK LLMProvider: %s\n", p.ID)
+		if existing != nil {
+			preserveImportIdentity(&p.BaseEntity, &existing.BaseEntity)
+		}
+		if err := ls.llm.Save(fc.ctx, &p); err != nil {
+			fmt.Printf("Error saving LLMProvider %s: %v\n", p.Name, err)
+			return false
+		}
+		fmt.Printf("  OK LLMProvider: %s\n", p.Name)
 
 	case "flow":
 		var spec entities.FlowInfo
@@ -306,10 +424,20 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			fmt.Printf("Error parsing NotifyChannel spec in %s: %v\n", filePath, err)
 			return false
 		}
-		ch.ID = uuid.New().String()
+		if ch.ID == "" {
+			ch.ID = uuid.New().String()
+		}
 		ch.CreatedAt = time.Now()
 		ch.UpdatedAt = time.Now()
+		if ch.Name == "" && ri.metadataName() != "" {
+			ch.Name = ri.metadataName()
+		}
 		applyWrapperMeta(ri, &ch.BaseEntity, &ch.Labels, fc.namespace)
+		ch.Status = activeRuntimeStatus(ch.Status)
+		if err := fc.prepareImportedChannel(ls, &ch); err != nil {
+			fmt.Printf("Error protecting NotifyChannel %s: %v\n", ch.Name, err)
+			return false
+		}
 		if err := ls.channels.Save(fc.ctx, &ch); err != nil {
 			fmt.Printf("Error saving NotifyChannel %s: %v\n", ch.Name, err)
 			return false
@@ -339,6 +467,14 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		if llm.ID == "" {
 			llm.ID = uuid.New().String()
 		}
+		llm.Status = activeRuntimeStatus(llm.Status)
+		existing, err := existingLLMProvider(ls, fc.ctx, llm.Namespace, llm.Name)
+		if err != nil {
+			return counts, fmt.Errorf("lookup llm %s: %w", llm.Name, err)
+		}
+		if existing != nil {
+			preserveImportIdentity(&llm.BaseEntity, &existing.BaseEntity)
+		}
 		if err := ls.llm.Save(fc.ctx, llm); err != nil {
 			return counts, fmt.Errorf("llm %s: %w", llm.ID, err)
 		}
@@ -351,6 +487,10 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		ch.UpdatedAt = time.Now()
 		if ch.ID == "" {
 			ch.ID = uuid.New().String()
+		}
+		ch.Status = activeRuntimeStatus(ch.Status)
+		if err := fc.prepareImportedChannel(ls, ch); err != nil {
+			return counts, fmt.Errorf("protect channel %s: %w", ch.Name, err)
 		}
 		if err := ls.channels.Save(fc.ctx, ch); err != nil {
 			return counts, fmt.Errorf("channel %s: %w", ch.ID, err)
@@ -365,8 +505,16 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		if m.ID == "" {
 			m.ID = uuid.New().String()
 		}
-		if m.Status == "active" {
+		m.Status = activeRuntimeStatus(m.Status)
+		if m.Status == "ACTIVE" {
 			m.Enabled = true
+		}
+		existing, err := existingMCP(ls, fc.ctx, m.Namespace, m.Name)
+		if err != nil {
+			return counts, fmt.Errorf("lookup mcp %s: %w", m.Name, err)
+		}
+		if existing != nil {
+			preserveImportIdentity(&m.BaseEntity, &existing.BaseEntity)
 		}
 		if err := ls.mcps.Save(fc.ctx, m); err != nil {
 			return counts, fmt.Errorf("mcp %s: %w", m.Name, err)

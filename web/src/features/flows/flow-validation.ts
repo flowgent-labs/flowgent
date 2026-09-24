@@ -9,21 +9,21 @@ export interface FlowValidationIssue {
 }
 
 export function validateFlow(
-  flow: Pick<Flow, 'id' | 'runtime_mode' | 'nodes' | 'edges'>,
+  flow: Pick<Flow, 'name' | 'runtime_mode' | 'nodes' | 'edges'>,
   existingNames: string[] = [],
 ): FlowValidationIssue[] {
   const issues: FlowValidationIssue[] = []
   const add = (path: string, code: string, message: string, params?: Record<string, string>) =>
     issues.push({ path, code, message, params })
-  if (!flow.id.trim()) add('id', 'flowIdRequired', 'Flow ID is required.')
-  else if (!validResourceName(flow.id))
+  if (!flow.name.trim()) add('name', 'flowIdRequired', 'Flow name is required.')
+  else if (!validResourceName(flow.name))
     add(
       'id',
       'flowNameInvalid',
       "Flow name must start with a letter, use only letters, numbers, '_' or '-', and contain at most 32 characters.",
     )
-  else if (existingNames.some((name) => sameResourceName(name, flow.id)))
-    add('id', 'flowNameExists', 'Flow name already exists in this namespace.')
+  else if (existingNames.some((name) => sameResourceName(name, flow.name)))
+    add('name', 'flowNameExists', 'Flow name already exists in this namespace.')
   if (!['application', 'session'].includes(flow.runtime_mode))
     add('runtime_mode', 'runtimeModeRequired', 'Runtime mode must be application or session.')
   const ids = new Set<string>()

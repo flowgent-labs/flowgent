@@ -71,7 +71,7 @@ export function RunGraph({
       className="run-graph"
       data-testid="run-graph"
       data-task-count={tasks.length}
-      data-task-node-count={new Set(tasks.map((task) => task.node_id)).size}
+      data-task-node-count={new Set(tasks.map((task) => task.node_key)).size}
     >
       <ReactFlow<RunCanvasNode, Edge>
         nodes={graph.nodes.map((node) => ({ ...node, selected: node.id === selected }))}

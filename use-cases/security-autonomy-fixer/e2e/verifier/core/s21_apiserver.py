@@ -1,754 +1,492 @@
 #!/usr/bin/env python3
+"""Scenario 21: canonical Flowgent REST CRUD and PostgreSQL persistence.
+
+This verifier intentionally speaks only the post-refactor contract. It proves
+stable identities, immutable revisions, canonical Run/NodeRun fields, unified
+approvals, reviewed Knowledge publication, and the non-versioned MCP/LLM/
+notification resources against the same API used by the Web console.
 """
-Scenario 21 — API Server Module: REST CRUD + Lifecycle Events.
 
-Validates complete REST API CRUD for all 9 entity types, PostgreSQL persistence,
-and MQTT lifecycle event publishing.
-
-Entity → Table → REST Path:
-  1. AgentFlow   → orh_agentflow    → /api/v1/{namespace}/flows
-  2. FlowRun     → orh_flowrun      → /api/v1/{namespace}/runs
-  3. TaskRun     → task_runs        → /api/v1/{namespace}/runs/{run_id}/tasks
-  4. Agent       → llm_agent        → /api/v1/{namespace}/agents
-  5. Skill       → llm_skill        → /api/v1/{namespace}/llm/skills
-  6. MCP         → llm_mcp          → /api/v1/{namespace}/mcp
-  7. Provider    → llm_providers     → /api/v1/{namespace}/llm/providers
-  8. Approval    → human_approvals   → /api/v1/{namespace}/runs/{run_id}/approvals
-  9. Channel     → nfy_channel      → /api/v1/{namespace}/notifications/channels
-
-Steps with Expected I/O:
-  Step 1. Flow CRUD
-    Action:  POST → GET → PUT → DELETE /api/v1/{namespace}/flows
-    Input:   {id, nodes, edges, runtime_mode}
-    Output:  Create→201, Read→flow object, Update→version++, Delete→200/204
-
-  Step 2. Run Lifecycle
-    Action:  POST /api/v1/{namespace}/runs → GET → trigger
-    Input:   {agentflow_id, runtime_mode}
-    Output:  Create→201 (status=PENDING), Trigger→200 (run_id)
-
-  Step 3. Task Query
-    Action:  GET /api/v1/{namespace}/runs/{run_id}/tasks
-    Input:   Run ID
-    Output:  Task array (may be empty for new runs)
-
-  Step 4. Agent CRUD
-    Action:  POST → GET /api/v1/{namespace}/agents
-    Input:   {name, model, instruction}
-    Output:  200/201, agent object
-
-  Step 5. MCP CRUD
-    Action:  POST → PUT → DELETE /api/v1/{namespace}/mcp
-    Input:   {name, type, url, enabled}
-    Output:  201→200→204
-
-  Step 6. Provider CRUD
-    Action:  POST → GET /api/v1/{namespace}/llm/providers
-    Input:   {type, endpoint, models[]}
-    Output:  201, provider object
-
-  Step 7. Channel CRUD
-    Action:  POST → DELETE /api/v1/{namespace}/notifications/channels
-    Input:   {name, channel_type, config}
-    Output:  201→204
-
-  Step 8. PG Persistence
-    Action:  Direct psycopg2 query or REST verification
-    Input:   PG connection params from config
-    Output:  Row count matches REST list response
-
-  Step 9. MQTT Lifecycle Events
-    Action:  Subscribe to ctrl/flow/updated, ctrl/flow/deleted topics
-    Input:   Flow CRUD operations trigger events
-    Output:  Event received with matching flow_id within 5s
-"""
 from __future__ import annotations
 
-from common.model import VerificationResult
-from verifier import BaseVerifier
-
-import time
 import json
+import time
 import uuid
+from typing import Any
+
 import requests
-from typing import Dict, Any, Optional
 
 from common import config
-from common.mqtt import ApiLifecycleMqttClient
 from common import project as common_api
+from common.model import VerificationResult
+from common.mqtt import ApiLifecycleMqttClient
 from common.project import FlowgentE2EProject
+from verifier import BaseVerifier
 
-# Try importing psycopg2
 try:
-    import psycopg2
+    import psycopg2  # noqa: F401
+
     PG_AVAILABLE = True
 except ImportError:
-    print("Warning: psycopg2 not installed, PG direct tests will be skipped")
     PG_AVAILABLE = False
+
 
 API_BASE = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
 
 
 class ApiServerVerifier(BaseVerifier):
-    """Class-owned operations for s21 apiserver."""
+    scenario_id = "21"
+    title = "API Server — Canonical CRUD, Revisions, Run State, and Publication"
 
     @staticmethod
-    def rand_id() -> str:
-        """Generate random ID"""
-        return str(uuid.uuid4())[:8]
+    def suffix() -> str:
+        return uuid.uuid4().hex[:8]
 
     @staticmethod
-    def canonical_flow(flow_id: str, description: str = "") -> Dict[str, Any]:
-        """Return the one supported Flow definition contract."""
+    def request(
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        expected: tuple[int, ...] = (200,),
+        timeout: int = 20,
+    ) -> Any:
+        response = requests.request(
+            method,
+            f"{API_BASE}{path}",
+            json=payload,
+            headers=common_api.FlowgentE2EProject.headers(),
+            timeout=timeout,
+        )
+        if response.status_code not in expected:
+            raise AssertionError(
+                f"{method} {path}: HTTP {response.status_code}, expected {expected}: "
+                f"{response.text[:800]}"
+            )
+        if response.status_code == 204 or not response.text:
+            return {}
+        return response.json()
+
+    @staticmethod
+    def pg_connect():
+        if not PG_AVAILABLE:
+            raise AssertionError("psycopg2 is required for canonical persistence evidence")
+        connection = FlowgentE2EProject.pg_connect()
+        if connection is None:
+            raise AssertionError("PostgreSQL connection is unavailable")
+        return connection
+
+    @staticmethod
+    def scalar(connection, sql: str, args: tuple[Any, ...] = ()) -> Any:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, args)
+            row = cursor.fetchone()
+        if row is None:
+            raise AssertionError(f"query returned no row: {sql}")
+        return row[0]
+
+    @staticmethod
+    def flow_body(name: str, description: str, summarize: bool = True) -> dict[str, Any]:
         return {
-            "id": flow_id,
+            "name": name,
             "kind": "flow",
             "description": description,
-            "nodes": [{"id": "n1", "kind": "noop"}],
+            "summarize_enabled": summarize,
+            "nodes": [{"id": "noop", "kind": "noop"}],
             "edges": [],
             "runtime_mode": "session",
         }
 
-    @staticmethod
-    def http_request(method: str, path: str, payload: Optional[Dict] = None, timeout: int = 10) -> Dict[str, Any]:
-        """Make HTTP request to API server"""
-        url = f"{API_BASE}{path}"
-        headers = common_api.FlowgentE2EProject.headers()
-    
-        try:
-            if method == "GET":
-                resp = requests.get(url, headers=headers, timeout=timeout)
-            elif method == "POST":
-                resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-            elif method == "PUT":
-                resp = requests.put(url, json=payload, headers=headers, timeout=timeout)
-            elif method == "DELETE":
-                resp = requests.delete(url, headers=headers, timeout=timeout)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
-        
-            try:
-                data = resp.json() if resp.text and resp.status_code != 204 else {}
-            except Exception:
-                data = resp.text
-            return {
-                "status_code": resp.status_code,
-                "data": data,
-                "text": resp.text,
-            }
-        except Exception as e:
-            return {"status_code": 0, "error": str(e)}
-
-    @staticmethod
-    def get_pg_connection():
-        """Get the shared E2E PostgreSQL connection with its configured schema."""
-        if not PG_AVAILABLE:
-            return None
-
-        connection = FlowgentE2EProject.pg_connect()
-        if connection is None:
-            print("  ⚠ PG connection failed")
-        return connection
-
-    @staticmethod
-    def test_crud_entity(entity_name: str, table_name: str, base_path: str,
-                         id_field: str, create_payload: Dict, update_payload: Dict,
-                         pg_id_col: str = None, update_check_sql: str = None,
-                         list_search_field: str = None) -> bool:
-        """Test CRUD operations for a single entity.
-
-        id_field is the JSON key identifying the resource in REST responses (used
-        for the URL path and LIST lookups). pg_id_col is the underlying SQL column
-        name to filter on directly, when it differs from id_field (e.g. AgentFlow:
-        REST responses use "id" but the orh_agentflow table's lookup column is
-        "agentflow_id" — see pkg/storage/pkg/flow/flow_postgres.go).
-
-        list_search_field is the JSON key to match in LIST responses; defaults to
-        id_field. Override when LIST items use a different key than the CREATE
-        response (e.g. AgentFlow LIST items use "flow_id" for the flow identifier).
-
-        update_check_sql overrides the default "updated_at > created_at" check
-        (e.g. for versioned tables where UPDATE creates a new row).
-        """
-        print(f"\n  → Testing {entity_name} CRUD...")
-
-        pg_id_col = pg_id_col or id_field
-        list_search_field = list_search_field or id_field
-        created_id = None
-        pg_conn = ApiServerVerifier.get_pg_connection()
-
-        try:
-            # CREATE
-            print(f"    • CREATE...")
-            resp = ApiServerVerifier.http_request("POST", base_path, create_payload)
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"CREATE failed: {resp['status_code']} {resp.get('text')}")
-
-            created_id = resp["data"].get(id_field) or resp["data"].get("id")
-            if not created_id:
-                raise AssertionError(f"No {id_field} in response: {resp['data']}")
-
-            print(f"      ✓ Created: {id_field}={created_id}")
-
-            # Verify PG persistence
-            if pg_conn:
-                cursor = pg_conn.cursor()
-                cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {pg_id_col}=%s AND del_flag=false", (created_id,))
-                count = cursor.fetchone()[0]
-                if count != 1:
-                    raise AssertionError(f"PG persistence failed: count={count}")
-                print(f"      ✓ PG persistence verified")
-
-            # READ (single)
-            print(f"    • READ...")
-            resp = ApiServerVerifier.http_request("GET", f"{base_path}/{created_id}")
-            if resp["status_code"] != 200:
-                raise AssertionError(f"GET failed: {resp['status_code']}")
-
-            if resp["data"].get(id_field) != created_id:
-                raise AssertionError(f"GET returned wrong {id_field}")
-
-            print(f"      ✓ Read verified")
-
-            # LIST
-            print(f"    • LIST...")
-            resp = ApiServerVerifier.http_request("GET", f"{base_path}?limit=10")
-            if resp["status_code"] != 200:
-                raise AssertionError(f"LIST failed: {resp['status_code']}")
-
-            items = resp["data"] if isinstance(resp["data"], list) else (resp["data"].get("items") or [])
-            if not isinstance(items, list):
-                raise AssertionError(f"LIST did not return array")
-
-            found = any(item.get(list_search_field) == created_id or item.get(id_field) == created_id for item in items)
-            if not found:
-                raise AssertionError(f"Created item not in LIST")
-
-            print(f"      ✓ List verified (count={len(items)})")
-
-            # UPDATE
-            print(f"    • UPDATE...")
-            resp = ApiServerVerifier.http_request("PUT", f"{base_path}/{created_id}", update_payload)
-            if resp["status_code"] != 200:
-                raise AssertionError(f"UPDATE failed: {resp['status_code']}")
-
-            # Verify update occurred (custom check for versioned tables)
-            if pg_conn:
-                cursor = pg_conn.cursor()
-                if update_check_sql:
-                    cursor.execute(update_check_sql, (created_id,))
-                    result = cursor.fetchone()[0]
-                    if not result:
-                        raise AssertionError(f"update check failed")
-                else:
-                    cursor.execute(f"SELECT updated_at >= created_at FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
-                    updated = cursor.fetchone()[0]
-                    if not updated:
-                        raise AssertionError(f"updated_at not set (check PG timestamp precision)")
-
-            print(f"      ✓ Update verified")
-        
-            # DELETE (soft delete)
-            print(f"    • DELETE...")
-            resp = ApiServerVerifier.http_request("DELETE", f"{base_path}/{created_id}")
-            if resp["status_code"] not in [200, 204]:
-                raise AssertionError(f"DELETE failed: {resp['status_code']}")
-        
-            # Verify soft delete
-            if pg_conn:
-                cursor = pg_conn.cursor()
-                cursor.execute(f"SELECT del_flag FROM {table_name} WHERE {pg_id_col}=%s", (created_id,))
-                result = cursor.fetchone()
-                if not result or not result[0]:
-                    raise AssertionError(f"Soft delete failed")
-        
-            # Verify GET returns 404
-            resp = ApiServerVerifier.http_request("GET", f"{base_path}/{created_id}")
-            if resp["status_code"] != 404:
-                raise AssertionError(f"DELETE did not hide item from GET (got {resp['status_code']})")
-
-            resp = ApiServerVerifier.http_request("GET", f"{base_path}?limit=10")
-            if resp["status_code"] != 200:
-                raise AssertionError(f"LIST after DELETE failed: {resp['status_code']}")
-            items = resp["data"] if isinstance(resp["data"], list) else (resp["data"].get("items") or [])
-            still_listed = any(item.get(list_search_field) == created_id or item.get(id_field) == created_id for item in items)
-            if still_listed:
-                raise AssertionError("DELETE did not hide item from LIST")
-        
-            print(f"      ✓ Delete verified")
-        
-            print(f"    ✓ {entity_name} CRUD tests passed")
-            return True
-        
-        except Exception as e:
-            print(f"    ✗ {entity_name} CRUD failed: {e}")
-            return False
-    
-        finally:
-            if pg_conn:
-                pg_conn.close()
-
-    @staticmethod
-    def test_flow_lifecycle_events() -> bool:
-        """Test flow lifecycle MQTT event publishing"""
-        print(f"\n  → Testing Flow Lifecycle Events...")
-    
-        mqtt_client = ApiLifecycleMqttClient(config.EMQX_HOST, config.EMQX_PORT)
-        if not mqtt_client.client:
-            print(f"    ⚠ MQTT not available, skipping event tests")
-            return True
-        created_id = None
-    
-        try:
-            # Subscribe to ctrl events
-            mqtt_client.subscribe("flowgent/v1/+/flows/+/ctrl/flow/updated")
-            mqtt_client.subscribe("flowgent/v1/+/flows/+/ctrl/flow/deleted")
-            time.sleep(0.5)  # Wait for subscription
-        
-            # Test 1: CREATE → ctrl/flow/updated (action=created)
-            print(f"    • Testing CREATE event...")
-            flow_id = "test-flow-" + ApiServerVerifier.rand_id()
-            # Flat FlowInfo shape — see test_crud_entity's AgentFlow comment above.
-            payload = ApiServerVerifier.canonical_flow(flow_id)
-        
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", payload)
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"Flow creation failed: {resp['status_code']}")
-        
-            created_id = resp["data"].get("id")
-        
-            # Wait for MQTT event
-            event = mqtt_client.wait_for_message("ctrl/flow/updated", timeout=5)
-            if not event:
-                raise AssertionError("No ctrl/flow/updated event received")
-        
-            event_payload = event["payload"].get("payload")
-            if event_payload:
-                event_data = json.loads(event_payload) if isinstance(event_payload, str) else event_payload
-                if event_data.get("action") != "created":
-                    raise AssertionError(f"Expected action=created, got {event_data.get('action')}")
-        
-            print(f"      ✓ CREATE event verified")
-        
-            # Test 2: UPDATE → ctrl/flow/updated (action=updated, version++)
-            print(f"    • Testing UPDATE event...")
-            update_payload = ApiServerVerifier.canonical_flow(flow_id, "updated description")
-        
-            resp = ApiServerVerifier.http_request("PUT", f"/api/v1/{NAMESPACE}/flows/{created_id}", update_payload)
-            if resp["status_code"] != 200:
-                raise AssertionError(f"Flow update failed: {resp['status_code']}")
-        
-            event = mqtt_client.wait_for_message("ctrl/flow/updated", timeout=5)
-            if not event:
-                raise AssertionError("No UPDATE event received")
-        
-            print(f"      ✓ UPDATE event verified")
-        
-            # Test 3: DELETE → ctrl/flow/deleted
-            print(f"    • Testing DELETE event...")
-            resp = ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}")
-            if resp["status_code"] not in [200, 204]:
-                raise AssertionError(f"Flow deletion failed: {resp['status_code']}")
-        
-            event = mqtt_client.wait_for_message("ctrl/flow/deleted", timeout=5)
-            if not event:
-                print(f"      ⚠ No DELETE event received (may be expected if event not implemented)")
-            else:
-                print(f"      ✓ DELETE event verified")
-        
-            print(f"    ✓ Flow lifecycle event tests passed")
-            return True
-        
-        except Exception as e:
-            print(f"    ✗ Flow lifecycle events failed: {e}")
-            return False
-    
-        finally:
-            if created_id:
-                ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5)
-            mqtt_client.close()
-
-    @staticmethod
-    def test_flow_run_crud() -> bool:
-        """Test FlowRun CRUD via /runs."""
-        print(f"\n  → Testing FlowRun CRUD...")
-        flow_id = f"test-flow-{ApiServerVerifier.rand_id()}"
-        created_run_id = None
-        pg_conn = ApiServerVerifier.get_pg_connection()
-        try:
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerVerifier.canonical_flow(flow_id))
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"setup flow failed: {resp['status_code']}")
-
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
-                "agentflow_id": flow_id,
-                "status": "PENDING",
-                "runtime_mode": "session",
-                "vars": {"test": True},
-            })
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"CREATE run failed: {resp['status_code']} {resp.get('text')}")
-            created_run_id = resp["data"].get("id")
-            if not created_run_id:
-                raise AssertionError("no run id in response")
-
-            resp = ApiServerVerifier.http_request("GET", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
-            if resp["status_code"] != 200 or resp["data"].get("id") != created_run_id:
-                raise AssertionError("GET run failed")
-
-            resp = ApiServerVerifier.http_request("PUT", f"/api/v1/{NAMESPACE}/runs/{created_run_id}", {"status": "RUNNING"})
-            if resp["status_code"] != 200:
-                raise AssertionError(f"UPDATE run failed: {resp['status_code']}")
-
-            if pg_conn:
-                cursor = pg_conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM orh_flowrun WHERE id=%s AND del_flag=false", (created_run_id,))
-                if cursor.fetchone()[0] != 1:
-                    raise AssertionError("PG persistence failed for orh_flowrun")
-
-            resp = ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{created_run_id}")
-            if resp["status_code"] not in [200, 204]:
-                raise AssertionError(f"DELETE run failed: {resp['status_code']}")
-
-            print(f"    ✓ FlowRun CRUD passed")
-            return True
-        except Exception as e:
-            print(f"    ✗ FlowRun CRUD failed: {e}")
-            return False
-        finally:
-            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
-            if pg_conn:
-                pg_conn.close()
-
-    @staticmethod
-    def test_task_run_nested() -> bool:
-        """Test nested TaskRun CRUD under /runs/{id}/tasks."""
-        print(f"\n  → Testing TaskRun nested CRUD...")
-        flow_id = f"test-flow-{ApiServerVerifier.rand_id()}"
-        pg_conn = ApiServerVerifier.get_pg_connection()
-        run_id = None
-        task_id = None
-        try:
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerVerifier.canonical_flow(flow_id))
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"setup flow failed: {resp['status_code']}")
-
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
-                "agentflow_id": flow_id,
-                "status": "PENDING",
-                "runtime_mode": "session",
-            })
-            run_id = resp["data"].get("id")
-            if not run_id:
-                raise AssertionError("no run id")
-
-            task_payload = {
-                "node_id": "test-node",
-                "status": "PENDING",
-                "input": {"hello": "world"},
-                "sequence": 1,
-            }
-            base = f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks"
-            resp = ApiServerVerifier.http_request("POST", base, task_payload)
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"CREATE task failed: {resp['status_code']} {resp.get('text')}")
-            task_id = resp["data"].get("id")
-            if not task_id:
-                raise AssertionError("no task id")
-
-            resp = ApiServerVerifier.http_request("GET", f"{base}/{task_id}")
-            if resp["status_code"] != 200 or not isinstance(resp["data"], dict):
-                raise AssertionError(f"GET task failed: {resp['status_code']} {resp.get('text')}")
-            if resp["data"].get("node_id") != "test-node":
-                raise AssertionError(f"GET task returned wrong node_id: {resp['data']}")
-
-            resp = ApiServerVerifier.http_request("PUT", f"{base}/{task_id}", {
-                "node_id": "test-node",
-                "status": "COMPLETED",
-                "output": {"result": "ok"},
-                "sequence": 1,
-            })
-            if resp["status_code"] != 200:
-                raise AssertionError(f"UPDATE task failed: {resp['status_code']}")
-
-            if pg_conn:
-                cursor = pg_conn.cursor()
-                cursor.execute(
-                    "SELECT output IS NOT NULL FROM task_runs WHERE id=%s AND agentflow_run_id=%s",
-                    (task_id, run_id),
-                )
-                row = cursor.fetchone()
-                if not row or not row[0]:
-                    raise AssertionError("task output not persisted in PG")
-
-            resp = ApiServerVerifier.http_request("GET", base)
-            if resp["status_code"] != 200:
-                raise AssertionError(f"LIST tasks failed: {resp['status_code']} {resp.get('text')}")
-            if isinstance(resp["data"], list):
-                items = resp["data"]
-            elif isinstance(resp["data"], dict):
-                items = resp["data"].get("items", [])
-            else:
-                raise AssertionError(f"LIST tasks returned non-JSON payload: {resp['data']!r}")
-            if not any(t.get("id") == task_id for t in items):
-                raise AssertionError("task not in LIST")
-
-            print(f"    ✓ TaskRun nested CRUD passed")
-            return True
-        except Exception as e:
-            print(f"    ✗ TaskRun nested CRUD failed: {e}")
-            return False
-        finally:
-            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
-            if pg_conn:
-                pg_conn.close()
-
-    @staticmethod
-    def test_approval_lifecycle() -> bool:
-        """Test human approval create + list + approve by token."""
-        print(f"\n  → Testing Approval lifecycle...")
-        token = f"test-token-{ApiServerVerifier.rand_id()}"
-        run_id = str(uuid.uuid4())
-        task_id = str(uuid.uuid4())
-        flow_id = f"test-flow-{ApiServerVerifier.rand_id()}"
-        try:
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/flows", ApiServerVerifier.canonical_flow(flow_id))
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"setup flow failed: {resp['status_code']} {resp.get('text')}")
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs", {
-                "id": run_id,
-                "agentflow_id": flow_id,
-                "status": "PENDING",
-                "runtime_mode": "session",
-            })
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"setup run failed: {resp['status_code']} {resp.get('text')}")
-            run_id = resp["data"].get("id")
-            if not run_id:
-                raise AssertionError(f"setup run omitted id: {resp['data']}")
-            resp = ApiServerVerifier.http_request("POST", f"/api/v1/{NAMESPACE}/runs/{run_id}/tasks", {
-                "node_id": "n1",
-                "status": "PENDING",
-                "sequence": 1,
-            })
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"setup task failed: {resp['status_code']} {resp.get('text')}")
-            task_id = resp["data"].get("id")
-            if not task_id:
-                raise AssertionError(f"setup task omitted id: {resp['data']}")
-
-            approval_path = f"/api/v1/{NAMESPACE}/runs/{run_id}/approvals"
-            resp = ApiServerVerifier.http_request("POST", approval_path, {
-                "task_run_id": task_id,
-                "token": token,
-            })
-            if resp["status_code"] not in [200, 201]:
-                raise AssertionError(f"CREATE approval failed: {resp['status_code']} {resp.get('text')}")
-
-            resp = ApiServerVerifier.http_request("GET", approval_path)
-            if resp["status_code"] != 200:
-                raise AssertionError(f"LIST approvals failed: {resp['status_code']}")
-            items = resp["data"] if isinstance(resp["data"], list) else []
-            if not any(a.get("token") == token for a in items):
-                print(f"      ⚠ created approval not in pending list (may already be resolved)")
-
-            resp = ApiServerVerifier.http_request("POST", f"{approval_path}/{token}/approve", {"comment": "e2e approved"})
-            if resp["status_code"] != 200:
-                raise AssertionError(f"APPROVE failed: {resp['status_code']} {resp.get('text')}")
-
-            print(f"    ✓ Approval lifecycle passed")
-            return True
-        except Exception as e:
-            print(f"    ✗ Approval lifecycle failed: {e}")
-            return False
-        finally:
-            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/runs/{run_id}", timeout=5)
-            ApiServerVerifier.http_request("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=5)
-
-    @staticmethod
-    def test_skill_api_availability() -> bool:
-        """Skill REST API is planned but may not be registered; verify and skip gracefully."""
-        print(f"\n  → Testing Skill API availability...")
-        for path in (f"/api/v1/{NAMESPACE}/llm/skills", f"/api/v1/{NAMESPACE}/skills"):
-            resp = ApiServerVerifier.http_request("GET", path)
-            if resp["status_code"] == 404:
-                continue
-            if resp["status_code"] == 200:
-                print(f"    ✓ Skill API reachable at {path}")
-                return True
-            if resp["status_code"] == 0:
-                raise AssertionError(resp.get("error", "connection failed"))
-        print(f"    ⚠ Skill REST API not exposed (llm_skill managed via import/console) — SKIP")
-        return True
-
-    @staticmethod
-    def _verify_scenario():
-        """Main test runner"""
-        print("\n" + "="*60)
-        print("  Scenario 21: API Server — REST CRUD + Lifecycle Events")
-        print("="*60)
-    
-        results = {}
-    
-        # Entity test definitions
-        provider_name = f"test-llm-{ApiServerVerifier.rand_id()}"
-        entities = [
-            {
-                # POST /flows decodes the request body directly into
-                # entities.FlowInfo (pkg/api/pkg/handler/flow_def.go Create) —
-                # a FLAT shape with "id"/"nodes"/"edges" at top level, NOT the
-                # {"agentflow_id", "version", "definition": {...}} DB row shape
-                # (that shape is only used internally by FlowVersionInfo).
-                # REST responses key the flow by "id", but the orh_agentflow table
-                # stores/looks it up by the "agentflow_id" column, hence pg_id_col.
-                # orh_agentflow is versioned: UPDATE creates a new version row
-                # (both created_at/updated_at set to same time), so the default
-                # "updated_at > created_at" check doesn't apply.
-                "name": "AgentFlow",
-                "table": "orh_agentflow",
-                "base_path": f"/api/v1/{NAMESPACE}/flows",
-                "id_field": "id",
-                "pg_id_col": "agentflow_id",
-                "list_search_field": "flow_id",
-                "create": {
-                    "id": f"test-flow-{ApiServerVerifier.rand_id()}",
-                    "kind": "flow",
-                    "nodes": [],
-                    "edges": [],
-                    "runtime_mode": "session",
-                },
-                "update": {
-                    "kind": "flow",
-                    "description": "updated",
-                    "nodes": [],
-                    "edges": [],
-                    "runtime_mode": "session",
-                },
-                "update_check_sql": (
-                    "SELECT COUNT(*) = 1 AND MAX(version) = 2 "
-                    "AND COALESCE(MAX(definition->>'description'), '') = 'updated' "
-                    "FROM orh_agentflow WHERE agentflow_id=%s AND version=2 AND del_flag=false"
-                ),
-            },
-            {
-                "name": "Agent",
-                "table": "llm_agent",
-                "base_path": f"/api/v1/{NAMESPACE}/agents",
-                "id_field": "name",
-                "create": {
-                    "name": f"test-agent-{ApiServerVerifier.rand_id()}",
-                    "model": "gpt-4",
-                    "soul": "You are a test agent",
-                    "instruction": "Test instruction",
-                },
-                "update": {
-                    "model": "gpt-4",
-                    "soul": "You are an updated test agent",
-                    "instruction": "Updated test instruction",
-                    "temperature": 0.7,
-                },
-            },
-            {
-                "name": "MCP",
-                "table": "llm_mcp",
-                "base_path": f"/api/v1/{NAMESPACE}/mcp",
-                "id_field": "name",
-                "create": {
-                    "name": f"test-mcp-{ApiServerVerifier.rand_id()}",
-                    "type": "streamable-http",
-                    "url": "https://example.com/mcp",
-                    "enabled": True,
-                },
-                "update": {
-                    "type": "streamable-http",
-                    "url": "https://example.com/mcp",
-                    "enabled": False,
-                },
-            },
-            {
-                "name": "Provider",
-                "table": "llm_providers",
-                "base_path": f"/api/v1/{NAMESPACE}/llm/providers",
-                "id_field": "id",
-                "create": {
-                    "name": provider_name,
-                    "type": "openai",
-                    "endpoint": "https://api.openai.com/v1",
-                    "api_key_env": "FLOWGENT_E2E_TEST_LLM_KEY",
-                    "defaultModel": "gpt-4",
-                    "enabled": True,
-                },
-                "update": {
-                    "name": provider_name,
-                    "type": "openai",
-                    "endpoint": "https://api.openai.com/v1",
-                    "defaultModel": "gpt-4",
-                    "enabled": True,
-                    "timeout_ms": 60000,
-                },
-            },
-            {
-                "name": "Channel",
-                "table": "nfy_channel",
-                "base_path": f"/api/v1/{NAMESPACE}/notifications/channels",
-                "id_field": "id",
-                "create": {
-                    "name": f"test-channel-{ApiServerVerifier.rand_id()}",
-                    "provider": "webhook",
-                    "config": {"url": "https://example.com/hook"},
-                    "enabled": True,
-                },
-                "update": {
-                    "name": "Updated test channel",
-                    "provider": "webhook",
-                    "config": {"url": "https://example.com/hook"},
-                    "enabled": False,
-                },
-            },
-        ]
-    
-        # Run entity tests
-        for entity in entities:
-            results[entity["name"]] = ApiServerVerifier.test_crud_entity(
-                entity["name"],
-                entity["table"],
-                entity["base_path"],
-                entity["id_field"],
-                entity["create"],
-                entity["update"],
-                pg_id_col=entity.get("pg_id_col"),
-                update_check_sql=entity.get("update_check_sql"),
-                list_search_field=entity.get("list_search_field"),
-            )
-    
-        # Run lifecycle event tests
-        results["LifecycleEvents"] = ApiServerVerifier.test_flow_lifecycle_events()
-        results["FlowRun"] = ApiServerVerifier.test_flow_run_crud()
-        results["TaskRun"] = ApiServerVerifier.test_task_run_nested()
-        results["Approval"] = ApiServerVerifier.test_approval_lifecycle()
-        results["SkillAPI"] = ApiServerVerifier.test_skill_api_availability()
-    
-        # Summary
-        passed = sum(1 for v in results.values() if v)
-        total = len(results)
-    
-        print(f"\n  {'='*60}")
-        print(f"  Summary: {passed}/{total} test groups passed")
-        print(f"  {'='*60}")
-    
-        if passed < total:
-            failed = [k for k, v in results.items() if not v]
-            raise AssertionError(f"Failed tests: {failed}")
-    
-        print(f"\n  ✓ All API Server tests passed")
-
-    scenario_id = "21"
-    title = "API Server — REST CRUD + Lifecycle Events"
-
     def run(self) -> VerificationResult:
-        return self.execute(lambda: self.step("verify REST resources and lifecycle persistence", self._verify_api_contract))
+        return self.execute(
+            lambda: self.step(
+                "verify canonical REST resources and PostgreSQL persistence",
+                self._verify,
+            )
+        )
 
-    @staticmethod
-    def _verify_api_contract() -> None:
-        ApiServerVerifier._verify_scenario()
+    def _verify(self) -> None:
+        connection = self.pg_connect()
+        suffix = self.suffix()
+        flow_name = f"api-flow-{suffix}"
+        agent_name = f"api-agent-{suffix}"
+        skill_name = f"api-skill-{suffix}"
+        mcp_name = f"api-mcp-{suffix}"
+        llm_name = f"api-llm-{suffix}"
+        channel_name = f"api-channel-{suffix}"
+        flow_created = False
+        run_id = ""
+        cleanup: list[tuple[str, str]] = []
+
+        try:
+            flow = self._flow_crud(connection, flow_name)
+            flow_created = True
+            self._flow_lifecycle_event()
+            self._agent_crud(connection, agent_name)
+            self._skill_crud(connection, skill_name)
+            self._mcp_crud(connection, mcp_name)
+            self._llm_crud(connection, llm_name)
+            self._notification_crud(connection, channel_name)
+            run_id = self._run_node_approval_and_publication(connection, flow_name, flow)
+            self.details.extend(
+                [
+                    f"Flow {flow_name} kept stable id {flow['id']} while revision advanced to 2.",
+                    "Agent and Skill saves produced immutable revision 2 rows.",
+                    "MCP, LLM, and notification definitions completed canonical CRUD without version aliases.",
+                    f"Run {run_id} persisted a locked Flow revision, NodeRun attempt/fencing state, and one unified approval.",
+                    "Knowledge candidate stayed invisible until approval, then published one immutable document revision.",
+                ]
+            )
+        finally:
+            if run_id:
+                self._ignore("DELETE", f"/api/v1/{NAMESPACE}/runs/{run_id}")
+            if flow_created:
+                self._ignore("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_name}")
+            for method, path in reversed(cleanup):
+                self._ignore(method, path)
+            connection.close()
+
+    def _flow_crud(self, connection, name: str) -> dict[str, Any]:
+        base = f"/api/v1/{NAMESPACE}/flows"
+        created = self.request(
+            "POST", base, self.flow_body(name, "canonical API lifecycle"), (201,)
+        )
+        if created.get("name") != name or not created.get("id"):
+            raise AssertionError(f"Flow create omitted stable id/name: {created}")
+        if created.get("revision") != 1:
+            raise AssertionError(f"Flow create revision is not 1: {created}")
+        stable_id = created["id"]
+        persisted = self.scalar(
+            connection,
+            """SELECT COUNT(*) FROM orh_flow f
+               JOIN orh_flow_revision r ON r.id=f.current_revision_id
+               WHERE f.id=%s AND f.namespace_id=%s AND f.name=%s
+                 AND f.status<>'DELETED' AND r.flow_id=f.id AND r.revision=1""",
+            (stable_id, NAMESPACE, name),
+        )
+        if persisted != 1:
+            raise AssertionError("Flow stable identity/current revision was not persisted")
+
+        fetched = self.request("GET", f"{base}/{name}")
+        if fetched.get("id") != stable_id or fetched.get("name") != name:
+            raise AssertionError(f"Flow GET changed identity: {fetched}")
+        listed = self.request("GET", base)
+        if not any(item.get("id") == stable_id and item.get("name") == name for item in listed):
+            raise AssertionError("Flow is absent from canonical LIST")
+
+        updated_body = self.flow_body(name, "canonical revision two")
+        updated_body["id"] = stable_id
+        updated = self.request("PUT", f"{base}/{name}", updated_body)
+        if updated.get("id") != stable_id or updated.get("revision") != 2:
+            raise AssertionError(f"Flow update did not preserve id/create revision 2: {updated}")
+        revision_state = self.scalar(
+            connection,
+            """SELECT COUNT(*)=2 AND MAX(r.revision)=2
+               FROM orh_flow_revision r WHERE r.flow_id=%s""",
+            (stable_id,),
+        )
+        if not revision_state:
+            raise AssertionError("Flow immutable revision history is incomplete")
+        return updated
+
+    def _flow_lifecycle_event(self) -> None:
+        mqtt = ApiLifecycleMqttClient(config.EMQX_HOST, config.EMQX_PORT)
+        if not mqtt.client:
+            raise AssertionError("MQTT is unavailable for lifecycle event verification")
+        temporary = f"event-flow-{self.suffix()}"
+        try:
+            mqtt.subscribe("flowgent/v1/+/flows/+/ctrl/flow/updated")
+            mqtt.subscribe("flowgent/v1/+/flows/+/ctrl/flow/deleted")
+            time.sleep(0.5)
+            self.request(
+                "POST",
+                f"/api/v1/{NAMESPACE}/flows",
+                self.flow_body(temporary, "event evidence", False),
+                (201,),
+            )
+            event = mqtt.wait_for_message("ctrl/flow/updated", timeout=8)
+            if not event:
+                raise AssertionError("Flow create lifecycle event was not received")
+            created_payload = event.get("payload", {})
+            if created_payload.get("flow_id") != temporary or created_payload.get("event_type") != "CREATED":
+                raise AssertionError(f"Flow create lifecycle payload is not canonical: {event}")
+            self.request("DELETE", f"/api/v1/{NAMESPACE}/flows/{temporary}", expected=(204,))
+            deleted = mqtt.wait_for_message("ctrl/flow/deleted", timeout=8)
+            if not deleted:
+                raise AssertionError("Flow delete lifecycle event was not received")
+            deleted_payload = deleted.get("payload", {})
+            if deleted_payload.get("flow_id") != temporary or deleted_payload.get("event_type") != "DELETED":
+                raise AssertionError(f"Flow delete lifecycle payload is not canonical: {deleted}")
+        finally:
+            self._ignore("DELETE", f"/api/v1/{NAMESPACE}/flows/{temporary}")
+            mqtt.close()
+
+    def _agent_crud(self, connection, name: str) -> None:
+        base = f"/api/v1/{NAMESPACE}/agents"
+        body = {
+            "name": name,
+            "model": "openai/e2e",
+            "soul": "Evidence first.",
+            "instruction": "Return a structured result.",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+        }
+        created = self.request("POST", base, body, (201,))
+        stable_id = created.get("id")
+        if not stable_id or created.get("revision") != 1:
+            raise AssertionError(f"Agent identity/revision invalid: {created}")
+        body["instruction"] = "Return a structured result with evidence."
+        updated = self.request("PUT", f"{base}/{name}", body)
+        if updated.get("id") != stable_id or updated.get("revision") != 2:
+            raise AssertionError(f"Agent revision 2 invalid: {updated}")
+        if self.scalar(
+            connection,
+            "SELECT COUNT(*) FROM llm_agent_revision WHERE agent_id=%s",
+            (stable_id,),
+        ) != 2:
+            raise AssertionError("Agent revision history was not persisted")
+        self.request("DELETE", f"{base}/{name}", expected=(204,))
+        if self.scalar(connection, "SELECT status FROM llm_agent WHERE id=%s", (stable_id,)) != "DELETED":
+            raise AssertionError("Agent soft deletion did not use status")
+
+    def _skill_crud(self, connection, name: str) -> None:
+        base = f"/api/v1/{NAMESPACE}/skill-definitions"
+        body = {
+            "name": name,
+            "description": "API-managed reusable skill",
+            "instruction": "Use only reviewed assets.",
+            "model": "openai/e2e",
+            "tools": [],
+        }
+        created = self.request("POST", base, body, (201,))
+        stable_id = created.get("id")
+        if not stable_id or created.get("revision") != 1:
+            raise AssertionError(f"Skill identity/revision invalid: {created}")
+        body["instruction"] = "Use only reviewed assets and cite them."
+        updated = self.request("PUT", f"{base}/{name}", body)
+        if updated.get("id") != stable_id or updated.get("revision") != 2:
+            raise AssertionError(f"Skill revision 2 invalid: {updated}")
+        if self.scalar(
+            connection,
+            "SELECT COUNT(*) FROM llm_skill_revision WHERE skill_id=%s",
+            (stable_id,),
+        ) != 2:
+            raise AssertionError("Skill revision history was not persisted")
+        self.request("DELETE", f"{base}/{name}", expected=(204,))
+
+    def _mcp_crud(self, connection, name: str) -> None:
+        base = f"/api/v1/{NAMESPACE}/mcp"
+        body = {
+            "name": name,
+            "transport": "http",
+            "rpc_url": "https://mcp.example.test/v1",
+            "enabled": True,
+            "header_refs": {"Authorization": "${DEEPSEEK_API_KEY}"},
+            "env_refs": {"MCP_TENANT": "${DEEPSEEK_API_KEY}"},
+        }
+        created = self.request("POST", base, body, (201,))
+        stable_id = created.get("id")
+        body["rpc_url"] = "https://mcp.example.test/v2"
+        body["enabled"] = False
+        updated = self.request("PUT", f"{base}/{name}", body)
+        if updated.get("id") != stable_id or updated.get("rpc_url") != body["rpc_url"]:
+            raise AssertionError(f"MCP update failed: {updated}")
+        if self.scalar(connection, "SELECT rpc_url FROM llm_mcp WHERE id=%s", (stable_id,)) != body["rpc_url"]:
+            raise AssertionError("MCP canonical rpc_url was not persisted")
+        self.request("DELETE", f"{base}/{name}", expected=(204,))
+
+    def _llm_crud(self, connection, name: str) -> None:
+        base = f"/api/v1/{NAMESPACE}/llm/providers"
+        body = {
+            "name": name,
+            "type": "openai",
+            "base_uri": "https://llm.example.test/v1",
+            "default_model": "e2e-model",
+            "models": [],
+            "enabled": True,
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "env_refs": {"LLM_TENANT": "${DEEPSEEK_API_KEY}"},
+        }
+        created = self.request("POST", base, body, (201,))
+        stable_id = created.get("id")
+        body.update({"type": "anthropic", "base_uri": "https://llm.example.test/anthropic"})
+        body.pop("api_key_env", None)
+        updated = self.request("PUT", f"{base}/{stable_id}", body)
+        if updated.get("type") != "anthropic" or updated.get("base_uri") != body["base_uri"]:
+            raise AssertionError(f"LLM update failed: {updated}")
+        row = self.scalar(
+            connection,
+            "SELECT type || '|' || base_uri FROM llm_provider WHERE id=%s",
+            (stable_id,),
+        )
+        if row != f"anthropic|{body['base_uri']}":
+            raise AssertionError("LLM canonical type/base_uri was not persisted")
+        self.request("DELETE", f"{base}/{stable_id}", expected=(204,))
+
+    def _notification_crud(self, connection, name: str) -> None:
+        base = f"/api/v1/{NAMESPACE}/notifications/channels"
+        body = {
+            "name": name,
+            "provider": "webhook",
+            "config": {"url": "https://notify.example.test/e2e"},
+            "enabled": True,
+        }
+        created = self.request("POST", base, body, (201,))
+        stable_id = created.get("id")
+        if "url" in created.get("config", {}):
+            raise AssertionError("Notification response leaked a write-only URL")
+        updated = self.request(
+            "PUT",
+            f"{base}/{stable_id}",
+            {"name": name, "provider": "webhook", "config": {}, "enabled": False},
+        )
+        if updated.get("enabled") is not False:
+            raise AssertionError(f"Notification update failed: {updated}")
+        if self.scalar(connection, "SELECT enabled FROM nfy_channel WHERE id=%s", (stable_id,)):
+            raise AssertionError("Notification enabled=false was not persisted")
+        self.request("DELETE", f"{base}/{stable_id}", expected=(204,))
+
+    def _run_node_approval_and_publication(
+        self, connection, flow_name: str, flow: dict[str, Any]
+    ) -> str:
+        runs = f"/api/v1/{NAMESPACE}/runs"
+        run = self.request(
+            "POST",
+            runs,
+            {
+                "flow_name": flow_name,
+                "status": "PENDING",
+                "input": {"origin": "scenario-21"},
+                "runtime_mode": "session",
+            },
+            (201,),
+        )
+        run_id = run.get("id")
+        if not run_id or run.get("flow_id") != flow.get("id") or run.get("flow_revision") != 2:
+            raise AssertionError(f"Run did not lock canonical Flow revision: {run}")
+        if not run.get("context_snapshot") or run.get("summarize_enabled") is not True:
+            raise AssertionError(f"Run snapshot/effective summary flag missing: {run}")
+        self.request("PUT", f"{runs}/{run_id}", {"status": "RUNNING"})
+
+        tasks = f"{runs}/{run_id}/node-runs"
+        task_body = {
+            "node_key": "noop",
+            "attempt": 1,
+            "status": "RUNNING",
+            "input": {"step": 1},
+            "execution_id": f"exec-{self.suffix()}",
+            "max_retries": 2,
+            "sequence": 1,
+            "fencing_token": 7,
+            "workspace_version": "workspace-v1",
+            "execution_memory": {"cursor": 1},
+            "checkpoint": {"last_step": 1},
+        }
+        task = self.request("POST", tasks, task_body, (201,))
+        task_id = task.get("id")
+        if task.get("node_key") != "noop" or task.get("attempt") != 1:
+            raise AssertionError(f"NodeRun canonical fields missing: {task}")
+        task_body.update({"status": "SUCCESS", "output": {"result": "ok"}})
+        self.request("PUT", f"{tasks}/{task_id}", task_body)
+        listed_tasks = self.request("GET", tasks)
+        if not any(
+            item.get("id") == task_id
+            and item.get("execution_id") == task_body["execution_id"]
+            and item.get("fencing_token") == 7
+            for item in listed_tasks
+        ):
+            raise AssertionError("NodeRun is absent from canonical task list")
+        if self.scalar(
+            connection,
+            "SELECT COUNT(*) FROM orh_node_checkpoint WHERE node_run_id=%s AND fencing_token=7",
+            (task_id,),
+        ) < 1:
+            raise AssertionError("NodeRun checkpoint/fencing evidence was not persisted")
+
+        approvals = f"{runs}/{run_id}/approvals"
+        approval_id = f"approval-{self.suffix()}"
+        approval_request = {
+            "tool": "manual-review",
+            "arguments": {"run_id": run_id, "node_run_id": task_id},
+        }
+        self.request(
+            "POST",
+            approvals,
+            {
+                "id": approval_id,
+                "node_run_id": task_id,
+                "type": "human_gate",
+                "subject_type": "node_run",
+                "subject_id": task_id,
+                "request": approval_request,
+                "idempotency_key": f"human:{run_id}:{task_id}",
+            },
+            (201,),
+        )
+        pending = self.request("GET", approvals)
+        if not any(item.get("id") == approval_id and item.get("status") == "pending" for item in pending):
+            raise AssertionError("Unified approval is absent from pending list")
+        decision = self.request("POST", f"{approvals}/{approval_id}/approve", {})
+        if decision.get("status") != "approved":
+            raise AssertionError(f"Approval decision failed: {decision}")
+        duplicate = self.request("POST", f"{approvals}/{approval_id}/approve", {})
+        if duplicate.get("status") != "approved":
+            raise AssertionError("Duplicate approval callback was not idempotent")
+        if self.scalar(
+            connection,
+            "SELECT status FROM orh_approval WHERE id=%s AND request_hash IS NOT NULL",
+            (approval_id,),
+        ) != "approved":
+            raise AssertionError("Unified approval terminal state was not persisted")
+
+        self.request("PUT", f"{runs}/{run_id}", {"status": "COMPLETED"})
+        candidate_response = self.request(
+            "POST",
+            f"/api/v1/{NAMESPACE}/knowledge/candidates",
+            {
+                "source_run_id": run_id,
+                "target_scope": "flow",
+                "target_flow_name": flow_name,
+                "type": "knowledge",
+                "content": "Scenario 21 approved operational fact.",
+                "provenance": {"origin": "scenario-21", "safe": True},
+                "expected_revision": 0,
+                "idempotency_key": f"knowledge:{run_id}",
+            },
+            (201,),
+        )
+        candidate = candidate_response.get("candidate", {})
+        publication_approval = candidate_response.get("approval", {})
+        candidate_id = candidate.get("id")
+        publication_approval_id = publication_approval.get("id")
+        if not candidate_id or not publication_approval_id:
+            raise AssertionError(f"Candidate/approval response incomplete: {candidate_response}")
+        visible_before = self.request("GET", f"/api/v1/{NAMESPACE}/knowledge?scope=flow")
+        if any(item.get("content") == candidate.get("content") for item in visible_before.get("items", [])):
+            raise AssertionError("Unapproved Knowledge candidate became retrieval-visible")
+        published = self.request(
+            "POST", f"{approvals}/{publication_approval_id}/approve", {}
+        ).get("candidate", {})
+        if published.get("status") != "published":
+            raise AssertionError(f"Knowledge publication failed: {published}")
+        document_id = published.get("metadata", {}).get("published_id")
+        entry = self.request("GET", f"/api/v1/{NAMESPACE}/knowledge/{document_id}")
+        if entry.get("content") != candidate.get("content") or entry.get("revision") != 1:
+            raise AssertionError(f"Published Knowledge is incorrect: {entry}")
+        self.request("POST", f"{approvals}/{publication_approval_id}/approve", {})
+        if self.scalar(
+            connection,
+            """SELECT COUNT(*) FROM knw_document d
+               JOIN knw_document_revision r ON r.id=d.current_revision_id
+               WHERE d.id=%s AND d.flow_id=%s AND r.revision=1 AND r.status='published'""",
+            (document_id, flow["id"]),
+        ) != 1:
+            raise AssertionError("Published Knowledge current revision is inconsistent")
+        return run_id
+
+    @classmethod
+    def _ignore(cls, method: str, path: str) -> None:
+        try:
+            cls.request(method, path, expected=(200, 204, 404), timeout=5)
+        except Exception:
+            pass

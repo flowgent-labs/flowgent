@@ -28,12 +28,14 @@ func marshalSpec(spec *entities.FlowInfo) ([]byte, error) {
 	if spec.Namespace == "" {
 		spec.Namespace = defaultNamespace
 	}
+	spec.NormalizeIdentity()
 	if spec.Kind == "" || strings.EqualFold(spec.Kind, "flow") {
-		if err := resourceid.Validate(spec.ID); err != nil {
+		if err := resourceid.Validate(spec.ResourceName()); err != nil {
 			return nil, fmt.Errorf("invalid flow name: %w", err)
 		}
 	}
 	persisted := *spec
+	persisted.Revision = 0
 	persisted.Version = 0
 	b, err := json.Marshal(&persisted)
 	if err != nil {
@@ -43,12 +45,17 @@ func marshalSpec(spec *entities.FlowInfo) ([]byte, error) {
 }
 
 func hydrateSpec(spec *entities.FlowInfo, version *entities.FlowVersionInfo) {
-	spec.Version = version.Version
+	spec.ID = version.FlowID
+	spec.Name = version.FlowName
+	spec.Revision = version.Revision
+	spec.Version = version.Revision
+	spec.SummarizeEnabled = version.SummarizeEnabled
 	spec.Namespace = version.Namespace
 	spec.Status = version.Status
 	spec.CreatedAt = version.CreatedAt
 	spec.CreatedBy = version.CreatedBy
 	spec.UpdatedAt = version.UpdatedAt
 	spec.UpdatedBy = version.UpdatedBy
-	spec.DelFlag = version.DelFlag
+	spec.RowVersion = version.RowVersion
+	spec.Metadata = version.Metadata
 }

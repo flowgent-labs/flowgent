@@ -23,7 +23,7 @@ const blankSkill = (): SkillDefinition => ({
   instruction: '',
   model: '',
   tools: [],
-  version: 1,
+  revision: 1,
   assets: [],
   scripts: [],
   status: 'ACTIVE',
@@ -140,7 +140,7 @@ export function SkillDefinitions() {
                 </dl>
               </button>
               <footer>
-                <code>v{skill.version || 1}</code>
+                <code>v{skill.revision}</code>
                 <IconButton
                   data-testid={`skill-delete-${skill.name}`}
                   label={t('common.delete')}
@@ -215,7 +215,7 @@ function SkillDrawer({
   return (
     <Drawer
       open={Boolean(value)}
-      title={current?.id ? `${current.name} · v${current.version}` : t('skills.new')}
+      title={current?.id ? `${current.name} · v${current.revision}` : t('skills.new')}
       onClose={onClose}
       footer={
         <>
@@ -237,6 +237,7 @@ function SkillDrawer({
         <div className="contract-warning contract-warning--info">
           <Braces size={15} />
           <span>{t('skills.revisionNotice')}</span>
+          {current?.id && <code data-testid="skill-current-revision">v{current.revision}</code>}
         </div>
         <label className="field">
           <span className="field__label">{t('common.name')}</span>
@@ -336,8 +337,8 @@ function FileUploadGroup({
       {files.length > 0 && (
         <div className="tag-row">
           {files.map((file) => (
-            <span key={file.name} title={file.content_type}>
-              <Upload size={12} /> {file.name}
+            <span key={file.id} title={`${file.media_type} · ${file.content_hash}`}>
+              <Upload size={12} /> {file.relative_path.split('/').at(-1)}
             </span>
           ))}
         </div>

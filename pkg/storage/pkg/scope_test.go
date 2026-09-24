@@ -35,19 +35,77 @@ func TestFlowgentSqlScopeForTableUsesCentralRegistry(t *testing.T) {
 		func(path FlowgentResourcePath) (guardmodel.SqlScope, error) {
 			resolvedPath = append(FlowgentResourcePath(nil), path...)
 			return guardmodel.SqlScope{
-				Where: `"agentflow_id" = ?`,
+				Where: `"name" = ?`,
 				Args:  []any{"payment-reconciliation"},
 			}, nil
 		},
 	)
 
-	scope := FlowgentSqlScopeForTable(ctx, "orh_agentflow")
+	scope := FlowgentSqlScopeForTable(ctx, "orh_flow")
 	where, args := scope.SQLiteWhere()
-	if where != `"agentflow_id" = ?` || !reflect.DeepEqual(args, []any{"payment-reconciliation"}) {
+	if where != `"name" = ?` || !reflect.DeepEqual(args, []any{"payment-reconciliation"}) {
 		t.Fatalf("scope = (%q, %#v)", where, args)
 	}
-	if len(resolvedPath) != 2 || resolvedPath[0].Kind != guardmodel.PathLiteral || resolvedPath[0].Value != "flows" || resolvedPath[1].Kind != guardmodel.PathColumn || resolvedPath[1].Value != `"agentflow_id"` {
-		t.Fatalf("resolved path = %#v, want flows/{agentflow_id}", resolvedPath)
+	if len(resolvedPath) != 2 || resolvedPath[0].Kind != guardmodel.PathLiteral || resolvedPath[0].Value != "flows" || resolvedPath[1].Kind != guardmodel.PathColumn || resolvedPath[1].Value != `"name"` {
+		t.Fatalf("resolved path = %#v, want flows/{name}", resolvedPath)
+	}
+}
+
+func TestReusableSkillScopeMatchesCanonicalAPIRoute(t *testing.T) {
+	var resolvedPath FlowgentResourcePath
+	ctx := WithFlowgentSqlScopeResolver(
+		context.Background(),
+		[]string{"skill-definitions"},
+		func(path FlowgentResourcePath) (guardmodel.SqlScope, error) {
+			resolvedPath = append(FlowgentResourcePath(nil), path...)
+			return guardmodel.SqlScope{Where: `"name" = ?`, Args: []any{"review"}}, nil
+		},
+	)
+
+	scope := FlowgentSqlScopeForTable(ctx, "llm_skill")
+	where, args := scope.SQLiteWhere()
+	if where != `"name" = ?` || !reflect.DeepEqual(args, []any{"review"}) {
+		t.Fatalf("scope = (%q, %#v)", where, args)
+	}
+	if len(resolvedPath) != 2 || resolvedPath[0].Value != "skill-definitions" || resolvedPath[1].Kind != guardmodel.PathColumn {
+		t.Fatalf("resolved path = %#v, want skill-definitions/{name}", resolvedPath)
+	}
+}
+
+func TestRuntimeSkillAndNodeRunScopesMatchCanonicalAPIRoutes(t *testing.T) {
+	tests := []struct {
+		table       string
+		requestPath []string
+		wantLiteral string
+	}{
+		{table: "orh_flow", requestPath: []string{"skills"}, wantLiteral: "skills"},
+		{table: "orh_node_run", requestPath: []string{"runs", "run-a", "node-runs"}, wantLiteral: "node-runs"},
+	}
+	for _, test := range tests {
+		t.Run(test.table, func(t *testing.T) {
+			var resolvedPath FlowgentResourcePath
+			ctx := WithFlowgentSqlScopeResolver(
+				context.Background(),
+				test.requestPath,
+				func(path FlowgentResourcePath) (guardmodel.SqlScope, error) {
+					resolvedPath = append(FlowgentResourcePath(nil), path...)
+					return guardmodel.SqlScope{Where: "1=1"}, nil
+				},
+			)
+			where, _ := FlowgentSqlScopeForTable(ctx, test.table).SQLiteWhere()
+			if where != "1=1" {
+				t.Fatalf("where = %q, want allow scope", where)
+			}
+			found := false
+			for _, segment := range resolvedPath {
+				if segment.Kind == guardmodel.PathLiteral && segment.Value == test.wantLiteral {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("resolved path = %#v, missing %q", resolvedPath, test.wantLiteral)
+			}
+		})
 	}
 }
 

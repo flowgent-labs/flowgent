@@ -26,16 +26,16 @@ SCENARIOS = {
     "42": ("Web Console — Agent CRUD and Revision", "verifier.web.s42_agent_crud"),
     "43": ("Web Console — Skill CRUD and Workspace Uploads", "verifier.web.s43_skill_crud"),
     "44": ("Web Console — MCP and LLM CRUD", "verifier.web.s44_integrations_crud"),
-    "45": ("Web Console — Knowledge and Notification CRUD", "verifier.web.s45_knowledge_notifications"),
+    "45": ("Web Console — Published Knowledge and Notification CRUD", "verifier.web.s45_knowledge_notifications"),
     "46": ("Hosted Login — OAuth Session and Business Sign-out", "verifier.web.s46_hosted_login"),
     "31": ("E2E Fixer — Seed & Trigger", "verifier.agentflow.s31_seed_trigger"),
     "32": ("E2E Fixer — Discovery & Analyze", "verifier.agentflow.s32_discovery_analyze"),
     "33": ("E2E Fixer — Remediation", "verifier.agentflow.s33_remediation"),
     "34": ("E2E Fixer — Delivery & Report", "verifier.agentflow.s34_delivery_report"),
     "35": ("PR Commits — Verify Fix Commits on Target PR", "verifier.agentflow.s35_pr_commit"),
-    "36": ("Knowledge — RAG Retrieval & Injection", "verifier.agentflow.s36_knowledge"),
+    "36": ("Knowledge — Approved Publication and Scoped Retrieval", "verifier.agentflow.s36_knowledge"),
     "37": ("Volume Workspace — Pod Mount and Git Clone Evidence", "verifier.agentflow.s37_volume_workspace"),
-    "21": ("API Server — REST CRUD + Lifecycle Events", "verifier.core.s21_apiserver"),
+    "21": ("API Server — Canonical CRUD, Revisions, Run State, and Publication", "verifier.core.s21_apiserver"),
     "22": ("Notifier — Multi-Channel Delivery", "verifier.core.s22_notifier"),
     "23": ("Controller — Application Runtime Cluster Lifecycle", "verifier.core.s23_controller"),
     "24": ("Messager — MQTT Topics + Sandbox Chain", "verifier.core.s24_messager"),
@@ -80,6 +80,8 @@ LOCAL_MQTT_PORT = int(os.getenv("FLOWGENT_E2E_MQTT_PORT", "11883"))
 LOCAL_EMQX_DASHBOARD_PORT = int(os.getenv("FLOWGENT_E2E_EMQX_DASHBOARD_PORT", "18084"))
 LOCAL_JAEGER_PORT = int(os.getenv("FLOWGENT_E2E_JAEGER_PORT", "16688"))
 LOCAL_AUTHN_PORT = int(os.getenv("FLOWGENT_E2E_AUTHN_PORT", "18082"))
+LOCAL_AUTHN_MGMT_PORT = int(os.getenv("FLOWGENT_E2E_AUTHN_MGMT_PORT", "18083"))
+LOCAL_AUTHZ_API_PORT = int(os.getenv("FLOWGENT_E2E_AUTHZ_API_PORT", "19090"))
 LOCAL_AUTHZ_MGMT_PORT = int(os.getenv("FLOWGENT_E2E_AUTHZ_MGMT_PORT", "19091"))
 LOCAL_GATEWAY_PORT = int(os.getenv("FLOWGENT_E2E_GATEWAY_PORT", "18089"))
 LOCAL_MOCK_GITHUB_PORT = int(os.getenv("FLOWGENT_E2E_MOCK_GITHUB_PORT", "18087"))

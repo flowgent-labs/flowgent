@@ -188,7 +188,7 @@ class DiscoveryAnalyzeVerifier(BaseVerifier):
 
         if tasks:
             for t in tasks:
-                nid = t.get("node_id", "?")
+                nid = c.task_node_key(t) or "?"
                 tstatus = t.get("status", "?")
                 has_output = bool(t.get("output"))
                 print(f"    {nid:<22} status={tstatus:<12} has_output={has_output}")

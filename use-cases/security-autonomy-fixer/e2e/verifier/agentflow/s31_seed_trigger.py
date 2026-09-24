@@ -51,7 +51,7 @@ class SeedTriggerVerifier(BaseVerifier):
         run_id = None
         response = session.post(
             f"{flow.API}/api/v1/{flow.NAMESPACE}/flows/{flow.FLOW_ID}/trigger",
-            json={"vars": {}},
+            json={"input": {}},
         )
         if response.status_code in (200, 201, 202):
             payload = response.json() if response.text else {}
@@ -80,7 +80,11 @@ class SeedTriggerVerifier(BaseVerifier):
             print(f"  OK webhook trigger accepted (status={response.status_code}, run_id={run_id})")
         if not run_id and connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT id FROM orh_flowrun WHERE agentflow_id=%s ORDER BY created_at DESC LIMIT 1", (flow.FLOW_ID,))
+            cursor.execute(
+                "SELECT r.id FROM orh_run r JOIN orh_flow f ON f.id=r.flow_id "
+                "WHERE f.name=%s AND r.namespace_id=%s ORDER BY r.created_at DESC LIMIT 1",
+                (flow.FLOW_ID, flow.NAMESPACE),
+            )
             row = cursor.fetchone()
             if row:
                 run_id = row[0]
@@ -89,10 +93,14 @@ class SeedTriggerVerifier(BaseVerifier):
             raise AssertionError("No run_id from trigger or PG fallback")
         if connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT id, status, agentflow_id, runtime_mode FROM orh_flowrun WHERE id=%s", (run_id,))
+            cursor.execute(
+                "SELECT r.id,r.status,f.name,r.runtime_mode FROM orh_run r "
+                "JOIN orh_flow f ON f.id=r.flow_id WHERE r.id=%s",
+                (run_id,),
+            )
             row = cursor.fetchone()
             if row:
-                print(f"  OK PG orh_flowrun: status={row[1]} flow={row[2]} runtime_mode={row[3]}")
+                print(f"  OK PG orh_run: status={row[1]} flow={row[2]} runtime_mode={row[3]}")
             else:
                 print("  WARN: run_id not yet visible in PG (may need persistence delay)")
         print(f"  OK run_id={run_id}")

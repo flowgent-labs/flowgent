@@ -26,19 +26,19 @@ KUBERNETES_IMAGE_LOADER_ENV = "FLOWGENT_E2E_KUBERNETES_IMAGE_LOADER"
 KUBERNETES_CLUSTER_ENV = "FLOWGENT_E2E_KUBERNETES_CLUSTER"
 CORE_IMAGE = "localhost/flowgent:latest"
 WEB_IMAGE = "localhost/flowgent-web:latest"
-AUTHGUARD_IMAGE = "localhost/e2e-flowgent-authguard:0.1.0"
-AUTHGUARD_WEB_IMAGE = "localhost/e2e-flowgent-authguard-web:0.1.0"
+AUTHGUARD_IMAGE = "localhost/e2e-flowgent-authguard:1.0.1"
+AUTHGUARD_WEB_IMAGE = "localhost/e2e-flowgent-authguard-web:1.0.1"
 # Match AuthGuard's current E2E template.  The source images remain
 # configurable, while Flowgent retags them to its own localhost/e2e-flowgent-
 # names before either backend consumes them, so concurrent AuthGuard E2E runs
 # cannot collide with this use case.
 AUTHGUARD_SOURCE_IMAGE = os.getenv(
     "FLOWGENT_E2E_AUTHGUARD_IMAGE",
-    "ghcr.io/wl4g/authguard:latest",
+    "ghcr.io/wl4g/authguard:1.0.1",
 )
 AUTHGUARD_WEB_SOURCE_IMAGE = os.getenv(
     "FLOWGENT_E2E_AUTHGUARD_WEB_IMAGE",
-    "ghcr.io/wl4g/authguard-web:latest",
+    "ghcr.io/wl4g/authguard-web:1.0.1",
 )
 
 
@@ -107,6 +107,8 @@ class KubernetesImageRuntime:
         core = PortForwards(context).start()
         specs = (
             (f"{context.release}-authguard-authn", config.LOCAL_AUTHN_PORT, 8082),
+            (f"{context.release}-authguard-authn", config.LOCAL_AUTHN_MGMT_PORT, 9091),
+            (f"{context.release}-authguard", config.LOCAL_AUTHZ_API_PORT, 9090),
             (f"{context.release}-authguard", config.LOCAL_AUTHZ_MGMT_PORT, 9091),
         )
         processes = [
@@ -132,6 +134,8 @@ class KubernetesImageRuntime:
             print(f"  UI and Gateway:  http://127.0.0.1:{config.LOCAL_GATEWAY_PORT}")
             print(f"  Internal API:    http://127.0.0.1:{config.LOCAL_API_PORT}")
             print(f"  AuthN:           http://127.0.0.1:{config.LOCAL_AUTHN_PORT}")
+            print(f"  AuthN management:http://127.0.0.1:{config.LOCAL_AUTHN_MGMT_PORT}")
+            print(f"  AuthZ API:       http://127.0.0.1:{config.LOCAL_AUTHZ_API_PORT}")
             print(f"  AuthZ management:http://127.0.0.1:{config.LOCAL_AUTHZ_MGMT_PORT}")
             signal.pause()
         except KeyboardInterrupt:
@@ -577,6 +581,12 @@ class KubernetesDeployer(BaseDeployer):
 
     def configure_client_environment(self) -> None:
         self.flowgent.configure()
+        from deploy.flowgent import FlowgentRuntime
+
+        FlowgentRuntime.export_notification_encryption_key(
+            self.context.namespace,
+            self.context.release,
+        )
         os.environ["FLOWGENT__STORAGE__TYPE"] = "POSTGRE"
         os.environ["FLOWGENT__STORAGE__POSTGRES__DSN"] = config.E2EConfiguration.postgres_dsn()
         os.environ["FLOWGENT__STORAGE__POSTGRES__SCHEMA"] = config.PG_SCHEMA

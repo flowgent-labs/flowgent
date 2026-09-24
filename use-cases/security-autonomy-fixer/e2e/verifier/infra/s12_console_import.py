@@ -34,7 +34,7 @@ Steps with Expected I/O:
       Input:   Import succeeded
       Output:  ≥5 agent records (supervisor, issue-detector, fixer-agent, security-reviewer, quality-reviewer, arch-reviewer, git-agent)
 
-    Step 3.2 Flows in orh_agentflow
+    Step 3.2 Flows in orh_flow + orh_flow_revision
       Action:  psql flow count scoped to the configured tenant namespace
       Input:   Flow YAMLs imported
       Output:  ≥1 flow record
@@ -44,7 +44,7 @@ Steps with Expected I/O:
       Input:   MCP YAMLs imported
       Output:  ≥2 MCP records
 
-    Step 3.4 LLM Providers in llm_providers
+    Step 3.4 LLM Providers in llm_provider
       Action:  psql provider count scoped to the configured tenant namespace
       Input:   LLM provider YAMLs imported
       Output:  ≥1 LLM provider record
@@ -54,7 +54,7 @@ Steps with Expected I/O:
       Input:   Notifier YAMLs imported
       Output:  ≥2 channel records
 
-    Step 3.6 Skills in orh_agentflow
+    Step 3.6 Runtime Skills in orh_flow + orh_flow_revision
       Action:  psql skill count scoped to the configured tenant namespace
       Input:   Skill YAMLs imported
       Output:  ≥2 skill records
@@ -197,9 +197,10 @@ class ConsoleImportVerifier(BaseVerifier):
     @staticmethod
     def _verify_security_flow_network_policy(failures):
         result = ConsoleImportVerifier._pg_query(
-            "SELECT definition::text FROM orh_agentflow "
-            f"WHERE namespace_id='{NAMESPACE}' AND agentflow_id='security-autonomy-fixer' "
-            "AND del_flag=false ORDER BY version DESC LIMIT 1;"
+            "SELECT r.definition::text FROM orh_flow f "
+            "JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+            f"WHERE f.namespace_id='{NAMESPACE}' AND f.name='security-autonomy-fixer' "
+            "AND f.status<>'DELETED' LIMIT 1;"
         )
         if result.returncode != 0:
             stderr_short = result.stderr[:200].strip()
@@ -332,7 +333,7 @@ class ConsoleImportVerifier(BaseVerifier):
         print("\n── L3: Database Verification ──")
 
         # ── L3.1: Agents ─────────────────────────────────────────
-        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED';")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.1] llm_agent: {count} records (min expected: {MIN_AGENTS})")
@@ -342,7 +343,7 @@ class ConsoleImportVerifier(BaseVerifier):
                 print(f"  [3.1] WARN: Expected ≥{MIN_AGENTS} agents, found {count}")
                 failures.append(f"expected >={MIN_AGENTS} agents, found {count}")
                 # List agent names for diagnosis
-                result2 = ConsoleImportVerifier._pg_query(f"SELECT name FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
+                result2 = ConsoleImportVerifier._pg_query(f"SELECT name FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED' ORDER BY name;")
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        Agent: {line.strip()}")
@@ -353,31 +354,33 @@ class ConsoleImportVerifier(BaseVerifier):
 
         # ── L3.2: Flows ──────────────────────────────────────────
         result = ConsoleImportVerifier._pg_query(
-            f"SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
-            "AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow';"
+            "SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+            f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
+            "AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'flow')='flow';"
         )
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
-            print(f"  [3.2] orh_agentflow (flows): {count} records (min expected: {MIN_FLOWS})")
+            print(f"  [3.2] orh_flow (flows): {count} records (min expected: {MIN_FLOWS})")
             if count >= MIN_FLOWS:
                 print(f"  [3.2] Flows OK")
             else:
                 print(f"  [3.2] WARN: Expected ≥{MIN_FLOWS} flows, found {count}")
                 failures.append(f"expected >={MIN_FLOWS} flows, found {count}")
                 result2 = ConsoleImportVerifier._pg_query(
-                    f"SELECT agentflow_id FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
-                    "AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow' ORDER BY agentflow_id;"
+                    "SELECT f.name FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+                    f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
+                    "AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'flow')='flow' ORDER BY f.name;"
                 )
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        Flow: {line.strip()}")
         else:
             stderr_short = result.stderr[:200].strip()
-            print(f"  [3.2] WARN: Could not query orh_agentflow: {stderr_short}")
-            failures.append(f"could not query orh_agentflow: {stderr_short}")
+            print(f"  [3.2] WARN: Could not query orh_flow: {stderr_short}")
+            failures.append(f"could not query orh_flow: {stderr_short}")
 
         # ── L3.3: MCPs ───────────────────────────────────────────
-        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED';")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.3] llm_mcp: {count} records (min expected: {MIN_MCPS})")
@@ -386,7 +389,7 @@ class ConsoleImportVerifier(BaseVerifier):
             else:
                 print(f"  [3.3] WARN: Expected ≥{MIN_MCPS} MCPs, found {count}")
                 failures.append(f"expected >={MIN_MCPS} MCPs, found {count}")
-                result2 = ConsoleImportVerifier._pg_query(f"SELECT name FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
+                result2 = ConsoleImportVerifier._pg_query(f"SELECT name FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED' ORDER BY name;")
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        MCP: {line.strip()}")
@@ -396,10 +399,10 @@ class ConsoleImportVerifier(BaseVerifier):
             failures.append(f"could not query llm_mcp: {stderr_short}")
 
         # ── L3.4: LLM Providers ──────────────────────────────────
-        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM llm_providers WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM llm_provider WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED';")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
-            print(f"  [3.4] llm_providers: {count} records (min expected: {MIN_LLM_PROVIDERS})")
+            print(f"  [3.4] llm_provider: {count} records (min expected: {MIN_LLM_PROVIDERS})")
             if count >= MIN_LLM_PROVIDERS:
                 print(f"  [3.4] LLM Providers OK")
             else:
@@ -407,11 +410,11 @@ class ConsoleImportVerifier(BaseVerifier):
                 failures.append(f"expected >={MIN_LLM_PROVIDERS} LLM providers, found {count}")
         else:
             stderr_short = result.stderr[:200].strip()
-            print(f"  [3.4] WARN: Could not query llm_providers: {stderr_short}")
-            failures.append(f"could not query llm_providers: {stderr_short}")
+            print(f"  [3.4] WARN: Could not query llm_provider: {stderr_short}")
+            failures.append(f"could not query llm_provider: {stderr_short}")
 
         # ── L3.5: Notify Channels ────────────────────────────────
-        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false;")
+        result = ConsoleImportVerifier._pg_query(f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED';")
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(f"  [3.5] nfy_channel: {count} records (min expected: {MIN_NOTIFIERS})")
@@ -420,7 +423,7 @@ class ConsoleImportVerifier(BaseVerifier):
             else:
                 print(f"  [3.5] WARN: Expected ≥{MIN_NOTIFIERS} channels, found {count}")
                 failures.append(f"expected >={MIN_NOTIFIERS} notify channels, found {count}")
-                result2 = ConsoleImportVerifier._pg_query(f"SELECT name FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false ORDER BY name;")
+                result2 = ConsoleImportVerifier._pg_query(f"SELECT name FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED' ORDER BY name;")
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        Channel: {line.strip()}")
@@ -431,28 +434,30 @@ class ConsoleImportVerifier(BaseVerifier):
 
         # ── L3.6: Skills ─────────────────────────────────────────
         result = ConsoleImportVerifier._pg_query(
-            f"SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
-            "AND lower(definition::jsonb->>'kind')='skill';"
+            "SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+            f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
+            "AND lower(r.definition->>'kind')='skill';"
         )
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
-            print(f"  [3.6] orh_agentflow (skills): {count} records (min expected: {MIN_SKILLS})")
+            print(f"  [3.6] orh_flow (runtime skills): {count} records (min expected: {MIN_SKILLS})")
             if count >= MIN_SKILLS:
                 print("  [3.6] Skills OK")
             else:
                 print(f"  [3.6] WARN: Expected ≥{MIN_SKILLS} skills, found {count}")
                 failures.append(f"expected >={MIN_SKILLS} skills, found {count}")
                 result2 = ConsoleImportVerifier._pg_query(
-                    f"SELECT agentflow_id FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false "
-                    "AND lower(definition::jsonb->>'kind')='skill' ORDER BY agentflow_id;"
+                    "SELECT f.name FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+                    f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
+                    "AND lower(r.definition->>'kind')='skill' ORDER BY f.name;"
                 )
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
                         print(f"        Skill: {line.strip()}")
         else:
             stderr_short = result.stderr[:200].strip()
-            print(f"  [3.6] WARN: Could not query orh_agentflow for skills: {stderr_short}")
-            failures.append(f"could not query orh_agentflow for skills: {stderr_short}")
+            print(f"  [3.6] WARN: Could not query orh_flow for skills: {stderr_short}")
+            failures.append(f"could not query orh_flow for skills: {stderr_short}")
 
         # ── L3.7: Flow spec network policy ───────────────────────
         ConsoleImportVerifier._verify_security_flow_network_policy(failures)
@@ -463,12 +468,12 @@ class ConsoleImportVerifier(BaseVerifier):
         # ── L3.9: Cross-table summary ────────────────────────────
         print("\n  ── Resource Inventory ──")
         inventory_queries = {
-            "Agents":      f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND del_flag=false",
-            "Flows":       f"SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false AND COALESCE(NULLIF(lower(definition::jsonb->>'kind'), ''), 'flow')='flow'",
-            "MCPs":        f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND del_flag=false",
-            "LLM Providers": f"SELECT COUNT(*) FROM llm_providers WHERE namespace_id='{NAMESPACE}' AND del_flag=false",
-            "Channels":    f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND del_flag=false",
-            "Skills":      f"SELECT COUNT(*) FROM orh_agentflow WHERE namespace_id='{NAMESPACE}' AND del_flag=false AND lower(definition::jsonb->>'kind')='skill'",
+            "Agents":      f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
+            "Flows":       f"SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'flow')='flow'",
+            "MCPs":        f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
+            "LLM Providers": f"SELECT COUNT(*) FROM llm_provider WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
+            "Channels":    f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
+            "Skills":      f"SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' AND lower(r.definition->>'kind')='skill'",
         }
         all_ok = True
         for label, query in inventory_queries.items():

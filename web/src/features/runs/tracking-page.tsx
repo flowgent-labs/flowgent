@@ -168,7 +168,7 @@ export function TrackingPage() {
                       <strong>{span.operation_name}</strong>
                       <small>
                         {attempt
-                          ? `${attempt.node_id} #${attempt.sequence} · ${span.service_name}`
+                          ? `${attempt.node_key} #${attempt.attempt} · ${span.service_name}`
                           : span.service_name}
                       </small>
                     </span>
@@ -198,7 +198,7 @@ export function TrackingPage() {
                 <div className="span-attempt-link">
                   <span>{t('runs.correlatedAttempt')}</span>
                   <code>
-                    {activeAttempt.node_id} #{activeAttempt.sequence}
+                    {activeAttempt.node_key} #{activeAttempt.attempt}
                   </code>
                 </div>
               )}

@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
@@ -19,7 +20,8 @@ func NewSQLiteConn(ctx context.Context, dir string) *sql.DB {
 		panic(fmt.Sprintf("sqlite dir: %v", err))
 	}
 	dbPath := filepath.Join(dir, "flowgent.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+
+		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=recursive_triggers(0)")
 	if err != nil {
 		panic(fmt.Sprintf("sqlite open: %v", err))
 	}
@@ -49,7 +51,7 @@ func (s *SQLiteGenericStore[T]) Get(ctx context.Context, id string) (*T, error) 
 	scopeWhere, scopeArgs := s.SqlScope(ctx).sqliteWhere()
 	args := append([]any{id}, scopeArgs...)
 	row := s.Conn.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT %s FROM %s WHERE %s=?1 AND del_flag=0 AND (%s) LIMIT 1", cols, s.Table, s.IDCol, scopeWhere), args...)
+		fmt.Sprintf("SELECT %s FROM %s WHERE %s=?1 AND status<>'DELETED' AND (%s) LIMIT 1", cols, s.Table, s.IDCol, scopeWhere), args...)
 	var entity T
 	if err := utils.ScanStruct(row, &entity); err != nil {
 		return nil, fmt.Errorf("%s: %w", s.Table, err)
@@ -64,7 +66,7 @@ func (s *SQLiteGenericStore[T]) GetScoped(ctx context.Context, namespace, id str
 	scopeWhere, scopeArgs := s.SqlScope(ctx).sqliteWhere()
 	args := append([]any{namespace, id}, scopeArgs...)
 	row := s.Conn.QueryRowContext(ctx, fmt.Sprintf(
-		"SELECT %s FROM %s WHERE namespace_id=?1 AND %s=?2 AND del_flag=0 AND (%s) LIMIT 1",
+		"SELECT %s FROM %s WHERE namespace_id=?1 AND %s=?2 AND status<>'DELETED' AND (%s) LIMIT 1",
 		utils.Columns[T](), s.Table, s.IDCol, scopeWhere), args...)
 	entity := new(T)
 	if err := utils.ScanStruct(row, entity); err != nil {
@@ -88,14 +90,14 @@ func (s *SQLiteGenericStore[T]) Select(ctx context.Context, req entities.PageReq
 	var total int64
 	scopeWhere, scopeArgs := s.SqlScope(ctx).sqliteWhere()
 	if err := s.Conn.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE del_flag=0 AND (%s)", s.Table, scopeWhere), scopeArgs...).Scan(&total); err != nil {
+		fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE status<>'DELETED' AND (%s)", s.Table, scopeWhere), scopeArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 	offset := (req.Page - 1) * req.Size
 
 	queryArgs := append(append([]any(nil), scopeArgs...), req.Size, offset)
 	rows, err := s.Conn.QueryContext(ctx,
-		fmt.Sprintf("SELECT %s FROM %s WHERE del_flag=0 AND (%s) ORDER BY created_at DESC LIMIT ? OFFSET ?", cols, s.Table, scopeWhere), queryArgs...)
+		fmt.Sprintf("SELECT %s FROM %s WHERE status<>'DELETED' AND (%s) ORDER BY created_at DESC LIMIT ? OFFSET ?", cols, s.Table, scopeWhere), queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -125,12 +127,12 @@ func (s *SQLiteGenericStore[T]) SelectScoped(ctx context.Context, namespace stri
 	scopeWhere, scopeArgs := s.SqlScope(ctx).sqliteWhere()
 	countArgs := append([]any{namespace}, scopeArgs...)
 	if err := s.Conn.QueryRowContext(ctx, fmt.Sprintf(
-		"SELECT COUNT(1) FROM %s WHERE namespace_id=?1 AND del_flag=0 AND (%s)", s.Table, scopeWhere), countArgs...).Scan(&total); err != nil {
+		"SELECT COUNT(1) FROM %s WHERE namespace_id=?1 AND status<>'DELETED' AND (%s)", s.Table, scopeWhere), countArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 	queryArgs := append(countArgs, req.Size, (req.Page-1)*req.Size)
 	rows, err := s.Conn.QueryContext(ctx, fmt.Sprintf(
-		"SELECT %s FROM %s WHERE namespace_id=?1 AND del_flag=0 AND (%s) ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT %s FROM %s WHERE namespace_id=?1 AND status<>'DELETED' AND (%s) ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		utils.Columns[T](), s.Table, scopeWhere), queryArgs...)
 	if err != nil {
 		return nil, err
@@ -219,7 +221,7 @@ func (s *SQLiteGenericStore[T]) Delete(ctx context.Context, id string) error {
 	scopeWhere, scopeArgs := s.SqlScope(ctx).sqliteWhere()
 	args := append([]any{id}, scopeArgs...)
 	_, err := s.Conn.ExecContext(ctx,
-		fmt.Sprintf("UPDATE %s SET del_flag=1, status='DELETED', updated_at=CURRENT_TIMESTAMP WHERE %s=?1 AND (%s)", s.Table, s.IDCol, scopeWhere), args...)
+		fmt.Sprintf("UPDATE %s SET status='DELETED', updated_at=CURRENT_TIMESTAMP WHERE %s=?1 AND (%s)", s.Table, s.IDCol, scopeWhere), args...)
 	return err
 }
 
@@ -230,7 +232,7 @@ func (s *SQLiteGenericStore[T]) DeleteScoped(ctx context.Context, namespace, id 
 	scopeWhere, scopeArgs := s.SqlScope(ctx).sqliteWhere()
 	args := append([]any{namespace, id}, scopeArgs...)
 	_, err := s.Conn.ExecContext(ctx, fmt.Sprintf(
-		"UPDATE %s SET del_flag=1,status='DELETED',updated_at=CURRENT_TIMESTAMP WHERE namespace_id=?1 AND %s=?2 AND del_flag=0 AND (%s)",
+		"UPDATE %s SET status='DELETED',updated_at=CURRENT_TIMESTAMP WHERE namespace_id=?1 AND %s=?2 AND status<>'DELETED' AND (%s)",
 		s.Table, s.IDCol, scopeWhere), args...)
 	return err
 }

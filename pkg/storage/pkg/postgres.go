@@ -21,8 +21,16 @@ func NewPostgresPool(ctx context.Context, dsn, schema string) *pgxpool.Pool {
 		schema = "public"
 	}
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	searchPath := quotedSchema
+	if schema != "public" {
+		// PostgreSQL extensions are database-scoped and are conventionally
+		// installed in public. Keep the tenant schema first for application
+		// objects while retaining access to extension types and operators such
+		// as pgvector's vector/halfvec.
+		searchPath += ", public"
+	}
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		_, err := conn.Exec(ctx, "SET search_path TO "+quotedSchema)
+		_, err := conn.Exec(ctx, "SET search_path TO "+searchPath)
 		return err
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -53,7 +61,7 @@ func (s *PostgresGenericStore[T]) Get(ctx context.Context, id string) (*T, error
 	scopeWhere, scopeArgs := s.SqlScope(ctx).postgresWhere(2)
 	args := append([]any{id}, scopeArgs...)
 	rows, err := s.Pool.Query(ctx,
-		fmt.Sprintf(`SELECT %s FROM %s WHERE "%s"=$1 AND "del_flag"=false AND (%s) LIMIT 1`, cols, s.Table, s.IDCol, scopeWhere), args...)
+		fmt.Sprintf(`SELECT %s FROM %s WHERE "%s"=$1 AND "status"<>'DELETED' AND (%s) LIMIT 1`, cols, s.Table, s.IDCol, scopeWhere), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +83,7 @@ func (s *PostgresGenericStore[T]) GetScoped(ctx context.Context, namespace, id s
 	scopeWhere, scopeArgs := s.SqlScope(ctx).postgresWhere(3)
 	args := append([]any{namespace, id}, scopeArgs...)
 	row := s.Pool.QueryRow(ctx, fmt.Sprintf(
-		`SELECT %s FROM %s WHERE "namespace_id"=$1 AND "%s"=$2 AND "del_flag"=false AND (%s) LIMIT 1`,
+		`SELECT %s FROM %s WHERE "namespace_id"=$1 AND "%s"=$2 AND "status"<>'DELETED' AND (%s) LIMIT 1`,
 		utils.Columns[T](), s.Table, s.IDCol, scopeWhere), args...)
 	entity := new(T)
 	if err := utils.ScanStruct(row, entity); err != nil {
@@ -99,7 +107,7 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, req entities.PageR
 	var total int64
 	scopeWhere, scopeArgs := s.SqlScope(ctx).postgresWhere(1)
 	if err := s.Pool.QueryRow(ctx,
-		fmt.Sprintf(`SELECT COUNT(1) FROM %s WHERE "del_flag"=false AND (%s)`, s.Table, scopeWhere), scopeArgs...).Scan(&total); err != nil {
+		fmt.Sprintf(`SELECT COUNT(1) FROM %s WHERE "status"<>'DELETED' AND (%s)`, s.Table, scopeWhere), scopeArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 	offset := (req.Page - 1) * req.Size
@@ -107,7 +115,7 @@ func (s *PostgresGenericStore[T]) Select(ctx context.Context, req entities.PageR
 	limitParameter := len(scopeArgs) + 1
 	queryArgs := append(append([]any(nil), scopeArgs...), req.Size, offset)
 	rows, err := s.Pool.Query(ctx, fmt.Sprintf(
-		`SELECT %s FROM %s WHERE "del_flag"=false AND (%s) ORDER BY "created_at" DESC LIMIT $%d OFFSET $%d`,
+		`SELECT %s FROM %s WHERE "status"<>'DELETED' AND (%s) ORDER BY "created_at" DESC LIMIT $%d OFFSET $%d`,
 		cols, s.Table, scopeWhere, limitParameter, limitParameter+1), queryArgs...)
 	if err != nil {
 		return nil, err
@@ -138,13 +146,13 @@ func (s *PostgresGenericStore[T]) SelectScoped(ctx context.Context, namespace st
 	scopeWhere, scopeArgs := s.SqlScope(ctx).postgresWhere(2)
 	countArgs := append([]any{namespace}, scopeArgs...)
 	if err := s.Pool.QueryRow(ctx, fmt.Sprintf(
-		`SELECT COUNT(1) FROM %s WHERE "namespace_id"=$1 AND "del_flag"=false AND (%s)`, s.Table, scopeWhere), countArgs...).Scan(&total); err != nil {
+		`SELECT COUNT(1) FROM %s WHERE "namespace_id"=$1 AND "status"<>'DELETED' AND (%s)`, s.Table, scopeWhere), countArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 	limitParameter := len(countArgs) + 1
 	queryArgs := append(countArgs, req.Size, (req.Page-1)*req.Size)
 	rows, err := s.Pool.Query(ctx, fmt.Sprintf(
-		`SELECT %s FROM %s WHERE "namespace_id"=$1 AND "del_flag"=false AND (%s) ORDER BY "created_at" DESC LIMIT $%d OFFSET $%d`,
+		`SELECT %s FROM %s WHERE "namespace_id"=$1 AND "status"<>'DELETED' AND (%s) ORDER BY "created_at" DESC LIMIT $%d OFFSET $%d`,
 		utils.Columns[T](), s.Table, scopeWhere, limitParameter, limitParameter+1), queryArgs...)
 	if err != nil {
 		return nil, err
@@ -234,7 +242,7 @@ func (s *PostgresGenericStore[T]) Delete(ctx context.Context, id string) error {
 	scopeWhere, scopeArgs := s.SqlScope(ctx).postgresWhere(2)
 	args := append([]any{id}, scopeArgs...)
 	_, err := s.Pool.Exec(ctx,
-		fmt.Sprintf(`UPDATE %s SET "del_flag"=true, "status"='DELETED', "updated_at"=NOW() WHERE "%s"=$1 AND (%s)`, s.Table, s.IDCol, scopeWhere), args...)
+		fmt.Sprintf(`UPDATE %s SET "status"='DELETED', "updated_at"=NOW() WHERE "%s"=$1 AND (%s)`, s.Table, s.IDCol, scopeWhere), args...)
 	return err
 }
 
@@ -245,8 +253,8 @@ func (s *PostgresGenericStore[T]) DeleteScoped(ctx context.Context, namespace, i
 	scopeWhere, scopeArgs := s.SqlScope(ctx).postgresWhere(3)
 	args := append([]any{namespace, id}, scopeArgs...)
 	_, err := s.Pool.Exec(ctx, fmt.Sprintf(
-		`UPDATE %s SET "del_flag"=true,"status"='DELETED',"updated_at"=NOW()
-		 WHERE "namespace_id"=$1 AND "%s"=$2 AND "del_flag"=false AND (%s)`, s.Table, s.IDCol, scopeWhere), args...)
+		`UPDATE %s SET "status"='DELETED',"updated_at"=NOW()
+		 WHERE "namespace_id"=$1 AND "%s"=$2 AND "status"<>'DELETED' AND (%s)`, s.Table, s.IDCol, scopeWhere), args...)
 	return err
 }
 

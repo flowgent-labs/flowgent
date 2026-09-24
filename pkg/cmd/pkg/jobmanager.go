@@ -188,10 +188,10 @@ func startJobManager(cfgPath string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flows, jobmanager.RunPollerConfig{
-		K8sNamespace:   runtimeNamespace,
-		AgentFlowID:    agentFlowID,
-		AgentFlowRunID: agentFlowRunID,
-		RuntimeMode:    runtimeMode,
+		RuntimeNamespace: runtimeNamespace,
+		AgentFlowID:      agentFlowID,
+		AgentFlowRunID:   agentFlowRunID,
+		RuntimeMode:      runtimeMode,
 	})
 	slog.Info("JobManager started",
 		"scheduler", rm.Provider(),

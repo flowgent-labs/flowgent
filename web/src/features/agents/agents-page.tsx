@@ -160,7 +160,7 @@ export function AgentsPage() {
               </button>
               <footer>
                 <div className="tag-row">
-                  <span data-testid={`agent-version-${agent.name}`}>v{agent.version || 1}</span>
+                  <span data-testid={`agent-version-${agent.name}`}>v{agent.revision}</span>
                   {Object.entries(agent.labels ?? {}).map(([key, value]) => (
                     <span key={key}>
                       {key}:{value}
@@ -244,7 +244,7 @@ function AgentDrawer({
         temperature: values.temperature,
         max_tokens: values.max_tokens,
         output_schema: outputSchema,
-        version: agent?.version ?? 1,
+        revision: agent?.revision ?? 1,
         labels: agent?.labels ?? {},
       },
       isNew,

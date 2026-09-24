@@ -10,10 +10,11 @@ metadata:
   description: DeepSeek LLM API provider — used by all AI agents in the security-autonomy-fixer pipeline
 
 data:
-  provider: OPENAI
-  endpoint: https://api.deepseek.com/v1
+  name: deepseek
+  type: openai
+  base_uri: https://api.deepseek.com/v1
   api_key_env: DEEPSEEK_API_KEY_FLOWGENT
-  defaultModel: deepseek-chat
+  default_model: deepseek-chat
   timeout: 120s
   models:
     - name: deepseek-chat

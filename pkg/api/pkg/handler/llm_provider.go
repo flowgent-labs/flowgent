@@ -30,7 +30,7 @@ func publicLlmProvider(p *entities.LlmProviderInfo) *entities.LlmProviderInfo {
 	}
 	result := *p
 	result.Enabled = result.Status == "ACTIVE"
-	result.KeyConfigured = strings.TrimSpace(result.ApiKey) != ""
+	result.KeyConfigured = strings.TrimSpace(result.ApiKey) != "" || strings.TrimSpace(result.CredentialRef) != ""
 	if envName, ok := secretref.EnvName(result.ApiKey); ok {
 		result.ApiKeyEnv = envName
 	}
@@ -77,6 +77,7 @@ func normalizeLlmSecret(p *entities.LlmProviderInfo) error {
 }
 
 func normalizeLlmIdentity(p *entities.LlmProviderInfo) error {
+	p.NormalizeAliases()
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" {
 		p.Name = strings.TrimSpace(p.Provider)
@@ -94,6 +95,10 @@ func normalizeLlmIdentity(p *entities.LlmProviderInfo) error {
 	// The runtime has historically used Provider as a lookup alias. Preserve
 	// that contract while storing the protocol separately in Type.
 	p.Provider = p.Name
+	p.Endpoint = p.BaseURI
+	if strings.TrimSpace(p.BaseURI) == "" {
+		return fmt.Errorf("base_uri is required")
+	}
 	return nil
 }
 
@@ -177,6 +182,8 @@ func (h *LlmProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	p.CreatedAt = time.Now()
 	p.UpdatedAt = time.Now()
+	p.CreatedBy = authenticatedUserID(r.Context())
+	p.UpdatedBy = p.CreatedBy
 	if err := h.store.Save(r.Context(), &p); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -250,7 +257,7 @@ func (h *LlmProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 	updates.Namespace = namespace
 	updates.CreatedAt = existing.CreatedAt
 	updates.CreatedBy = existing.CreatedBy
-	updates.DelFlag = existing.DelFlag
+	updates.RowVersion = existing.RowVersion
 	if updates.Status == "" {
 		if updates.Enabled {
 			updates.Status = "ACTIVE"
@@ -259,6 +266,7 @@ func (h *LlmProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	updates.UpdatedAt = time.Now()
+	updates.UpdatedBy = authenticatedUserID(r.Context())
 	if err := h.store.Save(r.Context(), &updates); err != nil {
 		http.Error(w, err.Error(), 500)
 		return

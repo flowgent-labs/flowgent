@@ -107,7 +107,14 @@ class OtelVerifier(BaseVerifier):
                 agent_def = OtelVerifier._unwrap_k8s(yaml.safe_load(f))
             name = agent_def.get("name")
             if name:
-                OtelVerifier._get_or_post(f"/api/v1/{NAMESPACE}/agents/{name}", f"/api/v1/{NAMESPACE}/agents", agent_def, "agent")
+                path = f"/api/v1/{NAMESPACE}/agents/{name}"
+                existing = FLOWGENT_SESSION.get(f"{API_BASE}{path}")
+                if existing.status_code == 200:
+                    updated = FLOWGENT_SESSION.put(f"{API_BASE}{path}", json=agent_def)
+                    if updated.status_code not in (200, 204):
+                        print(f"  WARN: failed to update agent {name}: {updated.status_code} {updated.text[:160]}")
+                else:
+                    OtelVerifier._get_or_post(path, f"/api/v1/{NAMESPACE}/agents", agent_def, "agent")
 
         if not os.environ.get("GITHUB_TOKEN") and os.environ.get("GH_TOKEN"):
             os.environ["GITHUB_TOKEN"] = os.environ["GH_TOKEN"]
@@ -315,7 +322,7 @@ class OtelVerifier(BaseVerifier):
         print("  -> Triggering security-autonomy-fixer flow...")
         url = f"{API_BASE}/api/v1/{NAMESPACE}/flows/security-autonomy-fixer/trigger"
         payload = {
-            "vars": {
+            "input": {
                 "repo": "rengine",
                 "max_iterations": 1,
             }

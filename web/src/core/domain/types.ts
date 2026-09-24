@@ -7,7 +7,8 @@ export interface BaseEntity {
   created_by?: string
   updated_at: string
   updated_by?: string
-  del_flag?: boolean
+  row_version?: number
+  metadata?: Record<string, unknown>
 }
 
 export interface Page<T> {
@@ -97,6 +98,9 @@ export interface RuntimeResources {
 }
 
 export interface Flow extends BaseEntity {
+  name: string
+  revision: number
+  summarize_enabled: boolean
   kind: string
   summary?: string
   input_schema?: Record<string, unknown>
@@ -110,7 +114,6 @@ export interface Flow extends BaseEntity {
   resources?: RuntimeResources
   k8s_namespace?: string
   labels?: Record<string, string>
-  version?: number
 }
 
 export type RunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | 'CANCELLED'
@@ -118,12 +121,17 @@ export type TaskStatus =
   'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'WAITING_HUMAN' | 'SKIPPED' | 'RETRYING'
 
 export interface FlowRun extends BaseEntity {
-  agentflow_id: string
-  version: number
+  flow_id: string
+  flow_name: string
+  flow_revision_id: string
+  flow_revision: number
   status: RunStatus
-  vars: Record<string, unknown>
+  input: Record<string, unknown>
   output: Record<string, unknown>
   error: string
+  run_instruction?: string
+  summarize_enabled: boolean
+  context_snapshot: Record<string, unknown>
   trigger_type?: string
   trigger_source?: string
   trigger_payload?: Record<string, unknown>
@@ -135,30 +143,44 @@ export interface FlowRun extends BaseEntity {
 }
 
 export interface TaskRun extends BaseEntity {
-  agentflow_run_id: string
-  node_id: string
+  run_id: string
+  node_key: string
+  attempt: number
+  agent_revision_id?: string
   status: TaskStatus
   input: Record<string, unknown>
   output: Record<string, unknown>
   error: string
-  retry_count: number
   max_retries: number
-  exec_id: string
-  parent_task_run_id: string
+  execution_id: string
+  parent_node_run_id?: string
   sequence: number
+  execution_memory?: Record<string, unknown>
+  checkpoint?: Record<string, unknown>
+  workspace_version?: string
+  lease_owner?: string
+  lease_expires_at?: string | null
+  fencing_token: number
+  last_heartbeat_at?: string | null
   started_at?: string | null
   finished_at?: string | null
 }
 
 export interface HumanApproval extends BaseEntity {
-  task_run_id: string
-  agentflow_run_id: string
-  token: string
-  status: 'PENDING' | 'APPROVED' | 'REJECTED'
-  approved?: boolean | null
-  comment?: string
+  run_id?: string
+  node_run_id?: string
+  type: 'human_gate' | 'tool_call' | 'payment' | 'knowledge_publish' | 'instruction_publish'
+  subject_type: string
+  subject_id: string
+  request: Record<string, unknown>
+  request_hash: string
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled'
+  decision?: Record<string, unknown>
+  decided_by?: string
+  decided_at?: string | null
   expires_at?: string | null
-  resolved_at?: string | null
+  consumed_at?: string | null
+  idempotency_key: string
 }
 
 export interface TraceEvent {
@@ -205,7 +227,7 @@ export interface Agent extends BaseEntity {
   instruction: string
   input_schema?: Record<string, unknown>
   output_schema?: Record<string, unknown>
-  version: number
+  revision: number
   temperature?: number
   max_tokens?: number
   labels?: Record<string, string>
@@ -221,13 +243,13 @@ export interface KnowledgeEntry extends BaseEntity {
   metadata: Record<string, unknown>
 }
 
-export type MemoryScope = 'run' | 'flow' | 'share'
+export type MemoryScope = 'namespace' | 'flow' | 'run'
 
 export interface McpServer extends BaseEntity {
   name: string
   enabled: boolean
-  type: string
-  url?: string
+  transport: 'http'
+  rpc_url: string
   header_refs?: Record<string, string>
   command?: string[]
   args?: string[]
@@ -246,14 +268,13 @@ export interface LlmModel {
 export interface LlmProvider extends BaseEntity {
   name: string
   type: 'openai' | 'anthropic' | 'gemini'
-  provider: string
   enabled: boolean
   timeout?: string
   timeout_ms?: number
-  endpoint: string
+  base_uri: string
   proxy?: string
   rate_limit?: number
-  defaultModel: string
+  default_model: string
   models: LlmModel[]
   api_key_env?: string
   key_configured?: boolean
@@ -262,9 +283,15 @@ export interface LlmProvider extends BaseEntity {
 }
 
 export interface SkillFile {
-  name: string
-  content_type: string
-  size: number
+  id: string
+  kind: 'asset' | 'script'
+  relative_path: string
+  media_type: string
+  size_bytes: number
+  content_hash: string
+  created_at: string
+  created_by?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface SkillDefinition extends BaseEntity {
@@ -274,7 +301,7 @@ export interface SkillDefinition extends BaseEntity {
   temperature?: number
   max_tokens?: number
   tools?: string[]
-  version: number
+  revision: number
   assets: SkillFile[]
   scripts: SkillFile[]
 }

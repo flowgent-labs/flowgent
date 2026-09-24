@@ -8,7 +8,7 @@ metadata:
   description: Senior autonomous orchestration controller that plans, routs, and supervises the security fix pipeline
 
 data:
-  model: OPENAI/deepseek-chat
+  model: deepseek/deepseek-chat
   max_tokens: 16384
   temperature: 0.2
   soul: |-

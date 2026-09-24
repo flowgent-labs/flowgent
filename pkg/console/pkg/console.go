@@ -3,10 +3,13 @@ package console
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/storage/pkg/agent"
 	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
@@ -21,9 +24,11 @@ import (
 // channels, skills, and runs). Wallet keys are owned by the external Wallet
 // service and are managed with walletd, outside the Flowgent process.
 type FlowgentConsole struct {
-	store     storage.IStorage
-	namespace string
-	ctx       context.Context
+	store           storage.IStorage
+	namespace       string
+	ctx             context.Context
+	secretCipher    secretbox.ISecretCipher
+	secretCipherErr error
 }
 
 // lazyStores holds lazily-initialized per-entity stores.
@@ -44,12 +49,32 @@ func NewFlowgentConsole(cfg *config.FlowgentConfig) (*FlowgentConsole, error) {
 		store: storeImpl,
 		ctx:   context.Background(),
 	}
+	if encryption := cfg.Notifier.SecretEncryption; encryption.Provider != "" {
+		if encryption.Provider != "aesgcm" {
+			fc.secretCipherErr = fmt.Errorf("notification secret encryption provider must be aesgcm")
+		} else {
+			fc.secretCipher, fc.secretCipherErr = secretbox.NewAESGCMSecretCipher(
+				encryption.ActiveKeyID,
+				encryption.Keys,
+			)
+		}
+	}
 
 	if cfg.Runtime.Namespace.DefaultNamespace != "" {
 		fc.namespace = cfg.Runtime.Namespace.DefaultNamespace
 	}
 
 	return fc, nil
+}
+
+func (fc *FlowgentConsole) protectChannelSecrets(ch *entities.NotifyChannelInfo) error {
+	if fc.secretCipherErr != nil {
+		return fmt.Errorf("notification secret encryption is unavailable: %w", fc.secretCipherErr)
+	}
+	if fc.secretCipher == nil {
+		return fmt.Errorf("notification secret encryption is not configured")
+	}
+	return ch.ProtectSecrets(fc.ctx, fc.secretCipher)
 }
 
 // SetNamespace sets the active namespace.

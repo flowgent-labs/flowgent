@@ -8,6 +8,7 @@ import uuid
 from playwright.sync_api import expect
 
 from common.model import RunContext, VerificationResult
+from common.project import FlowgentE2EProject
 from verifier import BaseVerifier
 from verifier.web.browser import BrowserConsoleVerifier
 
@@ -59,9 +60,9 @@ class SkillCrudVerifier(BrowserConsoleVerifier, BaseVerifier):
         response = request.value
         if not response.ok:
             raise AssertionError(f"Skill create returned HTTP {response.status}: {response.text()[:400]}")
+        self.created = True
         self.screenshot("UI-01-request", "browser submitted reusable Skill definition")
         expect(page.get_by_test_id(f"skill-card-{self.original_name}")).to_have_count(1, timeout=20_000)
-        self.created = True
         self.screenshot("UI-01", "browser created reusable Skill definition")
         self.details.append(f"Created reusable Skill {self.original_name} through the console.")
 
@@ -82,10 +83,13 @@ class SkillCrudVerifier(BrowserConsoleVerifier, BaseVerifier):
         page.get_by_test_id(f"skill-card-{self.name}").locator("button").first.click()
         page.get_by_test_id("skill-asset-file").set_input_files(str(FIXTURES / "skill-knowledge.txt"))
         expect(page.get_by_text("skill-knowledge.txt", exact=True)).to_be_visible(timeout=20_000)
+        expect(page.get_by_test_id("skill-current-revision")).to_have_text("v3")
         page.get_by_test_id("skill-script-file").set_input_files(str(FIXTURES / "skill-helper.sh"))
         expect(page.get_by_text("skill-helper.sh", exact=True)).to_be_visible(timeout=20_000)
+        expect(page.get_by_test_id("skill-current-revision")).to_have_text("v4")
+        self._assert_revision_files()
         self.screenshot("UI-03", "browser uploaded allowlisted Skill asset and helper script")
-        self.details.append("Uploaded text knowledge asset to assets/ and shell helper to scripts/ through file inputs.")
+        self.details.append("Uploaded text knowledge asset and shell helper; each upload advanced the immutable Skill revision (v3 then v4).")
         page.get_by_role("button", name="Cancel", exact=True).click()
 
     def _delete(self) -> None:
@@ -94,8 +98,52 @@ class SkillCrudVerifier(BrowserConsoleVerifier, BaseVerifier):
         page.get_by_test_id(f"skill-delete-{self.name}").click()
         expect(page.get_by_test_id(f"skill-card-{self.name}")).to_have_count(0, timeout=20_000)
         self.created = False
-        self.screenshot("UI-04", "browser deleted scenario-owned Skill and workspace")
-        self.details.append("Deleted scenario-owned Skill after verifying its uploaded assets and scripts.")
+        self.screenshot("UI-04", "browser retired scenario-owned Skill")
+        self.details.append("Retired the scenario-owned Skill while immutable revisions and content-addressed file history remained auditable.")
+
+    def _assert_revision_files(self) -> None:
+        connection = FlowgentE2EProject.pg_connect()
+        if connection is None:
+            raise AssertionError("PostgreSQL is required for Skill revision/file evidence")
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT s.id, r.id, r.revision, s.created_by, s.updated_by
+                       FROM llm_skill s
+                       JOIN llm_skill_revision r ON r.id=s.current_revision_id
+                       WHERE s.namespace_id=%s AND s.name=%s AND s.status<>'DELETED'""",
+                    (self.web_namespace, self.name),
+                )
+                current = cursor.fetchone()
+                if current is None or current[2] != 4:
+                    raise AssertionError(f"Skill current revision is not v4: {current}")
+                skill_id, revision_id, _, created_by, updated_by = current
+                if not created_by or not updated_by:
+                    raise AssertionError(
+                        "Browser Skill writes did not persist AuthGuard canonical principal audit fields"
+                    )
+                cursor.execute(
+                    "SELECT COUNT(*), MIN(revision), MAX(revision) FROM llm_skill_revision WHERE skill_id=%s",
+                    (skill_id,),
+                )
+                history = cursor.fetchone()
+                if history != (4, 1, 4):
+                    raise AssertionError(f"Skill immutable history is incomplete: {history}")
+                cursor.execute(
+                    """SELECT kind, relative_path, content_hash
+                       FROM llm_skill_file WHERE skill_revision_id=%s ORDER BY kind""",
+                    (revision_id,),
+                )
+                files = cursor.fetchall()
+                if len(files) != 2 or {row[0] for row in files} != {"asset", "script"}:
+                    raise AssertionError(f"Skill current revision files are incomplete: {files}")
+                if any(len(row[2].strip()) != 64 for row in files):
+                    raise AssertionError(f"Skill content hashes are not SHA-256 values: {files}")
+        finally:
+            connection.close()
+        self.details.append(
+            "PostgreSQL proved one stable Skill ID with revisions 1..4, two current file records, SHA-256 hashes, and AuthGuard principal audit fields."
+        )
 
     def _cleanup(self) -> None:
         page = self.browser_page

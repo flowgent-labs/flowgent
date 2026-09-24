@@ -7,15 +7,15 @@ function attemptTime(task: TaskRun): number {
 export function sortAttempts(tasks: TaskRun[]): TaskRun[] {
   return [...tasks].sort(
     (left, right) =>
+      left.attempt - right.attempt ||
       left.sequence - right.sequence ||
-      left.retry_count - right.retry_count ||
       attemptTime(left) - attemptTime(right),
   )
 }
 
 export function attemptsForNode(tasks: TaskRun[], nodeId?: string): TaskRun[] {
   if (!nodeId) return []
-  return sortAttempts(tasks.filter((task) => task.node_id === nodeId))
+  return sortAttempts(tasks.filter((task) => task.node_key === nodeId))
 }
 
 export function latestAttempt(tasks: TaskRun[], nodeId: string): TaskRun | undefined {
@@ -25,7 +25,7 @@ export function latestAttempt(tasks: TaskRun[], nodeId: string): TaskRun | undef
 export function retryCount(tasks: TaskRun[], nodeId: string): number {
   const attempts = attemptsForNode(tasks, nodeId)
   if (!attempts.length) return 0
-  return Math.max(attempts.length - 1, ...attempts.map((task) => task.retry_count))
+  return Math.max(attempts.length - 1, ...attempts.map((task) => task.attempt - 1))
 }
 
 function attributeString(span: TraceSpan, key: string): string | undefined {

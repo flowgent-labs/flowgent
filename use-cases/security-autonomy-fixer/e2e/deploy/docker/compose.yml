@@ -11,11 +11,11 @@ x-authguard-redis-environment: &authguard-redis-environment
 
 services:
   postgres:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
+    image: docker.io/pgvector/pgvector:pg16
     environment:
-      POSTGRESQL_USERNAME: test
-      POSTGRESQL_PASSWORD: test
-      POSTGRESQL_DATABASE: flowgent
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: flowgent
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=test pg_isready -U test -d flowgent"]
       interval: 3s
@@ -24,7 +24,7 @@ services:
     ports:
       - "127.0.0.1:25432:5432"
     volumes:
-      - postgres-data:/bitnami/postgresql
+      - postgres-data:/var/lib/postgresql/data
       - ../../reports/.state/docker/init.sql:/docker-entrypoint-initdb.d/01-e2e-flowgent.sql:ro
 
   emqx:
@@ -103,6 +103,7 @@ services:
       ldap: {condition: service_started}
     ports:
       - "127.0.0.1:18082:8082"
+      - "127.0.0.1:18083:9091"
 
   authguard-authz:
     image: localhost/e2e-flowgent-authguard:0.1.0
@@ -114,6 +115,7 @@ services:
       authguard-redis-0: {condition: service_healthy}
       ldap: {condition: service_started}
     ports:
+      - "127.0.0.1:19090:9090"
       - "127.0.0.1:19091:9091"
 
   authguard-web:

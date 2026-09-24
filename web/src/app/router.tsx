@@ -68,7 +68,7 @@ export const router = createBrowserRouter([
       { path: 'flows', element: page(<FlowsPage />) },
       { path: 'flows/new', element: page(<FlowEditorPage />) },
       { path: 'runs', element: page(<RunsPage />) },
-      { path: 'memory', element: <Navigate to="/memory/run" replace /> },
+      { path: 'memory', element: <Navigate to="/memory/namespace" replace /> },
       { path: 'memory/:scope', element: page(<MemoryPage />) },
       { path: 'agents', element: page(<AgentsPage />) },
       { path: 'skills', element: page(<SkillsPage />) },

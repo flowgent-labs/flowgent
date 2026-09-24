@@ -40,7 +40,7 @@ export interface RunRepository {
   resolveApproval(
     namespace: string,
     runId: string,
-    token: string,
+    approvalId: string,
     decision: 'approve' | 'reject',
     flowId?: string,
   ): Promise<void>
@@ -63,13 +63,6 @@ export interface AnalyticsRepository {
 
 export interface KnowledgeRepository {
   list(namespace: string, scope: MemoryScope, signal?: AbortSignal): Promise<KnowledgeEntry[]>
-  save(
-    namespace: string,
-    scope: MemoryScope,
-    entry: KnowledgeEntry,
-    isNew: boolean,
-  ): Promise<KnowledgeEntry>
-  remove(namespace: string, id: string): Promise<void>
 }
 
 export interface AgentRepository {

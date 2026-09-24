@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -28,10 +29,10 @@ type RunStateStore interface {
 	SaveTask(ctx context.Context, task *entities.TaskRunInfo) error
 }
 
-// KnowledgePostWriter persists knowledge entries after a run completes.
-// The engine uses this via a REST-client adapter — never a direct store import.
+// KnowledgePostWriter creates immutable candidates. Publication remains behind
+// the unified human-approval transaction in the API/storage layer.
 type KnowledgePostWriter interface {
-	CreateKnowledge(ctx context.Context, namespace string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error)
+	CreateKnowledgeCandidate(ctx context.Context, namespace string, candidate *entities.KnowledgeCandidate) (*entities.ApprovalInfo, error)
 }
 
 type EdgeCondition struct {
@@ -378,7 +379,7 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 		jm.planMap[n.ID] = &entities.ExecutionPlan{
 			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
 			AgentFlowRunID:        runID,
-			AgentFlowDefinitionID: spec.ID,
+			AgentFlowDefinitionID: spec.ResourceName(),
 			Namespace:             spec.Namespace,
 			RuntimeMode:           spec.RuntimeMode,
 			RuntimeClusterID:      jm.clusterID,
@@ -413,11 +414,11 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 	}
 	jm.resolvedVars["run_id"] = run.ID
 	jm.resolvedVars["namespace_id"] = spec.Namespace
-	jm.resolvedVars["flow_id"] = spec.ID
+	jm.resolvedVars["flow_id"] = spec.ResourceName()
 
 	ctx, span := jm.tracer.Start(ctx, "jobmaster.execute",
 		trace.WithAttributes(
-			attribute.String("agentflow.id", spec.ID), attribute.String("run.id", run.ID),
+			attribute.String("agentflow.id", spec.ResourceName()), attribute.String("run.id", run.ID),
 			attribute.String("resource_manager", string(jm.rm.Provider())),
 			attribute.Int("node_count", len(spec.Nodes)),
 		),
@@ -489,7 +490,7 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 
 			nodeCtx, nodeSpan := jm.tracer.Start(ctx, "jobmaster.node",
 				trace.WithAttributes(
-					attribute.String("agentflow.id", spec.ID),
+					attribute.String("agentflow.id", spec.ResourceName()),
 					attribute.String("run.id", run.ID),
 					attribute.String("flowgent.node_id", nodeID),
 					attribute.String("flowgent.task_type", string(plan.TaskType)),
@@ -731,17 +732,24 @@ func (jm *JobMaster) collectFirstError() string {
 	return "node failed"
 }
 
-// postHandle runs asynchronously after the run completes, extracting knowledge
-// from agent and tool node outputs for cross-workflow persistent memory.
+var summarySecretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\bbearer\s+[a-z0-9._~+/=-]{8,}|\b(?:sk|ghp|gho|github_pat)_[a-z0-9_-]{8,}|(?:api[_-]?key|password|secret|token)\s*[:=]\s*[^\s,;}]+)`)
+
+// postHandle runs asynchronously after a successfully completed run. It only
+// creates approval-bound candidates; it never publishes cross-run knowledge.
 func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowInfo) {
-	if jm.knowledgeWriter == nil {
+	if jm.knowledgeWriter == nil || run == nil || spec == nil ||
+		run.Status != entities.RunCompleted || !run.SummarizeEnabled {
 		return
 	}
 
 	// Snapshot fields needed by the async goroutine.
 	namespace := spec.Namespace
 	runID := run.ID
-	flowID := spec.ID
+	flowID := run.FlowID
+	if flowID == "" {
+		flowID = spec.ID
+	}
+	flowName := spec.ResourceName()
 
 	// Build a snapshot of completed node outputs.
 	jm.mu.Lock()
@@ -756,28 +764,80 @@ func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowIn
 			if len(output) == 0 {
 				continue
 			}
-			content, err := json.Marshal(output)
+			sanitized, ok := sanitizeSummaryValue(output)
+			if !ok {
+				continue
+			}
+			content, err := json.Marshal(map[string]any{
+				"node": nodeID, "result": sanitized,
+			})
 			if err != nil {
 				continue
 			}
-			title := fmt.Sprintf("Run %s / node %s", runID, nodeID)
-			sourceRef := fmt.Sprintf("%s:%s:%s", flowID, runID, nodeID)
-
-			entry := &entities.KnowledgeEntry{
-				Title:       title,
-				Content:     string(content),
-				ContentType: "json",
-				Source:      "flow_run",
-				SourceRef:   sourceRef,
-				Tags:        []string{flowID, nodeID},
+			if len(content) > 64*1024 || summarySecretPattern.Match(content) {
+				slog.Warn("jobmaster skipped unsafe run summary", "node", nodeID, "run", runID)
+				continue
 			}
-			entry.Namespace = namespace
-
-			if _, err := jm.knowledgeWriter.CreateKnowledge(context.Background(), namespace, entry); err != nil {
-				slog.Warn("jobmaster postHandle create knowledge failed", "node", nodeID, "err", err)
+			candidate := &entities.KnowledgeCandidate{
+				BaseEntity: entities.BaseEntity{
+					Namespace:   namespace,
+					CreatedBy:   "service:jobmaster",
+					Description: fmt.Sprintf("Run %s node %s summary", runID, nodeID),
+				},
+				SourceRunID:    runID,
+				TargetScope:    "flow",
+				TargetFlowID:   flowID,
+				TargetFlowName: flowName,
+				Type:           "knowledge",
+				Content:        string(content),
+				Provenance: map[string]any{
+					"origin": "built_in_summarizer", "run_id": runID, "node_key": nodeID,
+				},
+				ExpectedRevision: 0,
+				IdempotencyKey:   fmt.Sprintf("summary:%s:%s:v1", runID, nodeID),
+			}
+			if _, err := jm.knowledgeWriter.CreateKnowledgeCandidate(context.Background(), namespace, candidate); err != nil {
+				slog.Warn("jobmaster postHandle create knowledge candidate failed", "node", nodeID, "err", err)
 			}
 		}
 	}()
+}
+
+func sanitizeSummaryValue(value any) (any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		clean := make(map[string]any, len(typed))
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), " ", "_"))
+			if strings.Contains(normalized, "secret") || strings.Contains(normalized, "password") ||
+				strings.Contains(normalized, "token") || strings.Contains(normalized, "api_key") ||
+				strings.Contains(normalized, "authorization") || strings.Contains(normalized, "cookie") ||
+				strings.Contains(normalized, "private_key") {
+				continue
+			}
+			if sanitized, keep := sanitizeSummaryValue(child); keep {
+				clean[key] = sanitized
+			}
+		}
+		return clean, len(clean) > 0
+	case []any:
+		clean := make([]any, 0, len(typed))
+		for _, child := range typed {
+			if sanitized, keep := sanitizeSummaryValue(child); keep {
+				clean = append(clean, sanitized)
+			}
+		}
+		return clean, len(clean) > 0
+	case string:
+		if summarySecretPattern.MatchString(typed) {
+			return nil, false
+		}
+		return typed, strings.TrimSpace(typed) != ""
+	case nil:
+		return nil, false
+	default:
+		return typed, true
+	}
 }
 
 func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
@@ -792,16 +852,16 @@ func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 	return &entities.TaskRunInfo{
 		BaseEntity:      entities.BaseEntity{ID: plan.TaskID},
-		AgentFlowRunID:  plan.AgentFlowRunID,
-		NodeID:          plan.NodeID,
+		RunID:           plan.AgentFlowRunID,
+		NodeKey:         plan.NodeID,
+		Attempt:         plan.RetryCount + 1,
 		Status:          plan.State,
 		Input:           plan.Input,
 		Output:          planResultOutput(plan.Result),
 		Error:           planResultError(plan.Result),
-		RetryCount:      plan.RetryCount,
-		ExecID:          fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1),
+		ExecutionID:     fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1),
 		MaxRetries:      plan.MaxRetries,
-		ParentTaskRunID: plan.ParentTaskRunID,
+		ParentNodeRunID: plan.ParentTaskRunID,
 		Sequence:        plan.RetryCount + 1,
 		StartedAt:       plan.StartedAt,
 		FinishedAt:      plan.FinishedAt,

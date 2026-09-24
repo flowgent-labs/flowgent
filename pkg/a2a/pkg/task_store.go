@@ -70,15 +70,15 @@ func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Tas
 
 	var current int64
 	var owner string
-	err = tx.QueryRowContext(ctx, `SELECT version, caller_key FROM a2a_task WHERE id=?`, task.ID).Scan(&current, &owner)
+	err = tx.QueryRowContext(ctx, `SELECT row_version, caller_key FROM orh_a2a_task WHERE id=?`, task.ID).Scan(&current, &owner)
 	next := int64(1)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	caller := a2aCallerKey(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		_, err = tx.ExecContext(ctx, `INSERT INTO a2a_task
-            (id, caller_key, context_id, state, task_json, version, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?, ?)`, task.ID, caller, task.ContextID, task.Status.State, string(payload), now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO orh_a2a_task
+			(id, caller_key, context_id, status, task, row_version, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)`, task.ID, caller, task.ContextID, task.Status.State, string(payload), now, now)
 	case err != nil:
 		return protocol.TaskVersionMissing, err
 	default:
@@ -86,8 +86,8 @@ func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Tas
 			return protocol.TaskVersionMissing, protocol.ErrConcurrentTaskModification
 		}
 		next = current + 1
-		_, err = tx.ExecContext(ctx, `UPDATE a2a_task
-            SET context_id=?, state=?, task_json=?, version=?, updated_at=? WHERE id=? AND caller_key=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE orh_a2a_task
+			SET context_id=?, status=?, task=?, row_version=?, updated_at=? WHERE id=? AND caller_key=?`,
 			task.ContextID, task.Status.State, string(payload), next, now, task.ID, caller)
 	}
 	if err != nil {
@@ -108,13 +108,13 @@ func (s *PersistentTaskStore) savePostgres(ctx context.Context, task *protocol.T
 
 	var current int64
 	var owner string
-	err = tx.QueryRow(ctx, `SELECT version, caller_key FROM a2a_task WHERE id=$1 FOR UPDATE`, task.ID).Scan(&current, &owner)
+	err = tx.QueryRow(ctx, `SELECT row_version, caller_key FROM orh_a2a_task WHERE id=$1 FOR UPDATE`, task.ID).Scan(&current, &owner)
 	next := int64(1)
 	caller := a2aCallerKey(ctx)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		_, err = tx.Exec(ctx, `INSERT INTO a2a_task
-            (id, caller_key, context_id, state, task_json, version) VALUES ($1, $2, $3, $4, $5, 1)`,
+		_, err = tx.Exec(ctx, `INSERT INTO orh_a2a_task
+			(id, caller_key, context_id, status, task, row_version) VALUES ($1, $2, $3, $4, $5, 1)`,
 			task.ID, caller, task.ContextID, task.Status.State, payload)
 	case err != nil:
 		return protocol.TaskVersionMissing, err
@@ -123,8 +123,8 @@ func (s *PersistentTaskStore) savePostgres(ctx context.Context, task *protocol.T
 			return protocol.TaskVersionMissing, protocol.ErrConcurrentTaskModification
 		}
 		next = current + 1
-		_, err = tx.Exec(ctx, `UPDATE a2a_task
-            SET context_id=$1, state=$2, task_json=$3, version=$4, updated_at=NOW()
+		_, err = tx.Exec(ctx, `UPDATE orh_a2a_task
+			SET context_id=$1, status=$2, task=$3, row_version=$4, updated_at=NOW()
             WHERE id=$5 AND caller_key=$6`, task.ContextID, task.Status.State, payload, next, task.ID, caller)
 	}
 	if err != nil {
@@ -142,10 +142,10 @@ func (s *PersistentTaskStore) Get(ctx context.Context, taskID protocol.TaskID) (
 	var err error
 	if s.sqlite != nil {
 		var raw string
-		err = s.sqlite.QueryRowContext(ctx, `SELECT task_json, version FROM a2a_task WHERE id=? AND caller_key=?`, taskID, a2aCallerKey(ctx)).Scan(&raw, &version)
+		err = s.sqlite.QueryRowContext(ctx, `SELECT task, row_version FROM orh_a2a_task WHERE id=? AND caller_key=?`, taskID, a2aCallerKey(ctx)).Scan(&raw, &version)
 		payload = []byte(raw)
 	} else {
-		err = s.postgres.QueryRow(ctx, `SELECT task_json, version FROM a2a_task WHERE id=$1 AND caller_key=$2`, taskID, a2aCallerKey(ctx)).Scan(&payload, &version)
+		err = s.postgres.QueryRow(ctx, `SELECT task, row_version FROM orh_a2a_task WHERE id=$1 AND caller_key=$2`, taskID, a2aCallerKey(ctx)).Scan(&payload, &version)
 	}
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 		return nil, protocol.TaskVersionMissing, protocol.ErrTaskNotFound
@@ -192,7 +192,7 @@ func (s *PersistentTaskStore) listSQLite(ctx context.Context, req *protocol.List
 		args = append(args, req.ContextID)
 	}
 	if req.Status != protocol.TaskStateUnspecified {
-		where = append(where, "state=?")
+		where = append(where, "status=?")
 		args = append(args, req.Status)
 	}
 	if req.LastUpdatedAfter != nil {
@@ -201,11 +201,11 @@ func (s *PersistentTaskStore) listSQLite(ctx context.Context, req *protocol.List
 	}
 	clause := strings.Join(where, " AND ")
 	var total int
-	if err := s.sqlite.QueryRowContext(ctx, `SELECT COUNT(*) FROM a2a_task WHERE `+clause, args...).Scan(&total); err != nil {
+	if err := s.sqlite.QueryRowContext(ctx, `SELECT COUNT(*) FROM orh_a2a_task WHERE `+clause, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 	queryArgs := append(append([]any{}, args...), pageSize, offset)
-	rows, err := s.sqlite.QueryContext(ctx, `SELECT task_json FROM a2a_task WHERE `+clause+` ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.sqlite.QueryContext(ctx, `SELECT task FROM orh_a2a_task WHERE `+clause+` ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func (s *PersistentTaskStore) listPostgres(ctx context.Context, req *protocol.Li
 		add("context_id", req.ContextID)
 	}
 	if req.Status != protocol.TaskStateUnspecified {
-		add("state", req.Status)
+		add("status", req.Status)
 	}
 	if req.LastUpdatedAfter != nil {
 		args = append(args, req.LastUpdatedAfter.UTC())
@@ -232,11 +232,11 @@ func (s *PersistentTaskStore) listPostgres(ctx context.Context, req *protocol.Li
 	}
 	clause := strings.Join(where, " AND ")
 	var total int
-	if err := s.postgres.QueryRow(ctx, `SELECT COUNT(*) FROM a2a_task WHERE `+clause, args...).Scan(&total); err != nil {
+	if err := s.postgres.QueryRow(ctx, `SELECT COUNT(*) FROM orh_a2a_task WHERE `+clause, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 	queryArgs := append(append([]any{}, args...), pageSize, offset)
-	query := fmt.Sprintf(`SELECT task_json FROM a2a_task WHERE %s ORDER BY updated_at DESC, id DESC LIMIT $%d OFFSET $%d`, clause, len(args)+1, len(args)+2)
+	query := fmt.Sprintf(`SELECT task FROM orh_a2a_task WHERE %s ORDER BY updated_at DESC, id DESC LIMIT $%d OFFSET $%d`, clause, len(args)+1, len(args)+2)
 	rows, err := s.postgres.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
@@ -310,7 +310,7 @@ func taskPage(tasks []*protocol.Task, pageSize, offset, total int) *protocol.Lis
 func a2aCallerKey(ctx context.Context) string {
 	principal := authz.PrincipalIDFromContext(ctx)
 	digest := sha256.Sum256([]byte(principal))
-	return "sha256:" + hex.EncodeToString(digest[:])
+	return hex.EncodeToString(digest[:])
 }
 
 func encodePageOffset(offset int) string {

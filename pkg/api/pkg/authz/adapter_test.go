@@ -161,7 +161,7 @@ func TestAdapterRepositoryScopeFiltersDeniedResource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if page.TotalCount != 1 || len(page.Items) != 1 || page.Items[0].FlowID != "flow-a" {
+		if page.TotalCount != 1 || len(page.Items) != 1 || page.Items[0].FlowName != "flow-a" || page.Items[0].FlowID == "flow-a" {
 			t.Fatalf("visible flows = %#v", page.Items)
 		}
 		w.WriteHeader(http.StatusOK)

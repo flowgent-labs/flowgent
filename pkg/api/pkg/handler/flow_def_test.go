@@ -184,6 +184,68 @@ func TestCreateRunRejectsCrossTenantTrigger(t *testing.T) {
 	}
 }
 
+func TestApplyStableFlowIdentity(t *testing.T) {
+	existing := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "2f2cf079-63db-4ef3-a972-f576de41b23e"},
+		Name:       "security-fixer",
+	}
+
+	t.Run("stable ID route preserves omitted name", func(t *testing.T) {
+		updates := &entities.FlowInfo{}
+		applyStableFlowIdentity(existing, updates)
+		if updates.ID != existing.ID {
+			t.Fatalf("stable ID = %q, want %q", updates.ID, existing.ID)
+		}
+		if updates.Name != existing.Name {
+			t.Fatalf("name = %q, want preserved name %q", updates.Name, existing.Name)
+		}
+	})
+
+	t.Run("explicit rename remains independent of stable ID", func(t *testing.T) {
+		updates := &entities.FlowInfo{Name: "security-fixer-v2"}
+		applyStableFlowIdentity(existing, updates)
+		if updates.ID != existing.ID {
+			t.Fatalf("stable ID = %q, want %q", updates.ID, existing.ID)
+		}
+		if updates.Name != "security-fixer-v2" {
+			t.Fatalf("name = %q, want explicit rename", updates.Name)
+		}
+	})
+}
+
+func TestFlowCacheAliasesFollowRenameAndDelete(t *testing.T) {
+	const namespace = "tenant-a"
+	existing := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "2f2cf079-63db-4ef3-a972-f576de41b23e"},
+		Name:       "security-fixer",
+	}
+	h := &FlowDefHandler{agentFlows: make(map[string]*entities.FlowInfo)}
+	h.replaceCachedDefinition(namespace, existing)
+
+	if h.agentFlows[flowCacheKey(namespace, existing.Name)] == nil {
+		t.Fatal("name alias was not cached")
+	}
+	if h.agentFlows[flowCacheKey(namespace, existing.ID)] == nil {
+		t.Fatal("stable ID alias was not cached")
+	}
+
+	renamed := *existing
+	renamed.Name = "security-fixer-v2"
+	h.replaceCachedDefinition(namespace, &renamed, existing.Name, existing.ID)
+	if h.agentFlows[flowCacheKey(namespace, existing.Name)] != nil {
+		t.Fatal("stale name alias survived rename")
+	}
+	if h.agentFlows[flowCacheKey(namespace, renamed.Name)] == nil ||
+		h.agentFlows[flowCacheKey(namespace, renamed.ID)] == nil {
+		t.Fatal("renamed definition aliases were not cached")
+	}
+
+	h.removeCachedDefinition(namespace, &renamed, renamed.ID)
+	if len(h.agentFlows) != 0 {
+		t.Fatalf("cache aliases survived delete: %#v", h.agentFlows)
+	}
+}
+
 // TestNewFlowDefHandlerDefaultNamespacePrefix ensures an empty
 // namespacePrefix falls back to "flowgent-" rather than producing an
 // unprefixed (and potentially colliding) namespace.

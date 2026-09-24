@@ -47,9 +47,10 @@ export function FlowsPage() {
         namespace,
         {
           ...structuredClone(flow),
-          id: `${flow.id}-copy`,
-          summary: `${flow.summary ?? flow.id} (copy)`,
-          version: 1,
+          id: '',
+          name: `${flow.name}-copy`,
+          summary: `${flow.summary ?? flow.name} (copy)`,
+          revision: 1,
           created_at: '',
           updated_at: '',
         },
@@ -57,13 +58,13 @@ export function FlowsPage() {
       ),
     onSuccess: (flow) => {
       void queryClient.invalidateQueries({ queryKey: [namespace, 'flows'] })
-      navigate(flowPath(namespace, flow.id))
+      navigate(flowPath(namespace, flow.name))
     },
   })
   const filtered = useMemo(
     () =>
       query.data?.filter((flow) =>
-        `${flow.id} ${flow.summary} ${flow.description} ${Object.values(flow.labels ?? {}).join(' ')}`
+        `${flow.name} ${flow.id} ${flow.summary} ${flow.description} ${Object.values(flow.labels ?? {}).join(' ')}`
           .toLowerCase()
           .includes(search.toLowerCase()),
       ) ?? [],
@@ -128,18 +129,18 @@ export function FlowsPage() {
               </thead>
               <tbody>
                 {filtered.map((flow) => (
-                  <tr key={flow.id} data-testid={`flow-row-${flow.id}`}>
+                  <tr key={flow.id} data-testid={`flow-row-${flow.name}`}>
                     <td>
                       <button
                         type="button"
                         className="resource-cell"
-                        onClick={() => navigate(flowPath(namespace, flow.id))}
+                        onClick={() => navigate(flowPath(namespace, flow.name))}
                       >
                         <span className="resource-icon">
                           <GitBranch size={17} />
                         </span>
                         <span>
-                          <strong>{flow.id}</strong>
+                          <strong>{flow.name}</strong>
                           <small>{flow.summary || flow.description || '—'}</small>
                         </span>
                       </button>
@@ -160,7 +161,7 @@ export function FlowsPage() {
                       <span title={flow.updated_at}>
                         {formatRelative(flow.updated_at, i18n.language)}
                       </span>
-                      <small className="cell-subtitle">v{flow.version ?? 1}</small>
+                      <small className="cell-subtitle">v{flow.revision}</small>
                     </td>
                     <td className="row-actions">
                       <Button size="sm" variant="secondary" onClick={() => setTriggerFlow(flow)}>
@@ -169,17 +170,17 @@ export function FlowsPage() {
                       </Button>
                       <div className="more-menu">
                         <IconButton
-                          data-testid={`flow-actions-${flow.id}`}
+                          data-testid={`flow-actions-${flow.name}`}
                           label={t('common.actions')}
-                          onClick={() => setMenu(menu === flow.id ? null : flow.id)}
+                          onClick={() => setMenu(menu === flow.name ? null : flow.name)}
                         >
                           <MoreHorizontal size={17} />
                         </IconButton>
-                        {menu === flow.id && (
+                        {menu === flow.name && (
                           <div className="more-menu__popover">
                             <button
                               type="button"
-                              onClick={() => navigate(flowPath(namespace, flow.id, '/runs'))}
+                              onClick={() => navigate(flowPath(namespace, flow.name, '/runs'))}
                             >
                               {t('common.runs')}
                             </button>
@@ -190,7 +191,7 @@ export function FlowsPage() {
                             <button
                               type="button"
                               className="danger"
-                              data-testid={`flow-delete-${flow.id}`}
+                              data-testid={`flow-delete-${flow.name}`}
                               onClick={() => {
                                 setDeleteFlow(flow)
                                 setMenu(null)
@@ -213,7 +214,7 @@ export function FlowsPage() {
       <TriggerModal flow={triggerFlow} onClose={() => setTriggerFlow(null)} />
       <Modal
         open={Boolean(deleteFlow)}
-        title={`${t('common.delete')} ${deleteFlow?.id ?? ''}?`}
+        title={`${t('common.delete')} ${deleteFlow?.name ?? ''}?`}
         onClose={() => setDeleteFlow(null)}
         footer={
           <>
@@ -224,7 +225,7 @@ export function FlowsPage() {
               data-testid="flow-delete-confirm"
               variant="danger"
               disabled={remove.isPending}
-              onClick={() => deleteFlow && remove.mutate(deleteFlow.id)}
+              onClick={() => deleteFlow && remove.mutate(deleteFlow.name)}
             >
               {t('common.delete')}
             </Button>
@@ -249,11 +250,11 @@ function TriggerModal({ flow, onClose }: { flow: Flow | null; onClose: () => voi
     mutationFn: () =>
       repositories.flows.trigger(
         namespace,
-        flow?.id ?? '',
+        flow?.name ?? '',
         JSON.parse(vars) as Record<string, unknown>,
       ),
     onSuccess: (runId) => {
-      const id = flow?.id
+      const id = flow?.name
       onClose()
       if (id) navigate(flowPath(namespace, id, `/runs/${encodeURIComponent(runId)}`))
     },
@@ -273,7 +274,7 @@ function TriggerModal({ flow, onClose }: { flow: Flow | null; onClose: () => voi
   return (
     <Modal
       open={Boolean(flow)}
-      title={`${t('flows.runTitle')} · ${flow?.id ?? ''}`}
+      title={`${t('flows.runTitle')} · ${flow?.name ?? ''}`}
       onClose={onClose}
       footer={
         <>

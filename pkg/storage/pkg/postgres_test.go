@@ -9,8 +9,10 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
 	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 	"github.com/flowgent-labs/flowgent/storage/pkg/task"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func testPGDSN() string {
@@ -18,6 +20,15 @@ func testPGDSN() string {
 		return dsn
 	}
 	return ""
+}
+
+func seedPostgresFlow(t *testing.T, pool *pgxpool.Pool, namespace, name string) {
+	t.Helper()
+	if err := flow.NewFlowPostgresStore(pool).SaveSpec(context.Background(), &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: name, Namespace: namespace}, Kind: "flow",
+	}, "test", "run fixture"); err != nil {
+		t.Fatalf("seed flow %s/%s: %v", namespace, name, err)
+	}
 }
 
 func TestPostgresPool_Init(t *testing.T) {
@@ -41,6 +52,7 @@ func TestPostgresStore_FlowRunCRUD(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	s := flowrun.NewFlowRunPostgresStore(pool)
+	seedPostgresFlow(t, pool, "default", "pg-test-flow")
 
 	run := &entities.FlowRunInfo{
 		BaseEntity:  entities.BaseEntity{Namespace: "default"},
@@ -83,6 +95,7 @@ func TestPostgresStore_TaskRunCRUD(t *testing.T) {
 	ctx := context.Background()
 	frStore := flowrun.NewFlowRunPostgresStore(pool)
 	tpStore := task.NewTaskPostgresStore(pool)
+	seedPostgresFlow(t, pool, "default", "f1")
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	frStore.Create(ctx, run)

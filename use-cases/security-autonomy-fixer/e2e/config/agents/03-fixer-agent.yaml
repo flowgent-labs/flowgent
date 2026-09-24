@@ -8,7 +8,7 @@ metadata:
   description: Secure coding expert that generates minimal, safe code patches for identified security vulnerabilities
 
 data:
-  model: OPENAI/deepseek-chat
+  model: deepseek/deepseek-chat
   max_tokens: 12000
   soul: |-
     You are a secure coding expert.

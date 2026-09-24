@@ -335,7 +335,7 @@ func TestScheduleNodeWithRetryPersistsEachAttempt(t *testing.T) {
 	}
 	var attempts [3]entities.TaskRunInfo
 	for _, task := range state.tasks {
-		attempts[task.RetryCount] = task
+		attempts[task.Attempt-1] = task
 	}
 	for index, task := range attempts {
 		if task.Sequence != index+1 || task.MaxRetries != 2 || task.StartedAt == nil || task.FinishedAt == nil {
@@ -348,8 +348,8 @@ func TestScheduleNodeWithRetryPersistsEachAttempt(t *testing.T) {
 		if task.Status != expectedStatus {
 			t.Fatalf("attempt %d status = %s", index+1, task.Status)
 		}
-		if index > 0 && task.ParentTaskRunID != attempts[index-1].ID {
-			t.Fatalf("attempt %d parent = %q", index+1, task.ParentTaskRunID)
+		if index > 0 && task.ParentNodeRunID != attempts[index-1].ID {
+			t.Fatalf("attempt %d parent = %q", index+1, task.ParentNodeRunID)
 		}
 	}
 }

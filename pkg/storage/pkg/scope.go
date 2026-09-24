@@ -34,7 +34,8 @@ type FlowgentResourcePath []guardmodel.PathMap
 
 type FlowgentSqlScopeResolver func(FlowgentResourcePath) (guardmodel.SqlScope, error)
 
-const flowIDForRunResource = `(SELECT agentflow_id FROM orh_flowrun WHERE id = "agentflow_run_id")`
+const flowNameForRunResource = `(SELECT f.name FROM orh_run r JOIN orh_flow f ON f.id = r.flow_id WHERE r.id = "run_id")`
+const currentFlowNameResource = `(SELECT name FROM orh_flow WHERE id = "flow_id")`
 
 // resourcePathsByTable is the single storage-owned registry that maps
 // persisted rows to AuthGuard resource paths. Entity repositories identify
@@ -43,29 +44,29 @@ var resourcePathsByTable = map[string][]FlowgentResourcePath{
 	"llm_agent": {
 		ResourcePath(LiteralResource("agents"), ColumnResource(`"name"`)),
 	},
-	"human_approvals": {
-		ResourcePath(LiteralResource("approvals"), ColumnResource(`"token"`)),
+	"orh_approval": {
+		ResourcePath(LiteralResource("approvals"), ColumnResource(`"id"`)),
 		ResourcePath(
 			LiteralResource("runs"),
-			ColumnResource(`"agentflow_run_id"`),
+			ColumnResource(`"run_id"`),
 			LiteralResource("approvals"),
-			ColumnResource(`"token"`),
+			ColumnResource(`"id"`),
 		),
 		ResourcePath(
 			LiteralResource("flows"),
-			ColumnResource(flowIDForRunResource),
+			ColumnResource(flowNameForRunResource),
 			LiteralResource("runs"),
-			ColumnResource(`"agentflow_run_id"`),
+			ColumnResource(`"run_id"`),
 			LiteralResource("approvals"),
-			ColumnResource(`"token"`),
+			ColumnResource(`"id"`),
 		),
 	},
-	"orh_agentflow": {
-		ResourcePath(LiteralResource("flows"), ColumnResource(`"agentflow_id"`)),
-		ResourcePath(LiteralResource("flows"), LiteralResource("watch"), ColumnResource(`"agentflow_id"`)),
-		ResourcePath(LiteralResource("flows"), LiteralResource("trigger"), ColumnResource(`"agentflow_id"`)),
-		ResourcePath(LiteralResource("flows"), ColumnResource(`"agentflow_id"`), LiteralResource("trigger")),
-		ResourcePath(LiteralResource("skills"), ColumnResource(`"agentflow_id"`)),
+	"orh_flow": {
+		ResourcePath(LiteralResource("flows"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("skills"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("flows"), LiteralResource("watch"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("flows"), LiteralResource("trigger"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("flows"), ColumnResource(`"name"`), LiteralResource("trigger")),
 	},
 	"orh_flow_release": {
 		ResourcePath(LiteralResource("flow-releases"), ColumnResource(`"id"`)),
@@ -86,37 +87,29 @@ var resourcePathsByTable = map[string][]FlowgentResourcePath{
 			LiteralResource("install"),
 		),
 	},
-	"orh_flowrun": {
+	"orh_run": {
 		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`)),
 		ResourcePath(
 			LiteralResource("flows"),
-			ColumnResource(`"agentflow_id"`),
+			ColumnResource(currentFlowNameResource),
 			LiteralResource("runs"),
 			ColumnResource(`"id"`),
 		),
-		ResourcePath(LiteralResource("flows"), ColumnResource(`"agentflow_id"`), LiteralResource("trigger")),
-		ResourcePath(LiteralResource("flows"), LiteralResource("trigger"), ColumnResource(`"agentflow_id"`)),
+		ResourcePath(LiteralResource("flows"), ColumnResource(currentFlowNameResource), LiteralResource("trigger")),
+		ResourcePath(LiteralResource("flows"), LiteralResource("trigger"), ColumnResource(currentFlowNameResource)),
 		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`), LiteralResource("cancel")),
 		ResourcePath(LiteralResource("runs"), LiteralResource("metrics"), ColumnResource(`"id"`)),
 	},
-	"knowledge_entries": {
+	"knw_document": {
 		ResourcePath(LiteralResource("knowledge"), ColumnResource(`"id"`)),
 		ResourcePath(LiteralResource("knowledge"), LiteralResource("tags"), ColumnResource(`"id"`)),
 		ResourcePath(LiteralResource("knowledge"), LiteralResource("search"), ColumnResource(`"id"`)),
 	},
-	"llm_providers": {
+	"llm_provider": {
 		ResourcePath(LiteralResource("llm"), LiteralResource("providers"), ColumnResource(`"id"`)),
 	},
 	"llm_mcp": {
 		ResourcePath(LiteralResource("mcp"), ColumnResource(`"name"`)),
-	},
-	"llm_memory": {
-		ResourcePath(
-			LiteralResource("flows"),
-			ColumnResource(`"flow_id"`),
-			LiteralResource("memory"),
-			ColumnResource(`"id"`),
-		),
 	},
 	"nfy_channel": {
 		ResourcePath(LiteralResource("notifications"), LiteralResource("channels"), ColumnResource(`"id"`)),
@@ -125,21 +118,21 @@ var resourcePathsByTable = map[string][]FlowgentResourcePath{
 	},
 	"orh_runtime_configuration": runtimeConfigurationResourcePaths(),
 	"llm_skill": {
-		ResourcePath(LiteralResource("skills"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("skill-definitions"), ColumnResource(`"name"`)),
 	},
-	"task_runs": {
+	"orh_node_run": {
 		ResourcePath(
 			LiteralResource("runs"),
-			ColumnResource(`"agentflow_run_id"`),
-			LiteralResource("tasks"),
+			ColumnResource(`"run_id"`),
+			LiteralResource("node-runs"),
 			ColumnResource(`"id"`),
 		),
 		ResourcePath(
 			LiteralResource("flows"),
-			ColumnResource(flowIDForRunResource),
+			ColumnResource(flowNameForRunResource),
 			LiteralResource("runs"),
-			ColumnResource(`"agentflow_run_id"`),
-			LiteralResource("tasks"),
+			ColumnResource(`"run_id"`),
+			LiteralResource("node-runs"),
 			ColumnResource(`"id"`),
 		),
 	},
@@ -154,7 +147,7 @@ func runtimeConfigurationResourcePaths() []FlowgentResourcePath {
 	for _, suffix := range []string{"", "environment", "secrets", "resolved"} {
 		path := ResourcePath(
 			LiteralResource("flows"),
-			ColumnResource(`"scope_id"`),
+			ColumnResource(currentFlowNameResource),
 			LiteralResource("runtime-config"),
 		)
 		if suffix != "" {

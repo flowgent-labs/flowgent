@@ -103,16 +103,19 @@ class FlowgentE2EProject:
 
     @classmethod
     def _get_tasks_from_pg(cls, run_id):
-        """Query task_runs directly when the read API cannot return the task list."""
+        """Query canonical NodeRuns when the read API cannot return the task list."""
         try:
             connection = cls.pg_connect()
             if not connection:
                 return []
             cursor = connection.cursor()
             cursor.execute(
-                "SELECT id, agentflow_run_id, node_id, status, input, output, error, "
-                "retry_count, max_retries, exec_id, sequence, started_at, finished_at "
-                "FROM task_runs WHERE agentflow_run_id=%s ORDER BY sequence ASC",
+                "SELECT id, run_id, node_key, status, input, output, "
+                "COALESCE(error->>'message','') AS error, attempt, "
+                "COALESCE((metadata->>'max_retries')::int,0) AS max_retries, "
+                "execution_id, COALESCE((metadata->>'sequence')::int,attempt) AS sequence, "
+                "started_at, finished_at FROM orh_node_run "
+                "WHERE run_id=%s AND status<>'DELETED' ORDER BY node_key,attempt",
                 (run_id,),
             )
             rows = cursor.fetchall()
@@ -133,7 +136,7 @@ class FlowgentE2EProject:
     @classmethod
     def get_tasks(cls, session, api_base, namespace, run_id):
         """Fetch a flow run's tasks, with a direct database fallback."""
-        response = session.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/tasks")
+        response = session.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/node-runs")
         if response.status_code == 200:
             tasks = response.json()
             if isinstance(tasks, list):
@@ -142,7 +145,7 @@ class FlowgentE2EProject:
 
     @staticmethod
     def tasks_by_node(tasks):
-        return {task.get("node_id"): task for task in tasks if task.get("node_id")}
+        return {task.get("node_key"): task for task in tasks if task.get("node_key")}
 
     @staticmethod
     def parse_output(task):
@@ -174,30 +177,30 @@ class FlowgentE2EProject:
 
     @staticmethod
     def try_approve_pending_human(session, api_base, namespace, run_id, connection=None):
-        """Approve a pending gate, preferring its direct database token lookup."""
-        token = None
+        """Approve a pending gate, preferring its canonical approval ID."""
+        approval_id = None
         if connection:
             cursor = connection.cursor()
             cursor.execute(
-                "SELECT token FROM human_approvals WHERE agentflow_run_id=%s AND status='PENDING' LIMIT 1",
+                "SELECT id FROM orh_approval WHERE run_id=%s AND status='pending' LIMIT 1",
                 (run_id,),
             )
             row = cursor.fetchone()
             if row:
-                token = row[0]
-        if not token:
+                approval_id = row[0]
+        if not approval_id:
             response = session.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals")
             if response.status_code == 200:
                 for item in response.json() or []:
-                    if item.get("agentflow_run_id") == run_id and item.get("status") == "PENDING":
-                        token = item.get("token")
+                    if item.get("run_id") == run_id and item.get("status") == "pending":
+                        approval_id = item.get("id")
                         break
-        if token:
+        if approval_id:
             response = session.post(
-                f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals/{token}/approve",
+                f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/approve",
                 json={"comment": "Approved by e2e verifier"},
             )
-            print(f"  OK auto-approved human gate (token={token[:12]}...) status={response.status_code}")
+            print(f"  OK auto-approved human gate (approval={approval_id[:12]}...) status={response.status_code}")
             return response.status_code == 200
         return False
 

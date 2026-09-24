@@ -54,18 +54,23 @@ type FlowDefHandler struct {
 func NewFlowDefHandler(s storage.IStorage, logger *utils.Logger, agentFlows []entities.FlowInfo, subFlows map[string]entities.FlowInfo, namespacePrefix string, defaultNamespace string, sessionNamespace string, mqtt MQTTPublisher) *FlowDefHandler {
 	afMap := make(map[string]*entities.FlowInfo)
 	for i := range agentFlows {
+		agentFlows[i].NormalizeIdentity()
 		namespace := agentFlows[i].Namespace
 		if namespace == "" {
 			namespace = coalesceNamespace(defaultNamespace)
 		}
-		afMap[flowCacheKey(namespace, agentFlows[i].ID)] = &agentFlows[i]
+		putFlowCacheAliases(afMap, namespace, &agentFlows[i])
 	}
 	for k, v := range subFlows {
+		v.NormalizeIdentity()
 		namespace := v.Namespace
 		if namespace == "" {
 			namespace = coalesceNamespace(defaultNamespace)
 		}
-		afMap[flowCacheKey(namespace, k)] = &v
+		putFlowCacheAliases(afMap, namespace, &v)
+		if k != "" {
+			afMap[flowCacheKey(namespace, k)] = &v
+		}
 	}
 
 	var afStore flow.IFlowInfoStore
@@ -93,6 +98,66 @@ func NewFlowDefHandler(s storage.IStorage, logger *utils.Logger, agentFlows []en
 }
 
 func flowCacheKey(namespace, id string) string { return namespace + "\x00" + id }
+
+// putFlowCacheAliases indexes a definition by both its namespace-local name
+// and its stable database ID. The API accepts either identity on read/update
+// routes, so the cache must mirror the store's lookup semantics.
+func putFlowCacheAliases(cache map[string]*entities.FlowInfo, namespace string, spec *entities.FlowInfo) {
+	if spec == nil {
+		return
+	}
+	if name := spec.ResourceName(); name != "" {
+		cache[flowCacheKey(namespace, name)] = spec
+	}
+	if spec.ID != "" {
+		cache[flowCacheKey(namespace, spec.ID)] = spec
+	}
+}
+
+func deleteFlowCacheAliases(cache map[string]*entities.FlowInfo, namespace string, spec *entities.FlowInfo, extraKeys ...string) {
+	for _, key := range extraKeys {
+		if key != "" {
+			delete(cache, flowCacheKey(namespace, key))
+		}
+	}
+	if spec == nil {
+		return
+	}
+	if name := spec.ResourceName(); name != "" {
+		delete(cache, flowCacheKey(namespace, name))
+	}
+	if spec.ID != "" {
+		delete(cache, flowCacheKey(namespace, spec.ID))
+	}
+}
+
+func (h *FlowDefHandler) replaceCachedDefinition(namespace string, spec *entities.FlowInfo, staleKeys ...string) {
+	if spec == nil {
+		return
+	}
+	copy := *spec
+	copy.NormalizeIdentity()
+	copy.Namespace = namespace
+	h.mu.Lock()
+	deleteFlowCacheAliases(h.agentFlows, namespace, nil, staleKeys...)
+	putFlowCacheAliases(h.agentFlows, namespace, &copy)
+	h.mu.Unlock()
+}
+
+func (h *FlowDefHandler) removeCachedDefinition(namespace string, spec *entities.FlowInfo, routeKey string) {
+	h.mu.Lock()
+	deleteFlowCacheAliases(h.agentFlows, namespace, spec, routeKey)
+	h.mu.Unlock()
+}
+
+// applyStableFlowIdentity preserves the stable database identity while
+// treating name as a separately mutable, namespace-local resource key.
+func applyStableFlowIdentity(existing, updates *entities.FlowInfo) {
+	updates.ID = existing.ID
+	if updates.Name == "" {
+		updates.Name = existing.ResourceName()
+	}
+}
 
 // defaultNamespacePrefix falls back to "flowgent-" when unset, so
 // Runtime routing never derives an unprefixed (and potentially colliding)
@@ -178,7 +243,7 @@ func (h *FlowDefHandler) AgentFlows() map[string]*entities.FlowInfo {
 	c := make(map[string]*entities.FlowInfo, len(h.agentFlows))
 	for _, v := range h.agentFlows {
 		if v != nil {
-			c[v.ID] = v
+			c[v.ResourceName()] = v
 		}
 	}
 	return c
@@ -196,10 +261,15 @@ func (h *FlowDefHandler) Reload(flows []entities.FlowInfo, subFlows map[string]e
 	h.mu.Lock()
 	h.agentFlows = make(map[string]*entities.FlowInfo)
 	for i := range flows {
-		h.agentFlows[flowCacheKey(h.logicalNamespace(&flows[i]), flows[i].ID)] = &flows[i]
+		flows[i].NormalizeIdentity()
+		putFlowCacheAliases(h.agentFlows, h.logicalNamespace(&flows[i]), &flows[i])
 	}
 	for k, v := range subFlows {
-		h.agentFlows[flowCacheKey(h.logicalNamespace(&v), k)] = &v
+		namespace := h.logicalNamespace(&v)
+		putFlowCacheAliases(h.agentFlows, namespace, &v)
+		if k != "" {
+			h.agentFlows[flowCacheKey(namespace, k)] = &v
+		}
 	}
 	h.mu.Unlock()
 	h.notifyWatchers()
@@ -212,12 +282,8 @@ func (h *FlowDefHandler) CacheDefinition(spec *entities.FlowInfo) {
 	if spec == nil {
 		return
 	}
-	copy := *spec
-	namespace := h.logicalNamespace(&copy)
-	copy.Namespace = namespace
-	h.mu.Lock()
-	h.agentFlows[flowCacheKey(namespace, copy.ID)] = &copy
-	h.mu.Unlock()
+	namespace := h.logicalNamespace(spec)
+	h.replaceCachedDefinition(namespace, spec)
 	h.notifyWatchers()
 }
 
@@ -269,11 +335,14 @@ func (h *FlowDefHandler) listSpecs(ctx context.Context, namespace string, skills
 		if err := json.Unmarshal(definition.Definition, &spec); err != nil {
 			return nil, fmt.Errorf("decode flow %q: %w", definition.FlowID, err)
 		}
+		spec.ID = definition.FlowID
+		spec.Name = definition.FlowName
 		if (spec.Kind == "skill") != skills {
 			continue
 		}
 		spec.Namespace = namespace
-		spec.Version = definition.Version
+		spec.Revision = definition.Revision
+		spec.Version = definition.Revision
 		spec.Status = definition.Status
 		spec.CreatedAt = definition.CreatedAt
 		spec.CreatedBy = definition.CreatedBy
@@ -300,16 +369,17 @@ func (h *FlowDefHandler) createDefinition(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid body", 400)
 		return
 	}
+	spec.NormalizeIdentity()
 	if spec.Namespace != "" && spec.Namespace != namespace {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
 	if forceKind == "" {
-		if err := resourceid.Validate(spec.ID); err != nil {
+		if err := resourceid.Validate(spec.ResourceName()); err != nil {
 			http.Error(w, "invalid flow name: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-	} else if spec.ID == "" {
+	} else if spec.ResourceName() == "" {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
@@ -323,6 +393,7 @@ func (h *FlowDefHandler) createDefinition(w http.ResponseWriter, r *http.Request
 		return
 	}
 	spec.Namespace = namespace
+	spec.Revision = 1
 	spec.Version = 1
 	if err := spec.ValidateDAG(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -349,14 +420,12 @@ func (h *FlowDefHandler) createDefinition(w http.ResponseWriter, r *http.Request
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	h.mu.Lock()
-	h.agentFlows[flowCacheKey(namespace, spec.ID)] = &spec
-	h.mu.Unlock()
+	h.replaceCachedDefinition(namespace, &spec)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(spec)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "CREATED", spec.ID, namespace)
+	h.publishFlowEvent(r.Context(), "CREATED", spec.ResourceName(), namespace)
 }
 
 func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -389,9 +458,7 @@ func (h *FlowDefHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Populate in-memory cache for subsequent reads.
-	h.mu.Lock()
-	h.agentFlows[flowCacheKey(namespace, id)] = spec
-	h.mu.Unlock()
+	h.replaceCachedDefinition(namespace, spec, id)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(spec)
@@ -432,7 +499,7 @@ func (h *FlowDefHandler) updateDefinition(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if updates.ID != "" && updates.ID != id {
+	if updates.ID != "" && updates.ID != id && updates.ID != existing.ID {
 		http.Error(w, "id mismatch", http.StatusBadRequest)
 		return
 	}
@@ -467,15 +534,15 @@ func (h *FlowDefHandler) updateDefinition(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	updates.ID = id
+	applyStableFlowIdentity(existing, &updates)
 	updates.Namespace = namespace
-	updates.Version = existing.Version
+	updates.Revision = existing.Revision
+	updates.Version = existing.Revision
 	updates.Status = existing.Status
 	updates.CreatedAt = existing.CreatedAt
 	updates.CreatedBy = existing.CreatedBy
 	updates.UpdatedAt = time.Now()
-	updates.UpdatedBy = existing.UpdatedBy
-	updates.DelFlag = false
+	updates.UpdatedBy = authenticatedUserID(r.Context())
 	if err := updates.ValidateDAG(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -483,16 +550,15 @@ func (h *FlowDefHandler) updateDefinition(w http.ResponseWriter, r *http.Request
 
 	createdBy := authenticatedUserID(r.Context())
 	if err := h.afStore.SaveSpec(r.Context(), &updates, createdBy, "API update"); err != nil {
+		slog.Error("FlowDefHandler.SaveSpec failed", "id", id, "error", err)
 		http.Error(w, "internal", 500)
 		return
 	}
-	h.mu.Lock()
-	h.agentFlows[flowCacheKey(namespace, id)] = &updates
-	h.mu.Unlock()
+	h.replaceCachedDefinition(namespace, &updates, id, existing.ResourceName(), existing.ID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(updates)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "UPDATED", id, updates.Namespace)
+	h.publishFlowEvent(r.Context(), "UPDATED", updates.ResourceName(), updates.Namespace)
 }
 
 func (h *FlowDefHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -516,17 +582,15 @@ func (h *FlowDefHandler) deleteDefinition(w http.ResponseWriter, r *http.Request
 		http.Error(w, "internal", 500)
 		return
 	}
-	h.mu.Lock()
-	delete(h.agentFlows, flowCacheKey(namespace, id))
-	h.mu.Unlock()
+	h.removeCachedDefinition(namespace, existing, id)
 	w.WriteHeader(204)
 	h.notifyWatchers()
-	h.publishFlowEvent(r.Context(), "DELETED", id, namespace)
+	h.publishFlowEvent(r.Context(), "DELETED", existing.ResourceName(), namespace)
 }
 
-func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) {
+func (h *FlowDefHandler) TriggerWithInput(w http.ResponseWriter, r *http.Request, flowName string, input map[string]any, trigger entities.TriggerInfo) {
 	namespace := r.PathValue("namespace")
-	runID, err := h.CreateRunFromTrigger(r.Context(), agentFlowID, namespace, vars, trigger)
+	runID, err := h.CreateRunFromTrigger(r.Context(), flowName, namespace, input, trigger)
 	if err != nil {
 		if err == errFlowNotFound {
 			http.Error(w, "agentflow not found", 404)
@@ -536,7 +600,7 @@ func (h *FlowDefHandler) TriggerWithVars(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": string(entities.RunPending), "namespace": namespace, "agentflow_id": agentFlowID})
+	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": string(entities.RunPending), "namespace": namespace, "flow_id": flowName})
 }
 
 // errFlowNotFound is returned by CreateRunFromTrigger when the referenced
@@ -609,11 +673,12 @@ func (h *FlowDefHandler) publishRunCreatedEvent(ctx context.Context, namespaceID
 	}
 	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", namespaceID, flowID, run.ID)
 	payload, _ := json.Marshal(map[string]any{
-		"action":       "created",
+		"event_type":   "CREATED",
 		"run_id":       run.ID,
-		"agentflow_id": flowID,
+		"flow_id":      flowID,
 		"namespace_id": namespaceID,
 		"namespace":    run.K8sNamespace,
+		"status":       run.Status,
 		"trigger_type": run.TriggerType,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
@@ -652,27 +717,14 @@ func (h *FlowDefHandler) logicalNamespace(spec *entities.FlowInfo) string {
 	return h.defaultNamespace
 }
 
-func (h *FlowDefHandler) Trigger(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		AgentFlowID string               `json:"agentflow_id"`
-		Vars        map[string]any       `json:"vars"`
-		Trigger     entities.TriggerInfo `json:"trigger"`
-	}
-	if err := decodeStrictJSON(r, &req); err != nil {
-		http.Error(w, "invalid body", 400)
-		return
-	}
-	h.TriggerWithVars(w, r, req.AgentFlowID, req.Vars, req.Trigger)
-}
-
 func (h *FlowDefHandler) TriggerByID(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Vars    map[string]any       `json:"vars"`
+		Input   map[string]any       `json:"input"`
 		Trigger entities.TriggerInfo `json:"trigger"`
 	}
 	if err := decodeStrictJSON(r, &req); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	h.TriggerWithVars(w, r, r.PathValue("id"), req.Vars, req.Trigger)
+	h.TriggerWithInput(w, r, r.PathValue("id"), req.Input, req.Trigger)
 }

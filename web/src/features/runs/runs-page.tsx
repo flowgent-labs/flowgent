@@ -71,8 +71,7 @@ export function RunsPage() {
     () =>
       query.data?.items.filter(
         (run) =>
-          (!search ||
-            `${run.id} ${run.agentflow_id}`.toLowerCase().includes(search.toLowerCase())) &&
+          (!search || `${run.id} ${run.flow_name}`.toLowerCase().includes(search.toLowerCase())) &&
           (!trigger || run.trigger_type === trigger),
       ) ?? [],
     [query.data, search, trigger],
@@ -168,15 +167,15 @@ export function RunsPage() {
                     <td>
                       <Link
                         className="mono-link"
-                        to={flowRunPath(namespace, run.agentflow_id, run.id)}
+                        to={flowRunPath(namespace, run.flow_name, run.id)}
                       >
                         {run.id}
                       </Link>
                     </td>
                     {!flowId && (
                       <td>
-                        <Link to={flowPath(namespace, run.agentflow_id, '/runs')}>
-                          {run.agentflow_id}
+                        <Link to={flowPath(namespace, run.flow_name, '/runs')}>
+                          {run.flow_name}
                         </Link>
                       </td>
                     )}
@@ -187,14 +186,14 @@ export function RunsPage() {
                       <span className="trigger-label">{run.trigger_type || 'manual'}</span>
                       <small className="cell-subtitle">{run.trigger_source}</small>
                     </td>
-                    <td>v{run.version}</td>
+                    <td>v{run.flow_revision}</td>
                     <td>{formatDate(run.started_at)}</td>
                     <td>{duration(run.started_at, run.finished_at)}</td>
                     <td className="row-actions">
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => navigate(flowRunPath(namespace, run.agentflow_id, run.id))}
+                        onClick={() => navigate(flowRunPath(namespace, run.flow_name, run.id))}
                       >
                         <Eye size={14} />
                         {t('common.details')}

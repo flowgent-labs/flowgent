@@ -202,25 +202,26 @@ func (c *FlowgentClient) CreateRun(ctx context.Context, namespace string, run *e
 	if err := readJSON(resp, &created); err != nil {
 		return nil, fmt.Errorf("CreateRun: %w", err)
 	}
+	created.NormalizeAliases()
 	return &created, nil
 }
 
-// TriggerRunResult is the narrow response contract of POST /flows/trigger.
+// TriggerRunResult is the narrow response contract of POST /flows/{name}/trigger.
 // The trigger endpoint intentionally returns an acknowledgement rather than a
 // full FlowRunInfo; callers that need the run body can subsequently call
 // GetRun with RunID.
 type TriggerRunResult struct {
-	RunID       string             `json:"run_id"`
-	Status      entities.RunStatus `json:"status"`
-	Namespace   string             `json:"namespace"`
-	AgentFlowID string             `json:"agentflow_id"`
+	RunID     string             `json:"run_id"`
+	Status    entities.RunStatus `json:"status"`
+	Namespace string             `json:"namespace"`
+	FlowID    string             `json:"flow_id"`
 }
 
 // TriggerRun creates a PENDING run via the trigger endpoint.
-func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, agentFlowID string, vars map[string]any, trigger entities.TriggerInfo) (*TriggerRunResult, error) {
-	payload := map[string]any{"agentflow_id": agentFlowID, "vars": vars, "trigger": trigger}
+func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, flowName string, input map[string]any, trigger entities.TriggerInfo) (*TriggerRunResult, error) {
+	payload := map[string]any{"input": input, "trigger": trigger}
 	b, _ := json.Marshal(payload)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows/trigger", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows/"+url.PathEscape(flowName)+"/trigger", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
@@ -228,7 +229,7 @@ func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, agentFlowID 
 	if err := readJSON(resp, &out); err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	slog.Debug("api client TriggerRun", "namespace", namespace, "agentFlowID", agentFlowID)
+	slog.Debug("api client TriggerRun", "namespace", namespace, "flow", flowName)
 	return &out, nil
 }
 
@@ -250,6 +251,7 @@ func (c *FlowgentClient) GetRun(ctx context.Context, namespace, runID string) (*
 	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
 		return nil, err
 	}
+	run.NormalizeAliases()
 	return &run, nil
 }
 
@@ -266,7 +268,7 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, runtim
 		q.Set("k8s_namespace", k8sNamespace)
 	}
 	if flowID != "" {
-		q.Set("agentflow_id", flowID)
+		q.Set("flow_id", flowID)
 	}
 	if page > 0 {
 		q.Set("page", strconv.Itoa(page))
@@ -282,6 +284,11 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, runtim
 	var pageResp entities.Page[entities.FlowRunInfo]
 	if err := readJSON(resp, &pageResp); err != nil {
 		return nil, fmt.Errorf("ListRuns: %w", err)
+	}
+	for _, run := range pageResp.Items {
+		if run != nil {
+			run.NormalizeAliases()
+		}
 	}
 	return &pageResp, nil
 }
@@ -319,8 +326,15 @@ func (c *FlowgentClient) CancelRun(ctx context.Context, namespace, runID string)
 
 // CreateTaskRun persists a new task run.
 func (c *FlowgentClient) CreateTaskRun(ctx context.Context, namespace, runID string, task *entities.TaskRunInfo) error {
-	b, _ := json.Marshal(task)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs/"+runID+"/tasks", bytes.NewReader(b))
+	if task == nil {
+		return fmt.Errorf("CreateTaskRun: task is required")
+	}
+	task.NormalizeAliases()
+	b, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("CreateTaskRun: encode task: %w", err)
+	}
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs", bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("CreateTaskRun: %w", err)
 	}
@@ -334,8 +348,15 @@ func (c *FlowgentClient) CreateTaskRun(ctx context.Context, namespace, runID str
 
 // UpdateTaskRun updates an existing task run (status, output, error).
 func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, namespace, runID, taskID string, task *entities.TaskRunInfo) error {
-	b, _ := json.Marshal(task)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID+"/tasks/"+taskID, bytes.NewReader(b))
+	if task == nil {
+		return fmt.Errorf("UpdateTaskRun: task is required")
+	}
+	task.NormalizeAliases()
+	b, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("UpdateTaskRun: encode task: %w", err)
+	}
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs/"+taskID, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("UpdateTaskRun: %w", err)
 	}
@@ -349,7 +370,7 @@ func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, namespace, runID, ta
 
 // ListTaskRuns returns all tasks for a run.
 func (c *FlowgentClient) ListTaskRuns(ctx context.Context, namespace, runID string) ([]*entities.TaskRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/tasks", nil)
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs", nil)
 	if err != nil {
 		return nil, fmt.Errorf("ListTaskRuns: %w", err)
 	}
@@ -357,12 +378,17 @@ func (c *FlowgentClient) ListTaskRuns(ctx context.Context, namespace, runID stri
 	if err := readJSON(resp, &items); err != nil {
 		return nil, fmt.Errorf("ListTaskRuns: %w", err)
 	}
+	for _, item := range items {
+		if item != nil {
+			item.NormalizeAliases()
+		}
+	}
 	return items, nil
 }
 
 // GetTaskRun returns a single task run.
 func (c *FlowgentClient) GetTaskRun(ctx context.Context, namespace, runID, taskID string) (*entities.TaskRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/tasks/"+taskID, nil)
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs/"+taskID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GetTaskRun: %w", err)
 	}
@@ -378,6 +404,7 @@ func (c *FlowgentClient) GetTaskRun(ctx context.Context, namespace, runID, taskI
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
 		return nil, err
 	}
+	item.NormalizeAliases()
 	return &item, nil
 }
 
@@ -385,12 +412,13 @@ func (c *FlowgentClient) GetTaskRun(ctx context.Context, namespace, runID, taskI
 func (c *FlowgentClient) SavePlan(ctx context.Context, namespace, runID string, plan *entities.ExecutionPlan) error {
 	// execution plans flow through the tasks endpoint
 	task := &entities.TaskRunInfo{
-		BaseEntity:     entities.BaseEntity{ID: plan.TaskID},
-		AgentFlowRunID: plan.AgentFlowRunID,
-		NodeID:         plan.NodeID,
-		Status:         plan.State,
-		Input:          plan.Input,
-		ExecID:         plan.PlanID,
+		BaseEntity:  entities.BaseEntity{ID: plan.TaskID},
+		RunID:       plan.AgentFlowRunID,
+		NodeKey:     plan.NodeID,
+		Attempt:     plan.RetryCount + 1,
+		Status:      plan.State,
+		Input:       plan.Input,
+		ExecutionID: plan.PlanID,
 	}
 	return c.CreateTaskRun(ctx, namespace, runID, task)
 }
@@ -531,6 +559,11 @@ func (c *FlowgentClient) ListLLMProviders(ctx context.Context, namespace string)
 	if err := readJSON(resp, &items); err != nil {
 		return nil, fmt.Errorf("ListLLMProviders: %w", err)
 	}
+	for _, item := range items {
+		if item != nil {
+			item.NormalizeAliases()
+		}
+	}
 	return items, nil
 }
 
@@ -545,6 +578,11 @@ func (c *FlowgentClient) ListMCPs(ctx context.Context, namespace string) ([]*ent
 	var items []*entities.McpInfo
 	if err := readJSON(resp, &items); err != nil {
 		return nil, fmt.Errorf("ListMCPs: %w", err)
+	}
+	for _, item := range items {
+		if item != nil {
+			item.NormalizeAliases()
+		}
 	}
 	return items, nil
 }
@@ -569,18 +607,24 @@ func (c *FlowgentClient) SearchKnowledge(ctx context.Context, namespace string, 
 	return items, nil
 }
 
-// CreateKnowledge creates a knowledge entry via the API.
-func (c *FlowgentClient) CreateKnowledge(ctx context.Context, namespace string, entry *entities.KnowledgeEntry) (*entities.KnowledgeEntry, error) {
-	b, _ := json.Marshal(entry)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/knowledge", bytes.NewReader(b))
+// CreateKnowledgeCandidate freezes a summary candidate and requests the
+// human approval required before it can become retrievable knowledge or an
+// active instruction.
+func (c *FlowgentClient) CreateKnowledgeCandidate(ctx context.Context, namespace string, candidate *entities.KnowledgeCandidate) (*entities.ApprovalInfo, error) {
+	b, _ := json.Marshal(candidate)
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/knowledge/candidates", bytes.NewReader(b))
 	if err != nil {
-		return nil, fmt.Errorf("CreateKnowledge: %w", err)
+		return nil, fmt.Errorf("CreateKnowledgeCandidate: %w", err)
 	}
-	var created entities.KnowledgeEntry
-	if err := readJSON(resp, &created); err != nil {
-		return nil, fmt.Errorf("CreateKnowledge: %w", err)
+	var result struct {
+		Candidate entities.KnowledgeCandidate `json:"candidate"`
+		Approval  entities.ApprovalInfo       `json:"approval"`
 	}
-	return &created, nil
+	if err := readJSON(resp, &result); err != nil {
+		return nil, fmt.Errorf("CreateKnowledgeCandidate: %w", err)
+	}
+	*candidate = result.Candidate
+	return &result.Approval, nil
 }
 
 // ─── Watch (long-poll) ───────────────────────────────────────────
@@ -619,7 +663,11 @@ func (a *RunStateClient) UpdateRun(ctx context.Context, run *entities.FlowRunInf
 }
 
 func (a *RunStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
-	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.AgentFlowRunID, task.ID, task)
+	if task == nil {
+		return fmt.Errorf("save task: task is required")
+	}
+	task.NormalizeAliases()
+	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.RunID, task.ID, task)
 }
 
 // TaskStateClient adapts FlowgentClient for TM/SlotWorker task persistence.
@@ -629,7 +677,11 @@ type TaskStateClient struct {
 }
 
 func (a *TaskStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
-	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.AgentFlowRunID, task.ID, task)
+	if task == nil {
+		return fmt.Errorf("save task: task is required")
+	}
+	task.NormalizeAliases()
+	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.RunID, task.ID, task)
 }
 
 // HumanApprovalClient adapts FlowgentClient for HumanExecutor approval creation.

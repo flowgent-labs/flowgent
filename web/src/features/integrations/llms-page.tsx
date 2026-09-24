@@ -22,10 +22,9 @@ const blankLlm = (): LlmProvider => ({
   id: '',
   name: '',
   type: 'openai',
-  provider: '',
   enabled: true,
-  endpoint: '',
-  defaultModel: '',
+  base_uri: '',
+  default_model: '',
   models: [],
   rate_limit: 60,
   timeout: '90s',
@@ -61,7 +60,7 @@ export function LlmsPage() {
   const rows = useMemo(
     () =>
       query.data?.filter((item) =>
-        `${item.name} ${item.type} ${item.endpoint} ${item.defaultModel}`
+        `${item.name} ${item.type} ${item.base_uri} ${item.default_model}`
           .toLowerCase()
           .includes(search.toLowerCase()),
       ) ?? [],
@@ -128,10 +127,10 @@ export function LlmsPage() {
                 <StatusBadge status={item.enabled ? 'ACTIVE' : 'INACTIVE'} />
               </header>
               <button type="button" onClick={() => setSelected(structuredClone(item))}>
-                <h2>{item.name || item.provider}</h2>
+                <h2>{item.name}</h2>
                 <p>
                   <Sparkles size={14} />
-                  {item.type} · {item.defaultModel}
+                  {item.type} · {item.default_model}
                 </p>
                 <dl>
                   <div>
@@ -156,7 +155,7 @@ export function LlmsPage() {
                 </div>
               </button>
               <footer>
-                <code>{endpointHostname(item.endpoint)}</code>
+                <code>{endpointHostname(item.base_uri)}</code>
                 <IconButton
                   data-testid={`llm-delete-${item.name || item.id}`}
                   label={t('common.delete')}
@@ -204,9 +203,9 @@ function LlmDrawer({
   const current = draft
   const update = (updates: Partial<LlmProvider>) => current && setDraft({ ...current, ...updates })
   const submit = () => {
-    if (!current?.name || !current.endpoint || !current.defaultModel) return
+    if (!current?.name || !current.base_uri || !current.default_model) return
     try {
-      onSave({ ...current, provider: current.name, models: JSON.parse(models) }, !current.id)
+      onSave({ ...current, models: JSON.parse(models) }, !current.id)
     } catch {
       window.alert(t('errors.invalidJson'))
     }
@@ -214,7 +213,7 @@ function LlmDrawer({
   return (
     <Drawer
       open={Boolean(value)}
-      title={current?.id ? current.name || current.provider : t('llms.new')}
+      title={current?.id ? current.name : t('llms.new')}
       onClose={onClose}
       footer={
         <>
@@ -223,7 +222,7 @@ function LlmDrawer({
           </Button>
           <Button
             data-testid="llm-save"
-            disabled={saving || !current?.name || !current.endpoint}
+            disabled={saving || !current?.name || !current.base_uri}
             onClick={submit}
           >
             {t('common.save')}
@@ -263,16 +262,16 @@ function LlmDrawer({
           <input
             data-testid="llm-endpoint"
             type="url"
-            value={current?.endpoint ?? ''}
-            onChange={(event) => update({ endpoint: event.target.value })}
+            value={current?.base_uri ?? ''}
+            onChange={(event) => update({ base_uri: event.target.value })}
           />
         </label>
         <label className="field">
           <span className="field__label">{t('llms.defaultModel')}</span>
           <input
             data-testid="llm-default-model"
-            value={current?.defaultModel ?? ''}
-            onChange={(event) => update({ defaultModel: event.target.value })}
+            value={current?.default_model ?? ''}
+            onChange={(event) => update({ default_model: event.target.value })}
           />
         </label>
         <label className="field">

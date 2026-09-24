@@ -52,7 +52,7 @@ def get_or_post(s, api_base, get_path, post_path, payload, kind):
 
 def get_tasks(s, api_base, namespace, run_id):
     """Fetch all tasks for a given flow run."""
-    r = s.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/tasks")
+    r = s.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/node-runs")
     if r.status_code != 200:
         return []
     tasks = r.json()
@@ -62,8 +62,8 @@ def get_tasks(s, api_base, namespace, run_id):
 
 
 def tasks_by_node(tasks):
-    """Index task list by node_id."""
-    return {t.get("node_id"): t for t in tasks if t.get("node_id")}
+    """Index task list by canonical node_key."""
+    return {t.get("node_key"): t for t in tasks if t.get("node_key")}
 
 
 def parse_output(task):
@@ -87,26 +87,27 @@ def try_approve_pending_human(s, api_base, run_id, conn=None):
 
     Checks the DB first (if conn is provided), falls back to the API.
     """
-    token = None
+    approval_id = None
+    namespace = os.getenv("FLOWGENT_NAMESPACE_ID", "default")
     if conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT token FROM human_approvals WHERE agentflow_run_id=%s AND status='PENDING' LIMIT 1",
+            "SELECT id FROM orh_approval WHERE run_id=%s AND status='pending' LIMIT 1",
             (run_id,),
         )
         row = cur.fetchone()
         if row:
-            token = row[0]
-    if not token:
-        r = s.get(f"{api_base}/api/v1/human/approvals")
+            approval_id = row[0]
+    if not approval_id:
+        r = s.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals")
         if r.status_code == 200:
             for item in r.json() or []:
-                if item.get("agentflow_run_id") == run_id and item.get("status") == "PENDING":
-                    token = item.get("token")
+                if item.get("run_id") == run_id and item.get("status") == "pending":
+                    approval_id = item.get("id")
                     break
-    if token:
-        r = s.post(f"{api_base}/api/v1/human/{token}/approve",
+    if approval_id:
+        r = s.post(f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/approve",
                    json={"comment": "Approved by e2e verifier"})
-        print(f"  OK auto-approved human gate (token={token[:12]}...) status={r.status_code}")
+        print(f"  OK auto-approved human gate (approval={approval_id[:12]}...) status={r.status_code}")
         return r.status_code == 200
     return False

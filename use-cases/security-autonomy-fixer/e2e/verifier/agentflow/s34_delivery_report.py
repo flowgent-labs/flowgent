@@ -142,7 +142,7 @@ class DeliveryReportVerifier(BaseVerifier):
 
     @staticmethod
     def verify_pg_final(conn, run_id):
-        print("\n-- [34 PG Final] All-phase task_runs coverage --")
+        print("\n-- [34 PG Final] All-phase NodeRun coverage --")
         if not conn:
             print("  SKIP: no PG connection")
             return 0, 0
@@ -157,9 +157,9 @@ class DeliveryReportVerifier(BaseVerifier):
             placeholders = ", ".join("%s" for _ in node_ids)
             cur = conn.cursor()
             cur.execute(
-                f"SELECT node_id, status FROM task_runs "
-                f"WHERE agentflow_run_id=%s AND node_id IN ({placeholders}) "
-                f"ORDER BY sequence",
+                f"SELECT node_key,status FROM orh_node_run "
+                f"WHERE run_id=%s AND node_key IN ({placeholders}) AND status<>'DELETED' "
+                f"ORDER BY node_key,attempt",
                 (run_id, *node_ids),
             )
             rows = cur.fetchall()
@@ -172,17 +172,17 @@ class DeliveryReportVerifier(BaseVerifier):
                     statuses = [f"{r[0]}={r[1]}" for r in rows]
                     print(f"  -- {phase_name:<12}: no completed tasks — {statuses}")
             else:
-                print(f"  -- {phase_name:<12}: no task_runs entries (phase not reached)")
+                print(f"  -- {phase_name:<12}: no NodeRun entries (phase not reached)")
 
         cur = conn.cursor()
         cur.execute(
-            "SELECT COUNT(*) FROM task_runs WHERE agentflow_run_id=%s AND status IN ('COMPLETED','SUCCESS')",
+            "SELECT COUNT(*) FROM orh_node_run WHERE run_id=%s AND status IN ('COMPLETED','SUCCESS')",
             (run_id,),
         )
         total_completed = cur.fetchone()[0]
-        print(f"  Total completed task_runs: {total_completed}")
+        print(f"  Total completed NodeRuns: {total_completed}")
 
-        print(f"  Result: {passed}/{total} phases have completed task_runs")
+        print(f"  Result: {passed}/{total} phases have completed NodeRuns")
         return passed, total
 
     @staticmethod

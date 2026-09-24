@@ -76,7 +76,10 @@ export function manifestToFlow(source: string, expectedKind: 'Flow' | 'Skill'): 
   return {
     ...emptyAudit,
     ...(data as unknown as Flow),
-    id: String(data.id ?? manifest.metadata.name),
+    id: '',
+    name: manifest.metadata.name ?? '',
+    revision: 1,
+    summarize_enabled: Boolean(data.summarize_enabled ?? false),
     kind: expectedKind.toLowerCase(),
     namespace_id: manifest.metadata.namespace ?? 'default',
     description: String(data.description ?? manifest.metadata.description ?? ''),
@@ -95,6 +98,7 @@ export function manifestToAgent(source: string): Agent {
     ...emptyAudit,
     ...(data as unknown as Agent),
     id: '',
+    revision: 1,
     name: metadata.name ?? '',
     namespace_id: metadata.namespace ?? 'default',
     description: metadata.description ?? '',
@@ -113,8 +117,7 @@ function environmentName(value: unknown): string {
 
 export function manifestToLlm(source: string): LlmProvider {
   const { metadata, data } = parseResourceManifest(source, 'LLMProvider')
-  const legacyProvider = String(data.provider ?? '')
-  const requestedType = String(data.type ?? legacyProvider).toLowerCase()
+  const requestedType = String(data.type ?? '').toLowerCase()
   const type =
     requestedType === 'anthropic' || requestedType === 'gemini' ? requestedType : 'openai'
   return {
@@ -123,7 +126,6 @@ export function manifestToLlm(source: string): LlmProvider {
     id: '',
     name: metadata.name ?? '',
     type,
-    provider: metadata.name ?? '',
     namespace_id: metadata.namespace ?? 'default',
     description: metadata.description ?? '',
     labels: metadata.labels ?? {},
@@ -136,8 +138,8 @@ export function manifestToLlm(source: string): LlmProvider {
 
 export function manifestToMcp(source: string): McpServer {
   const { metadata, data } = parseResourceManifest(source, 'MCP')
-  if (data.type !== 'streamable-http') {
-    throw new Error('MCP data.type must be streamable-http.')
+  if (data.transport !== 'http') {
+    throw new Error('MCP data.transport must be http.')
   }
   return {
     ...emptyAudit,
@@ -149,7 +151,8 @@ export function manifestToMcp(source: string): McpServer {
     labels: metadata.labels ?? {},
     status: status(metadata.status),
     enabled: status(metadata.status) === 'ACTIVE',
-    type: data.type,
+    transport: 'http',
+    rpc_url: String(data.rpc_url ?? ''),
     header_refs: (data.header_refs as Record<string, string> | undefined) ?? {},
     env_refs: (data.env_refs as Record<string, string> | undefined) ?? {},
   }

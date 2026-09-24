@@ -178,17 +178,18 @@ func (c *FlowgentController) reconcile(ctx context.Context) {
 	seen := make(map[string]*entities.FlowInfo)
 	for i := range flows {
 		spec := &flows[i]
-		if spec.ID == "" {
+		flowName := spec.ResourceName()
+		if flowName == "" {
 			continue
 		}
 		if strings.EqualFold(spec.Kind, "skill") {
 			continue
 		}
 		if err := entities.ValidateRuntimeMode(spec.RuntimeMode); err != nil {
-			c.logger.Error("Flow has invalid runtime_mode", "flow_id", spec.ID, "runtime_mode", spec.RuntimeMode, "error", err)
+			c.logger.Error("Flow has invalid runtime_mode", "flow_id", flowName, "runtime_mode", spec.RuntimeMode, "error", err)
 			continue
 		}
-		seen[spec.ID] = spec
+		seen[flowName] = spec
 	}
 
 	activeApplicationRuns, activeRunSnapshotOK := c.collectActiveApplicationRuns(ctx, seen, peers)
@@ -284,8 +285,9 @@ func (c *FlowgentController) ensureApplicationJobManager(ctx context.Context, sp
 	if run.RuntimeMode != entities.RuntimeModeApplication {
 		return
 	}
+	flowName := spec.ResourceName()
 	if run.ID == "" {
-		c.logger.Error("Application FlowRun has no id", "flow_id", spec.ID)
+		c.logger.Error("Application FlowRun has no id", "flow_id", flowName)
 		return
 	}
 	ns := c.runtimeNamespace(spec)
@@ -300,34 +302,34 @@ func (c *FlowgentController) ensureApplicationJobManager(ctx context.Context, sp
 
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		c.logger.Error("Not in K8s cluster — cannot create application JM", "flow_id", spec.ID, "run_id", run.ID, "error", err)
+		c.logger.Error("Not in K8s cluster — cannot create application JM", "flow_id", flowName, "run_id", run.ID, "error", err)
 		return
 	}
 
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		c.logger.Error("Failed to create K8s client", "flow_id", spec.ID, "run_id", run.ID, "error", err)
+		c.logger.Error("Failed to create K8s client", "flow_id", flowName, "run_id", run.ID, "error", err)
 		return
 	}
 
-	if !c.ensureRuntimeNamespace(ctx, clientset, ns, namespaceID, spec.ID) {
+	if !c.ensureRuntimeNamespace(ctx, clientset, ns, namespaceID, flowName) {
 		return
 	}
-	c.ensureRuntimeConfigMap(ctx, clientset, ns, namespaceID, spec.ID)
-	runtimeConfigMap, runtimeSecret, runtimeChecksum, ok := c.ensureFlowRuntimeConfiguration(ctx, clientset, ns, namespaceID, spec.ID)
+	c.ensureRuntimeConfigMap(ctx, clientset, ns, namespaceID, flowName)
+	runtimeConfigMap, runtimeSecret, runtimeChecksum, ok := c.ensureFlowRuntimeConfiguration(ctx, clientset, ns, namespaceID, flowName)
 	if !ok {
 		return
 	}
-	c.ensureRuntimeRBAC(ctx, clientset, ns, namespaceID, spec.ID)
+	c.ensureRuntimeRBAC(ctx, clientset, ns, namespaceID, flowName)
 
-	jmName := applicationJobManagerDeploymentName(namespaceID, spec.ID, run.ID)
+	jmName := applicationJobManagerDeploymentName(namespaceID, flowName, run.ID)
 	jmDeployment := c.buildJMDeployment(jmName, ns, namespaceID, spec, run, clusterID, runtimeConfigMap, runtimeSecret, runtimeChecksum)
 
 	_, err = clientset.AppsV1().Deployments(ns).Create(ctx, jmDeployment, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		existing, getErr := clientset.AppsV1().Deployments(ns).Get(ctx, jmName, metav1.GetOptions{})
 		if getErr != nil {
-			c.logger.Error("Failed to read application JM deployment", "flow_id", spec.ID, "run_id", run.ID, "error", getErr)
+			c.logger.Error("Failed to read application JM deployment", "flow_id", flowName, "run_id", run.ID, "error", getErr)
 			return
 		}
 		if !jmDeploymentManagedEqual(existing, jmDeployment) {
@@ -354,21 +356,21 @@ func (c *FlowgentController) ensureApplicationJobManager(ctx context.Context, sp
 			}
 			existing.Labels = jmDeployment.Labels
 			if _, updateErr := clientset.AppsV1().Deployments(ns).Update(ctx, existing, metav1.UpdateOptions{}); updateErr != nil {
-				c.logger.Error("Failed to update application JM deployment", "flow_id", spec.ID, "run_id", run.ID, "error", updateErr)
+				c.logger.Error("Failed to update application JM deployment", "flow_id", flowName, "run_id", run.ID, "error", updateErr)
 				return
 			}
 			c.logger.Info("Application JM deployment updated",
-				"flow_id", spec.ID, "run_id", run.ID, "runtime_cluster_id", clusterID, "namespace", ns, "deployment", jmName)
+				"flow_id", flowName, "run_id", run.ID, "runtime_cluster_id", clusterID, "namespace", ns, "deployment", jmName)
 		}
 		return
 	}
 	if err != nil {
-		c.logger.Error("Failed to create application JM deployment", "flow_id", spec.ID, "run_id", run.ID, "error", err)
+		c.logger.Error("Failed to create application JM deployment", "flow_id", flowName, "run_id", run.ID, "error", err)
 		return
 	}
 	if err == nil {
 		c.logger.Info("Application JM deployment created",
-			"flow_id", spec.ID, "run_id", run.ID, "runtime_cluster_id", clusterID, "namespace", ns, "deployment", jmName)
+			"flow_id", flowName, "run_id", run.ID, "runtime_cluster_id", clusterID, "namespace", ns, "deployment", jmName)
 	}
 }
 
@@ -587,9 +589,10 @@ func (c *FlowgentController) ensureRuntimeConfigMap(ctx context.Context, clients
 func (c *FlowgentController) createScheduledRun(ctx context.Context, spec *entities.FlowInfo) *entities.FlowRunInfo {
 	ns := c.runtimeNamespace(spec)
 	namespaceID := c.dispatchNamespace(spec)
+	flowName := spec.ResourceName()
 	run := &entities.FlowRunInfo{
-		BaseEntity:   entities.BaseEntity{ID: fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano()), Namespace: namespaceID},
-		AgentFlowID:  spec.ID,
+		BaseEntity:   entities.BaseEntity{ID: fmt.Sprintf("%s-%d", flowName, time.Now().UnixNano()), Namespace: namespaceID},
+		AgentFlowID:  flowName,
 		Version:      1,
 		Status:       entities.RunPending,
 		RuntimeMode:  spec.RuntimeMode,
@@ -599,7 +602,7 @@ func (c *FlowgentController) createScheduledRun(ctx context.Context, spec *entit
 	run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "controller"})
 	created, err := c.api.CreateRun(ctx, namespaceID, run)
 	if err != nil {
-		c.logger.Error("Failed to create scheduled run via apiserver", "flow_id", spec.ID, "error", err)
+		c.logger.Error("Failed to create scheduled run via apiserver", "flow_id", flowName, "error", err)
 		return nil
 	}
 	return created
@@ -758,11 +761,12 @@ func resourceMemory(resources *model.SandboxResources) string {
 
 func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID string, spec *entities.FlowInfo, run *entities.FlowRunInfo, clusterID, runtimeConfigMap, runtimeSecret, runtimeChecksum string) *appsv1.Deployment {
 	replicas := int32(1)
+	flowName := spec.ResourceName()
 	labels := map[string]string{
 		"app":                          c.applicationJobManagerAppLabel(),
 		"app.kubernetes.io/component":  "jobmanager",
 		"flowgent.io/namespace":        namespaceID,
-		"flowgent.io/flow":             spec.ID,
+		"flowgent.io/flow":             flowName,
 		"flowgent.io/run":              run.ID,
 		"flowgent.io/runtime-mode":     string(entities.RuntimeModeApplication),
 		"flowgent.io/runtime-cluster":  clusterID,
@@ -788,11 +792,11 @@ func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID stri
 						Name:            "jobmanager",
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Image:           image,
-						Args:            []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--flow-id", spec.ID, "--run-id", run.ID},
+						Args:            []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--flow-id", flowName, "--run-id", run.ID},
 						EnvFrom:         runtimeEnvFrom(c.cfg.Runtime.CredentialEnvSecret, runtimeConfigMap, runtimeSecret),
 						Resources:       buildResourceRequirements(applicationResources.JobManager),
 						Env: []corev1.EnvVar{
-							{Name: "FLOWGENT__RUNTIME__AGENT_FLOW_ID", Value: spec.ID},
+							{Name: "FLOWGENT__RUNTIME__AGENT_FLOW_ID", Value: flowName},
 							{Name: "FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID", Value: run.ID},
 							{Name: "FLOWGENT__RUNTIME__MODE", Value: string(entities.RuntimeModeApplication)},
 							{Name: "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID", Value: clusterID},

@@ -73,7 +73,7 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 
 	m.logger.Info("jobmanager submit",
 		"run_id", run.ID,
-		"agentflow_id", spec.ID,
+		"agentflow_id", spec.ResourceName(),
 		"runtime_mode", mode,
 		"runtime_cluster_id", m.cfg.RuntimeClusterID,
 		"namespace_id", run.Namespace,
@@ -95,10 +95,10 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 }
 
 type RunPollerConfig struct {
-	K8sNamespace   string
-	AgentFlowID    string
-	AgentFlowRunID string
-	RuntimeMode    entities.RuntimeMode
+	RuntimeNamespace string
+	AgentFlowID      string
+	AgentFlowRunID   string
+	RuntimeMode      entities.RuntimeMode
 }
 
 // StartRunPoller polls for pending AgentFlowRuns via the apiserver API and
@@ -117,22 +117,17 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), string(cfg.RuntimeMode), cfg.K8sNamespace, cfg.AgentFlowID, 1, 50)
+			// The physical Kubernetes namespace is a deployment concern and is
+			// deliberately absent from the durable Run schema. Runtime mode plus
+			// Flow/Run identity selects the work; the owning JM then injects its
+			// configured namespace before dispatch.
+			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), string(cfg.RuntimeMode), "", cfg.AgentFlowID, 1, 50)
 			if err != nil {
 				slog.Warn("poller ListRuns failed", "err", err)
 				continue
 			}
 			for _, run := range page.Items {
-				if run.Status != entities.RunPending {
-					continue
-				}
-				if cfg.AgentFlowRunID != "" && run.ID != cfg.AgentFlowRunID {
-					continue
-				}
-				if cfg.K8sNamespace != "" && run.K8sNamespace != cfg.K8sNamespace {
-					continue
-				}
-				if run.RuntimeMode != cfg.RuntimeMode {
+				if !preparePolledRun(run, cfg) {
 					continue
 				}
 				// Resolve the durable definition for every new run. The initial map is
@@ -165,6 +160,22 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 			}
 		}
 	}
+}
+
+func preparePolledRun(run *entities.FlowRunInfo, cfg RunPollerConfig) bool {
+	if run == nil || run.Status != entities.RunPending {
+		return false
+	}
+	if cfg.AgentFlowRunID != "" && run.ID != cfg.AgentFlowRunID {
+		return false
+	}
+	if run.RuntimeMode != cfg.RuntimeMode {
+		return false
+	}
+	if run.K8sNamespace == "" {
+		run.K8sNamespace = cfg.RuntimeNamespace
+	}
+	return true
 }
 
 func (m *JobManager) claimRun(ctx context.Context, runID string) (context.Context, func(), bool, error) {

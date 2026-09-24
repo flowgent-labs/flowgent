@@ -57,7 +57,6 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{id}", flowDef.Get)
 	mux.HandleFunc("PUT /api/v1/{namespace}/flows/{id}", flowDef.Update)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{id}", flowDef.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/trigger", flowDef.Trigger)
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/{id}/trigger", flowDef.TriggerByID)
 
 	// Flow-scoped run aliases make exact-Flow grants cover its complete run,
@@ -66,11 +65,11 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Get)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Delete)
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/cancel", flowRun.Cancel)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/tasks", flowRun.ListTasks)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/tasks/{task_id}", flowRun.GetTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/node-runs", flowRun.ListTasks)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/node-runs/{node_run_id}", flowRun.GetTask)
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.ListRunApprovals)
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.CreateRunApproval)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{token}/{decision}", human.ResolveRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
 	if traceHandler != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/trace", traceHandler.GetRunTrace)
 	}
@@ -94,19 +93,19 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{namespace}/runs", flowRun.Create)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs", flowRun.List)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs/metrics", flowRun.Metrics)
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}", flowRun.Update)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}", flowRun.Get)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/runs/{id}", flowRun.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/cancel", flowRun.Cancel)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/tasks", flowRun.CreateTask)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks", flowRun.ListTasks)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.GetTask)
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.UpdateTask)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/approvals", human.ListRunApprovals)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals", human.CreateRunApproval)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/approvals/{token}/{decision}", human.ResolveRunApproval)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}", flowRun.Update)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}", flowRun.Get)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/runs/{run_id}", flowRun.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/cancel", flowRun.Cancel)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/node-runs", flowRun.CreateTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs", flowRun.ListTasks)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", flowRun.GetTask)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", flowRun.UpdateTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/approvals", human.ListRunApprovals)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/approvals", human.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
 	if traceHandler != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/trace", traceHandler.GetRunTrace)
+		mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", traceHandler.GetRunTrace)
 	}
 
 	// ── Namespace approval feed for the notifier ───────────
@@ -137,11 +136,9 @@ func RegisterRESTRoutes(
 
 	// ── Knowledge Entries (namespace-scoped) ─────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge/tags", knowledgeHandler.ListTags)
+	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/candidates", knowledgeHandler.CreateCandidate)
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge", knowledgeHandler.List)
-	mux.HandleFunc("POST /api/v1/{namespace}/knowledge", knowledgeHandler.Create)
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Get)
-	mux.HandleFunc("PUT /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Update)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Delete)
 	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/search", knowledgeHandler.Search)
 
 	// ── Immutable Flow releases and consumer installations ───

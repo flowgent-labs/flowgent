@@ -93,12 +93,13 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 		if mcps, err := mcpLoader.ListMCPs(context.Background()); err == nil {
 			slog.Info("taskmanager loaded MCP servers", "count", len(mcps))
 			for _, m := range mcps {
-				slog.Info("taskmanager MCP candidate", "name", m.Name, "enabled", m.Enabled, "type", m.Type)
+				m.NormalizeAliases()
+				slog.Info("taskmanager MCP candidate", "name", m.Name, "enabled", m.Enabled, "transport", m.Transport)
 				if !m.Enabled || m.Name == "" {
 					slog.Info("taskmanager skip MCP", "name", m.Name, "enabled", m.Enabled)
 					continue
 				}
-				slog.Info("taskmanager register MCP", "name", m.Name, "type", m.Type, "url", m.URL)
+				slog.Info("taskmanager register MCP", "name", m.Name, "transport", m.Transport, "rpc_url", m.RPCURL)
 				// Resolve persisted credential references from the K8s Secret envFrom.
 				persistedHeaders := m.Headers
 				if m.HeaderRefs != nil {
@@ -112,7 +113,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 					}
 					headers[k] = resolved
 				}
-				url := os.ExpandEnv(m.URL)
+				url := os.ExpandEnv(m.RPCURL)
 				slog.Info("taskmanager MCP resolved", "name", m.Name, "url", url)
 				mcpMgr.Register(m.Name, url, headers)
 			}
@@ -210,13 +211,14 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 	if task.ID == "" {
 		task.BaseEntity.ID = plan.TaskID
 	}
-	task.AgentFlowRunID = plan.AgentFlowRunID
-	task.NodeID = plan.NodeID
+	task.RunID = plan.AgentFlowRunID
+	task.NodeKey = plan.NodeID
 	task.Input = plan.Input
-	task.RetryCount = plan.RetryCount
+	task.Attempt = plan.RetryCount + 1
 	task.MaxRetries = plan.MaxRetries
-	task.ExecID = fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1)
+	task.ExecutionID = fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1)
 	task.Sequence = plan.RetryCount + 1
+	task.NormalizeAliases()
 	startedAt := time.Now().UTC()
 	if plan.StartedAt != nil {
 		startedAt = *plan.StartedAt

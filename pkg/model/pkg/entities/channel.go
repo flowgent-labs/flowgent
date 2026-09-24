@@ -28,7 +28,7 @@ type NotifyChannelInfo struct {
 	ChannelType NotifyChannelType `json:"provider" db:"channel_type"`
 	Config      map[string]any    `json:"config"`
 	Enabled     bool              `json:"enabled"`
-	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty" yaml:"labels,omitempty" db:"-"`
 
 	// ConfiguredSecretFields lets management clients distinguish an unchanged
 	// write-only value from an unset value. SealedSecrets is opaque runtime data:

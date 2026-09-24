@@ -41,7 +41,7 @@ BROWSER_HOST = "localhost"
 APPLICATION_DISPLAY_NAME = "Flowgent Security Autonomy Fixer"
 AUTHN_ISSUER = f"urn:authguard:{config.RESOURCE_PREFIX}:authn"
 AUDIENCE = "flowgent"
-AUTHGUARD_DATABASE = "flowgent"
+DEFAULT_AUTHGUARD_DATABASE = "flowgent"
 AUTHGUARD_SCHEMA = "e2e_flowgent_authguard"
 AUTHGUARD_REDIS_NAME = f"{config.RESOURCE_PREFIX}-authguard-redis"
 GITHUB_CLIENT_ID = "e2e-flowgent-github"
@@ -57,6 +57,13 @@ MOCK_GITHUB_SCRIPT = (
 
 class AuthGuardRuntime:
     """Class-owned operations for authguard."""
+
+    @staticmethod
+    def _postgres_database() -> str:
+        database = os.getenv("FLOWGENT_PG_DATABASE", DEFAULT_AUTHGUARD_DATABASE).strip()
+        if not database:
+            raise ValueError("FLOWGENT_PG_DATABASE must not be empty")
+        return database
 
     @staticmethod
     def _b64url(value: int) -> str:
@@ -168,7 +175,7 @@ class AuthGuardRuntime:
             "AUTHGUARD_LDAP_BIND_PASSWORD",
             "AUTHGUARD__STORAGE__POSTGRES__PASSWORD",
             "AUTHGUARD__CACHE__REDIS__PASSWORD",
-            "AUTHGUARD__AUTHZ__API_TOKEN",
+            "AUTHGUARD__AUTHZ__API__TOKEN",
             "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY",
             "AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY",
             "AUTHGUARD_AUTHN_SESSION_JWKS",
@@ -184,7 +191,7 @@ class AuthGuardRuntime:
             "AUTHGUARD_LDAP_BIND_PASSWORD": bind_password,
             "AUTHGUARD__STORAGE__POSTGRES__PASSWORD": os.getenv("FLOWGENT_PG_PASSWORD", "test"),
             "AUTHGUARD__CACHE__REDIS__PASSWORD": secrets.token_urlsafe(36),
-            "AUTHGUARD__AUTHZ__API_TOKEN": secrets.token_urlsafe(48),
+            "AUTHGUARD__AUTHZ__API__TOKEN": secrets.token_urlsafe(48),
             "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY": access_context_hmac_key,
             "AUTHGUARD_AUTHN_SESSION_PRIVATE_KEY": private_key,
             "AUTHGUARD_AUTHN_SESSION_JWKS": jwks,
@@ -295,20 +302,21 @@ class AuthGuardRuntime:
 
     @staticmethod
     def _reset_authguard_schema(pg_container: str, pg_user: str, pg_password: str) -> None:
+        database = AuthGuardRuntime._postgres_database()
         sql = (
             f'DROP SCHEMA IF EXISTS "{AUTHGUARD_SCHEMA}" CASCADE; '
             f'CREATE SCHEMA "{AUTHGUARD_SCHEMA}" AUTHORIZATION "{pg_user}";'
         )
         result = subprocess.run(
             ["docker", "exec", "-e", f"PGPASSWORD={pg_password}", pg_container,
-             "psql", "-v", "ON_ERROR_STOP=1", "-U", pg_user, "-d", AUTHGUARD_DATABASE, "-c", sql],
+             "psql", "-v", "ON_ERROR_STOP=1", "-U", pg_user, "-d", database, "-c", sql],
             capture_output=True,
             text=True,
             timeout=60,
         )
         if result.returncode != 0:
             raise RuntimeError(f"reset AuthGuard schema failed: {result.stderr[:400]}")
-        print(f"  PostgreSQL schema reset: {AUTHGUARD_DATABASE}/{AUTHGUARD_SCHEMA}")
+        print(f"  PostgreSQL schema reset: {database}/{AUTHGUARD_SCHEMA}")
 
     @staticmethod
     def runtime_config(
@@ -324,8 +332,9 @@ class AuthGuardRuntime:
         mock_url = mock_url or f"http://{MOCK_GITHUB_NAME}.{namespace}.svc.cluster.local:8080"
         ldap_url = ldap_url or f"ldap://{LDAP_NAME}.{namespace}.svc.cluster.local:389"
         redis_url = redis_url or f"redis://{AUTHGUARD_REDIS_NAME}.{namespace}.svc.cluster.local:6379"
+        database = parse.quote(AuthGuardRuntime._postgres_database(), safe="")
         postgres_url = (
-            f"postgresql://{pg_host}:{pg_port}/{AUTHGUARD_DATABASE}?sslmode=disable"
+            f"postgresql://{pg_host}:{pg_port}/{database}?sslmode=disable"
             f"&options=-csearch_path%3D{AUTHGUARD_SCHEMA}"
         )
         document = {
@@ -375,6 +384,12 @@ class AuthGuardRuntime:
                 "otel": {"enabled": False, "endpoint": "http://127.0.0.1:4317", "protocol": "grpc", "timeout": "5s", "sample_rate": 1.0},
             },
             "authz": {
+                "api": {
+                    "enabled": True,
+                    "host": "0.0.0.0",
+                    "port": 9090,
+                    "token": "",
+                },
                 "identity": {"token_header": "authorization", "principal_id_claim": "principal_id", "principal_kind_claim": "principal_kind", "groups_claim": "authguard_group_ids"},
                 "scope_delivery": {
                     "direct_urn_limit": 32,
@@ -397,7 +412,6 @@ class AuthGuardRuntime:
                     "scim": {"enabled": False, "discovery_id": "disabled", "issuer": LDAP_ISSUER},
                 },
                 "resign": {"enabled": False, "max_ttl": "60s", "private_key_b64": ""},
-                "api_token": "",
             },
             "storage": {
                 "provider": "Postgres", "bootstrap_policy": None,
@@ -722,7 +736,7 @@ class AuthGuardRuntime:
         print("\n-- Verifying LDAP federation, GitHub AuthN, and Envoy/AuthGuard authorization --")
         AuthGuardRuntime._wait_authguard_ready(namespace)
         token, github_principal_id = AuthGuardRuntime._social_login(namespace)
-        api_token = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD__AUTHZ__API_TOKEN")
+        api_token = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD__AUTHZ__API__TOKEN")
         authz_service = f"{config.RESOURCE_PREFIX}-authguard"
         materializations = (
             ("global-platform-security", "GROUP", "principal-global-platform-security"),
@@ -731,7 +745,7 @@ class AuthGuardRuntime:
             ("global-model-risk", "GROUP", "principal-global-model-risk"),
             ("global-regulatory-audit", "GROUP", "principal-global-regulatory-audit"),
         )
-        with AuthGuardRuntime._forward(namespace, authz_service, 9091) as port:
+        with AuthGuardRuntime._forward(namespace, authz_service, 9090) as port:
             for text_value, kind, principal_id in materializations:
                 status, _, result = AuthGuardRuntime._api(port, "/api/v1/principal-discovery/search", api_token, "POST", {"text": text_value, "kinds": [kind], "provider_ids": ["e2e-flowgent-corporate-ldap"], "per_provider_limit": 20, "cursors": {}})
                 candidates = result.get("principals", [])

@@ -41,10 +41,10 @@ consoleVersion: core.flowgent.io/v1
 kind: LLMProvider
 metadata: { name: deepseek, namespace: default, status: active }
 data:
-  provider: OPENAI
-  endpoint: https://api.example/v1
+  type: openai
+  base_uri: https://api.example/v1
   api_key_env: DEEPSEEK_API_KEY
-  defaultModel: chat
+  default_model: chat
   models: []
 `)
     expect(provider.api_key_env).toBe('DEEPSEEK_API_KEY')
@@ -56,13 +56,13 @@ consoleVersion: core.flowgent.io/v1
 kind: MCP
 metadata: { name: github, namespace: default, status: active }
 data:
-  type: streamable-http
-  url: https://mcp.example/mcp
+  transport: http
+  rpc_url: https://mcp.example/mcp
   header_refs:
     Authorization: Bearer \${GITHUB_TOKEN}
 `)
     expect(server.header_refs).toEqual({ Authorization: 'Bearer ${GITHUB_TOKEN}' })
-    expect(server.type).toBe('streamable-http')
+    expect(server.transport).toBe('http')
   })
 
   it('keeps canonical flat skill nodes unchanged', () => {

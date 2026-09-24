@@ -73,9 +73,19 @@ class IntegrationsCrudVerifier(BrowserConsoleVerifier, BaseVerifier):
         page.get_by_test_id("llm-default-model").fill("gpt-e2e")
         page.get_by_test_id("llm-api-key-env").fill("DEEPSEEK_API_KEY")
         page.get_by_test_id("llm-env-refs").fill('{"LLM_TENANT":"${DEEPSEEK_API_KEY}"}')
-        page.get_by_test_id("llm-save").click()
-        expect(page.get_by_test_id(f"llm-card-{self.llm_name}")).to_have_count(1, timeout=20_000)
+        with page.expect_response(
+            lambda response: response.request.method == "POST"
+            and response.url.endswith(f"/api/v1/{self.web_namespace}/llm/providers"),
+            timeout=20_000,
+        ) as request:
+            page.get_by_test_id("llm-save").click()
+        response = request.value
+        if not response.ok:
+            raise AssertionError(
+                f"LLM create returned HTTP {response.status}: {response.text()[:400]}"
+            )
         self.llm_created = True
+        expect(page.get_by_test_id(f"llm-card-{self.llm_name}")).to_have_count(1, timeout=20_000)
         self.screenshot("UI-03", "browser created typed LLM provider with environment references")
         self.details.append("Created LLM using strict openai type, Base URI, model, and masked environment references.")
 

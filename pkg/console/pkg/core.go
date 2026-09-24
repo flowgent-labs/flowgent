@@ -76,6 +76,9 @@ func (fc *FlowgentConsole) AddChannel(ch *entities.NotifyChannelInfo) error {
 	ch.Namespace = fc.namespace
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = time.Now()
+	if err := fc.protectChannelSecrets(ch); err != nil {
+		return err
+	}
 	return fc.getStores().channels.Save(fc.ctx, ch)
 }
 

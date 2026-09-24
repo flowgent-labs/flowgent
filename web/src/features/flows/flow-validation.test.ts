@@ -3,7 +3,10 @@ import type { Flow } from '../../core/domain/types'
 import { validateFlow } from './flow-validation'
 
 const flow = (overrides: Partial<Flow> = {}): Flow => ({
-  id: 'valid-flow',
+  id: 'stable-flow-id',
+  name: 'valid-flow',
+  revision: 1,
+  summarize_enabled: false,
   status: 'ACTIVE',
   created_at: '',
   updated_at: '',
@@ -27,10 +30,10 @@ describe('validateFlow', () => {
   })
 
   it('enforces the public name contract and case-insensitive uniqueness', () => {
-    expect(validateFlow(flow({ id: '1-invalid' }))).toContainEqual(
+    expect(validateFlow(flow({ name: '1-invalid' }))).toContainEqual(
       expect.objectContaining({ code: 'flowNameInvalid' }),
     )
-    expect(validateFlow(flow({ id: 'Security_Fixer' }), ['security_fixer'])).toContainEqual(
+    expect(validateFlow(flow({ name: 'Security_Fixer' }), ['security_fixer'])).toContainEqual(
       expect.objectContaining({ code: 'flowNameExists' }),
     )
   })

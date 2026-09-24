@@ -72,8 +72,13 @@ export function RunDetailPage() {
     refetchInterval: 4_000,
   })
   const resolveApproval = useMutation({
-    mutationFn: ({ token, decision }: { token: string; decision: 'approve' | 'reject' }) =>
-      repositories.runs.resolveApproval(namespace, runId, token, decision, flowId),
+    mutationFn: ({
+      approvalId,
+      decision,
+    }: {
+      approvalId: string
+      decision: 'approve' | 'reject'
+    }) => repositories.runs.resolveApproval(namespace, runId, approvalId, decision, flowId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [namespace, 'runs', runId] })
       void queryClient.invalidateQueries({ queryKey: [namespace, 'runs', runId, 'tasks'] })
@@ -139,7 +144,7 @@ export function RunDetailPage() {
         <SummaryItem
           icon={<GitCommitHorizontal />}
           label={t('flows.version')}
-          value={`v${run.data.version}`}
+          value={`v${run.data.flow_revision}`}
         />
         <SummaryItem
           icon={<Activity />}
@@ -157,7 +162,7 @@ export function RunDetailPage() {
         </div>
       )}
       {approvals.data.map((approval) => (
-        <section className="contract-warning" data-testid="pending-approval" key={approval.token}>
+        <section className="contract-warning" data-testid="pending-approval" key={approval.id}>
           <ShieldApproval />
           <span>
             <strong>{t('runs.humanApproval')}</strong>
@@ -168,14 +173,14 @@ export function RunDetailPage() {
             size="sm"
             variant="secondary"
             disabled={resolveApproval.isPending}
-            onClick={() => resolveApproval.mutate({ token: approval.token, decision: 'reject' })}
+            onClick={() => resolveApproval.mutate({ approvalId: approval.id, decision: 'reject' })}
           >
             {t('runs.reject')}
           </Button>
           <Button
             size="sm"
             disabled={resolveApproval.isPending}
-            onClick={() => resolveApproval.mutate({ token: approval.token, decision: 'approve' })}
+            onClick={() => resolveApproval.mutate({ approvalId: approval.id, decision: 'approve' })}
           >
             {t('runs.approve')}
           </Button>
@@ -228,7 +233,7 @@ export function RunDetailPage() {
                       onClick={() => setSelectedAttemptId(attempt.id)}
                     >
                       <span>
-                        <strong>{t('runs.attemptNumber', { count: attempt.sequence })}</strong>
+                        <strong>{t('runs.attemptNumber', { count: attempt.attempt })}</strong>
                         <small>{formatDate(attempt.started_at)}</small>
                       </span>
                       <StatusBadge status={attempt.status} />
@@ -250,7 +255,7 @@ export function RunDetailPage() {
         </aside>
       </div>
       <div className="json-grid">
-        <JsonView label={t('runs.variables')} value={run.data.vars} />
+        <JsonView label={t('runs.variables')} value={run.data.input} />
         <JsonView label={t('runs.output')} value={run.data.output} />
       </div>
     </div>
@@ -265,13 +270,13 @@ function TaskAttemptDetail({ task, traceHref }: { task: TaskRun; traceHref: stri
         <div>
           <dt>{t('runs.executionId')}</dt>
           <dd>
-            <code>{task.exec_id || '—'}</code>
+            <code>{task.execution_id || '—'}</code>
           </dd>
         </div>
         <div>
           <dt>{t('runs.attempt')}</dt>
           <dd>
-            {task.sequence} / {task.max_retries + 1}
+            {task.attempt} / {task.max_retries + 1}
           </dd>
         </div>
         <div>

@@ -5,15 +5,16 @@ import "time"
 // BaseEntity provides common fields for all persisted entities.
 // All DB-backed entities in this package embed BaseEntity.
 type BaseEntity struct {
-	ID          string    `json:"id" yaml:"id"`
-	Description string    `json:"description,omitempty" yaml:"description,omitempty"`
-	Namespace   string    `json:"namespace_id,omitempty" yaml:"namespace_id,omitempty"`
-	Status      string    `json:"status" yaml:"status"`
-	CreatedAt   time.Time `json:"created_at" yaml:"created_at"`
-	CreatedBy   string    `json:"created_by,omitempty" yaml:"created_by,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at" yaml:"updated_at"`
-	UpdatedBy   string    `json:"updated_by,omitempty" yaml:"updated_by,omitempty"`
-	DelFlag     bool      `json:"del_flag" yaml:"del_flag"`
+	ID          string         `json:"id" yaml:"id"`
+	Description string         `json:"description,omitempty" yaml:"description,omitempty"`
+	Namespace   string         `json:"namespace_id,omitempty" yaml:"namespace_id,omitempty" db:"namespace_id"`
+	Status      string         `json:"status" yaml:"status"`
+	CreatedAt   time.Time      `json:"created_at" yaml:"created_at"`
+	CreatedBy   string         `json:"created_by,omitempty" yaml:"created_by,omitempty"`
+	UpdatedAt   time.Time      `json:"updated_at" yaml:"updated_at"`
+	UpdatedBy   string         `json:"updated_by,omitempty" yaml:"updated_by,omitempty"`
+	RowVersion  int64          `json:"row_version" yaml:"row_version"`
+	Metadata    map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 // MarkCreated sets creation audit fields.
@@ -24,7 +25,7 @@ func (b *BaseEntity) MarkCreated(by string) {
 	b.CreatedBy = by
 	b.UpdatedAt = now
 	b.UpdatedBy = by
-	b.DelFlag = false
+	b.RowVersion = 1
 }
 
 // MarkUpdated sets update audit fields.
@@ -37,7 +38,6 @@ func (b *BaseEntity) MarkUpdated(by string) {
 
 // MarkDeleted soft-deletes the entity.
 func (b *BaseEntity) MarkDeleted(by string) {
-	b.DelFlag = true
 	b.Status = "DELETED"
 	b.MarkUpdated(by)
 }

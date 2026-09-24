@@ -118,7 +118,7 @@ func TestFlowRunLifecycleUpdatePersistsJobMasterTimestamps(t *testing.T) {
 	}}
 	handler := &FlowRunHandler{runStore: store}
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}", handler.Update)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}", handler.Update)
 
 	body := `{"status":"COMPLETED","started_at":"2026-08-16T00:00:00Z","finished_at":"2026-08-16T00:03:00Z"}`
 	response := httptest.NewRecorder()
@@ -141,7 +141,7 @@ func TestFlowRunLifecycleRejectsInvertedTimestamps(t *testing.T) {
 	}}
 	handler := &FlowRunHandler{runStore: store}
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}", handler.Update)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}", handler.Update)
 
 	body := `{"status":"FAILED","started_at":"2026-08-16T00:03:00Z","finished_at":"2026-08-16T00:00:00Z"}`
 	response := httptest.NewRecorder()
@@ -162,10 +162,10 @@ func TestFlowRunTasksRequireRunNamespaceOwnership(t *testing.T) {
 		payloads:  taskpayload.NewDefaultTaskPayloadProvider(0),
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks", handler.ListTasks)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs", handler.ListTasks)
 
 	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tenant-b/runs/run-a/tasks", nil))
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tenant-b/runs/run-a/node-runs", nil))
 	if response.Code != http.StatusNotFound || tasks.listCalled {
 		t.Fatalf("status = %d, list called = %v", response.Code, tasks.listCalled)
 	}
@@ -182,15 +182,34 @@ func TestUpdateTaskUsesOwnedRunFromPath(t *testing.T) {
 		payloads:  taskpayload.NewDefaultTaskPayloadProvider(0),
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id}", handler.UpdateTask)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", handler.UpdateTask)
 
-	body := `{"agentflow_run_id":"run-b","namespace_id":"tenant-b","node_id":"node-a","status":"SUCCESS","sequence":1}`
+	body := `{"run_id":"run-b","namespace_id":"tenant-b","node_key":"node-a","status":"SUCCESS","attempt":1}`
 	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/v1/tenant-a/runs/run-a/tasks/task-a", strings.NewReader(body)))
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/v1/tenant-a/runs/run-a/node-runs/node-run-a", strings.NewReader(body)))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if tasks.updated == nil || tasks.updated.AgentFlowRunID != "run-a" || tasks.updated.Namespace != "tenant-a" {
+	if tasks.updated == nil || tasks.updated.RunID != "run-a" || tasks.updated.Namespace != "tenant-a" || tasks.updated.NodeKey != "node-a" {
 		t.Fatalf("updated task = %+v", tasks.updated)
+	}
+}
+
+func TestUpdateNodeRunRejectsLegacyTransportAliases(t *testing.T) {
+	t.Parallel()
+	handler := &FlowRunHandler{
+		runStore: &flowRunStoreStub{runs: map[string]*entities.FlowRunInfo{
+			"run-a": {BaseEntity: entities.BaseEntity{ID: "run-a", Namespace: "tenant-a"}},
+		}},
+		taskStore: &taskStoreStub{tasks: map[string]*entities.TaskRunInfo{}},
+		payloads:  taskpayload.NewDefaultTaskPayloadProvider(0),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", handler.UpdateTask)
+	body := `{"agentflow_run_id":"run-a","node_id":"node-a","status":"SUCCESS"}`
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/api/v1/tenant-a/runs/run-a/node-runs/node-run-a", strings.NewReader(body)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
 }

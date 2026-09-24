@@ -17,13 +17,6 @@ import (
 
 // ─── Agent Executor ────────────────────────────────────
 
-// NodeMemoryStore is the subset of store.NodeMemoryStore needed by executors.
-type NodeMemoryStore = interface {
-	GetMemory(ctx context.Context, flowID, nodeID string) (*entities.MemoryInfo, error)
-	UpsertMemory(ctx context.Context, mem *entities.MemoryInfo) error
-	SearchMemory(ctx context.Context, flowID string, embedding []float32, topK int) ([]entities.MemoryInfo, error)
-}
-
 // KnowledgeRetriever provides cross-workflow persistent knowledge for RAG injection.
 // Engine components use this via a REST-client adapter — never a direct store import.
 type KnowledgeRetriever interface {
@@ -34,7 +27,6 @@ type AgentExecutor struct {
 	llmClient  engine.LLMClient
 	client     *client.FlowgentClient
 	namespace  string
-	memStore   NodeMemoryStore
 	knowledge  KnowledgeRetriever
 	maxRetries int
 }
@@ -43,7 +35,6 @@ func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, na
 	return &AgentExecutor{llmClient: llm, client: apiClient, namespace: namespace, maxRetries: 3}
 }
 
-func (e *AgentExecutor) SetMemoryStore(s NodeMemoryStore)           { e.memStore = s }
 func (e *AgentExecutor) SetKnowledgeRetriever(k KnowledgeRetriever) { e.knowledge = k }
 func (e *AgentExecutor) TaskType() entities.TaskType                { return entities.TaskAgent }
 
@@ -56,13 +47,15 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		return nil, fmt.Errorf("agent not found: %s", plan.NodeSpec.Agent)
 	}
 
-	flowDefID := plan.AgentFlowDefinitionID // agentflow definition ID (NOT run ID)
-
-	// Enrich prompt with prior node memory from past runs
 	userPrompt := formatPlanInput(plan)
-	if e.memStore != nil {
-		if prior, _ := e.memStore.GetMemory(ctx, flowDefID, plan.NodeID); prior != nil && prior.Content != "" {
-			userPrompt += fmt.Sprintf("\n\n[Prior executions of this node (flow=%s, node=%s):]\n%s", flowDefID, plan.NodeID, truncate(prior.Content, 500))
+	// A node resumes only the checkpoint carried by this run/attempt. Context
+	// from older runs is knowledge and must pass the scoped retrieval path.
+	if plan.Checkpoint != nil {
+		if plan.Checkpoint.Scratchpad != "" {
+			userPrompt += "\n\n[Current attempt checkpoint:]\n" + truncate(plan.Checkpoint.Scratchpad, 1000)
+		}
+		for _, message := range plan.Checkpoint.Messages {
+			userPrompt += fmt.Sprintf("\n%s: %s", message.Role, truncate(message.Content, 500))
 		}
 	}
 
@@ -113,7 +106,6 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		resp, err := e.llmClient.Generate(attemptCtx, soul, userPrompt, agent.Model, temperature, agent.MaxTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call failed: %w", err)
-			e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, "", attempt, lastErr.Error())
 			attemptSpan.RecordError(err)
 			attemptSpan.SetStatus(codes.Error, "LLM call failed")
 			attemptSpan.End()
@@ -124,7 +116,6 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		var out map[string]any
 		if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
 			lastErr = fmt.Errorf("agent output JSON: %w", err)
-			e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, lastErr.Error())
 			attemptSpan.RecordError(err)
 			attemptSpan.SetStatus(codes.Error, "invalid JSON output")
 			attemptSpan.End()
@@ -137,7 +128,6 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		if outputSchema != nil {
 			if err := utils.ValidateJSONSchema(outputSchema, out); err != nil {
 				lastErr = fmt.Errorf("schema validation failed: %w", err)
-				e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, lastErr.Error())
 				attemptSpan.RecordError(err)
 				attemptSpan.SetStatus(codes.Error, "schema validation failed")
 				attemptSpan.End()
@@ -148,40 +138,12 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 			}
 		}
 
-		e.upsertMemory(ctx, flowDefID, plan.NodeID, userPrompt, resp, attempt, "")
 		attemptSpan.SetStatus(codes.Ok, "done")
 		attemptSpan.End()
 		return &entities.TaskResult{Output: out}, nil
 	}
 
 	return nil, lastErr
-}
-
-// upsertMemory accumulates execution context into the (flowID, nodeID) memory slot.
-// Each call appends to the existing content rather than replacing — building a
-// rich execution history that persists across runs.
-func (e *AgentExecutor) upsertMemory(ctx context.Context, flowID, nodeID, prompt, response string, attempt int, errMsg string) {
-	if e.memStore == nil {
-		return
-	}
-
-	existing, _ := e.memStore.GetMemory(ctx, flowID, nodeID)
-	entry := truncate(fmt.Sprintf("attempt=%d prompt=%s response=%s", attempt, truncate(prompt, 300), truncate(response, 300)), 2000)
-	if errMsg != "" {
-		entry += fmt.Sprintf(" error=%s", errMsg)
-	}
-
-	content := entry
-	if existing != nil {
-		content = existing.Content + "\n" + entry // accumulate, don't replace
-	}
-
-	_ = e.memStore.UpsertMemory(ctx, &entities.MemoryInfo{
-		FlowID:   flowID,
-		NodeID:   nodeID,
-		Content:  content,
-		Metadata: map[string]any{"retry_count": attempt, "last_error": errMsg},
-	})
 }
 
 // formatKnowledgeContext formats knowledge entries as a system-prompt context block.

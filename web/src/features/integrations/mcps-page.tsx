@@ -22,8 +22,8 @@ const blankMcp = (): McpServer => ({
   id: '',
   name: '',
   enabled: true,
-  type: 'streamable-http',
-  url: '',
+  transport: 'http',
+  rpc_url: '',
   header_refs: {},
   env_refs: {},
   labels: {},
@@ -65,7 +65,7 @@ export function McpsPage() {
   const rows = useMemo(
     () =>
       query.data?.filter((item) =>
-        `${item.name} ${item.url} ${Object.values(item.labels ?? {})}`
+        `${item.name} ${item.rpc_url} ${Object.values(item.labels ?? {})}`
           .toLowerCase()
           .includes(search.toLowerCase()),
       ) ?? [],
@@ -135,12 +135,12 @@ export function McpsPage() {
                 <h2>{item.name}</h2>
                 <p>
                   <Globe2 size={14} />
-                  {item.url || t('mcps.endpointMissing')}
+                  {item.rpc_url || t('mcps.endpointMissing')}
                 </p>
                 <dl>
                   <div>
                     <dt>{t('mcps.transport')}</dt>
-                    <dd>{item.type}</dd>
+                    <dd>{item.transport}</dd>
                   </div>
                   <div>
                     <dt>{t('mcps.secrets')}</dt>
@@ -206,14 +206,14 @@ function McpDrawer({
   const current = draft
   const update = (updates: Partial<McpServer>) => current && setDraft({ ...current, ...updates })
   const submit = () => {
-    if (!current?.name || !current.url) return
+    if (!current?.name || !current.rpc_url) return
     try {
       onSave(
         {
           ...current,
           header_refs: JSON.parse(headers),
           env_refs: JSON.parse(env),
-          type: 'streamable-http',
+          transport: 'http',
         },
         !current.id,
         value?.name,
@@ -234,7 +234,7 @@ function McpDrawer({
           </Button>
           <Button
             data-testid="mcp-save"
-            disabled={saving || !current?.name || !current.url}
+            disabled={saving || !current?.name || !current.rpc_url}
             onClick={submit}
           >
             {t('common.save')}
@@ -262,8 +262,8 @@ function McpDrawer({
           <input
             data-testid="mcp-url"
             type="url"
-            value={current?.url ?? ''}
-            onChange={(event) => update({ url: event.target.value })}
+            value={current?.rpc_url ?? ''}
+            onChange={(event) => update({ rpc_url: event.target.value })}
             placeholder="https://mcp.example.com/mcp"
           />
         </label>

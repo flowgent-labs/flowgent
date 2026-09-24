@@ -104,7 +104,8 @@ func (h *FlowReleaseHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	release := &entities.FlowRelease{
 		BaseEntity:     entities.BaseEntity{ID: uuid.NewString(), Description: strings.TrimSpace(input.Description), Namespace: namespace},
-		FlowID:         input.FlowID,
+		FlowID:         version.FlowID,
+		FlowName:       input.FlowID,
 		FlowVersion:    version.Version,
 		ReleaseVersion: input.ReleaseVersion,
 		Definition:     *snapshot,
@@ -220,14 +221,15 @@ func (h *FlowReleaseHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.InstalledFlowID == "" {
-		input.InstalledFlowID = release.FlowID
+		input.InstalledFlowID = release.FlowName
 	}
 	if !resourceid.IsValid(input.InstalledFlowID) {
 		http.Error(w, "invalid installed_flow_id", http.StatusBadRequest)
 		return
 	}
 	definition := release.Definition
-	definition.ID = input.InstalledFlowID
+	definition.ID = ""
+	definition.Name = input.InstalledFlowID
 	definition.Namespace = namespace
 	definition.K8sNamespace = ""
 	if err := applyFlowResourceBindings(&definition, input.ResourceBindings); err != nil {
@@ -244,7 +246,7 @@ func (h *FlowReleaseHandler) Install(w http.ResponseWriter, r *http.Request) {
 		ReleaseID:         release.ID,
 		ReleaseVersion:    release.ReleaseVersion,
 		ProducerNamespace: release.Namespace,
-		InstalledFlowID:   definition.ID,
+		InstalledFlowName: input.InstalledFlowID,
 		ReleaseChecksum:   release.Checksum,
 		AppliedChecksum:   appliedChecksum,
 		ResourceBindings:  input.ResourceBindings,
@@ -260,7 +262,7 @@ func (h *FlowReleaseHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.flowDefs.CacheDefinition(&definition)
-	h.flowDefs.publishFlowEvent(r.Context(), "CREATED", definition.ID, namespace)
+	h.flowDefs.publishFlowEvent(r.Context(), "CREATED", definition.ResourceName(), namespace)
 	writeFlowReleaseCreated(w, installation)
 }
 

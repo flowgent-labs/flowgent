@@ -12,6 +12,7 @@ package storage_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -32,11 +33,21 @@ func TestSQLiteConn_Init(t *testing.T) {
 	}
 }
 
+func seedSQLiteFlow(t *testing.T, conn *sql.DB, namespace, name string) {
+	t.Helper()
+	if err := flow.NewFlowSQLiteStore(conn).CreateSpec(context.Background(), &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: name, Namespace: namespace}, Kind: "flow",
+	}, "test", "run fixture"); err != nil {
+		t.Fatalf("seed flow %s/%s: %v", namespace, name, err)
+	}
+}
+
 func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	conn := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
 	s := flowrun.NewFlowRunSQLiteStore(conn)
+	seedSQLiteFlow(t, conn, "default", "test-flow")
 
 	run := &entities.FlowRunInfo{
 		BaseEntity:  entities.BaseEntity{Namespace: "default"},
@@ -104,6 +115,7 @@ func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
 	ctx := context.Background()
 	frStore := flowrun.NewFlowRunSQLiteStore(conn)
 	tpStore := task.NewTaskSQLiteStore(conn)
+	seedSQLiteFlow(t, conn, "default", "f1")
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
 	if err := frStore.Create(ctx, run); err != nil {
@@ -165,11 +177,16 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 	frStore := flowrun.NewFlowRunSQLiteStore(conn)
 	tpStore := task.NewTaskSQLiteStore(conn)
 	apStore := approval.NewApprovalSQLiteStore(conn)
+	seedSQLiteFlow(t, conn, "default", "f1")
 
 	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
-	frStore.Create(ctx, run)
+	if err := frStore.Create(ctx, run); err != nil {
+		t.Fatalf("Create flow run: %v", err)
+	}
 	task := &entities.TaskRunInfo{AgentFlowRunID: run.ID, NodeID: "human", Status: entities.TaskPending, ExecID: "e1"}
-	tpStore.CreateTaskRun(ctx, task)
+	if err := tpStore.CreateTaskRun(ctx, task); err != nil {
+		t.Fatalf("Create task run: %v", err)
+	}
 
 	appr := &entities.ApprovalInfo{
 		TaskRunID: task.ID, AgentFlowRunID: run.ID, Status: "PENDING", Timeout: 1 * time.Hour,
@@ -185,8 +202,8 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Status != "PENDING" {
-		t.Errorf("expected PENDING, got %s", got.Status)
+	if got.Status != "pending" {
+		t.Errorf("expected pending, got %s", got.Status)
 	}
 
 	pendingBefore, err := apStore.ListPending(ctx, appr.Namespace)
@@ -238,8 +255,8 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetVersion: %v", err)
 	}
-	if gotVer.FlowID != "flow-1" {
-		t.Errorf("expected flow-1, got %s", gotVer.FlowID)
+	if gotVer.FlowName != "flow-1" || gotVer.FlowID == "flow-1" {
+		t.Errorf("expected stable ID plus name flow-1, got id=%s name=%s", gotVer.FlowID, gotVer.FlowName)
 	}
 
 	page, err := s.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 100})

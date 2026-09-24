@@ -49,7 +49,7 @@ func TestTraceHandlerEnforcesRunNamespace(t *testing.T) {
 		BaseEntity: entities.BaseEntity{ID: "run-1", Namespace: "tenant-a"},
 	}}, query)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/trace", handler.GetRunTrace)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", handler.GetRunTrace)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/tenant-b/runs/run-1/trace", nil)
 	response := httptest.NewRecorder()
@@ -70,7 +70,7 @@ func TestTraceHandlerReturnsNormalizedTrace(t *testing.T) {
 		BaseEntity: entities.BaseEntity{ID: "run-1", Namespace: "tenant-a"},
 	}}, query)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/trace", handler.GetRunTrace)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", handler.GetRunTrace)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/tenant-a/runs/run-1/trace", nil)
 	response := httptest.NewRecorder()

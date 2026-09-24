@@ -3,13 +3,10 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
@@ -69,45 +66,6 @@ func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// Create adds a new knowledge entry.
-func (h *KnowledgeHandler) Create(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-
-	var entry entities.KnowledgeEntry
-	if err := decodeStrictJSON(r, &entry); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if entry.Title == "" && entry.Content == "" {
-		http.Error(w, "title or content is required", http.StatusBadRequest)
-		return
-	}
-	if entry.Namespace != "" && entry.Namespace != namespace {
-		http.Error(w, "namespace mismatch", http.StatusBadRequest)
-		return
-	}
-
-	entry.ID = uuid.New().String()
-	entry.Namespace = namespace
-	entry.CreatedAt = time.Now()
-	entry.UpdatedAt = time.Now()
-	if entry.Status == "" {
-		entry.Status = "ACTIVE"
-	}
-	if entry.Tags == nil {
-		entry.Tags = []string{}
-	}
-
-	if err := h.store.Save(r.Context(), &entry); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(entry)
-}
-
 // Get returns a single knowledge entry by ID.
 func (h *KnowledgeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -124,74 +82,6 @@ func (h *KnowledgeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(entry)
 }
 
-// Update modifies an existing knowledge entry.
-func (h *KnowledgeHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	namespace := r.PathValue("namespace")
-
-	existing, err := h.store.Get(r.Context(), namespace, id)
-	if err != nil || existing == nil {
-		http.Error(w, "knowledge entry not found", http.StatusNotFound)
-		return
-	}
-
-	var updates entities.KnowledgeEntry
-	if err := decodeStrictJSON(r, &updates); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if updates.ID != "" && updates.ID != id {
-		http.Error(w, "id mismatch", http.StatusBadRequest)
-		return
-	}
-	if updates.Namespace != "" && updates.Namespace != namespace {
-		http.Error(w, "namespace mismatch", http.StatusBadRequest)
-		return
-	}
-	if updates.Title == "" && updates.Content == "" {
-		http.Error(w, "title or content is required", http.StatusBadRequest)
-		return
-	}
-	updates.ID = id
-	updates.Namespace = namespace
-	updates.Status = existing.Status
-	updates.CreatedAt = existing.CreatedAt
-	updates.CreatedBy = existing.CreatedBy
-	updates.UpdatedAt = time.Now()
-	updates.UpdatedBy = existing.UpdatedBy
-	updates.DelFlag = false
-	if updates.Tags == nil {
-		updates.Tags = []string{}
-	}
-	if updates.Metadata == nil {
-		updates.Metadata = map[string]any{}
-	}
-
-	if err := h.store.Save(r.Context(), &updates); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(updates)
-}
-
-// Delete removes a knowledge entry by ID.
-func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	namespace := r.PathValue("namespace")
-	if _, err := h.store.Get(r.Context(), namespace, id); err != nil {
-		http.Error(w, "knowledge entry not found", http.StatusNotFound)
-		return
-	}
-	if err := h.store.Delete(r.Context(), namespace, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // Search performs a knowledge search with optional tag filtering.
 func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var req entities.KnowledgeSearchRequest
@@ -199,8 +89,8 @@ func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Query == "" {
-		http.Error(w, "query is required", http.StatusBadRequest)
+	if strings.TrimSpace(req.Query) == "" && len(req.Embedding) == 0 {
+		http.Error(w, "query or embedding is required", http.StatusBadRequest)
 		return
 	}
 
@@ -215,6 +105,31 @@ func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+// CreateCandidate freezes a run-summary publication request and creates the
+// single unified approval record that governs its eventual publication.
+func (h *KnowledgeHandler) CreateCandidate(w http.ResponseWriter, r *http.Request) {
+	var candidate entities.KnowledgeCandidate
+	if err := decodeStrictJSON(r, &candidate); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	namespace := r.PathValue("namespace")
+	if candidate.Namespace != "" && candidate.Namespace != namespace {
+		http.Error(w, "namespace mismatch", http.StatusBadRequest)
+		return
+	}
+	candidate.Namespace = namespace
+	candidate.CreatedBy = authenticatedUserID(r.Context())
+	approval, err := h.store.CreateCandidate(r.Context(), &candidate)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{"candidate": candidate, "approval": approval})
 }
 
 // ListTags returns all distinct tags from knowledge entries.

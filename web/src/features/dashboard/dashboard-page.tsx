@@ -211,13 +211,13 @@ export function DashboardPage() {
                         type="button"
                         className="activity-row"
                         key={run.id}
-                        onClick={() => navigate(flowRunPath(namespace, run.agentflow_id, run.id))}
+                        onClick={() => navigate(flowRunPath(namespace, run.flow_name, run.id))}
                       >
                         <span className="activity-row__icon activity-row__icon--danger">
                           <XCircle size={16} />
                         </span>
                         <span className="activity-row__copy">
-                          <strong>{run.agentflow_id}</strong>
+                          <strong>{run.flow_name}</strong>
                           <span>{run.error || t('dashboard.executionFailed')}</span>
                         </span>
                         <span className="activity-row__meta">
@@ -246,15 +246,15 @@ export function DashboardPage() {
                         type="button"
                         className="activity-row"
                         key={run.id}
-                        onClick={() => navigate(flowRunPath(namespace, run.agentflow_id, run.id))}
+                        onClick={() => navigate(flowRunPath(namespace, run.flow_name, run.id))}
                       >
                         <span className="activity-row__icon">
                           <Clock3 size={16} />
                         </span>
                         <span className="activity-row__copy">
-                          <strong>{run.agentflow_id}</strong>
+                          <strong>{run.flow_name}</strong>
                           <span>
-                            {run.trigger_type || 'manual'} · v{run.version}
+                            {run.trigger_type || 'manual'} · v{run.flow_revision}
                           </span>
                         </span>
                         <span className="activity-row__meta">

@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,191 +12,181 @@ import (
 	"github.com/google/uuid"
 )
 
-// TaskSQLiteStore wraps storage.SQLiteGenericStore[entities.TaskRunInfo].
-type TaskSQLiteStore struct {
-	inner *storage.SQLiteGenericStore[entities.TaskRunInfo]
-}
+type TaskSQLiteStore struct{ conn *sql.DB }
 
-func NewTaskSQLiteStore(conn *sql.DB) *TaskSQLiteStore {
-	return &TaskSQLiteStore{
-		inner: &storage.SQLiteGenericStore[entities.TaskRunInfo]{
-			Conn: conn, Table: "task_runs", IDCol: "id",
-		},
+func NewTaskSQLiteStore(conn *sql.DB) *TaskSQLiteStore { return &TaskSQLiteStore{conn: conn} }
+func (s *TaskSQLiteStore) scan(row interface{ Scan(...any) error }) (*entities.TaskRunInfo, error) {
+	var record nodeRecord
+	if err := utils.ScanStruct(row, &record); err != nil {
+		return nil, err
 	}
+	return record.entity(), nil
 }
-
 func (s *TaskSQLiteStore) Get(ctx context.Context, id string) (*entities.TaskRunInfo, error) {
-	return s.inner.Get(ctx, id)
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").SQLiteWhere()
+	args := append([]any{id}, scopeArgs...)
+	return s.scan(s.conn.QueryRowContext(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE id=?1 AND status<>'DELETED' AND (`+scopeWhere+`)`, args...))
+}
+func (s *TaskSQLiteStore) GetByExecID(ctx context.Context, executionID string) (*entities.TaskRunInfo, error) {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").SQLiteWhere()
+	args := append([]any{executionID}, scopeArgs...)
+	return s.scan(s.conn.QueryRowContext(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE execution_id=?1 AND status<>'DELETED' AND (`+scopeWhere+`)`, args...))
 }
 func (s *TaskSQLiteStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.TaskRunInfo], error) {
-	return s.inner.Select(ctx, req)
-}
-func (s *TaskSQLiteStore) Save(ctx context.Context, e *entities.TaskRunInfo) error {
-	return s.inner.Save(ctx, e)
-}
-func (s *TaskSQLiteStore) Delete(ctx context.Context, id string) error {
-	return s.inner.Delete(ctx, id)
-}
-
-func (s *TaskSQLiteStore) GetByExecID(ctx context.Context, execID string) (*entities.TaskRunInfo, error) {
-	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).SQLiteWhere()
-	args := append([]any{execID}, scopeArgs...)
-	row := s.inner.Conn.QueryRowContext(ctx, "SELECT * FROM task_runs WHERE exec_id=?1 AND ("+scopeWhere+")", args...)
-	return scanTaskRun(row)
-}
-
-func (s *TaskSQLiteStore) CreateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
-	if e.ID == "" {
-		e.ID = uuid.New().String()
+	if req.Page < 1 {
+		req.Page = 1
 	}
-	now := time.Now().UTC()
-	e.CreatedAt = now
-	e.UpdatedAt = now
-	return s.inner.Save(ctx, e)
-}
-
-func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, e *entities.TaskRunInfo) error {
-	output, err := json.Marshal(e.Output)
+	if req.Size < 1 {
+		req.Size = 20
+	}
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").SQLiteWhere()
+	var total int64
+	if err := s.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM orh_node_run WHERE status<>'DELETED' AND (`+scopeWhere+`)`, scopeArgs...).Scan(&total); err != nil {
+		return nil, err
+	}
+	args := append(scopeArgs, req.Size, (req.Page-1)*req.Size)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE status<>'DELETED' AND (`+scopeWhere+`) ORDER BY created_at DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	input, err := json.Marshal(e.Input)
-	if err != nil {
-		return err
+	defer rows.Close()
+	items := make([]*entities.TaskRunInfo, 0)
+	for rows.Next() {
+		item, err := s.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
 	}
-	scope := s.inner.SqlScope(ctx)
+	return entities.NewPage(items, total, req), rows.Err()
+}
+func (s *TaskSQLiteStore) Save(ctx context.Context, item *entities.TaskRunInfo) error {
+	return s.UpdateTaskRun(ctx, item)
+}
+func (s *TaskSQLiteStore) CreateTaskRun(ctx context.Context, item *entities.TaskRunInfo) error {
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+	}
+	return s.UpdateTaskRun(ctx, item)
+}
+func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, item *entities.TaskRunInfo) error {
+	item.NormalizeAliases()
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+	}
+	if item.ExecutionID == "" {
+		item.ExecutionID = item.ID
+	}
+	if item.Status == "" {
+		item.Status = entities.TaskPending
+	}
+	scope := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run")
 	if scope.Where == "0=1" {
 		return storage.ErrFlowgentSqlScopeDenied
 	}
-	tx, err := s.inner.Conn.BeginTx(ctx, nil)
+	tx, err := s.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO task_runs (id, agentflow_run_id, node_id, status, input, output, error, retry_count, max_retries, exec_id, parent_task_run_id, sequence, started_at, finished_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-		 ON CONFLICT (id) DO UPDATE SET
-		     status             = EXCLUDED.status,
-		     input              = COALESCE(EXCLUDED.input, task_runs.input),
-		     output             = COALESCE(EXCLUDED.output, task_runs.output),
-		     error              = COALESCE(EXCLUDED.error, task_runs.error),
-		     retry_count        = EXCLUDED.retry_count,
-		     max_retries        = EXCLUDED.max_retries,
-		     exec_id            = COALESCE(EXCLUDED.exec_id, task_runs.exec_id),
-		     parent_task_run_id = COALESCE(EXCLUDED.parent_task_run_id, task_runs.parent_task_run_id),
-		     sequence           = EXCLUDED.sequence,
-		     started_at         = COALESCE(EXCLUDED.started_at, task_runs.started_at),
-		     finished_at        = COALESCE(EXCLUDED.finished_at, task_runs.finished_at),
-		     updated_at         = CURRENT_TIMESTAMP`,
-		e.ID, e.AgentFlowRunID, e.NodeID, string(e.Status), input, output, e.Error,
-		e.RetryCount, e.MaxRetries, e.ExecID, e.ParentTaskRunID, e.Sequence, e.StartedAt, e.FinishedAt)
+	var namespace string
+	if err = tx.QueryRowContext(ctx, `SELECT namespace_id FROM orh_run WHERE id=?`, item.RunID).Scan(&namespace); err != nil {
+		return fmt.Errorf("resolve run namespace: %w", err)
+	}
+	if item.Namespace != "" && item.Namespace != namespace {
+		return fmt.Errorf("node run namespace mismatch")
+	}
+	item.Namespace = namespace
+	metadata := map[string]any{}
+	for key, value := range item.Metadata {
+		metadata[key] = value
+	}
+	metadata["max_retries"] = item.MaxRetries
+	metadata["sequence"] = item.Sequence
+	workspace := item.WorkspaceVersion
+	if item.Checkpoint != nil && workspace == "" {
+		workspace = "execution:" + item.ExecutionID
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO orh_node_run(id,namespace_id,run_id,node_key,attempt,agent_revision_id,status,input,output,error,execution_memory,checkpoint,workspace_version,parent_node_run_id,execution_id,lease_owner,lease_expires_at,fencing_token,last_heartbeat_at,started_at,finished_at,description,created_by,updated_by,metadata) VALUES(?,?,?,?,?,NULLIF(?,''),?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,NULLIF(?,''),?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,input=COALESCE(excluded.input,orh_node_run.input),output=COALESCE(excluded.output,orh_node_run.output),error=excluded.error,execution_memory=COALESCE(excluded.execution_memory,orh_node_run.execution_memory),checkpoint=COALESCE(excluded.checkpoint,orh_node_run.checkpoint),workspace_version=COALESCE(excluded.workspace_version,orh_node_run.workspace_version),lease_owner=excluded.lease_owner,lease_expires_at=excluded.lease_expires_at,fencing_token=excluded.fencing_token,last_heartbeat_at=excluded.last_heartbeat_at,started_at=COALESCE(excluded.started_at,orh_node_run.started_at),finished_at=excluded.finished_at,metadata=excluded.metadata WHERE orh_node_run.run_id=excluded.run_id AND orh_node_run.node_key=excluded.node_key AND orh_node_run.attempt=excluded.attempt AND orh_node_run.fencing_token<=excluded.fencing_token`, item.ID, namespace, item.RunID, item.NodeKey, item.Attempt, item.AgentRevisionID, item.Status, taskString(taskJSON(item.Input)), taskString(taskJSON(item.Output)), taskString(taskError(item.Error)), taskString(taskJSON(item.ExecutionMemory)), taskString(taskJSON(item.Checkpoint)), workspace, item.ParentNodeRunID, item.ExecutionID, item.LeaseOwner, item.LeaseExpiresAt, item.FencingToken, item.LastHeartbeatAt, item.StartedAt, item.FinishedAt, item.Description, item.UpdatedBy, item.UpdatedBy, taskString(taskJSON(metadata)))
 	if err != nil {
 		return err
 	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("stale node-run fencing token")
+	}
+	if item.Checkpoint != nil {
+		if err = appendCheckpointSQLite(ctx, tx, item, workspace); err != nil {
+			return err
+		}
+	}
 	if scope.Where != "1=1" {
-		scopeWhere, scopeArgs := scope.SQLiteWhere()
-		args := append([]any{e.ID}, scopeArgs...)
+		where, args0 := scope.SQLiteWhere()
+		args := append([]any{item.ID}, args0...)
 		var visible int
-		if err := tx.QueryRowContext(ctx,
-			"SELECT COUNT(1) FROM task_runs WHERE id=? AND ("+scopeWhere+")", args...).Scan(&visible); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM orh_node_run WHERE id=? AND (`+where+`)`, args...).Scan(&visible); err != nil {
 			return err
 		}
 		if visible != 1 {
 			return storage.ErrFlowgentSqlScopeDenied
 		}
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	item.CreatedAt = time.Now().UTC()
+	item.UpdatedAt = item.CreatedAt
+	item.RowVersion = 1
+	return nil
 }
-
-func (s *TaskSQLiteStore) ListByFlowRun(ctx context.Context, flowRunID string) ([]*entities.TaskRunInfo, error) {
-	scopeWhere, scopeArgs := s.inner.SqlScope(ctx).SQLiteWhere()
-	args := append([]any{flowRunID}, scopeArgs...)
-	rows, err := s.inner.Conn.QueryContext(ctx, "SELECT * FROM task_runs WHERE agentflow_run_id=?1 AND ("+scopeWhere+") ORDER BY sequence ASC", args...)
+func taskString(value []byte) any {
+	if value == nil {
+		return nil
+	}
+	return string(value)
+}
+func appendCheckpointSQLite(ctx context.Context, tx *sql.Tx, item *entities.TaskRunInfo, workspace string) error {
+	payload := string(taskJSON(item.Checkpoint))
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM orh_node_checkpoint WHERE node_run_id=? AND json(checkpoint)=json(?) AND workspace_version=? AND fencing_token=?)`, item.ID, payload, workspace, item.FencingToken).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	var sequence int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM orh_node_checkpoint WHERE node_run_id=?`, item.ID).Scan(&sequence); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO orh_node_checkpoint(id,namespace_id,node_run_id,sequence,execution_memory,checkpoint,workspace_version,fencing_token,created_by,metadata) VALUES(?,?,?,?,?,?,?,?,?,?)`, uuid.NewString(), item.Namespace, item.ID, sequence, taskString(taskJSON(item.ExecutionMemory)), payload, workspace, item.FencingToken, item.UpdatedBy, taskString(taskJSON(item.Metadata)))
+	return err
+}
+func (s *TaskSQLiteStore) ListByFlowRun(ctx context.Context, runID string) ([]*entities.TaskRunInfo, error) {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").SQLiteWhere()
+	args := append([]any{runID}, scopeArgs...)
+	rows, err := s.conn.QueryContext(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE run_id=?1 AND status<>'DELETED' AND (`+scopeWhere+`) ORDER BY node_key,attempt`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*entities.TaskRunInfo
+	items := make([]*entities.TaskRunInfo, 0)
 	for rows.Next() {
-		e, err := scanTaskRun(rows)
+		item, err := s.scan(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, e)
+		items = append(items, item)
 	}
-	return out, rows.Err()
+	return items, rows.Err()
 }
-
-type scanner interface{ Scan(dest ...any) error }
-
-func scanTaskRun(s scanner) (*entities.TaskRunInfo, error) {
-	var e entities.TaskRunInfo
-	var inputStr, outputStr sql.NullString
-	var startedAt, finishedAt any
-	var createdAtStr, updatedAtStr string
-	err := s.Scan(
-		&e.ID, &e.AgentFlowRunID, &e.NodeID, &e.Status,
-		&inputStr, &outputStr, &e.Error,
-		&e.RetryCount, &e.MaxRetries, &e.ExecID,
-		&e.ParentTaskRunID, &e.Sequence,
-		&startedAt, &finishedAt,
-		&e.Description, &e.Namespace,
-		&createdAtStr, &e.CreatedBy, &updatedAtStr, &e.UpdatedBy, &e.DelFlag,
-	)
+func (s *TaskSQLiteStore) Delete(ctx context.Context, id string) error {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").SQLiteWhere()
+	args := append([]any{id}, scopeArgs...)
+	result, err := s.conn.ExecContext(ctx, `UPDATE orh_node_run SET status='DELETED' WHERE id=?1 AND (`+scopeWhere+`)`, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if inputStr.Valid {
-		json.Unmarshal([]byte(inputStr.String), &e.Input)
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("node run not found or outside authorization scope")
 	}
-	if outputStr.Valid {
-		json.Unmarshal([]byte(outputStr.String), &e.Output)
-	}
-	parsedStartedAt, err := scanOptionalTime(startedAt)
-	if err != nil {
-		return nil, fmt.Errorf("parse task started_at: %w", err)
-	}
-	e.StartedAt = parsedStartedAt
-	parsedFinishedAt, err := scanOptionalTime(finishedAt)
-	if err != nil {
-		return nil, fmt.Errorf("parse task finished_at: %w", err)
-	}
-	e.FinishedAt = parsedFinishedAt
-	// created_at/updated_at come back as TEXT (SQLite has no native
-	// timestamp type) — database/sql cannot scan a string directly into
-	// *time.Time, so parse it explicitly (mirrors utils.ScanStruct).
-	if t, err := utils.ParseTime(createdAtStr); err == nil {
-		e.CreatedAt = t
-	}
-	if t, err := utils.ParseTime(updatedAtStr); err == nil {
-		e.UpdatedAt = t
-	}
-	return &e, nil
-}
-
-func scanOptionalTime(value any) (*time.Time, error) {
-	if value == nil {
-		return nil, nil
-	}
-	if parsed, ok := value.(time.Time); ok {
-		return &parsed, nil
-	}
-	var raw string
-	switch typed := value.(type) {
-	case string:
-		raw = typed
-	case []byte:
-		raw = string(typed)
-	default:
-		return nil, fmt.Errorf("unsupported SQLite timestamp type %T", value)
-	}
-	if raw == "" {
-		return nil, nil
-	}
-	parsed, err := utils.ParseTime(raw)
-	if err != nil {
-		return nil, err
-	}
-	return &parsed, nil
+	return nil
 }

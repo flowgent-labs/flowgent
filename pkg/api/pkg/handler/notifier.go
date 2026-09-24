@@ -113,6 +113,8 @@ func (h *NotifierHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 	ch.Namespace = namespace
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = time.Now()
+	ch.CreatedBy = authenticatedUserID(r.Context())
+	ch.UpdatedBy = ch.CreatedBy
 	if err := validateNotifyChannel(&ch); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -197,6 +199,7 @@ func (h *NotifierHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 		delete(next.Config, field)
 	}
 	next.UpdatedAt = time.Now()
+	next.UpdatedBy = authenticatedUserID(r.Context())
 	if err := validateNotifyChannel(next); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

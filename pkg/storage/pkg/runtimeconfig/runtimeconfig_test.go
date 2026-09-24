@@ -7,6 +7,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
+	flowstore "github.com/flowgent-labs/flowgent/storage/pkg/flow"
 )
 
 type testStore struct{ db any }
@@ -17,6 +18,11 @@ func (s *testStore) Close() error { return nil }
 func TestSQLiteRepositoryRoundTripAndUpsert(t *testing.T) {
 	db := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer db.Close()
+	if err := flowstore.NewFlowSQLiteStore(db).CreateSpec(context.Background(), &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "fixer", Namespace: "team-a"}, Kind: "flow",
+	}, "tester", "runtime configuration fixture"); err != nil {
+		t.Fatal(err)
+	}
 	repo, err := NewRepository(&testStore{db: db})
 	if err != nil {
 		t.Fatal(err)

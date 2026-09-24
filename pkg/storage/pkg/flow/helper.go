@@ -47,12 +47,14 @@ func LoadFromDB(ctx context.Context, s storage.IStorage, namespace string) ([]en
 			slog.Warn("Skipping invalid flow definition", "flow_id", v.FlowID, "error", err)
 			continue
 		}
-		if spec.ID == "" {
+		spec.ID = v.FlowID
+		spec.Name = v.FlowName
+		if spec.ResourceName() == "" {
 			slog.Warn("Skipping flow definition with empty ID", "flow_id", v.FlowID)
 			continue
 		}
 		if spec.Kind == "skill" {
-			subFlows[spec.ID] = spec
+			subFlows[spec.ResourceName()] = spec
 		} else {
 			flows = append(flows, spec)
 		}

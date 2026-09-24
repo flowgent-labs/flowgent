@@ -155,8 +155,22 @@ class SecurityAutonomyFixture:
             name = agent_def.get("name")
             if not name:
                 continue
-            if FlowgentE2EProject.get_or_post(s, API, f"/api/v1/{NAMESPACE}/agents/{name}",
-                           f"/api/v1/{NAMESPACE}/agents", agent_def, "agent"):
+            existing = s.get(f"{API}/api/v1/{NAMESPACE}/agents/{name}")
+            if existing.status_code == 200:
+                updated = s.put(f"{API}/api/v1/{NAMESPACE}/agents/{name}", json=agent_def)
+                ok = updated.status_code in (200, 204)
+                if not ok:
+                    print(f"  WARN: failed to update agent {name}: {updated.status_code} {updated.text[:160]}")
+            else:
+                ok = FlowgentE2EProject.get_or_post(
+                    s,
+                    API,
+                    f"/api/v1/{NAMESPACE}/agents/{name}",
+                    f"/api/v1/{NAMESPACE}/agents",
+                    agent_def,
+                    "agent",
+                )
+            if ok:
                 agent_count += 1
         print(f"  OK {agent_count} agent definition(s) registered (from {_AGENTS_DIR})")
 
@@ -473,9 +487,10 @@ class SecurityAutonomyFixture:
         """
         required_nodes = set(required_nodes or [])
         completed_nodes = {
-            task.get("node_id")
+            SecurityAutonomyFixture.task_node_key(task)
             for task in tasks
-            if task.get("node_id") and task.get("status") in COMPLETED_STATUSES
+            if SecurityAutonomyFixture.task_node_key(task)
+            and task.get("status") in COMPLETED_STATUSES
         }
         missing_nodes = sorted(required_nodes - completed_nodes)
         if missing_nodes:
@@ -517,7 +532,12 @@ class SecurityAutonomyFixture:
     @staticmethod
     def message_node_id(message):
         payload = SecurityAutonomyFixture.message_payload(message)
-        return payload.get("node_id") or payload.get("nodeId")
+        return payload.get("node_key") or payload.get("node_id") or payload.get("nodeId")
+
+    @staticmethod
+    def task_node_key(task):
+        """Return the canonical NodeRun key, accepting the retired API alias."""
+        return task.get("node_key") or task.get("node_id")
 
     @staticmethod
     def assert_completed_task_mqtt_coverage(run_id, tasks):
@@ -535,9 +555,10 @@ class SecurityAutonomyFixture:
         plan_nodes.discard(None)
         result_nodes.discard(None)
         completed_nodes = {
-            t.get("node_id")
+            SecurityAutonomyFixture.task_node_key(t)
             for t in tasks
-            if t.get("node_id") and t.get("status") in COMPLETED_STATUSES
+            if SecurityAutonomyFixture.task_node_key(t)
+            and t.get("status") in COMPLETED_STATUSES
         }
         missing_plans = sorted(completed_nodes - plan_nodes)
         missing_results = sorted(completed_nodes - result_nodes)

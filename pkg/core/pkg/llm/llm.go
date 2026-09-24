@@ -37,7 +37,8 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
-				slog.Debug("llm loaded provider", "id", dbp.ID, "provider", dbp.Provider, "status", dbp.Status, "keyConfigured", dbp.KeyConfigured || dbp.ApiKeyEnv != "" || dbp.ApiKey != "")
+				dbp.NormalizeAliases()
+				slog.Debug("llm loaded provider", "id", dbp.ID, "name", dbp.Name, "type", dbp.Type, "status", dbp.Status, "keyConfigured", dbp.KeyConfigured || dbp.ApiKeyEnv != "" || dbp.ApiKey != "")
 				if dbp.Status != "ACTIVE" || dbp.ID == "" {
 					slog.Debug("llm skip provider", "id", dbp.ID, "status", dbp.Status)
 					continue
@@ -54,13 +55,14 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 }
 
 func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
+	dbP.NormalizeAliases()
 	reference := dbP.ApiKey
 	if dbP.ApiKeyEnv != "" {
 		reference = secretref.Prefix + dbP.ApiKeyEnv
 	}
 	resolved, err := secretref.Resolve(reference)
 	if err != nil {
-		slog.Error("llm provider secret reference is unavailable", "id", dbP.ID, "provider", dbP.Provider, "error", err)
+		slog.Error("llm provider secret reference is unavailable", "id", dbP.ID, "name", dbP.Name, "error", err)
 		return
 	}
 	dbP.ApiKey = resolved
@@ -74,17 +76,12 @@ func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 		if dbP.Name != "" && dbP.Name != dbP.ID {
 			m.providers[dbP.Name] = pc
 		}
-		if dbP.Provider != "" && dbP.Provider != dbP.ID {
-			m.providers[dbP.Provider] = pc
-		}
 	}
 }
 
 func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
+	p.NormalizeAliases()
 	providerType := p.Type
-	if providerType == "" {
-		providerType = p.Provider
-	}
 	switch {
 	case strings.EqualFold(providerType, "anthropic"):
 		return newAnthropicProvider(p)

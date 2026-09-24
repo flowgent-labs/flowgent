@@ -127,7 +127,7 @@ class DockerDeployer(BaseDeployer):
         status = self._compose("ps", "-a", timeout_seconds=30)
         if "Exit " in status.output:
             raise RuntimeError("one or more Docker E2E services exited during startup")
-        self._wait_http(config.LOCAL_AUTHN_PORT, "/readyz", timeout_seconds=180)
+        self._wait_http(config.LOCAL_AUTHN_MGMT_PORT, "/readyz", timeout_seconds=180)
         self._wait_http(config.LOCAL_AUTHZ_MGMT_PORT, "/readyz", timeout_seconds=180)
         self._probe_endpoints()
 
@@ -176,6 +176,12 @@ class DockerDeployer(BaseDeployer):
         os.environ["FLOWGENT_E2E_NOTIFICATION_TOKEN"] = self.environment[
             "FLOWGENT_E2E_NOTIFICATION_TOKEN"
         ]
+        # The host-side console verifier imports the same encrypted notification
+        # resources as the in-container console. Use the deployment key without
+        # logging or persisting it outside the existing mode-0600 state file.
+        os.environ["FLOWGENT_NOTIFICATION_KEY_V1"] = self.environment[
+            "FLOWGENT_NOTIFICATION_KEY_V1"
+        ]
         os.environ["FLOWGENT_E2E_NOTIFICATION_URL"] = "http://notification-receiver:8080"
 
     def runtime_exec(self, command: tuple[str, ...]) -> CommandResult:
@@ -194,7 +200,7 @@ class DockerDeployer(BaseDeployer):
         )
         for text_value, materialized_id in materializations:
             status, _, body = authguard.AuthGuardRuntime._api(
-                config.LOCAL_AUTHZ_MGMT_PORT,
+                config.LOCAL_AUTHZ_API_PORT,
                 "/api/v1/principal-discovery/search",
                 api_token,
                 "POST",
@@ -212,7 +218,7 @@ class DockerDeployer(BaseDeployer):
                     f"Docker LDAP discovery failed for {text_value}: HTTP {status}"
                 )
             status, _, _ = authguard.AuthGuardRuntime._api(
-                config.LOCAL_AUTHZ_MGMT_PORT,
+                config.LOCAL_AUTHZ_API_PORT,
                 "/api/v1/principal-discovery/materialize",
                 api_token,
                 "POST",
@@ -221,13 +227,13 @@ class DockerDeployer(BaseDeployer):
             if status not in (200, 201, 409):
                 raise RuntimeError(f"Docker LDAP materialization failed: HTTP {status}")
         status, _, current = authguard.AuthGuardRuntime._api(
-            config.LOCAL_AUTHZ_MGMT_PORT, "/api/v1/policy", api_token
+            config.LOCAL_AUTHZ_API_PORT, "/api/v1/policy", api_token
         )
         if status != 200:
             raise RuntimeError(f"Docker AuthGuard policy read failed: HTTP {status}")
         revision = int(current.get("revision", 1))
         status, _, persisted = authguard.AuthGuardRuntime._api(
-            config.LOCAL_AUTHZ_MGMT_PORT,
+            config.LOCAL_AUTHZ_API_PORT,
             "/api/v1/policy",
             api_token,
             "PUT",
@@ -247,12 +253,21 @@ class DockerDeployer(BaseDeployer):
         )
         if status != 200:
             raise RuntimeError(f"Docker Hosted Login route failed: HTTP {status}")
-        status, _, flows = authguard.AuthGuardRuntime._api(
-            gateway,
-            f"/api/v1/{config.NAMESPACE_ID}/flows",
-            token,
-            headers={"Host": authguard.APPLICATION_HOST},
-        )
+        deadline = time.monotonic() + 20
+        while True:
+            status, _, flows = authguard.AuthGuardRuntime._api(
+                gateway,
+                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                token,
+                headers={"Host": authguard.APPLICATION_HOST},
+            )
+            if status != 503 or time.monotonic() >= deadline:
+                break
+            # AuthZ publishes a new policy revision asynchronously. A freshly
+            # bootstrapped Gateway can briefly report ext_authz unavailable
+            # while that revision is materialized; retry only that transient
+            # status and keep all authorization failures fail-closed.
+            time.sleep(0.5)
         if status != 200:
             raise RuntimeError(f"Docker gateway authorization failed: HTTP {status}")
         if resource_scope:
@@ -353,7 +368,7 @@ class DockerDeployer(BaseDeployer):
             }
         }
         authguard_document["authz"]["scope_delivery"]["direct_context_hmac_key"] = self.environment["AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY"]
-        authguard_document["authz"]["api_token"] = self.environment["AUTHGUARD_API_TOKEN"]
+        authguard_document["authz"]["api"]["token"] = self.environment["AUTHGUARD_API_TOKEN"]
         authguard_document["authz"]["principal_discovery"]["ldap"][0]["auth"]["bind_password"] = self.environment["AUTHGUARD_LDAP_BIND_PASSWORD"]
         authguard_document["storage"]["postgres"]["password"] = "test"
         authguard_document["cache"]["redis"]["password"] = self.environment[

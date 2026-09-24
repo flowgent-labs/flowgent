@@ -84,11 +84,12 @@ func (h *FlowRunHandler) publishRunCreatedEvent(ctx context.Context, run *entiti
 	}
 	topic := fmt.Sprintf("flowgent/v1/%s/flows/%s/runs/%s/ctrl/run/created", run.Namespace, run.AgentFlowID, run.ID)
 	payload, _ := json.Marshal(map[string]any{
-		"action":       "created",
+		"event_type":   "CREATED",
 		"run_id":       run.ID,
-		"agentflow_id": run.AgentFlowID,
+		"flow_id":      run.FlowName,
 		"namespace_id": run.Namespace,
 		"namespace":    run.K8sNamespace,
+		"status":       run.Status,
 	})
 	if err := h.mqtt.Publish(ctx, topic, payload); err != nil {
 		h.logger.Warn("mqtt run created event publish failed", "topic", topic, "error", err)
@@ -108,7 +109,7 @@ func (h *FlowRunHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	flowID := r.PathValue("flow_id")
 	if flowID == "" {
-		flowID = q.Get("agentflow_id")
+		flowID = q.Get("flow_id")
 	}
 	runs, err := h.runStore.List(r.Context(), flowrun.ListFilter{
 		Namespace:    r.PathValue("namespace"),
@@ -259,8 +260,10 @@ func (h *FlowRunHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	task.AgentFlowRunID = requestRunID(r)
+	task.RunID = requestRunID(r)
+	task.AgentFlowRunID = task.RunID
 	task.Namespace = r.PathValue("namespace")
+	task.NormalizeAliases()
 	if task.ID != "" {
 		if existing, err := h.taskStore.Get(r.Context(), task.ID); err == nil && existing != nil {
 			http.Error(w, "task already exists", http.StatusConflict)
@@ -295,8 +298,11 @@ func (h *FlowRunHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	task, err := h.taskStore.Get(r.Context(), r.PathValue("task_id"))
-	if err != nil || task == nil || task.AgentFlowRunID != requestRunID(r) {
+	task, err := h.taskStore.Get(r.Context(), requestNodeRunID(r))
+	if task != nil {
+		task.NormalizeAliases()
+	}
+	if err != nil || task == nil || task.RunID != requestRunID(r) {
 		http.Error(w, "not found", 404)
 		return
 	}
@@ -318,13 +324,16 @@ func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", 400)
 		return
 	}
-	task.ID = r.PathValue("task_id")
-	task.AgentFlowRunID = requestRunID(r)
+	task.ID = requestNodeRunID(r)
+	task.RunID = requestRunID(r)
+	task.AgentFlowRunID = task.RunID
 	task.Namespace = r.PathValue("namespace")
+	task.NormalizeAliases()
 	var existing *entities.TaskRunInfo
 	if current, err := h.taskStore.Get(r.Context(), task.ID); err == nil && current != nil {
 		existing = current
-		if existing.AgentFlowRunID != task.AgentFlowRunID {
+		existing.NormalizeAliases()
+		if existing.RunID != task.RunID {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -363,7 +372,7 @@ func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlowRunHandler) persistTaskPayloads(ctx context.Context, task *entities.TaskRunInfo) error {
-	key := taskpayload.TaskPayloadKey{Namespace: task.Namespace, RunID: task.AgentFlowRunID, TaskID: task.ID}
+	key := taskpayload.TaskPayloadKey{Namespace: task.Namespace, RunID: task.RunID, TaskID: task.ID}
 	key.Kind = taskpayload.PayloadInput
 	input, err := h.payloads.Persist(ctx, key, task.Input)
 	if err != nil {
@@ -421,15 +430,17 @@ func (h *FlowRunHandler) ownedRun(r *http.Request) (*entities.FlowRunInfo, bool)
 	if err != nil || run == nil || run.Namespace != r.PathValue("namespace") {
 		return nil, false
 	}
-	if flowID := r.PathValue("flow_id"); flowID != "" && run.AgentFlowID != flowID {
+	run.NormalizeAliases()
+	if flowID := r.PathValue("flow_id"); flowID != "" && run.FlowName != flowID && run.AgentFlowID != flowID {
 		return nil, false
 	}
 	return run, true
 }
 
 func requestRunID(r *http.Request) string {
-	if id := r.PathValue("run_id"); id != "" {
-		return id
-	}
-	return r.PathValue("id")
+	return r.PathValue("run_id")
+}
+
+func requestNodeRunID(r *http.Request) string {
+	return r.PathValue("node_run_id")
 }

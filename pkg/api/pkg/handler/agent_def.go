@@ -66,12 +66,15 @@ func (h *AgentDefHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	agent.ID = uuid.New().String()
 	agent.Namespace = namespace
+	agent.Revision = 1
 	agent.Version = 1
 	if agent.Status == "" {
 		agent.Status = "ACTIVE"
 	}
 	agent.CreatedAt = time.Now()
 	agent.UpdatedAt = time.Now()
+	agent.CreatedBy = authenticatedUserID(r.Context())
+	agent.UpdatedBy = agent.CreatedBy
 	if err := h.store.Save(r.Context(), &agent); err != nil {
 		h.logger.Error("save agent", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -134,13 +137,13 @@ func (h *AgentDefHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	updates.ID = existing.ID
 	updates.Namespace = namespace
-	updates.Version = existing.Version + 1
+	updates.Revision = existing.Revision + 1
+	updates.Version = updates.Revision
 	updates.Status = existing.Status
 	updates.CreatedAt = existing.CreatedAt
 	updates.CreatedBy = existing.CreatedBy
 	updates.UpdatedAt = time.Now()
-	updates.UpdatedBy = existing.UpdatedBy
-	updates.DelFlag = false
+	updates.UpdatedBy = authenticatedUserID(r.Context())
 
 	if err := h.store.Save(r.Context(), &updates); err != nil {
 		h.logger.Error("update agent", "error", err)

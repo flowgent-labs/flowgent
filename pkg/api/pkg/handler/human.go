@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -12,15 +13,17 @@ import (
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/storage/pkg/approval"
 	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/knowledge"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // HumanHandler manages human approval endpoints.
 type HumanHandler struct {
-	store  approval.IApprovalStore
-	runs   flowrun.IFlowRunStore
-	mqtt   MQTTPublisher
-	logger *utils.Logger
+	store       approval.IApprovalStore
+	runs        flowrun.IFlowRunStore
+	publication knowledge.IKnowledgeStore
+	mqtt        MQTTPublisher
+	logger      *utils.Logger
 }
 
 // MQTTPublisher is the subset of messager needed to publish lifecycle events.
@@ -32,15 +35,18 @@ type MQTTPublisher interface {
 func NewHumanHandler(s storage.IStorage, mqtt MQTTPublisher, logger *utils.Logger) *HumanHandler {
 	var apStore approval.IApprovalStore
 	var runStore flowrun.IFlowRunStore
+	var publicationStore knowledge.IKnowledgeStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
 		apStore = approval.NewApprovalPostgresStore(db)
 		runStore = flowrun.NewFlowRunPostgresStore(db)
+		publicationStore = knowledge.NewKnowledgePostgresStore(db)
 	case *sql.DB:
 		apStore = approval.NewApprovalSQLiteStore(db)
 		runStore = flowrun.NewFlowRunSQLiteStore(db)
+		publicationStore = knowledge.NewKnowledgeSQLiteStore(db)
 	}
-	return &HumanHandler{store: apStore, runs: runStore, mqtt: mqtt, logger: logger}
+	return &HumanHandler{store: apStore, runs: runStore, publication: publicationStore, mqtt: mqtt, logger: logger}
 }
 
 // ListRunApprovals returns pending approvals only after the URL namespace and
@@ -57,7 +63,8 @@ func (h *HumanHandler) ListRunApprovals(w http.ResponseWriter, r *http.Request) 
 	}
 	filtered := make([]*entities.ApprovalInfo, 0)
 	for _, item := range items {
-		if item.AgentFlowRunID == run.ID {
+		item.NormalizeAliases()
+		if item.RunID == run.ID {
 			filtered = append(filtered, item)
 		}
 	}
@@ -77,9 +84,10 @@ func (h *HumanHandler) CreateRunApproval(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	approval.AgentFlowRunID = run.ID
+	approval.RunID = run.ID
 	approval.Namespace = run.Namespace
 	approval.Status = "PENDING"
+	approval.NormalizeAliases()
 	if err := h.store.CreateApproval(r.Context(), &approval); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -114,9 +122,45 @@ func (h *HumanHandler) resolveRunApproval(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	item, err := h.store.Get(r.Context(), r.PathValue("token"))
-	if err != nil || item == nil || item.AgentFlowRunID != run.ID || item.Status != "PENDING" {
+	item, err := h.store.Get(r.Context(), r.PathValue("approval_id"))
+	if item != nil {
+		item.NormalizeAliases()
+	}
+	if err != nil || item == nil || item.RunID != run.ID {
 		http.Error(w, "approval not found", http.StatusNotFound)
+		return
+	}
+	if item.Type == "knowledge_publish" || item.Type == "instruction_publish" {
+		if h.publication == nil {
+			http.Error(w, "publication store is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		candidate, resolveErr := h.publication.ResolveCandidateApproval(r.Context(), item.ID, approved,
+			authenticatedUserID(r.Context()), map[string]any{"decision": r.PathValue("decision")})
+		if resolveErr != nil {
+			status := http.StatusConflict
+			if errors.Is(resolveErr, knowledge.ErrApprovalExpired) {
+				status = http.StatusGone
+			}
+			http.Error(w, resolveErr.Error(), status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": candidate.Status, "candidate": candidate})
+		return
+	}
+	terminal := strings.ToLower(item.Status)
+	wanted := "rejected"
+	if approved {
+		wanted = "approved"
+	}
+	if terminal != "pending" {
+		if terminal == wanted {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"status": terminal})
+			return
+		}
+		http.Error(w, "approval is already "+terminal, http.StatusConflict)
 		return
 	}
 	item.Approved = &approved
@@ -125,6 +169,7 @@ func (h *HumanHandler) resolveRunApproval(w http.ResponseWriter, r *http.Request
 	} else {
 		item.Status = "REJECTED"
 	}
+	item.DecidedBy = authenticatedUserID(r.Context())
 	if err := h.store.UpdateApproval(r.Context(), item); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -143,7 +188,8 @@ func (h *HumanHandler) authorizedRun(w http.ResponseWriter, r *http.Request) (*e
 		http.Error(w, "run not found", http.StatusNotFound)
 		return nil, false
 	}
-	if flowID := r.PathValue("flow_id"); flowID != "" && run.AgentFlowID != flowID {
+	run.NormalizeAliases()
+	if flowID := r.PathValue("flow_id"); flowID != "" && run.FlowName != flowID && run.AgentFlowID != flowID {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return nil, false
 	}

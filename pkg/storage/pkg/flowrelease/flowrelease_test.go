@@ -2,6 +2,7 @@ package flowrelease
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,14 @@ func TestSQLiteReleaseGrantAndAtomicInstall(t *testing.T) {
 	defer db.Close()
 	repo := newSQLiteRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
+	producerFlow := &entities.FlowInfo{
+		BaseEntity: entities.BaseEntity{ID: "shared-flow", Namespace: "producer", Status: "ACTIVE"},
+		Kind:       "flow", Nodes: []entities.Node{{ID: "agent", Agent: "security-agent"}},
+		RuntimeMode: entities.RuntimeModeApplication,
+	}
+	if err := flow.NewFlowSQLiteStore(db).CreateSpec(ctx, producerFlow, "producer-owner", "release fixture"); err != nil {
+		t.Fatal(err)
+	}
 	release := &entities.FlowRelease{
 		BaseEntity: entities.BaseEntity{ID: "release-1", Namespace: "producer"},
 		FlowID:     "shared-flow", FlowVersion: 1, ReleaseVersion: "1.0.0",
@@ -24,7 +33,7 @@ func TestSQLiteReleaseGrantAndAtomicInstall(t *testing.T) {
 			Nodes:       []entities.Node{{ID: "agent", Agent: "security-agent"}},
 			RuntimeMode: entities.RuntimeModeApplication,
 		},
-		Checksum: "release-checksum", Visibility: "PRIVATE", PublishedAt: now,
+		Checksum: strings.Repeat("a", 64), Visibility: "PRIVATE", PublishedAt: now,
 	}
 	release.MarkCreated("producer-owner")
 	if err := repo.SaveRelease(ctx, release); err != nil {
@@ -59,7 +68,7 @@ func TestSQLiteReleaseGrantAndAtomicInstall(t *testing.T) {
 		ProducerNamespace: release.Namespace,
 		InstalledFlowID:   definition.ID,
 		ReleaseChecksum:   release.Checksum,
-		AppliedChecksum:   "applied-checksum",
+		AppliedChecksum:   strings.Repeat("b", 64),
 		ResourceBindings:  map[string]string{"agent:security-agent": "local-agent"},
 		InstalledAt:       now,
 	}

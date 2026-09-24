@@ -15,6 +15,6 @@ maintainers:
 dependencies:
   - name: authguard
     alias: authguard-middleware
-    version: 0.1.0
+    version: 1.0.1
     repository: oci://ghcr.io/wl4g/charts
     condition: authguard-middleware.enabled

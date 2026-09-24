@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bot,
   BellRing,
   BrainCircuit,
@@ -24,8 +25,9 @@ import { namespaceSettingsPath } from './paths'
 
 const globalNav = [
   { to: '/dashboard', label: 'nav.dashboard', icon: CircleGauge },
+  { to: '/runs', label: 'nav.runs', icon: Activity },
   { to: '/flows', label: 'nav.flows', icon: Waypoints },
-  { to: '/memory/run', label: 'nav.memory', icon: BrainCircuit },
+  { to: '/memory/namespace', label: 'nav.memory', icon: BrainCircuit },
   { to: '/agents', label: 'nav.agents', icon: Bot },
   { to: '/skills', label: 'nav.skills', icon: Sparkles },
   { to: '/mcps', label: 'nav.mcps', icon: Network },

@@ -25,6 +25,20 @@ func TestLlmProviderUsesWriteOnlyEnvironmentReference(t *testing.T) {
 	}
 }
 
+func TestLlmProviderNormalizesPersistedTimeout(t *testing.T) {
+	provider := &entities.LlmProviderInfo{Timeout: "90s"}
+	provider.NormalizeAliases()
+	if provider.TimeoutMs != 90_000 {
+		t.Fatalf("timeout_ms = %d, want 90000", provider.TimeoutMs)
+	}
+
+	persisted := &entities.LlmProviderInfo{TimeoutMs: 45_000}
+	persisted.NormalizeAliases()
+	if persisted.Timeout != "45000ms" {
+		t.Fatalf("timeout = %q, want 45000ms", persisted.Timeout)
+	}
+}
+
 func TestMcpAPIUsesOnlySecretReferences(t *testing.T) {
 	mcp := &entities.McpInfo{
 		HeaderRefs: map[string]string{

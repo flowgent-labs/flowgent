@@ -74,8 +74,8 @@ func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities
 	slog.Debug("local rm schedule", "plan", plan.PlanID, "node", plan.NodeID)
 
 	task := &entities.TaskRunInfo{
-		AgentFlowRunID: plan.AgentFlowRunID, NodeID: plan.NodeID,
-		Status: entities.TaskPending, ExecID: plan.PlanID,
+		RunID: plan.AgentFlowRunID, NodeKey: plan.NodeID, Attempt: plan.RetryCount + 1,
+		Status: entities.TaskPending, ExecutionID: plan.PlanID,
 	}
 	result, err := s.tm.ExecutePlan(ctx, plan, task)
 	if err != nil {

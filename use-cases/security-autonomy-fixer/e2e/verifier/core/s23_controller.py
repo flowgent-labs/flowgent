@@ -16,7 +16,7 @@ Steps with Expected I/O — Flow CREATE + TRIGGER Lifecycle:
   Step 1b. Verify MQTT ctrl/flow/updated event (best-effort)
     Action:  Subscribe to ctrl/flow/updated, wait 5s after flow create
     Input:   MQTT broker reachable
-    Output:  Event with matching agentflow_id (WARN if not received — Controller may poll)
+    Output:  Event with matching flow_id (WARN if not received — Controller may poll)
 
   Step 2. Verify metadata-only creation does not create runtime Deployments
     Action:  kubectl get deployments with flow labels
@@ -359,7 +359,7 @@ class ControllerVerifier(BaseVerifier):
             # a flat shape ("id"/"nodes"/"edges"/"runtime_mode" at top level), not a
             # nested "definition" object (see pkg/api/pkg/handler/flow_def.go Create).
             payload = {
-                "id": flow_id,
+                "name": flow_id,
                 "kind": "flow",
                 "runtime_mode": "application",
                 "resources": {
@@ -397,8 +397,8 @@ class ControllerVerifier(BaseVerifier):
                                     inner = json.loads(inner)
                                 except Exception:
                                     pass
-                            if isinstance(inner, dict) and inner.get("agentflow_id") == flow_id:
-                                print(f"      ✓ MQTT ctrl/flow/updated event received (action={inner.get('action','?')})")
+                            if isinstance(inner, dict) and inner.get("flow_id") == flow_id:
+                                print(f"      ✓ MQTT ctrl/flow/updated event received (event_type={inner.get('event_type','?')})")
                                 break
                     else:
                         time.sleep(0.2)

@@ -12,11 +12,43 @@ const (
 // receive ConfiguredSecretKeys instead of plaintext or the encrypted envelope.
 type RuntimeConfiguration struct {
 	BaseEntity
-	ScopeType            string              `json:"scope_type"`
-	ScopeID              string              `json:"scope_id"`
+	Scope                string              `json:"scope"`
+	FlowID               string              `json:"flow_id,omitempty"`
+	FlowName             string              `json:"flow_name,omitempty" db:"-"`
+	ScopeType            string              `json:"-" db:"-"`
+	ScopeID              string              `json:"-" db:"-"`
 	Environment          map[string]string   `json:"environment"`
 	ConfiguredSecretKeys []string            `json:"configured_secret_keys"`
 	SealedSecrets        *secretbox.Envelope `json:"-"`
+}
+
+func (r *RuntimeConfiguration) NormalizeAliases() {
+	if r.Scope == "" {
+		r.Scope = r.ScopeType
+	}
+	if r.ScopeType == "" {
+		r.ScopeType = r.Scope
+	}
+	if r.FlowName == "" && r.Scope == RuntimeConfigScopeFlow {
+		r.FlowName = r.ScopeID
+	}
+	if r.ScopeID == "" && r.Scope == RuntimeConfigScopeFlow {
+		if r.FlowName != "" {
+			r.ScopeID = r.FlowName
+		} else {
+			r.ScopeID = r.FlowID
+		}
+	}
+}
+
+func (r *RuntimeConfiguration) FlowKey() string {
+	if r.FlowName != "" {
+		return r.FlowName
+	}
+	if r.ScopeID != "" {
+		return r.ScopeID
+	}
+	return r.FlowID
 }
 
 // RuntimeConfigLayer is a redacted configuration layer returned to management

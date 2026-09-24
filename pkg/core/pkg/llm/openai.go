@@ -22,6 +22,7 @@ type OpenAIProvider struct {
 }
 
 func newOpenAIProvider(p *entities.LlmProviderInfo) *OpenAIProvider {
+	p.NormalizeAliases()
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {
@@ -36,8 +37,8 @@ func newOpenAIProvider(p *entities.LlmProviderInfo) *OpenAIProvider {
 		openaiopt.WithAPIKey(apiKey),
 		openaiopt.WithRequestTimeout(timeout),
 	}
-	if p.Endpoint != "" {
-		opts = append(opts, openaiopt.WithBaseURL(p.Endpoint))
+	if p.BaseURI != "" {
+		opts = append(opts, openaiopt.WithBaseURL(p.BaseURI))
 	}
 	c := openai.NewClient(opts...)
 	return &OpenAIProvider{
