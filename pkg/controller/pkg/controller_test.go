@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -43,6 +44,54 @@ func TestJmConfigMapName(t *testing.T) {
 			t.Errorf("jmConfigMapName() = %q, want fallback %q", got, "flowgent-config")
 		}
 	})
+}
+
+func TestEnsureRuntimeConfigMapReconcilesExistingCopy(t *testing.T) {
+	ctx := context.Background()
+	clientset := fake.NewSimpleClientset(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "flowgent-config", Namespace: "flowgent-system"},
+			Data:       map[string]string{"flowgent.yaml": "storage:\n  host: current\n"},
+			BinaryData: map[string][]byte{"policy.bin": {1, 2, 3}},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "flowgent-config",
+				Namespace: "flowgent-acme",
+				Labels:    map[string]string{"stale": "true"},
+			},
+			Data: map[string]string{"flowgent.yaml": "storage:\n  host: stale\n"},
+		},
+	)
+	c := testController(&config.FlowgentConfig{
+		Runtime: config.RuntimeConfig{
+			JMConfigMap:     "flowgent-config",
+			SystemNamespace: "flowgent-system",
+		},
+	})
+
+	checksum, ok := c.ensureRuntimeConfigMap(ctx, clientset, "flowgent-acme", "acme", "flow-a")
+	if !ok || checksum == "" {
+		t.Fatalf("ensureRuntimeConfigMap() = %q, %v; want non-empty checksum and success", checksum, ok)
+	}
+	got, err := clientset.CoreV1().ConfigMaps("flowgent-acme").Get(ctx, "flowgent-config", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get reconciled ConfigMap: %v", err)
+	}
+	if got.Data["flowgent.yaml"] != "storage:\n  host: current\n" {
+		t.Fatalf("runtime ConfigMap retained stale data: %#v", got.Data)
+	}
+	if !reflect.DeepEqual(got.BinaryData["policy.bin"], []byte{1, 2, 3}) {
+		t.Fatalf("runtime ConfigMap binary data = %#v", got.BinaryData)
+	}
+	wantLabels := map[string]string{
+		"flowgent.io/runtime-boundary": "namespace",
+		"flowgent.io/namespace":        "acme",
+		"flowgent.io/managed-by":       runtimeConfigurationManagedBy,
+	}
+	if !reflect.DeepEqual(got.Labels, wantLabels) {
+		t.Fatalf("runtime ConfigMap labels = %#v, want %#v", got.Labels, wantLabels)
+	}
 }
 
 func TestApplicationJobManagerAppLabelIsInstallationScoped(t *testing.T) {

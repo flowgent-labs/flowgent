@@ -30,6 +30,8 @@ spec:
           env:
             - name: FLOWGENT_API_UPSTREAM
               value: {{ $apiUpstream | quote }}
+            - name: FLOWGENT_DEFAULT_NAMESPACE
+              value: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
           resources:
             {{- toYaml .Values.web.resources | nindent 12 }}
           readinessProbe:

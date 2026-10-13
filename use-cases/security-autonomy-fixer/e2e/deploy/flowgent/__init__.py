@@ -34,7 +34,7 @@ DEFAULT_NAMESPACE = config.SYSTEM_NAMESPACE
 DEFAULT_RELEASE = config.RELEASE_NAME
 DEFAULT_TIMEOUT = 300
 FLOWGENT_IMAGE = "localhost/flowgent:latest"
-FLOWGENT_PG_CONTAINER = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "sigbot_e2e_164364_postgres")
+FLOWGENT_PG_CONTAINER = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "flowgent-test-pgvector")
 WORKLOAD_NAMESPACE_PREFIX = os.getenv(
     "FLOWGENT_K8S_WORKLOAD_NAMESPACE_PREFIX",
     f"{config.RESOURCE_PREFIX}-workload-",
@@ -850,6 +850,12 @@ class FlowgentRuntime:
             print(f"  ERROR: preparing AuthGuard E2E failed: {exc}")
             return False
 
+        # The Controller resolves persisted LLM/MCP secret references during
+        # startup.  Its existing runtime credential Secret therefore has to
+        # precede Helm, not be created only after the Controller rollout.
+        if not FlowgentRuntime._ensure_runtime_credential_secret([namespace]):
+            return False
+
         # UI remains unreferenced while AuthGuard images and identity services are
         # prepared. Refresh it immediately before Helm creates the UI pod so the
         # node runtime's image GC cannot remove it on a disk-constrained host.
@@ -859,6 +865,9 @@ class FlowgentRuntime:
         cmd = [
             "install", release, HELM_CHART,
             "-n", namespace, "--create-namespace", "--timeout", "300s",
+            "--post-renderer", str(
+                config.E2E_DIR / "deploy" / "envoy_gateway_post_renderer.py"
+            ),
             "--set", "global.image.repository=localhost/flowgent",
             "--set", "global.image.tag=latest",
             "--set", "global.image.pullPolicy=IfNotPresent",
@@ -882,6 +891,10 @@ class FlowgentRuntime:
             "--set-string", "runtime.session.taskmanager.resources.limits.cpu=50m",
             "--set-string", "runtime.session.sandbox.resources.limits.cpu=50m",
             "--set", "sandbox.minReplicas=0",
+            # Keep one application sandbox warm in this retained acceptance
+            # environment.  The full verifier must be able to observe the real
+            # pod before the short sandbox task scales back to zero.
+            "--set", "runtime.application.sandbox.minReplicas=1",
             "--set", "storage.type=POSTGRE",
             "--set-string", f"storage.postgres.dsn={runtime_env['FLOWGENT__STORAGE__POSTGRES__DSN']}",
             "--set-string", f"storage.postgres.schema={config.PG_SCHEMA}",
@@ -889,15 +902,14 @@ class FlowgentRuntime:
             "--set", "emqx.enabled=true",
             "--set", "redis.enabled=false",
             "--set", "apiserver.replicas=1",
-            "--set", "apiserver.service.type=NodePort",
-            "--set-string", f"web.apiUpstream=http://{release}-apiserver:9990",
+            # The Web NodePort is diagnostic-only and must never forward to the
+            # unauthenticated trusted listener. Public traffic enters through
+            # Envoy; direct Web access still fails closed in the Go adapter.
+            "--set-string", f"web.apiUpstream=http://{release}-apiserver:9999",
             "--set", "controller.replicas=1",
             "--set", "notifier.replicas=1",
             "--set", "a2a.enabled=true",
             "--set", "a2a.replicas=2",
-            "--set", "apiserver.service.nodePorts.rest=31999",
-            "--set", "apiserver.service.nodePorts.internal=31990",
-            "--set", "apiserver.service.nodePorts.mgmt=31991",
             "--set", "a2a.service.nodePort=31992",
             "--set", "web.service.nodePort=31080",
             "--set", f"controller.serviceAccount.name={config.RESOURCE_PREFIX}-controller",
@@ -1066,79 +1078,9 @@ class FlowgentRuntime:
         print(f"  WARN: healthz check did not succeed within {timeout}s")
         return False
 
-
-
-
 selected_kubeconfig = FlowgentRuntime._select_kubeconfig()
 if selected_kubeconfig:
     os.environ["KUBECONFIG"] = selected_kubeconfig
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 class FlowgentDeployer(BaseDeployer):
     """Own the isolated Helm release and its AuthGuard middleware lifecycle."""

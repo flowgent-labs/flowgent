@@ -26,6 +26,20 @@ LDAP 联邦 Principal 搜索/物化。成功后不会卸载 Helm；执行
 Flowgent/AuthGuard 数据分别使用 `e2e_flowgent` 与
 `e2e_flowgent_authguard` schema，不会清理、读取或接管隔壁 AuthGuard 默认 E2E。
 
+保留给人工验收的正式同源入口为 `https://flowgent.wl4g.com`。E2E Gateway 与
+AuthGuard Application 默认直接使用该真实域名；仅在其他指定环境中才通过
+`FLOWGENT_E2E_APPLICATION_HOST` 覆盖。运行时不要传 `--clean-after-run`，即可保留
+导入的资源、运行记录和验证证据。Web 仍保留诊断用 NodePort `31080`，但其 API
+反代只能进入受保护的 Flowgent listener，匿名请求会 fail-closed。保留的独立验收
+账号保存在 Kubernetes Secret `e2e-flowgent-acceptance-credentials` 中（运行日志不会
+打印密码）；该密码验收账号特意关闭 TOTP。
+
+AuthGuard 的 `standalone.totp.enabled` 会启用 TOTP 注册/校验能力，并在 Application
+metadata 中发布 `standalone.totp=true`，Hosted Login 据此显示验证码输入框；但该开关
+本身不会强制每个密码身份都输入 TOTP。只有某个身份已经注册且存在未撤销的 TOTP
+credential 时，服务端才会要求并校验验证码。本验收环境将其设为 `false`，因此保留账号
+明确采用纯密码登录。
+
 同一个入口还提供功能等价的 Docker Compose 部署模式：
 
 ```bash

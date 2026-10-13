@@ -26,6 +26,8 @@ import type { TaskRun } from '../../core/domain/types'
 import { attemptsForNode } from './run-attempts'
 import { RunGraph } from './run-graph'
 import { duration, formatDate } from './run-utils'
+import { FileChangesPreview } from './file-changes-preview'
+import { extractTaskFileChanges } from './file-changes'
 
 export function RunDetailPage() {
   const { t } = useTranslation()
@@ -264,6 +266,7 @@ export function RunDetailPage() {
 
 function TaskAttemptDetail({ task, traceHref }: { task: TaskRun; traceHref: string }) {
   const { t } = useTranslation()
+  const fileChanges = extractTaskFileChanges(task)
   return (
     <div className="task-details">
       <dl>
@@ -290,8 +293,12 @@ function TaskAttemptDetail({ task, traceHref }: { task: TaskRun; traceHref: stri
         <ExternalLink size={12} />
       </Link>
       {task.error && <div className="inline-error">{task.error}</div>}
-      <JsonView label={t('runs.request')} value={task.input} />
-      <JsonView label={t('runs.response')} value={task.output} />
+      <FileChangesPreview changes={fileChanges} status={task.status} />
+      <details className="task-raw-data" open={!fileChanges.length}>
+        <summary>{t('runs.rawPayload')}</summary>
+        <JsonView label={t('runs.request')} value={task.input} />
+        <JsonView label={t('runs.response')} value={task.output} />
+      </details>
     </div>
   )
 }

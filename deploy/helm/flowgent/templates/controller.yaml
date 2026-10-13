@@ -109,12 +109,33 @@ spec:
 {{ end }}
     spec:
       serviceAccountName: {{ .Values.controller.serviceAccount.name }}
+      initContainers:
+        - name: wait-for-apiserver
+          image: {{ include "flowgent.image" . | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              until curl --fail --silent --show-error
+              http://{{ include "flowgent.fullname" . }}-apiserver.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.apiserver.service.internalPort }}/_/healthz;
+              do sleep 1; done
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
       containers:
         - name: controller
           image: {{ include "flowgent.image" . | quote }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           command: ["/app/flowgent"]
           args: ["controller", "start", "-c", "/etc/flowgent/flowgent.yaml"]
+{{- if .Values.runtime.credentialEnvSecret }}
+          envFrom:
+            {{- include "flowgent.runtimeCredentialEnvFrom" . | nindent 12 }}
+{{- end }}
           env:
             {{- include "flowgent.internalEnv" . | nindent 12 }}
             - name: FLOWGENT__RUNTIME__CONTROLLER_LABEL

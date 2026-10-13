@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 from contextlib import contextmanager
+import json
 import os
 import re
+import subprocess
 from typing import Any, Iterator
 from urllib.parse import quote
 
@@ -86,8 +89,12 @@ class BrowserConsoleVerifier:
                 fixture_route = return_path is None
                 return_path = return_path or f"/{self.web_namespace}/{self.fixture_flow_id}"
                 self.page.goto(
-                    f"{self.origin}/auth/login?return_to={quote(return_path, safe='')}",
+                    f"{self.origin}{return_path}",
                     wait_until="domcontentloaded",
+                )
+                self.page.wait_for_url(
+                    f"{self.origin}/auth/login?return_to={quote(return_path, safe='')}",
+                    timeout=20_000,
                 )
                 expect(self.page.get_by_test_id("login-provider-github")).to_be_visible(
                     timeout=20_000
@@ -113,8 +120,8 @@ class BrowserConsoleVerifier:
                         f"HTTP {session_status}"
                     )
                 self.details.append(
-                    "Chromium entered Flowgent through the same-origin Envoy Gateway "
-                    "and completed Hosted GitHub OAuth before using Flowgent Web"
+                    "Chromium proved the Flowgent session boundary redirected an anonymous "
+                    "deep link to same-origin Hosted Login, then completed GitHub OAuth"
                 )
                 yield self.page
             finally:
@@ -138,9 +145,9 @@ class BrowserConsoleVerifier:
             raise RuntimeError(
                 f"Flowgent browser session was absent before sign-out: HTTP {session_before}"
             )
-        page.get_by_role("button", name="Account menu", exact=True).hover()
+        page.get_by_role("button", name="Account menu", exact=True).click()
         expect(page.get_by_role("menuitem", name="Sign out", exact=True)).to_be_visible()
-        self.screenshot("UI-46-before", "Flowgent account menu sign-out control")
+        self.screenshot("UI-47-before", "Flowgent account menu sign-out control")
         with page.expect_response(
             lambda response: response.request.method == "POST"
             and response.url.endswith("/auth/logout")
@@ -169,8 +176,77 @@ class BrowserConsoleVerifier:
             raise RuntimeError(
                 f"AuthGuard retained the session after Flowgent sign-out: HTTP {session_after}"
             )
-        self.screenshot("UI-46", "Flowgent sign-out returned to Hosted Login")
+        self.screenshot("UI-47", "Flowgent sign-out returned to Hosted Login")
         self.details.append(
             "Flowgent sign-out used the same-origin Gateway and proved "
             "session_before=200, logout=204, session_after=401 without a 404."
+        )
+
+    def acceptance_password_login(self) -> None:
+        """Exercise the retained human account through the real Hosted Login form."""
+        if self.context.deployer != "k8s":
+            self.details.append(
+                "Standalone acceptance-account browser proof is K8s-only; Docker OAuth proof passed"
+            )
+            return
+        from deploy.authguard import ACCEPTANCE_SECRET
+
+        result = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "secret",
+                ACCEPTANCE_SECRET,
+                "-n",
+                self.context.namespace,
+                "-o",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("retained acceptance credential Secret is unavailable")
+        encoded = json.loads(result.stdout).get("data", {})
+        username = base64.b64decode(encoded.get("username", "")).decode()
+        password = base64.b64decode(encoded.get("password", "")).decode()
+        if not username or not password:
+            raise RuntimeError("retained acceptance credentials are incomplete")
+
+        page = self.browser_page
+        expect(page.get_by_test_id("login-password-submit")).to_be_visible()
+        expect(page.get_by_test_id("login-totp")).to_have_count(0)
+        page.get_by_test_id("login-id").fill(username)
+        page.get_by_test_id("login-password").fill(password)
+        page.get_by_test_id("login-password-submit").click()
+        page.wait_for_url(f"{self.origin}/dashboard", timeout=20_000)
+        expect(page.get_by_role("button", name="Account menu", exact=True)).to_be_visible()
+        expect(page.get_by_test_id("dashboard-telemetry")).to_be_visible(timeout=20_000)
+        session_status = page.evaluate(
+            "async () => (await fetch('/auth/session')).status"
+        )
+        runtime_namespace = page.evaluate(
+            "JSON.parse(localStorage.getItem('flowgent-web-preferences')).state.namespace"
+        )
+        protected_status = page.evaluate(
+            """async () => (await fetch(
+              '/api/v1/security-fixer/flows/security-autonomy-fixer'
+            )).status"""
+        )
+        if (
+            session_status != 200
+            or protected_status != 200
+            or runtime_namespace != self.web_namespace
+        ):
+            raise RuntimeError(
+                "standalone acceptance login did not traverse the complete security chain: "
+                f"session={session_status}, protected_flow={protected_status}, "
+                f"runtime_namespace={runtime_namespace}"
+            )
+        self.screenshot("UI-48", "Standalone password acceptance login without TOTP")
+        self.details.append(
+            "Hosted Login omitted TOTP, accepted the retained password account, established "
+            "a canonical cookie, loaded the authorized runtime namespace, and accessed the "
+            "fixture through Envoy plus Flowgent AuthZ"
         )

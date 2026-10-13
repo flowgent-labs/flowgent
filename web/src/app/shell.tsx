@@ -20,6 +20,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, Outlet } from 'react-router-dom'
+import { Modal } from '../shared/components/ui'
 import { useAppStore } from './store'
 import { namespaceSettingsPath } from './paths'
 
@@ -49,7 +50,7 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <aside className="topbar">
         <NavLink to="/dashboard" className="topbar__brand" aria-label={t('app.name')}>
           <BrandMark />
           <div className="brand-copy">
@@ -78,11 +79,15 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <AccountMenu />
-      </header>
-      <main className="page">
-        <Outlet />
-      </main>
+      </aside>
+      <section className="workspace-shell">
+        <header className="utility-bar">
+          <AccountMenu />
+        </header>
+        <main className="page">
+          <Outlet />
+        </main>
+      </section>
     </div>
   )
 }
@@ -90,6 +95,7 @@ export function AppShell() {
 function AccountMenu() {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const locale = useAppStore((state) => state.locale)
@@ -97,9 +103,17 @@ function AccountMenu() {
   const setLocale = useAppStore((state) => state.setLocale)
   const setTheme = useAppStore((state) => state.setTheme)
   const namespace = useAppStore((state) => state.namespace)
-  const displayName = t('header.account')
-  const secondary = 'AuthGuard'
-  const initials = 'AG'
+  const authGuard = useAppStore((state) => state.authGuard)
+  const displayName = authGuard.displayName || t('header.signedInUser')
+  const secondary = authGuard.applicationName || t('app.name')
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
 
   useEffect(() => {
     if (!open) return
@@ -120,94 +134,127 @@ function AccountMenu() {
   }, [open])
 
   return (
-    <div
-      className="account"
-      ref={menuRef}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-    >
-      <button
-        ref={buttonRef}
-        type="button"
-        className="account__button"
-        aria-label={t('header.account')}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="avatar">{initials}</span>
-        <span className="account__identity">
-          <strong>{displayName}</strong>
-          <span>{secondary}</span>
-        </span>
-        <ChevronDown size={15} />
-      </button>
-      {open && (
-        <div className="account-menu" role="menu">
-          <div className="account-menu__heading">
-            <span className="avatar avatar--large">{initials}</span>
-            <div>
-              <strong>{displayName}</strong>
-              <span>{secondary}</span>
+    <>
+      <div className="account" ref={menuRef}>
+        <button
+          ref={buttonRef}
+          type="button"
+          className="account__button"
+          aria-label={t('header.account')}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          data-testid="account-menu-trigger"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <AccountAvatar logo={authGuard.logo} initials={initials} />
+          <span className="account__identity">
+            <strong>{displayName}</strong>
+            <span data-testid="account-application">{secondary}</span>
+          </span>
+          <ChevronDown size={15} />
+        </button>
+        {open && (
+          <div className="account-menu" role="menu">
+            <div className="account-menu__heading">
+              <AccountAvatar logo={authGuard.logo} initials={initials} large />
+              <div>
+                <strong>{displayName}</strong>
+                <span>{secondary}</span>
+              </div>
+            </div>
+            <MenuSetting icon={<Languages size={16} />} label={t('header.language')}>
+              <Segmented
+                value={locale}
+                options={[
+                  ['en', t('header.english')],
+                  ['zh', t('header.chinese')],
+                ]}
+                onChange={(value) => setLocale(value as 'en' | 'zh')}
+              />
+            </MenuSetting>
+            <MenuSetting
+              icon={theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+              label={t('header.appearance')}
+            >
+              <Segmented
+                value={theme}
+                options={[
+                  ['light', t('header.light')],
+                  ['dark', t('header.dark')],
+                  ['system', t('header.system')],
+                ]}
+                onChange={(value) => setTheme(value as 'light' | 'dark' | 'system')}
+              />
+            </MenuSetting>
+            <div className="account-menu__links">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false)
+                  setSecurityOpen(true)
+                }}
+              >
+                <ShieldCheck size={16} />
+                {t('header.security', { defaultValue: 'Account security' })}
+              </button>
+              <NavLink
+                role="menuitem"
+                to={namespaceSettingsPath(namespace)}
+                onClick={() => setOpen(false)}
+              >
+                <Settings size={16} />
+                {t('header.settings')}
+              </NavLink>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  void fetch('/auth/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                  }).finally(() => {
+                    window.location.assign('/auth/login?return_to=%2Fdashboard')
+                  })
+                }}
+              >
+                <LogOut size={16} />
+                {t('header.signOut', { defaultValue: 'Sign out' })}
+              </button>
             </div>
           </div>
-          <MenuSetting icon={<Languages size={16} />} label={t('header.language')}>
-            <Segmented
-              value={locale}
-              options={[
-                ['en', t('header.english')],
-                ['zh', t('header.chinese')],
-              ]}
-              onChange={(value) => setLocale(value as 'en' | 'zh')}
-            />
-          </MenuSetting>
-          <MenuSetting
-            icon={theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
-            label={t('header.appearance')}
-          >
-            <Segmented
-              value={theme}
-              options={[
-                ['light', t('header.light')],
-                ['dark', t('header.dark')],
-                ['system', t('header.system')],
-              ]}
-              onChange={(value) => setTheme(value as 'light' | 'dark' | 'system')}
-            />
-          </MenuSetting>
-          <div className="account-menu__links">
-            <a role="menuitem" href="/auth/account/security">
-              <ShieldCheck size={16} />
-              {t('header.security', { defaultValue: 'Account security' })}
-            </a>
-            <NavLink
-              role="menuitem"
-              to={namespaceSettingsPath(namespace)}
-              onClick={() => setOpen(false)}
-            >
-              <Settings size={16} />
-              {t('header.settings')}
-            </NavLink>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                void fetch('/auth/logout', {
-                  method: 'POST',
-                  credentials: 'same-origin',
-                }).finally(() => {
-                  window.location.assign('/auth/login?return_to=%2Fdashboard')
-                })
-              }}
-            >
-              <LogOut size={16} />
-              {t('header.signOut', { defaultValue: 'Sign out' })}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+      <Modal
+        open={securityOpen}
+        wide
+        title={t('header.security')}
+        onClose={() => setSecurityOpen(false)}
+      >
+        <iframe
+          className="authguard-security-frame"
+          data-testid="authguard-security-frame"
+          src="/auth/account/security?embedded=1"
+          title={t('header.security')}
+        />
+      </Modal>
+    </>
+  )
+}
+
+function AccountAvatar({
+  logo,
+  initials,
+  large = false,
+}: {
+  logo: string
+  initials: string
+  large?: boolean
+}) {
+  return (
+    <span className={`avatar${large ? ' avatar--large' : ''}`}>
+      {logo ? <img src={logo} alt="" data-testid="account-brand-logo" /> : initials || 'FG'}
+    </span>
   )
 }
 

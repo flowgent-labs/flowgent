@@ -7,6 +7,9 @@ global:
     repository: ghcr.io/flowgent-labs/flowgent
     tag: ""                       # defaults to Chart.appVersion
     pullPolicy: IfNotPresent
+  authguard:
+    themeConfigMap: '{{ .Release.Name }}-authguard-theme-v1'
+    themeRevision: "1"
 
 # Business workload lifecycle. Keep this true for ordinary Flowgent releases.
 # A separately managed AuthGuard middleware release sets it to false so normal
@@ -275,11 +278,11 @@ runtime:
         server_bind: "0.0.0.0:6669"
       otel:
         enabled: true
-        endpoint: "{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.otlpHttp }}"
+        endpoint: "{{ include "flowgent.fullname" . }}-jaeger.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.jaeger.service.otlpHttp }}"
         protocol: "http/protobuf"
         sample_rate: 1.0
         {{- if .Values.jaeger.enabled }}
-        query_endpoint: "http://{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.ui }}"
+        query_endpoint: "http://{{ include "flowgent.fullname" . }}-jaeger.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.jaeger.service.ui }}"
         {{- else }}
         query_endpoint: {{ .Values.jaeger.queryEndpoint | quote }}
         {{- end }}
@@ -319,7 +322,7 @@ runtime:
         {{- end }}
       {{- else if .Values.postgresql.enabled }}
       postgres:
-        host: "{{ include "flowgent.fullname" . }}-postgresql"
+        host: "{{ include "flowgent.fullname" . }}-postgresql.{{ .Release.Namespace }}.svc.cluster.local"
         port: 5432
         database: flowgent
         {{- if .Values.storage.postgres.schema }}
@@ -356,7 +359,7 @@ runtime:
     messager:
       type: {{ .Values.messaging.type | quote }}
       mqtt:
-        broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
+        broker: "tcp://{{ include "flowgent.fullname" . }}-emqx.{{ .Release.Namespace }}.svc.cluster.local:1883"
         client_id: "flowgent"
     lock:
       provider: {{ .Values.lock.provider | default (ternary "postgres" "memory" (eq (.Values.storage.type | default "SQLITE") "POSTGRE")) | quote }}
@@ -371,7 +374,7 @@ runtime:
         keys:
           {{ .Values.notifier.secretEncryption.activeKeyId }}: "${FLOWGENT_NOTIFICATION_KEY_V1}"
     runtime:
-      api_server_url: "http://{{ include "flowgent.fullname" . }}-apiserver:{{ .Values.apiserver.service.internalPort }}"
+      api_server_url: "http://{{ include "flowgent.fullname" . }}-apiserver.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.apiserver.service.internalPort }}"
       resource_owner: {{ .Values.runtime.resourceOwner | default "flowgent" | quote }}
       system_namespace: {{ .Values.runtime.systemNamespace | default "flowgent-system" | quote }}
       k8s_namespace: {{ .Values.runtime.k8sNamespace | default .Release.Namespace | quote }}
@@ -594,6 +597,8 @@ runtime:
 # ───────────────────────────────────────────────────────────────
 authguard-middleware:
   enabled: false
+  theme:
+    files: files/authguard-theme/*
   adapter:
     enabled: false
     existingSecret: ""           # key must contain a random value of at least 32 bytes
@@ -632,6 +637,10 @@ authguard-middleware:
         flowgent:
           hosts: [flowgent.wl4g.com]
           displayName: Flowgent
+          logo: /auth/assets/themes/custom/flowgent.svg
+          theme:
+            id: flowgent
+            stylesheet: /auth/assets/themes/custom/flowgent.css
           returnUris: [https://flowgent.wl4g.com/**]
     web:
       enabled: true

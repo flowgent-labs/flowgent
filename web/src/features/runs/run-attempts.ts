@@ -43,6 +43,23 @@ export interface TraceTreeRow {
   depth: number
 }
 
+export function traceSpanKey(span: TraceSpan): string {
+  return `${span.trace_id}:${span.span_id}`
+}
+
+export function traceRowForAttempt<T extends TraceTreeRow>(
+  rows: T[],
+  taskId?: string | null,
+): T | undefined {
+  if (!taskId) return undefined
+  return rows
+    .filter(({ span }) => attributeString(span, 'flowgent.task_id') === taskId)
+    .sort(
+      (left, right) =>
+        left.depth - right.depth || right.span.duration_micros - left.span.duration_micros,
+    )[0]
+}
+
 export function flattenSpanTree(spans: TraceSpan[]): TraceTreeRow[] {
   const byParent = new Map<string, TraceSpan[]>()
   const ids = new Set(spans.map((span) => span.span_id))

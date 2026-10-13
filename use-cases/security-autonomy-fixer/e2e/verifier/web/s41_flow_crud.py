@@ -23,6 +23,7 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         self.flow_id = f"ui-e2e-{uuid.uuid4().hex[:8]}"
         self.node_id = "console-sandbox"
         self.run_id = ""
+        self.focused_task_id = ""
         self.flow_created = False
         self.flow_deleted = False
 
@@ -64,7 +65,13 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         page.get_by_test_id("flow-node-add-sandbox").click()
         expect(page.get_by_test_id("flow-node-script")).to_be_visible()
         page.get_by_test_id("flow-node-id").fill(self.node_id)
-        page.get_by_test_id("flow-node-script").fill("printf 'flowgent web console e2e\\n'")
+        page.get_by_test_id("flow-node-script").fill(
+            "printf '%s\\n' '"
+            '{"files":[{"path":"src/security.ts","content":"export const secured = true;\\n"}],'
+            '"patches":[{"file":"src/security.ts","rule":"e2e:secure-default",'
+            '"description":"Enable the secure default."}]}'
+            "'"
+        )
         self.flow_created = True
         page.get_by_test_id("flow-editor-save").click()
         page.wait_for_url(
@@ -98,16 +105,27 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         self.run_id = page.url.rsplit("/", 1)[-1]
         node = page.locator(f'[data-testid="run-node"][data-node-id="{self.node_id}"]')
         expect(node).to_have_attribute("data-has-task", "true")
+        node.click()
+        preview = page.get_by_test_id("task-file-preview")
+        expect(preview).to_be_visible(timeout=20_000)
+        expect(preview).to_contain_text("src/security.ts")
+        expect(preview).to_contain_text("Enable the secure default")
+        trace_link = page.locator("a.attempt-trace-link")
+        href = trace_link.get_attribute("href") or ""
+        match = re.search(r"[?&]task=([^&]+)", href)
+        if not match:
+            raise AssertionError(f"node attempt trace link did not carry an exact task id: {href}")
+        self.focused_task_id = match.group(1)
         self.screenshot("UI-02", "console displayed the completed sandbox run")
         self.details.append("Web console triggered the Flow and rendered its terminal COMPLETED run with sandbox task evidence.")
 
     def _inspect_trace(self) -> None:
         page = self.browser_page
-        page.get_by_role("button", name="Tracking", exact=True).click()
+        page.locator("a.attempt-trace-link").click()
         page.wait_for_url(
             re.compile(
                 rf"^{re.escape(self.origin)}/{re.escape(self.web_namespace)}/"
-                rf"{re.escape(self.flow_id)}/runs/[^/]+/tracking$"
+                rf"{re.escape(self.flow_id)}/runs/[^/]+/tracking\?task={re.escape(self.focused_task_id)}$"
             ),
             timeout=20_000,
         )
@@ -122,12 +140,20 @@ class ConsoleManagementVerifier(BrowserConsoleVerifier, BaseVerifier):
         expect(trace_source).to_have_attribute("data-trace-count", re.compile(r"^[1-9]\d*$"))
         expect(trace_source).to_have_attribute("data-span-count", re.compile(r"^[1-9]\d*$"))
         expect(page.locator("button.span-row").first).to_be_visible()
+        focused = page.get_by_test_id("trace-focused-attempt")
+        expect(focused).to_have_attribute("data-task-id", self.focused_task_id)
+        expect(focused).to_have_attribute("data-span-id", re.compile(r".+"))
+        focused_row = page.locator(
+            f'[data-testid="trace-span"][data-task-id="{self.focused_task_id}"]'
+        ).first
+        expect(focused_row).to_have_class(re.compile(r"is-focused"))
         trace_count = trace_source.get_attribute("data-trace-count")
         span_count = trace_source.get_attribute("data-span-count")
         self.screenshot("UI-03", "console rendered the Jaeger-style trace view for the completed run")
         self.details.append(
             f"Opened the run Tracking route and rendered {trace_count} Jaeger trace(s) / "
-            f"{span_count} span(s), correlated with the persisted Run."
+            f"{span_count} span(s), then selected and scrolled to persisted TaskRun "
+            f"{self.focused_task_id}."
         )
 
     def _inspect_overview(self) -> None:

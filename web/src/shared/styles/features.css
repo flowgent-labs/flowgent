@@ -1096,6 +1096,217 @@
 .attempt-trace-link svg:last-child {
   margin-left: auto;
 }
+.file-change-preview {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 9px;
+  background: var(--bg-elevated);
+}
+.file-change-preview__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(100deg, var(--primary-soft), transparent 72%);
+}
+.file-change-preview__icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: var(--primary);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.file-change-preview__header > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.file-change-preview__header strong {
+  font-size: 10px;
+}
+.file-change-preview__header small {
+  color: var(--muted);
+  font-size: 8px;
+}
+.file-change-preview__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.file-change-preview__live svg {
+  animation: file-preview-pulse 1.5s ease-in-out infinite;
+}
+@keyframes file-preview-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.86);
+  }
+}
+.file-change-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.file-change-tabs button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 7px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  white-space: nowrap;
+}
+.file-change-tabs button span {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-change-tabs button:hover,
+.file-change-tabs button.is-active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.file-change-tabs button.is-active {
+  box-shadow: inset 0 -2px var(--primary);
+}
+.file-change-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+  font-size: 7px;
+}
+.file-change-meta > code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-change-kind {
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: var(--blue);
+  background: var(--info-soft);
+  text-transform: uppercase;
+}
+.file-change-kind--added {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.file-change-kind--deleted {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.diff-stat {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.diff-stat--added {
+  color: var(--primary);
+}
+.diff-stat--deleted {
+  color: var(--danger);
+}
+.file-change-description {
+  display: grid;
+  gap: 4px;
+  padding: 8px 9px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 8px;
+  line-height: 1.45;
+}
+.file-change-description code {
+  color: var(--blue);
+}
+.file-diff {
+  max-height: 420px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, #000);
+}
+.file-diff__line {
+  display: grid;
+  min-width: max-content;
+  grid-template-columns: 31px 31px 18px minmax(260px, 1fr);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 18px;
+}
+.file-diff__line--addition {
+  color: color-mix(in srgb, var(--primary) 86%, var(--text));
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.file-diff__line--deletion {
+  color: color-mix(in srgb, var(--danger) 86%, var(--text));
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+.file-diff__number,
+.file-diff__marker {
+  color: var(--faint);
+  border-right: 1px solid var(--border);
+  text-align: right;
+  user-select: none;
+}
+.file-diff__number {
+  padding-right: 5px;
+}
+.file-diff__marker {
+  padding-right: 5px;
+}
+.file-diff__line > code {
+  padding: 0 8px;
+  white-space: pre;
+}
+.file-diff__line--omitted {
+  display: block;
+  min-width: 0;
+}
+.file-diff__omitted {
+  display: block;
+  padding: 4px 10px;
+  color: var(--faint);
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-align: center;
+}
+.task-raw-data {
+  border-top: 1px solid var(--border);
+}
+.task-raw-data > summary {
+  padding: 9px 2px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 650;
+}
+.task-raw-data[open] > summary {
+  color: var(--text-soft);
+}
 .task-details dl,
 .detail-list {
   display: grid;
@@ -1166,6 +1377,25 @@
   margin-left: auto;
   color: var(--muted);
 }
+.trace-focus {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
+  border-radius: 7px;
+  background: var(--primary-soft);
+  font-size: 9px;
+}
+.trace-focus code {
+  color: inherit;
+}
+.trace-focus--missing {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+}
 .trace-layout {
   display: grid;
   min-height: 620px;
@@ -1235,6 +1465,22 @@
 }
 .span-row.is-active {
   box-shadow: inset 2px 0 var(--primary);
+}
+.span-row.is-focused {
+  position: relative;
+  color: var(--text);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-2));
+  box-shadow:
+    inset 3px 0 var(--primary),
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+.span-row.is-focused::after {
+  position: absolute;
+  inset: 5px;
+  border: 1px solid color-mix(in srgb, var(--primary) 36%, transparent);
+  border-radius: 5px;
+  content: '';
+  pointer-events: none;
 }
 .span-row.has-error {
   box-shadow: inset 2px 0 var(--danger);

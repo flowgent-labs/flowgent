@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Activity, ArrowLeft, Clock3, RadioTower, Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useRepositories } from '../../app/providers'
@@ -15,7 +15,13 @@ import {
 } from '../../shared/components/ui'
 import type { TaskRun, TraceInfo } from '../../core/domain/types'
 import { useAppStore } from '../../app/store'
-import { correlateAttempt, flattenSpanTree, type TraceTreeRow } from './run-attempts'
+import {
+  correlateAttempt,
+  flattenSpanTree,
+  traceRowForAttempt,
+  traceSpanKey,
+  type TraceTreeRow,
+} from './run-attempts'
 import { duration, formatDate } from './run-utils'
 
 const tabs = ['overview', 'request', 'response', 'attributes', 'events', 'error', 'raw'] as const
@@ -43,6 +49,7 @@ export function TrackingPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [tab, setTab] = useState<(typeof tabs)[number]>('overview')
+  const spanElements = useRef(new Map<string, HTMLButtonElement>())
   const allRows = useMemo(
     () =>
       traceQuery.data?.traces.flatMap((trace) =>
@@ -70,11 +77,26 @@ export function TrackingPage() {
     })
   }, [allRows, search, status])
   const focusedTaskId = searchParams.get('task')
+  const focusedRow = useMemo(
+    () => traceRowForAttempt(allRows, focusedTaskId),
+    [allRows, focusedTaskId],
+  )
+  const focusedSpanKey = focusedRow ? traceSpanKey(focusedRow.span) : undefined
+  useEffect(() => {
+    if (!focusedSpanKey) return
+    const timer = window.setTimeout(() => {
+      spanElements.current
+        .get(focusedSpanKey)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [focusedSpanKey])
   const active =
-    rows.find(({ span }) => `${span.trace_id}:${span.span_id}` === selected) ??
-    rows.find(({ span }) => span.attributes['flowgent.task_id'] === focusedTaskId) ??
-    rows[0]
+    allRows.find(({ span }) => traceSpanKey(span) === selected) ?? focusedRow ?? rows[0]
   const activeAttempt = active ? correlateAttempt(active.span, taskQuery.data ?? []) : undefined
+  const focusedAttempt = focusedTaskId
+    ? taskQuery.data?.find((task) => task.id === focusedTaskId)
+    : undefined
 
   if (traceQuery.isLoading || taskQuery.isLoading) return <LoadingState rows={7} />
   if (traceQuery.isError)
@@ -111,6 +133,24 @@ export function TrackingPage() {
           {t('runs.spanCount', { count: allRows.length })}
         </code>
       </div>
+      {focusedTaskId && (
+        <div
+          className={clsx('trace-focus', !focusedRow && 'trace-focus--missing')}
+          data-testid="trace-focused-attempt"
+          data-task-id={focusedTaskId}
+          data-span-id={focusedRow?.span.span_id ?? ''}
+        >
+          <Activity size={14} />
+          {focusedRow && focusedAttempt ? (
+            <span>
+              {t('runs.focusedAttempt')} · <strong>{focusedAttempt.node_key}</strong>{' '}
+              <code>#{focusedAttempt.attempt}</code>
+            </span>
+          ) : (
+            <span>{t('runs.focusedAttemptMissing')}</span>
+          )}
+        </div>
+      )}
       <div className="trace-layout">
         <section className="surface trace-list">
           <div className="trace-toolbar">
@@ -146,15 +186,23 @@ export function TrackingPage() {
                 Math.max((span.duration_micros / traceRange) * 100, 0.7),
                 100 - left,
               )
-              const spanKey = `${span.trace_id}:${span.span_id}`
+              const spanKey = traceSpanKey(span)
               const attempt = correlateAttempt(span, taskQuery.data ?? [])
               return (
                 <button
                   type="button"
                   key={`${span.trace_id}:${span.span_id}`}
+                  ref={(element) => {
+                    if (element) spanElements.current.set(spanKey, element)
+                    else spanElements.current.delete(spanKey)
+                  }}
+                  data-testid="trace-span"
+                  data-span-id={span.span_id}
+                  data-task-id={attempt?.id ?? ''}
                   className={clsx(
                     'span-row',
                     selected === spanKey || active === row ? 'is-active' : undefined,
+                    focusedSpanKey === spanKey && 'is-focused',
                     span.status === 'ERROR' && 'has-error',
                   )}
                   onClick={() => setSelected(spanKey)}

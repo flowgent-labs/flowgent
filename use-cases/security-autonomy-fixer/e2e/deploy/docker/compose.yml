@@ -157,7 +157,8 @@ services:
   web:
     image: localhost/flowgent-web:latest
     environment:
-      FLOWGENT_API_UPSTREAM: http://flowgent:9990
+      FLOWGENT_API_UPSTREAM: http://flowgent:9999
+      FLOWGENT_DEFAULT_NAMESPACE: security-fixer
     depends_on:
       flowgent: {condition: service_started}
     ports:

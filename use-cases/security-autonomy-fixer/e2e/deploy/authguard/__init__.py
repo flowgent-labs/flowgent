@@ -28,16 +28,42 @@ from common.process import CommandRunner
 
 LDAP_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0"
 AUTH_SECRET = f"{config.RESOURCE_PREFIX}-authguard-secrets"
+ACCEPTANCE_SECRET = f"{config.RESOURCE_PREFIX}-acceptance-credentials"
+ACCEPTANCE_USERNAME = "flowgent-admin"
+ACCEPTANCE_DISPLAY_NAME = "Flowgent Acceptance Administrator"
 LDAP_NAME = f"{config.RESOURCE_PREFIX}-ldap"
 MOCK_GITHUB_NAME = f"{config.RESOURCE_PREFIX}-github-oauth"
 GATEWAY_NAME = f"{config.RESOURCE_PREFIX}-gateway"
 GATEWAY_CLASS = GATEWAY_NAME
 GATEWAY_CONTROLLER = f"flowgent.authguard.io/{config.RESOURCE_PREFIX}-gateway-controller"
+_ENVIRONMENT_PREFIX = (
+    config.RESOURCE_PREFIX[: -len("-flowgent")]
+    if config.RESOURCE_PREFIX.endswith("-flowgent")
+    else config.RESOURCE_PREFIX
+)
+ENVOY_GATEWAY_NAME = os.getenv(
+    "FLOWGENT_E2E_ENVOY_GATEWAY_NAME", f"{_ENVIRONMENT_PREFIX}-envoy-gateway"
+)
+ENVOY_DATA_PLANE_NAME = os.getenv(
+    "FLOWGENT_E2E_ENVOY_NAME", f"{config.RESOURCE_PREFIX}-envoy"
+)
 # Keep the LoadBalancer listener clear of both the adjacent AuthGuard E2E's
 # port 80 and this use case's host-side SonarQube MCP bridge on port 18080.
 GATEWAY_LISTENER_PORT = 28080
-APPLICATION_HOST = "authn.flowgent.local"
-BROWSER_HOST = "localhost"
+# The retained E2E release is also the human acceptance environment. Keep its
+# real HTTPS host in the generated AuthGuard Application and Gateway routes;
+# localhost remains a second, explicit host solely for the automated browser
+# tunnel used by the verifier matrix.
+APPLICATION_HOST = os.getenv(
+    "FLOWGENT_E2E_APPLICATION_HOST", "flowgent.wl4g.com"
+).strip().lower()
+BROWSER_HOST = os.getenv("FLOWGENT_E2E_BROWSER_HOST", "localhost").strip().lower()
+for host_variable, host_value in (
+    ("FLOWGENT_E2E_APPLICATION_HOST", APPLICATION_HOST),
+    ("FLOWGENT_E2E_BROWSER_HOST", BROWSER_HOST),
+):
+    if not host_value or "://" in host_value or "/" in host_value:
+        raise ValueError(f"{host_variable} must be a DNS host without scheme or path")
 APPLICATION_DISPLAY_NAME = "Flowgent Security Autonomy Fixer"
 AUTHN_ISSUER = f"urn:authguard:{config.RESOURCE_PREFIX}:authn"
 AUDIENCE = "flowgent"
@@ -114,6 +140,63 @@ class AuthGuardRuntime:
         if result.returncode != 0:
             return set()
         return set(json.loads(result.stdout).get("data", {}))
+
+    @staticmethod
+    def _existing_secret_data(namespace: str, name: str) -> dict[str, str]:
+        result = subprocess.run(
+            ["kubectl", "get", "secret", name, "-n", namespace, "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            return {}
+        encoded = json.loads(result.stdout).get("data", {})
+        return {
+            key: base64.b64decode(value).decode()
+            for key, value in encoded.items()
+        }
+
+    @staticmethod
+    def _ensure_acceptance_credentials(namespace: str) -> tuple[str, str]:
+        existing = AuthGuardRuntime._existing_secret_data(namespace, ACCEPTANCE_SECRET)
+        username = existing.get("username") or os.getenv(
+            "FLOWGENT_E2E_ACCEPTANCE_USERNAME", ACCEPTANCE_USERNAME
+        ).strip()
+        password = existing.get("password") or os.getenv(
+            "FLOWGENT_E2E_ACCEPTANCE_PASSWORD", ""
+        ).strip() or secrets.token_urlsafe(24)
+        display_name = existing.get("display-name") or ACCEPTANCE_DISPLAY_NAME
+        if not username or len(username) > 320:
+            raise ValueError("FLOWGENT_E2E_ACCEPTANCE_USERNAME must be 1-320 bytes")
+        if len(password) < 12:
+            raise ValueError("FLOWGENT_E2E_ACCEPTANCE_PASSWORD must be at least 12 characters")
+        if not {"username", "password", "display-name"}.issubset(existing):
+            AuthGuardRuntime._apply({
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": ACCEPTANCE_SECRET,
+                    "namespace": namespace,
+                    "labels": {"app.kubernetes.io/part-of": config.RESOURCE_PREFIX},
+                },
+                "type": "Opaque",
+                "stringData": {
+                    "username": username,
+                    "password": password,
+                    "display-name": display_name,
+                },
+            })
+            print(
+                f"  Acceptance credentials ready: {namespace}/{ACCEPTANCE_SECRET} "
+                "(password redacted)"
+            )
+        else:
+            print(
+                f"  Reusing acceptance credentials: {namespace}/{ACCEPTANCE_SECRET} "
+                "(password redacted)"
+            )
+        return username, password
 
     @staticmethod
     def _ldap_config(bind_password: str) -> str:
@@ -301,15 +384,15 @@ class AuthGuardRuntime:
                 raise RuntimeError(f"support deployment not ready: {namespace}/{name}")
 
     @staticmethod
-    def _reset_authguard_schema(pg_container: str, pg_user: str, pg_password: str) -> None:
+    def _reset_authguard_schema(pg_container: str, pg_user: str) -> None:
         database = AuthGuardRuntime._postgres_database()
         sql = (
             f'DROP SCHEMA IF EXISTS "{AUTHGUARD_SCHEMA}" CASCADE; '
             f'CREATE SCHEMA "{AUTHGUARD_SCHEMA}" AUTHORIZATION "{pg_user}";'
         )
         result = subprocess.run(
-            ["docker", "exec", "-e", f"PGPASSWORD={pg_password}", pg_container,
-             "psql", "-v", "ON_ERROR_STOP=1", "-U", pg_user, "-d", database, "-c", sql],
+            ["docker", "exec", pg_container, "psql", "-v", "ON_ERROR_STOP=1",
+             "-U", pg_user, "-d", database, "-c", sql],
             capture_output=True,
             text=True,
             timeout=60,
@@ -339,6 +422,25 @@ class AuthGuardRuntime:
         )
         document = {
             "authn": {
+                "standalone": {
+                    "enabled": True,
+                    "issuer": f"urn:authguard:{config.RESOURCE_PREFIX}:standalone",
+                    "credentialEncryptionKey": "",
+                    "password": {"minLength": 12},
+                    "totp": {
+                        "enabled": False,
+                        "issuer": APPLICATION_DISPLAY_NAME,
+                        "digits": 6,
+                        "stepSeconds": 30,
+                        "skew": 1,
+                    },
+                    "webauthn": {
+                        "enabled": False,
+                        "rpId": "",
+                        "rpOrigin": "",
+                        "rpName": APPLICATION_DISPLAY_NAME,
+                    },
+                },
                 "providers": {
                     "github": {
                         "type": "oauth2",
@@ -445,7 +547,8 @@ class AuthGuardRuntime:
         if not KubernetesImageManager.import_authguard_web():
             raise RuntimeError("isolated AuthGuard Web image is unavailable")
         secret_name, bind_password = AuthGuardRuntime._ensure_secret(namespace)
-        AuthGuardRuntime._reset_authguard_schema(pg_container, pg_user, pg_password)
+        AuthGuardRuntime._ensure_acceptance_credentials(namespace)
+        AuthGuardRuntime._reset_authguard_schema(pg_container, pg_user)
         AuthGuardRuntime._ensure_support(namespace, bind_password)
         jwks = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD_AUTHN_SESSION_JWKS")
         return {
@@ -474,7 +577,7 @@ class AuthGuardRuntime:
                 "postgresql": {"enabled": False},
                 "envoy_gateway": {
                     "enabled": True,
-                    "nameOverride": f"{config.RESOURCE_PREFIX}-envoy-gateway",
+                    "nameOverride": ENVOY_GATEWAY_NAME,
                     "deployment": {"replicas": 1},
                     "config": {"envoyGateway": {"gateway": {"controllerName": GATEWAY_CONTROLLER}}},
                     "ext_authz": {
@@ -485,6 +588,7 @@ class AuthGuardRuntime:
                             "listenerPort": GATEWAY_LISTENER_PORT,
                             "className": GATEWAY_CLASS,
                             "controllerName": GATEWAY_CONTROLLER,
+                            "envoyDeploymentName": ENVOY_DATA_PLANE_NAME,
                         },
                         "authguardRoute": {
                             "enabled": True,
@@ -596,9 +700,14 @@ class AuthGuardRuntime:
                 return {"raw": raw.decode(errors="replace")}
 
         body = None if payload is None else json.dumps(payload).encode()
+        request_headers = {"Content-Type": "application/json", **(headers or {})}
+        if token:
+            request_headers["Authorization"] = f"Bearer {token}"
         req = request.Request(
-            f"http://127.0.0.1:{port}{path}", data=body, method=method,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", **(headers or {})},
+            f"http://127.0.0.1:{port}{path}",
+            data=body,
+            method=method,
+            headers=request_headers,
         )
         try:
             with request.urlopen(req, timeout=20) as response:
@@ -641,7 +750,53 @@ class AuthGuardRuntime:
         return token, principal_id
 
     @staticmethod
-    def _policy(revision: int, github_principal_id: str) -> dict:
+    def _standalone_login(namespace: str) -> tuple[str, str]:
+        username, password = AuthGuardRuntime._ensure_acceptance_credentials(namespace)
+        authn_service = f"{config.RESOURCE_PREFIX}-authguard-authn"
+        with AuthGuardRuntime._forward(namespace, authn_service, 8082) as authn_port:
+            payload = {
+                "login": username,
+                "displayName": ACCEPTANCE_DISPLAY_NAME,
+                "password": password,
+            }
+            status, _, login = AuthGuardRuntime._api(
+                authn_port,
+                "/auth/standalone/register",
+                "",
+                "POST",
+                payload,
+                {"Host": APPLICATION_HOST},
+            )
+            if status == 409:
+                status, _, login = AuthGuardRuntime._api(
+                    authn_port,
+                    "/auth/standalone/login",
+                    "",
+                    "POST",
+                    {
+                        "login": username,
+                        "password": password,
+                        "totp": None,
+                        "returnTo": "/dashboard",
+                    },
+                    {"Host": APPLICATION_HOST},
+                )
+        token = login.get("accessToken", "")
+        principal_id = login.get("principal", {}).get("principalId", "")
+        amr = login.get("principal", {}).get("amr", [])
+        if status != 200 or not token or not principal_id or "pwd" not in amr:
+            raise RuntimeError(
+                "standalone acceptance login did not return a canonical password session: "
+                f"HTTP {status} amr={amr}"
+            )
+        return token, principal_id
+
+    @staticmethod
+    def _policy(
+        revision: int,
+        github_principal_id: str,
+        acceptance_principal_id: str | None = None,
+    ) -> dict:
         methods = {
             "flowgent.api.read": ["GET"],
             "flowgent.api.operate": ["POST", "PUT", "PATCH"],
@@ -679,6 +834,18 @@ class AuthGuardRuntime:
             {"id": "ldap-model-risk", "principal_id": "principal-global-model-risk", "role_id": "flowgent-model-risk-approver", "effect": "ALLOW", "resource_urn": tenant_scope, "conditions": {"subject": {"mfa": True}}},
             {"id": "ldap-regulatory-audit", "principal_id": "principal-global-regulatory-audit", "role_id": "flowgent-regulatory-auditor", "effect": "ALLOW", "resource_urn": tenant_scope, "conditions": {}},
         ]
+        if acceptance_principal_id:
+            bindings.append({
+                "id": "standalone-acceptance-platform-admin",
+                "principal_id": acceptance_principal_id,
+                "role_id": "flowgent-platform-security-admin",
+                "effect": "ALLOW",
+                "resource_urn": (
+                    "urn:iam:prod:flowgent:global:example-corp:namespace/"
+                    f"{config.NAMESPACE_ID}/**"
+                ),
+                "conditions": {},
+            })
         return {"revision": revision, "actions": actions, "roles": roles, "role_bindings": bindings}
 
     @staticmethod
@@ -688,7 +855,7 @@ class AuthGuardRuntime:
             f"deployment/{config.RESOURCE_PREFIX}-authguard",
             f"deployment/{config.RESOURCE_PREFIX}-authguard-authn",
             f"deployment/{config.RESOURCE_PREFIX}-authguard-web",
-            "deployment/envoy-gateway",
+            f"deployment/{ENVOY_GATEWAY_NAME}",
         )
         for resource in resources:
             result = subprocess.run(
@@ -736,6 +903,7 @@ class AuthGuardRuntime:
         print("\n-- Verifying LDAP federation, GitHub AuthN, and Envoy/AuthGuard authorization --")
         AuthGuardRuntime._wait_authguard_ready(namespace)
         token, github_principal_id = AuthGuardRuntime._social_login(namespace)
+        acceptance_token, acceptance_principal_id = AuthGuardRuntime._standalone_login(namespace)
         api_token = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD__AUTHZ__API__TOKEN")
         authz_service = f"{config.RESOURCE_PREFIX}-authguard"
         materializations = (
@@ -758,7 +926,18 @@ class AuthGuardRuntime:
             if status != 200:
                 raise RuntimeError(f"read AuthGuard policy failed: HTTP {status}")
             revision = int(current.get("revision", 1))
-            status, _, persisted = AuthGuardRuntime._api(port, "/api/v1/policy", api_token, "PUT", AuthGuardRuntime._policy(revision, github_principal_id), {"If-Match": str(revision)})
+            status, _, persisted = AuthGuardRuntime._api(
+                port,
+                "/api/v1/policy",
+                api_token,
+                "PUT",
+                AuthGuardRuntime._policy(
+                    revision,
+                    github_principal_id,
+                    acceptance_principal_id,
+                ),
+                {"If-Match": str(revision)},
+            )
             if status != 200 or int(persisted.get("revision", 0)) <= revision:
                 raise RuntimeError(f"replace AuthGuard policy failed: HTTP {status}")
 
@@ -799,6 +978,12 @@ class AuthGuardRuntime:
                 raise RuntimeError(
                     f"AuthN Application metadata failed: HTTP {status} application={application}"
                 )
+            standalone = metadata.get("standalone", {})
+            if not standalone.get("password") or standalone.get("totp"):
+                raise RuntimeError(
+                    "acceptance login metadata must enable password and omit TOTP: "
+                    f"{standalone}"
+                )
             status, _, _ = AuthGuardRuntime._api(
                 gateway_port,
                 "/auth/login",
@@ -815,6 +1000,17 @@ class AuthGuardRuntime:
             )
             if status != 200:
                 raise RuntimeError(f"GitHub -> Envoy -> AuthGuard -> Flowgent request failed: HTTP {status}")
+            status, _, _ = AuthGuardRuntime._api(
+                gateway_port,
+                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                "",
+                headers={"Host": APPLICATION_HOST},
+            )
+            if status not in (401, 403):
+                raise RuntimeError(
+                    "anonymous Gateway API request did not fail closed: "
+                    f"HTTP {status}"
+                )
             if verify_resource_scope:
                 flow_items = (
                     flow_page
@@ -840,6 +1036,17 @@ class AuthGuardRuntime:
                     raise RuntimeError(
                         "AuthGuard exact-resource DENY did not fail closed: "
                         f"HTTP {status}"
+                    )
+                status, _, _ = AuthGuardRuntime._api(
+                    gateway_port,
+                    f"/api/v1/{config.NAMESPACE_ID}/flows/security-autonomy-fixer",
+                    acceptance_token,
+                    headers={"Host": APPLICATION_HOST},
+                )
+                if status != 200:
+                    raise RuntimeError(
+                        "standalone acceptance administrator could not access the retained "
+                        f"fixture through Envoy/AuthGuard: HTTP {status}"
                     )
             status, _, _ = AuthGuardRuntime._api(
                 gateway_port,
@@ -871,6 +1078,18 @@ class AuthGuardRuntime:
                     "direct external Flowgent API without AuthGuard context did not fail closed: "
                     f"HTTP {status}"
                 )
+        with AuthGuardRuntime._forward(namespace, f"{config.RELEASE_NAME}-web", 8080) as web_port:
+            status, _, _ = AuthGuardRuntime._api(
+                web_port,
+                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                "",
+                headers={"Host": APPLICATION_HOST},
+            )
+            if status != 401:
+                raise RuntimeError(
+                    "direct Web NodePort API path bypassed the protected Flowgent listener: "
+                    f"HTTP {status}"
+                )
         scope_result = (
             "action/resource SQL scope + "
             if verify_resource_scope
@@ -879,7 +1098,7 @@ class AuthGuardRuntime:
         print(
             "  AuthGuard E2E passed: Application metadata + Hosted Login + LDAP "
             f"discovery/materialization + GitHub OAuth + {scope_result}"
-            "gateway/direct-port fail-closed"
+            "standalone password acceptance login + gateway/direct-port fail-closed"
         )
 
 

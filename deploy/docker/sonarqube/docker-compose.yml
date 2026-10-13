@@ -107,6 +107,23 @@ services:
         echo ">> SonarQube init done. Admin password: Abcd1234@sonar"
     networks:
       - sonarqube-net
+
+  sonarqube-mcp:
+    image: registry.cn-shenzhen.aliyuncs.com/wl4g/ghcr.io_flowgent-labs_sonarqube-mcp:v0.6.0
+    container_name: sonarqube-mcp
+    restart: unless-stopped
+    ports:
+      - "18080:8080"
+    environment:
+      HOME: /root
+      MCP__UPSTREAM__DEFAULT__ENDPOINT: http://sonarqube:9000
+      MCP__UPSTREAM__DEFAULT__AUTH__STATIC__WEB_TOKEN: ${SONARQUBE_TOKEN:?SONARQUBE_TOKEN is required}
+      MCP__NATIVE_TOOLS__EXPOSE__REGISTER_ALL_TOOLS_BY_DEFAULT: "true"
+    depends_on:
+      sonarqube:
+        condition: service_healthy
+    networks:
+      - sonarqube-net
 networks:
   sonarqube-net:
     driver: bridge

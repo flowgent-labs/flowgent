@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { TaskRun, TraceSpan } from '../../core/domain/types'
-import { attemptsForNode, correlateAttempt, flattenSpanTree, retryCount } from './run-attempts'
+import {
+  attemptsForNode,
+  correlateAttempt,
+  flattenSpanTree,
+  retryCount,
+  traceRowForAttempt,
+  traceSpanKey,
+} from './run-attempts'
 
 const task = (id: string, sequence: number): TaskRun => ({
   id,
@@ -67,5 +74,17 @@ describe('run attempt projections', () => {
       ['grandchild', 2],
       ['orphan', 0],
     ])
+  })
+
+  it('focuses the outermost exact span for a persisted attempt', () => {
+    const outer = span('outer', '', { 'flowgent.task_id': 'task-2' })
+    outer.duration_micros = 5_000
+    const inner = span('inner', 'outer', { 'flowgent.task_id': 'task-2' })
+    const unrelated = span('unrelated', '', { 'flowgent.task_id': 'task-1' })
+    const rows = flattenSpanTree([inner, unrelated, outer])
+
+    expect(traceRowForAttempt(rows, 'task-2')?.span.span_id).toBe('outer')
+    expect(traceSpanKey(outer)).toBe('trace-1:outer')
+    expect(traceRowForAttempt(rows, 'missing')).toBeUndefined()
   })
 })

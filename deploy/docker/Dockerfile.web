@@ -5,7 +5,8 @@ ARG NGINX_IMAGE=registry.cn-shenzhen.aliyuncs.com/wl4g/nginx:1.27-alpine
 FROM ${NGINX_IMAGE} AS runtime-base
 
 ENV FLOWGENT_API_UPSTREAM=http://flowgent-apiserver:9999
-ENV NGINX_ENVSUBST_FILTER=FLOWGENT_API_UPSTREAM
+ENV FLOWGENT_DEFAULT_NAMESPACE=default
+ENV NGINX_ENVSUBST_FILTER=FLOWGENT_API_UPSTREAM|FLOWGENT_DEFAULT_NAMESPACE
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

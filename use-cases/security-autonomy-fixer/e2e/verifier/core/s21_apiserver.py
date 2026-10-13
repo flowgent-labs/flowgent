@@ -448,7 +448,7 @@ class ApiServerVerifier(BaseVerifier):
                 "target_scope": "flow",
                 "target_flow_name": flow_name,
                 "type": "knowledge",
-                "content": "Scenario 21 approved operational fact.",
+                "content": f"Scenario 21 approved operational fact for run {run_id}.",
                 "provenance": {"origin": "scenario-21", "safe": True},
                 "expected_revision": 0,
                 "idempotency_key": f"knowledge:{run_id}",

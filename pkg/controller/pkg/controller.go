@@ -315,15 +315,19 @@ func (c *FlowgentController) ensureApplicationJobManager(ctx context.Context, sp
 	if !c.ensureRuntimeNamespace(ctx, clientset, ns, namespaceID, flowName) {
 		return
 	}
-	c.ensureRuntimeConfigMap(ctx, clientset, ns, namespaceID, flowName)
+	baseConfigChecksum, ok := c.ensureRuntimeConfigMap(ctx, clientset, ns, namespaceID, flowName)
+	if !ok {
+		return
+	}
 	runtimeConfigMap, runtimeSecret, runtimeChecksum, ok := c.ensureFlowRuntimeConfiguration(ctx, clientset, ns, namespaceID, flowName)
 	if !ok {
 		return
 	}
+	configurationChecksum := fmt.Sprintf("%x", sha256.Sum256([]byte(baseConfigChecksum+"\x00"+runtimeChecksum)))
 	c.ensureRuntimeRBAC(ctx, clientset, ns, namespaceID, flowName)
 
 	jmName := applicationJobManagerDeploymentName(namespaceID, flowName, run.ID)
-	jmDeployment := c.buildJMDeployment(jmName, ns, namespaceID, spec, run, clusterID, runtimeConfigMap, runtimeSecret, runtimeChecksum)
+	jmDeployment := c.buildJMDeployment(jmName, ns, namespaceID, spec, run, clusterID, runtimeConfigMap, runtimeSecret, configurationChecksum)
 
 	_, err = clientset.AppsV1().Deployments(ns).Create(ctx, jmDeployment, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
@@ -553,34 +557,64 @@ func (c *FlowgentController) ensureRuntimeRBAC(ctx context.Context, clientset ku
 	}
 }
 
-func (c *FlowgentController) ensureRuntimeConfigMap(ctx context.Context, clientset kubernetes.Interface, namespace, namespaceID, flowID string) {
+func (c *FlowgentController) ensureRuntimeConfigMap(ctx context.Context, clientset kubernetes.Interface, namespace, namespaceID, flowID string) (string, bool) {
 	cmName := c.jmConfigMapName()
-	if _, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, cmName, metav1.GetOptions{}); err == nil {
-		return
-	} else if !apierrors.IsNotFound(err) {
-		c.logger.Warn("Failed to check ConfigMap in runtime namespace",
-			"flow_id", flowID, "namespace", namespace, "configmap", cmName, "error", err)
-		return
-	}
 	srcCM, err := clientset.CoreV1().ConfigMaps(c.systemNamespace()).Get(ctx, cmName, metav1.GetOptions{})
 	if err != nil {
 		c.logger.Warn("Failed to load system ConfigMap for runtime namespace",
 			"flow_id", flowID, "system_namespace", c.systemNamespace(), "configmap", cmName, "error", err)
-		return
+		return "", false
 	}
-	dstCM := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   cmName,
-			Labels: map[string]string{"flowgent.io/runtime-boundary": "namespace", "flowgent.io/namespace": namespaceID},
-		},
-		Data: srcCM.Data,
+	checksumPayload, err := json.Marshal(struct {
+		Data       map[string]string `json:"data"`
+		BinaryData map[string][]byte `json:"binary_data"`
+	}{Data: srcCM.Data, BinaryData: srcCM.BinaryData})
+	if err != nil {
+		c.logger.Warn("Failed to hash system ConfigMap for runtime namespace",
+			"flow_id", flowID, "system_namespace", c.systemNamespace(), "configmap", cmName, "error", err)
+		return "", false
 	}
-	if _, err := clientset.CoreV1().ConfigMaps(namespace).Create(ctx, dstCM, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		c.logger.Warn("Failed to copy ConfigMap to runtime namespace",
+	checksum := fmt.Sprintf("%x", sha256.Sum256(checksumPayload))
+	desiredLabels := map[string]string{
+		"flowgent.io/runtime-boundary": "namespace",
+		"flowgent.io/namespace":        namespaceID,
+		"flowgent.io/managed-by":       runtimeConfigurationManagedBy,
+	}
+	dstCM, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, cmName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = clientset.CoreV1().ConfigMaps(namespace).Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: cmName, Labels: desiredLabels},
+			Data:       srcCM.Data,
+			BinaryData: srcCM.BinaryData,
+		}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			c.logger.Warn("Failed to copy ConfigMap to runtime namespace",
+				"flow_id", flowID, "namespace", namespace, "configmap", cmName, "error", err)
+			return "", false
+		}
+		c.logger.Info("ConfigMap created in runtime namespace", "flow_id", flowID, "namespace", namespace, "configmap", cmName)
+		return checksum, true
+	}
+	if err != nil {
+		c.logger.Warn("Failed to check ConfigMap in runtime namespace",
 			"flow_id", flowID, "namespace", namespace, "configmap", cmName, "error", err)
-		return
+		return "", false
 	}
-	c.logger.Info("ConfigMap ensured in runtime namespace", "flow_id", flowID, "namespace", namespace, "configmap", cmName)
+	if reflect.DeepEqual(dstCM.Data, srcCM.Data) &&
+		reflect.DeepEqual(dstCM.BinaryData, srcCM.BinaryData) &&
+		reflect.DeepEqual(dstCM.Labels, desiredLabels) {
+		return checksum, true
+	}
+	dstCM.Data = srcCM.Data
+	dstCM.BinaryData = srcCM.BinaryData
+	dstCM.Labels = desiredLabels
+	if _, err = clientset.CoreV1().ConfigMaps(namespace).Update(ctx, dstCM, metav1.UpdateOptions{}); err != nil {
+		c.logger.Warn("Failed to update ConfigMap in runtime namespace",
+			"flow_id", flowID, "namespace", namespace, "configmap", cmName, "error", err)
+		return "", false
+	}
+	c.logger.Info("ConfigMap updated in runtime namespace", "flow_id", flowID, "namespace", namespace, "configmap", cmName)
+	return checksum, true
 }
 
 // createScheduledRun creates a PENDING run scoped to the Flow runtime mode. In

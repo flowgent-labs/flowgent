@@ -33,6 +33,7 @@ class E2EStructureVerifier(BaseVerifier):
             "verifier/__init__.py",
             "deploy/base/kubernetes.py",
             "deploy/base/docker.py",
+            "deploy/envoy_gateway_post_renderer.py",
             "deploy/authguard/__init__.py",
             "deploy/flowgent/__init__.py",
             "deploy/mocksvc-github-service/app/server.py",
@@ -223,6 +224,15 @@ class E2EStructureVerifier(BaseVerifier):
         hosted_login = (E2E_DIR / "verifier/web/browser.py").read_text(
             encoding="utf-8"
         )
+        web_main = (E2E_DIR.parents[2] / "web/src/main.tsx").read_text(
+            encoding="utf-8"
+        )
+        auth_boundary = (
+            E2E_DIR.parents[2] / "web/src/app/authentication-boundary.tsx"
+        ).read_text(encoding="utf-8")
+        runtime_config = (
+            E2E_DIR.parents[2] / "web/src/app/runtime-config.ts"
+        ).read_text(encoding="utf-8")
         envoy = (E2E_DIR / "config/envoy/envoy.yaml").read_text(encoding="utf-8")
         chart = (E2E_DIR.parents[2] / "deploy/helm/flowgent/templates/web.yaml").read_text(
             encoding="utf-8"
@@ -230,10 +240,21 @@ class E2EStructureVerifier(BaseVerifier):
         values = (E2E_DIR.parents[2] / "deploy/helm/flowgent/values.yaml").read_text(
             encoding="utf-8"
         )
+        deployer = (E2E_DIR / "deploy/flowgent/__init__.py").read_text(
+            encoding="utf-8"
+        )
         if "LOCAL_GATEWAY_PORT" not in browser or "/auth/login?return_to=" not in browser:
             raise AssertionError("browser scenarios must enter Hosted Login through Envoy Gateway")
         if any(port in browser for port in ("21080", "31080")):
             raise AssertionError("browser scenarios must not bypass Gateway through a Web NodePort")
+        if "AuthenticationBoundary" not in web_main:
+            raise AssertionError("Flowgent Web must gate the console on an AuthGuard session")
+        for proof in ("/auth/session", "response.status === 401", "hostedLoginUrl"):
+            if proof not in auth_boundary:
+                raise AssertionError(f"Flowgent Web authentication boundary is missing: {proof}")
+        for proof in ("/runtime-config.json", "setRuntimeNamespace"):
+            if proof not in runtime_config:
+                raise AssertionError(f"Flowgent Web runtime namespace config is missing: {proof}")
         for proof in (
             'fetch(\'/auth/session\')',
             'response.url.endswith("/auth/logout")',
@@ -246,8 +267,35 @@ class E2EStructureVerifier(BaseVerifier):
             raise AssertionError("Docker edge must separate the public SPA from protected /api/")
         if "kind: HTTPRoute" not in chart or "value: /" not in chart:
             raise AssertionError("Flowgent Helm must expose its public SPA through the shared Gateway")
+        if "FLOWGENT_DEFAULT_NAMESPACE" not in chart:
+            raise AssertionError("Flowgent Helm must pass the runtime namespace to the Web console")
+        controller_chart = (
+            E2E_DIR.parents[2] / "deploy/helm/flowgent/templates/controller.yaml"
+        ).read_text(encoding="utf-8")
+        if "flowgent.runtimeCredentialEnvFrom" not in controller_chart:
+            raise AssertionError(
+                "Flowgent Controller must receive the configured runtime credential Secret"
+            )
+        helpers = (
+            E2E_DIR.parents[2] / "deploy/helm/flowgent/templates/_helpers.tpl"
+        ).read_text(encoding="utf-8")
+        if "-emqx.%s.svc.cluster.local:1883" not in helpers:
+            raise AssertionError(
+                "Flowgent Helm must use a cross-namespace MQTT service FQDN"
+            )
         if "path: /api/" not in values:
             raise AssertionError("AuthGuard's protected Flowgent route must be scoped to /api/")
+        if 'web.apiUpstream=http://{release}-apiserver:9999' not in deployer:
+            raise AssertionError("Web must proxy API calls to the protected external listener")
+        if "web.apiUpstream=http://{release}-apiserver:9990" in deployer:
+            raise AssertionError("Web must never proxy to Flowgent's trusted internal listener")
+        if "apiserver.service.type=NodePort" in deployer:
+            raise AssertionError("E2E must not expose Flowgent's trusted internal API as a NodePort")
+        compose = (E2E_DIR / "deploy/docker/compose.yml").read_text(encoding="utf-8")
+        if "FLOWGENT_API_UPSTREAM: http://flowgent:9999" not in compose:
+            raise AssertionError("Docker Web must proxy API calls to the protected external listener")
+        if "FLOWGENT_API_UPSTREAM: http://flowgent:9990" in compose:
+            raise AssertionError("Docker Web must never proxy to Flowgent's trusted internal listener")
 
     def _verify_forbidden_paths(self) -> None:
         forbidden = (

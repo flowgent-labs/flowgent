@@ -29,6 +29,23 @@ ports. Flowgent and AuthGuard use the dedicated PostgreSQL schemas
 `e2e_flowgent` and `e2e_flowgent_authguard`, so AuthGuard's adjacent default
 E2E can run concurrently without sharing application state.
 
+The retained human-acceptance origin is `https://flowgent.wl4g.com`. The E2E
+Gateway and AuthGuard Application use that real host by default; override it
+only with `FLOWGENT_E2E_APPLICATION_HOST`. Run the runner without
+`--clean-after-run` to preserve the imported fixtures and execution evidence.
+The Web remains available on diagnostic NodePort `31080`, but its API proxy uses
+the protected Flowgent listener and anonymous requests fail closed. The retained
+standalone acceptance login is stored (not printed) in the Kubernetes Secret
+`e2e-flowgent-acceptance-credentials`; TOTP is deliberately disabled for this
+password-only acceptance account.
+
+AuthGuard's `standalone.totp.enabled` flag enables the TOTP enrollment/verifier
+capability and publishes `standalone.totp=true` in application metadata, which
+makes Hosted Login render the code input. It does not by itself require TOTP for
+every password identity: server-side verification is required only after that
+identity has a non-revoked enrolled TOTP credential. This acceptance profile
+sets the flag to `false`, so the retained account is intentionally password-only.
+
 The same runner also provides a functionally equivalent Docker Compose backend:
 
 ```bash

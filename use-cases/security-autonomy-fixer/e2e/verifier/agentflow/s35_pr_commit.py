@@ -22,10 +22,14 @@ from __future__ import annotations
 from common.model import VerificationResult
 from verifier import BaseVerifier
 
+import base64
 import os
+from pathlib import PurePosixPath
+from urllib.parse import quote
 
-from common import config
+from common import project as common_api
 from common.agentflow import SecurityAutonomyFixture as c
+from common.project import RUN_ID_PATH
 
 GITHUB_API = c.GITHUB_API
 REPO = c.PR_REPO
@@ -67,6 +71,52 @@ HISTORICAL_COMMIT_SAMPLE_SIZE = 3
 
 class PullRequestCommitVerifier(BaseVerifier):
     """Class-owned operations for s35 pr commit."""
+
+    @staticmethod
+    def _verify_idempotent_delivery() -> tuple[bool, int]:
+        """Prove a successful no-op push by comparing every generated file."""
+        if not os.path.isfile(RUN_ID_PATH):
+            return False, 0
+        with open(RUN_ID_PATH, encoding="utf-8") as source:
+            run_id = source.read().strip()
+        if not run_id:
+            return False, 0
+
+        session = common_api.FlowgentE2EProject.session()
+        tasks_by_node = c.tasks_by_node(c.get_tasks(session, run_id))
+        generated = c.node_task(tasks_by_node, "generate-fixes")
+        delivery = c.node_task(tasks_by_node, "commit-to-existing") or c.node_task(
+            tasks_by_node, "commit-fixes"
+        )
+        if not c.task_completed(generated) or not c.task_completed(delivery):
+            return False, 0
+
+        files = c.parse_output(generated).get("files") or []
+        if not isinstance(files, list) or not files:
+            return False, 0
+        for entry in files:
+            if not isinstance(entry, dict):
+                return False, 0
+            raw_path = entry.get("path")
+            expected = entry.get("content")
+            if not isinstance(raw_path, str) or not isinstance(expected, str):
+                return False, 0
+            path = str(PurePosixPath(raw_path))
+            if path.startswith("../") or path.startswith("/"):
+                return False, 0
+            remote = c.gh_get_json(
+                f"/repos/{REPO}/contents/{quote(path, safe='/')}?ref={quote(BRANCH, safe='')}"
+            )
+            encoded = remote.get("content") if isinstance(remote, dict) else None
+            if not isinstance(encoded, str):
+                return False, 0
+            try:
+                actual = base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                return False, 0
+            if actual != expected:
+                return False, 0
+        return True, len(files)
 
     @staticmethod
     def _print_commits(label: str, commits: list[dict], *, historical: bool = False) -> None:
@@ -125,7 +175,8 @@ class PullRequestCommitVerifier(BaseVerifier):
         baseline = c.load_pr_baseline()
         baseline_shas = set(baseline.get("shas") or [])
         baseline_count = int(baseline.get("commit_count") or 0)
-        baseline_head = (baseline.get("head_sha") or "")[:8] or "none"
+        baseline_head_sha = baseline.get("head_sha") or ""
+        baseline_head = baseline_head_sha[:8] or "none"
         print(f"  Baseline from s31: commits={baseline_count} head={baseline_head}")
 
         # 2. Get commits on the PR (only those unique to the head branch vs base)
@@ -237,11 +288,34 @@ class PullRequestCommitVerifier(BaseVerifier):
         has_security_fixes = len(flowgent_security_fixes) > 0
         checks.append(("Flowgent security-fix commits on PR", has_security_fixes, True))
 
-        has_new_commits = len(new_commits) > 0 and len(commits) > baseline_count
-        checks.append(("New commits since Scenario 31 baseline", has_new_commits, True))
-
+        current_head_sha = commits[-1].get("sha", "") if commits else ""
+        head_advanced = bool(baseline_head_sha and current_head_sha != baseline_head_sha)
+        # GitHub bounds the PR commit endpoint.  Once that window is full, a new
+        # head pushes an old commit out and the returned count stays constant.
+        # The baseline SHA set plus an advanced head is the durable proof; a
+        # strictly larger count is only an additional signal below the cap.
+        has_new_commits = len(new_commits) > 0 and (
+            len(commits) > baseline_count or head_advanced
+        )
         has_new_security_fixes = len(new_flowgent_security_fixes) > 0
-        checks.append(("New Flowgent security-fix commits in this run", has_new_security_fixes, True))
+        idempotent_delivery, identical_file_count = (
+            PullRequestCommitVerifier._verify_idempotent_delivery()
+        )
+        if idempotent_delivery:
+            print(
+                "  Idempotent delivery proof: "
+                f"{identical_file_count} generated file(s) already match {BRANCH} byte-for-byte"
+            )
+        checks.append((
+            "New commit or content-identical idempotent delivery",
+            has_new_commits or idempotent_delivery,
+            True,
+        ))
+        checks.append((
+            "New security fix or verified existing security-fix lineage",
+            has_new_security_fixes or (idempotent_delivery and has_security_fixes),
+            True,
+        ))
 
         # Critical: Fix commits must touch source code, not just CI configs
         source_files_changed = [fn for fn in src_files if not fn.startswith(".github/")]
@@ -258,7 +332,7 @@ class PullRequestCommitVerifier(BaseVerifier):
         if flowgent_ci_commits and not flowgent_security_fixes:
             print(f"\n  ⚠  Found {len(flowgent_ci_commits)} Flowgent CI/workflow commit(s) but ZERO security-fix commits.")
             print(f"  ⚠  The security-autonomy-fixer pipeline has NOT produced any code fixes.")
-        if flowgent_security_fixes and not new_flowgent_security_fixes:
+        if flowgent_security_fixes and not new_flowgent_security_fixes and not idempotent_delivery:
             print(f"\n  ⚠  PR has historical Flowgent security-fix commits, but this run produced none.")
 
         critical_failures = [label for label, ok, critical in checks if not ok and critical]
@@ -273,6 +347,11 @@ class PullRequestCommitVerifier(BaseVerifier):
 
         if has_new_security_fixes:
             print(f"\n  ✓ Flowgent security-autonomy-fixer produced {len(new_flowgent_security_fixes)} new commit(s)")
+        elif idempotent_delivery:
+            print(
+                "\n  ✓ Flowgent delivery was idempotent; generated content is already "
+                "present on the target branch"
+            )
         if test_files:
             print(f"  ✓ Test coverage changes detected in {len(test_files)} file(s)")
         else:

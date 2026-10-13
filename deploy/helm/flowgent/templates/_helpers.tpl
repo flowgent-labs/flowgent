@@ -127,6 +127,19 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 {{- include "flowgent.extraSecretEnv" . }}
 {{- end }}
 
+{{/*
+The Controller constructs execution resources and resolves persisted LLM/MCP
+secret references while it starts. Mount the same existing Secret that is
+propagated to TaskManager and Sandbox pods; keeping the name in one runtime
+setting prevents a second credential configuration path.
+*/}}
+{{- define "flowgent.runtimeCredentialEnvFrom" -}}
+{{- with .Values.runtime.credentialEnvSecret }}
+- secretRef:
+    name: {{ . | quote }}
+{{- end }}
+{{- end }}
+
 {{/* Database URL — only used when postgresql.enabled=true (internal) */}}
 {{- define "flowgent.databaseUrl" -}}
 {{- printf "postgres://%s:%s@%s-postgresql:%d/%s?sslmode=disable" "flowgent" "flowgent" (include "flowgent.fullname" .) 5432 "flowgent" }}
@@ -134,7 +147,7 @@ Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier
 
 {{/* MQTT broker URL — only used when emqx.enabled=true (internal) */}}
 {{- define "flowgent.mqttBroker" -}}
-{{- printf "tcp://%s-emqx:1883" (include "flowgent.fullname" .) }}
+{{- printf "tcp://%s-emqx.%s.svc.cluster.local:1883" (include "flowgent.fullname" .) .Release.Namespace }}
 {{- end }}
 
 {{/* ── Runtime Secret Providers: CSI volumes (GCP / AWS) ── */}}

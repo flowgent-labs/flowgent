@@ -489,6 +489,25 @@ class KubernetesDeployer(BaseDeployer):
         self.sonarqube = SonarQubeDeployer(context)
     backend = "k8s"
 
+    def prepare(
+        self,
+        *,
+        skip_sonarqube: bool,
+        skip_build: bool,
+        skip_deploy: bool,
+        skip_import: bool,
+    ) -> None:
+        # Read-only verifier reruns still query canonical PostgreSQL evidence.
+        # Always resolve the dedicated pgvector endpoint so --skip-deploy can
+        # never fall back to an unrelated localhost PostgreSQL instance.
+        self.step("start and verify dedicated pgvector persistence", self._ensure_pgvector)
+        super().prepare(
+            skip_sonarqube=skip_sonarqube,
+            skip_build=skip_build,
+            skip_deploy=skip_deploy,
+            skip_import=skip_import,
+        )
+
     def _run(
         self,
         command: tuple[str, ...],
@@ -511,13 +530,138 @@ class KubernetesDeployer(BaseDeployer):
         self.sonarqube.deploy()
         self.sonarqube.verify()
 
+    def _ensure_pgvector(self) -> None:
+        container = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "flowgent-test-pgvector")
+        os.environ["FLOWGENT_E2E_PG_CONTAINER"] = container
+        if container == "flowgent-test-pgvector":
+            self._run(
+                ("make", "-C", str(config.PROJECT_ROOT), "test-it-deps"),
+                timeout_seconds=180,
+                environment={"HTTPS_PROXY": "http://127.0.0.1:8800"},
+            )
+
+        inspect = subprocess.run(
+            ["docker", "inspect", container, "--format", "{{json .Config.Env}}"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if inspect.returncode != 0:
+            raise RuntimeError(f"dedicated pgvector container is unavailable: {container}")
+        container_env = {}
+        for entry in json.loads(inspect.stdout):
+            key, separator, value = entry.partition("=")
+            if separator:
+                container_env[key] = value
+        defaults = {
+            "FLOWGENT_PG_USER": container_env.get("POSTGRES_USER", ""),
+            "FLOWGENT_PG_PASSWORD": container_env.get("POSTGRES_PASSWORD", ""),
+            "FLOWGENT_PG_DATABASE": container_env.get("POSTGRES_DB", ""),
+            "FLOWGENT_PG_PORT": "5432",
+        }
+        for key, value in defaults.items():
+            if not os.getenv(key) and value:
+                os.environ[key] = value
+
+        ip_result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                container,
+                "--format",
+                "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        pg_host = ip_result.stdout.strip().split()[0] if ip_result.returncode == 0 and ip_result.stdout.strip() else ""
+        if not os.getenv("FLOWGENT_PG_HOST") and pg_host:
+            os.environ["FLOWGENT_PG_HOST"] = pg_host
+        required = (
+            "FLOWGENT_PG_HOST",
+            "FLOWGENT_PG_PORT",
+            "FLOWGENT_PG_USER",
+            "FLOWGENT_PG_PASSWORD",
+            "FLOWGENT_PG_DATABASE",
+        )
+        if missing := [key for key in required if not os.getenv(key)]:
+            raise RuntimeError(f"pgvector connection configuration is incomplete: {missing}")
+
+        user = os.environ["FLOWGENT_PG_USER"]
+        database = os.environ["FLOWGENT_PG_DATABASE"]
+        vector_probe = subprocess.run(
+            [
+                "docker",
+                "exec",
+                container,
+                "psql",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                user,
+                "-d",
+                database,
+                "-Atc",
+                (
+                    "CREATE EXTENSION IF NOT EXISTS vector; "
+                    "SELECT extversion FROM pg_extension WHERE extname='vector'; "
+                    "SELECT typname FROM pg_type WHERE typname='vector'; "
+                    "SELECT round(('[1,2,3]'::vector <-> '[1,2,4]'::vector)::numeric, 6);"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        probe_lines = vector_probe.stdout.splitlines()
+        if vector_probe.returncode != 0 or "vector" not in probe_lines or "1.000000" not in probe_lines:
+            detail = (vector_probe.stdout + vector_probe.stderr).strip()[-500:]
+            raise RuntimeError(f"native pgvector write/distance probe failed: {detail}")
+
+        try:
+            import psycopg2
+
+            connection = psycopg2.connect(
+                host=os.environ["FLOWGENT_PG_HOST"],
+                port=int(os.environ["FLOWGENT_PG_PORT"]),
+                user=user,
+                password=os.environ["FLOWGENT_PG_PASSWORD"],
+                dbname=database,
+                connect_timeout=5,
+            )
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector")
+                    if float(cursor.fetchone()[0]) != 1.0:
+                        raise RuntimeError("unexpected pgvector distance over the runtime TCP path")
+            finally:
+                connection.close()
+        except Exception as error:
+            raise RuntimeError(
+                "K8s runtime cannot reach the dedicated pgvector TCP endpoint"
+            ) from error
+
+        config.PG_HOST = os.environ["FLOWGENT_PG_HOST"]
+        config.PG_PORT = int(os.environ["FLOWGENT_PG_PORT"])
+        config.PG_USER = user
+        config.PG_PASSWORD = os.environ["FLOWGENT_PG_PASSWORD"]
+        config.PG_DATABASE = database
+        version = next(
+            (line for line in probe_lines if re.fullmatch(r"\d+\.\d+\.\d+", line)),
+            "unknown",
+        )
+        print(
+            f"  Dedicated pgvector ready: container={container}, database={database}, "
+            f"extension={version}, native_distance=1.000000"
+        )
+
     def reset_database(self) -> None:
-        container = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "sigbot_e2e_164364_postgres")
+        container = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "flowgent-test-pgvector")
         schema = config.PG_SCHEMA
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", schema):
             raise ValueError(f"invalid isolated PostgreSQL schema: {schema!r}")
         user = os.getenv("FLOWGENT_PG_USER", "test")
-        password = os.getenv("FLOWGENT_PG_PASSWORD", "test")
         database = os.getenv("FLOWGENT_PG_DATABASE", "flowgent")
         sql = (
             f'DROP SCHEMA IF EXISTS "{schema}" CASCADE; '
@@ -528,9 +672,15 @@ class KubernetesDeployer(BaseDeployer):
                 "docker",
                 "exec",
                 container,
-                "sh",
+                "psql",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                user,
+                "-d",
+                database,
                 "-c",
-                f"PGPASSWORD={password} psql -U {user} -d {database} -c '{sql}'",
+                sql,
             ),
             timeout_seconds=60,
         )

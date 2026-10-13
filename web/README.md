@@ -80,9 +80,13 @@ health, and WebSocket paths to `FLOWGENT_API_UPSTREAM`:
 docker build -t flowgent-web:latest -f ../deploy/docker/Dockerfile.web .
 docker run --rm -p 8080:8080 \
   -e FLOWGENT_API_UPSTREAM=http://flowgent-apiserver:9999 \
+  -e FLOWGENT_DEFAULT_NAMESPACE=default \
   flowgent-web:latest
 ```
 
 Use Web, AuthGuard and the Flowgent API on one origin in production. The Helm
 Gateway routes authentication endpoints to AuthGuard and business endpoints to
-Flowgent.
+Flowgent. The Web container exposes `FLOWGENT_DEFAULT_NAMESPACE` through a
+non-cached `/runtime-config.json`; the authentication boundary applies it before
+rendering protected pages, while preserving a namespace explicitly selected by
+the user.
