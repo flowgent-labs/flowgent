@@ -27,25 +27,23 @@ from common.process import CommandRunner
 
 
 LDAP_IMAGE = "registry.cn-shenzhen.aliyuncs.com/wl4g/glauth:v2.5.0"
-AUTH_SECRET = f"{config.RESOURCE_PREFIX}-authguard-secrets"
-ACCEPTANCE_SECRET = f"{config.RESOURCE_PREFIX}-acceptance-credentials"
+AUTH_SECRET = "authguard-secrets"
+ADAPTER_SECRET = "authguard-adapter"
+ACCEPTANCE_SECRET = "acceptance-credentials"
+AUTHGUARD_NAME = "authguard"
 ACCEPTANCE_USERNAME = "flowgent-admin"
 ACCEPTANCE_DISPLAY_NAME = "Flowgent Acceptance Administrator"
-LDAP_NAME = f"{config.RESOURCE_PREFIX}-ldap"
-MOCK_GITHUB_NAME = f"{config.RESOURCE_PREFIX}-github-oauth"
-GATEWAY_NAME = f"{config.RESOURCE_PREFIX}-gateway"
-GATEWAY_CLASS = GATEWAY_NAME
+LDAP_NAME = "authguard-ldap"
+MOCK_GITHUB_NAME = "mock-github"
+GATEWAY_NAME = "flowgent-gateway"
+# GatewayClass is cluster-scoped, so namespace isolation cannot protect it.
+GATEWAY_CLASS = f"{config.RESOURCE_PREFIX}-gateway"
 GATEWAY_CONTROLLER = f"flowgent.authguard.io/{config.RESOURCE_PREFIX}-gateway-controller"
-_ENVIRONMENT_PREFIX = (
-    config.RESOURCE_PREFIX[: -len("-flowgent")]
-    if config.RESOURCE_PREFIX.endswith("-flowgent")
-    else config.RESOURCE_PREFIX
-)
 ENVOY_GATEWAY_NAME = os.getenv(
-    "FLOWGENT_E2E_ENVOY_GATEWAY_NAME", f"{_ENVIRONMENT_PREFIX}-envoy-gateway"
+    "FLOWGENT_E2E_ENVOY_GATEWAY_NAME", "envoy-gateway"
 )
 ENVOY_DATA_PLANE_NAME = os.getenv(
-    "FLOWGENT_E2E_ENVOY_NAME", f"{config.RESOURCE_PREFIX}-envoy"
+    "FLOWGENT_E2E_ENVOY_NAME", "envoy"
 )
 # Keep the LoadBalancer listener clear of both the adjacent AuthGuard E2E's
 # port 80 and this use case's host-side SonarQube MCP bridge on port 18080.
@@ -69,13 +67,13 @@ AUTHN_ISSUER = f"urn:authguard:{config.RESOURCE_PREFIX}:authn"
 AUDIENCE = "flowgent"
 DEFAULT_AUTHGUARD_DATABASE = "flowgent"
 AUTHGUARD_SCHEMA = "e2e_flowgent_authguard"
-AUTHGUARD_REDIS_NAME = f"{config.RESOURCE_PREFIX}-authguard-redis"
+AUTHGUARD_REDIS_NAME = "authguard-redis"
 GITHUB_CLIENT_ID = "e2e-flowgent-github"
 GITHUB_CLIENT_SECRET = "e2e-flowgent-github-secret"
 LDAP_ISSUER = f"urn:authguard:{config.RESOURCE_PREFIX}:ldap:example-corp"
 MOCK_GITHUB_SCRIPT = (
     Path(__file__).resolve().parents[1]
-    / "mocksvc-github-service"
+    / "mock-github-service"
     / "app"
     / "server.py"
 )
@@ -128,6 +126,24 @@ class AuthGuardRuntime:
         )
         if result.returncode != 0:
             raise RuntimeError(f"kubectl apply failed: {result.stderr[:500]}")
+
+    @staticmethod
+    def _ensure_namespace(namespace: str, component: str) -> None:
+        if not namespace.startswith(f"{config.RESOURCE_PREFIX}-"):
+            raise ValueError(
+                f"E2E namespace must start with {config.RESOURCE_PREFIX}-: {namespace}"
+            )
+        AuthGuardRuntime._apply({
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {
+                "name": namespace,
+                "labels": {
+                    "flowgent.io/e2e-owner": config.RESOURCE_PREFIX,
+                    "flowgent.io/e2e-component": component,
+                },
+            },
+        })
 
     @staticmethod
     def _existing_secret_keys(namespace: str) -> set[str]:
@@ -303,26 +319,35 @@ class AuthGuardRuntime:
         return base64.b64decode(result.stdout).decode()
 
     @staticmethod
-    def _ensure_support(namespace: str, bind_password: str) -> None:
+    def _ensure_support(
+        authguard_namespace: str,
+        mock_github_namespace: str,
+        bind_password: str,
+    ) -> None:
         if not bind_password:
-            bind_password = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD_LDAP_BIND_PASSWORD")
-        labels = {"app.kubernetes.io/part-of": config.RESOURCE_PREFIX}
+            bind_password = AuthGuardRuntime._secret_value(
+                authguard_namespace, "AUTHGUARD_LDAP_BIND_PASSWORD"
+            )
+        labels = {
+            "app.kubernetes.io/part-of": config.RESOURCE_PREFIX,
+            "flowgent.io/e2e-owner": config.RESOURCE_PREFIX,
+        }
         AuthGuardRuntime._apply({
             "apiVersion": "v1",
             "kind": "Secret",
-            "metadata": {"name": f"{LDAP_NAME}-config", "namespace": namespace, "labels": labels},
+            "metadata": {"name": f"{LDAP_NAME}-config", "namespace": authguard_namespace, "labels": labels},
             "type": "Opaque",
             "stringData": {"ldap-config.cfg": AuthGuardRuntime._ldap_config(bind_password)},
         })
         AuthGuardRuntime._apply({
             "apiVersion": "v1",
             "kind": "ConfigMap",
-            "metadata": {"name": f"{MOCK_GITHUB_NAME}-script", "namespace": namespace, "labels": labels},
+            "metadata": {"name": f"{MOCK_GITHUB_NAME}-script", "namespace": mock_github_namespace, "labels": labels},
             "data": {"server.py": MOCK_GITHUB_SCRIPT.read_text(encoding="utf-8")},
         })
-        for name, image, port, volume in (
-            (LDAP_NAME, LDAP_IMAGE, 389, "ldap"),
-            (MOCK_GITHUB_NAME, "localhost/flowgent:latest", 8080, "github"),
+        for namespace, name, image, port, volume in (
+            (authguard_namespace, LDAP_NAME, LDAP_IMAGE, 389, "ldap"),
+            (mock_github_namespace, MOCK_GITHUB_NAME, "localhost/flowgent:latest", 8080, "github"),
         ):
             mounts = []
             volumes = []
@@ -365,7 +390,10 @@ class AuthGuardRuntime:
         # mock provider script should follow the same deterministic lifecycle.
         # Restart only this use case's precisely named support Deployments after
         # their Secret/ConfigMap is updated, then wait before AuthGuard discovery.
-        for name in (LDAP_NAME, MOCK_GITHUB_NAME):
+        for namespace, name in (
+            (authguard_namespace, LDAP_NAME),
+            (mock_github_namespace, MOCK_GITHUB_NAME),
+        ):
             result = subprocess.run(
                 ["kubectl", "rollout", "restart", f"deployment/{name}", "-n", namespace],
                 capture_output=True,
@@ -384,26 +412,14 @@ class AuthGuardRuntime:
                 raise RuntimeError(f"support deployment not ready: {namespace}/{name}")
 
     @staticmethod
-    def _reset_authguard_schema(pg_container: str, pg_user: str) -> None:
-        database = AuthGuardRuntime._postgres_database()
-        sql = (
-            f'DROP SCHEMA IF EXISTS "{AUTHGUARD_SCHEMA}" CASCADE; '
-            f'CREATE SCHEMA "{AUTHGUARD_SCHEMA}" AUTHORIZATION "{pg_user}";'
-        )
-        result = subprocess.run(
-            ["docker", "exec", pg_container, "psql", "-v", "ON_ERROR_STOP=1",
-             "-U", pg_user, "-d", database, "-c", sql],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"reset AuthGuard schema failed: {result.stderr[:400]}")
-        print(f"  PostgreSQL schema reset: {database}/{AUTHGUARD_SCHEMA}")
+    def _reset_authguard_schema() -> None:
+        from deploy.postgres import PgvectorRuntime
+
+        PgvectorRuntime.reset_schema(AUTHGUARD_SCHEMA)
 
     @staticmethod
     def runtime_config(
-        namespace: str,
+        authguard_namespace: str,
         pg_host: str,
         pg_port: str,
         pg_user: str,
@@ -412,9 +428,15 @@ class AuthGuardRuntime:
         ldap_url: str | None = None,
         redis_url: str | None = None,
     ) -> str:
-        mock_url = mock_url or f"http://{MOCK_GITHUB_NAME}.{namespace}.svc.cluster.local:8080"
-        ldap_url = ldap_url or f"ldap://{LDAP_NAME}.{namespace}.svc.cluster.local:389"
-        redis_url = redis_url or f"redis://{AUTHGUARD_REDIS_NAME}.{namespace}.svc.cluster.local:6379"
+        mock_url = mock_url or (
+            f"http://{MOCK_GITHUB_NAME}.{config.MOCK_GITHUB_NAMESPACE}.svc.cluster.local:8080"
+        )
+        ldap_url = ldap_url or (
+            f"ldap://{LDAP_NAME}.{authguard_namespace}.svc.cluster.local:389"
+        )
+        redis_url = redis_url or (
+            f"redis://{AUTHGUARD_REDIS_NAME}.{authguard_namespace}.svc.cluster.local:6379"
+        )
         database = parse.quote(AuthGuardRuntime._postgres_database(), safe="")
         postgres_url = (
             f"postgresql://{pg_host}:{pg_port}/{database}?sslmode=disable"
@@ -540,18 +562,35 @@ class AuthGuardRuntime:
         return yaml.safe_dump(document, sort_keys=False)
 
     @staticmethod
-    def prepare(namespace: str, pg_container: str, pg_host: str, pg_port: str, pg_user: str, pg_password: str) -> dict:
+    def prepare(
+        namespace: str,
+        pg_host: str,
+        pg_port: str,
+        pg_user: str,
+        pg_password: str,
+    ) -> dict:
         print("\n-- Preparing isolated AuthGuard identity services --")
+        AuthGuardRuntime._ensure_namespace(namespace, "authguard")
+        AuthGuardRuntime._ensure_namespace(config.MOCK_GITHUB_NAMESPACE, "mock-github")
         if not KubernetesImageManager.import_authguard():
             raise RuntimeError("isolated AuthGuard image is unavailable")
         if not KubernetesImageManager.import_authguard_web():
             raise RuntimeError("isolated AuthGuard Web image is unavailable")
         secret_name, bind_password = AuthGuardRuntime._ensure_secret(namespace)
         AuthGuardRuntime._ensure_acceptance_credentials(namespace)
-        AuthGuardRuntime._reset_authguard_schema(pg_container, pg_user)
-        AuthGuardRuntime._ensure_support(namespace, bind_password)
+        AuthGuardRuntime._reset_authguard_schema()
+        AuthGuardRuntime._ensure_support(
+            namespace, config.MOCK_GITHUB_NAMESPACE, bind_password
+        )
         jwks = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD_AUTHN_SESSION_JWKS")
         return {
+            "application": {"enabled": False},
+            "global": {
+                "authguard": {
+                    "themeConfigMap": "authguard-theme-v1",
+                    "themeRevision": "1",
+                }
+            },
             "authguard-middleware": {
                 "enabled": True,
                 "adapter": {
@@ -559,7 +598,7 @@ class AuthGuardRuntime:
                     "existingSecret": secret_name,
                     "hmacKey": "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY",
                 },
-                "fullnameOverride": f"{config.RESOURCE_PREFIX}-authguard",
+                "fullnameOverride": AUTHGUARD_NAME,
                 "secrets": {"provider": "kubernetes", "kubernetes": {"existingSecret": secret_name}},
                 "redis_cluster": {
                     "enabled": True,
@@ -578,6 +617,7 @@ class AuthGuardRuntime:
                 "envoy_gateway": {
                     "enabled": True,
                     "nameOverride": ENVOY_GATEWAY_NAME,
+                    "fullnameOverride": ENVOY_GATEWAY_NAME,
                     "deployment": {"replicas": 1},
                     "config": {"envoyGateway": {"gateway": {"controllerName": GATEWAY_CONTROLLER}}},
                     "ext_authz": {
@@ -591,7 +631,10 @@ class AuthGuardRuntime:
                             "envoyDeploymentName": ENVOY_DATA_PLANE_NAME,
                         },
                         "authguardRoute": {
-                            "enabled": True,
+                            # Flowgent owns its cross-namespace API route. Keeping
+                            # the backend local to the business namespace avoids
+                            # an unnecessary ReferenceGrant for Service access.
+                            "enabled": False,
                             "name": f"{config.RESOURCE_PREFIX}-api",
                             "hostnames": [APPLICATION_HOST, BROWSER_HOST],
                             "path": "/api/",
@@ -599,8 +642,12 @@ class AuthGuardRuntime:
                         },
                         "authnRoute": {
                             "enabled": True,
-                            "name": f"{config.RESOURCE_PREFIX}-authn",
+                            "name": "authguard-authn",
                             "hostnames": [APPLICATION_HOST, BROWSER_HOST],
+                        },
+                        "protectedRouteSelector": {
+                            "matchLabels": {"authguard.io/protected": "true"},
+                            "namespaces": {"from": "All"},
                         },
                     },
                 },
@@ -612,6 +659,11 @@ class AuthGuardRuntime:
                             "flowgent": {
                                 "hosts": [APPLICATION_HOST, BROWSER_HOST],
                                 "displayName": APPLICATION_DISPLAY_NAME,
+                                "logo": "/auth/assets/themes/custom/flowgent.svg",
+                                "theme": {
+                                    "id": "flowgent",
+                                    "stylesheet": "/auth/assets/themes/custom/flowgent.css",
+                                },
                                 "returnUris": [
                                     f"https://{APPLICATION_HOST}/**",
                                     f"https://{BROWSER_HOST}/**",
@@ -645,16 +697,159 @@ class AuthGuardRuntime:
                     "authguard-config": AuthGuardRuntime.runtime_config(namespace, pg_host, pg_port, pg_user),
                 },
             },
-            "web": {
-                "route": {
-                    "enabled": True,
-                    "name": f"{config.RESOURCE_PREFIX}-web",
-                    "gatewayName": GATEWAY_NAME,
-                    "sectionName": "http",
-                    "hostnames": [APPLICATION_HOST, BROWSER_HOST],
-                }
-            },
         }
+
+    @staticmethod
+    def sync_adapter_secret(source_namespace: str, target_namespace: str) -> str:
+        AuthGuardRuntime._ensure_namespace(target_namespace, "flowgent")
+        hmac_key = AuthGuardRuntime._secret_value(
+            source_namespace, "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY"
+        )
+        AuthGuardRuntime._apply({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": ADAPTER_SECRET,
+                "namespace": target_namespace,
+                "labels": {
+                    "app.kubernetes.io/part-of": config.RESOURCE_PREFIX,
+                    "flowgent.io/e2e-owner": config.RESOURCE_PREFIX,
+                },
+            },
+            "type": "Opaque",
+            "stringData": {"AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY": hmac_key},
+        })
+        return ADAPTER_SECRET
+
+    @staticmethod
+    def _reconcile_gateway_class(release: str, namespace: str) -> None:
+        """Remove only a stale, unreferenced class owned by this E2E lineage."""
+        current = subprocess.run(
+            ["kubectl", "get", "gatewayclass", GATEWAY_CLASS, "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if current.returncode != 0:
+            return
+
+        gateway_class = json.loads(current.stdout)
+        metadata = gateway_class.get("metadata", {})
+        annotations = metadata.get("annotations", {})
+        owner = (
+            annotations.get("meta.helm.sh/release-name"),
+            annotations.get("meta.helm.sh/release-namespace"),
+        )
+        desired_owner = (release, namespace)
+        deleting = bool(metadata.get("deletionTimestamp"))
+        if owner == desired_owner and not deleting:
+            return
+
+        gateways_result = subprocess.run(
+            ["kubectl", "get", "gateways.gateway.networking.k8s.io", "-A", "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if gateways_result.returncode != 0:
+            raise RuntimeError(
+                f"cannot inspect Gateways before reconciling GatewayClass {GATEWAY_CLASS}: "
+                f"{gateways_result.stderr.strip()[-300:]}"
+            )
+        gateways = json.loads(gateways_result.stdout).get("items", [])
+        references = [
+            f"{item.get('metadata', {}).get('namespace', '')}/"
+            f"{item.get('metadata', {}).get('name', '')}"
+            for item in gateways
+            if item.get("spec", {}).get("gatewayClassName") == GATEWAY_CLASS
+        ]
+        if references:
+            raise RuntimeError(
+                f"refusing to replace GatewayClass {GATEWAY_CLASS}; still referenced by "
+                f"{', '.join(sorted(references))}"
+            )
+
+        if deleting:
+            command = [
+                "kubectl", "patch", "gatewayclass", GATEWAY_CLASS,
+                "--type=merge", "-p", '{"metadata":{"finalizers":[]}}',
+            ]
+        else:
+            command = [
+                "kubectl", "delete", "gatewayclass", GATEWAY_CLASS,
+                "--wait=true", "--timeout=60s",
+            ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if result.returncode != 0:
+            detail = (result.stdout + result.stderr).strip()[-500:]
+            raise RuntimeError(
+                f"stale GatewayClass {GATEWAY_CLASS} reconciliation failed: {detail}"
+            )
+        print(
+            f"  Reconciled stale GatewayClass {GATEWAY_CLASS} "
+            f"(previous owner={owner[1]}/{owner[0]})"
+        )
+
+    @staticmethod
+    def install_or_upgrade(release: str, namespace: str, values: dict) -> None:
+        AuthGuardRuntime._reconcile_gateway_class(release, namespace)
+        chart = str(config.HELM_CHART)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as values_file:
+            json.dump(values, values_file)
+            values_file.flush()
+            result = subprocess.run(
+                [
+                    "helm", "upgrade", "--install", release, chart,
+                    "-n", namespace, "--create-namespace",
+                    "--timeout", "600s", "--wait",
+                    "--post-renderer",
+                    str(config.E2E_DIR / "deploy" / "envoy_gateway_post_renderer.py"),
+                    "-f", values_file.name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=660,
+            )
+        if result.returncode != 0:
+            detail = (result.stdout + result.stderr).strip()[-1200:]
+            raise RuntimeError(f"AuthGuard Helm upgrade failed: {detail}")
+        # The AuthGuard schema is reset immediately before this upgrade. An
+        # unchanged Helm template would otherwise retain processes connected to
+        # the newly empty schema and skip startup migrations entirely. Redis is
+        # deliberately retained: rolling its emptyDir-backed cluster members
+        # would destroy their cluster configuration.
+        resources = (
+            f"deployment/{AUTHGUARD_NAME}",
+            f"deployment/{AUTHGUARD_NAME}-authn",
+        )
+        for resource in resources:
+            restart = subprocess.run(
+                ["kubectl", "rollout", "restart", resource, "-n", namespace],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if restart.returncode != 0:
+                detail = (restart.stdout + restart.stderr).strip()[-500:]
+                raise RuntimeError(f"AuthGuard restart failed for {resource}: {detail}")
+            ready = subprocess.run(
+                [
+                    "kubectl", "rollout", "status", resource, "-n", namespace,
+                    "--timeout=300s",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=330,
+            )
+            if ready.returncode != 0:
+                detail = (ready.stdout + ready.stderr).strip()[-500:]
+                raise RuntimeError(f"AuthGuard restart timed out for {resource}: {detail}")
+        print(f"  AuthGuard release ready: {namespace}/{release}")
 
     @contextmanager
     @staticmethod
@@ -716,9 +911,15 @@ class AuthGuardRuntime:
             return response.code, response.headers, response_body(response)
 
     @staticmethod
-    def _social_login(namespace: str) -> tuple[str, str]:
-        authn_service = f"{config.RESOURCE_PREFIX}-authguard-authn"
-        with AuthGuardRuntime._forward(namespace, authn_service, 8082) as authn_port, AuthGuardRuntime._forward(namespace, MOCK_GITHUB_NAME, 8080) as mock_port:
+    def _social_login(
+        namespace: str, mock_github_namespace: str
+    ) -> tuple[str, str]:
+        authn_service = f"{AUTHGUARD_NAME}-authn"
+        with AuthGuardRuntime._forward(
+            namespace, authn_service, 8082
+        ) as authn_port, AuthGuardRuntime._forward(
+            mock_github_namespace, MOCK_GITHUB_NAME, 8080
+        ) as mock_port:
             no_redirect = request.build_opener(type("NoRedirect", (request.HTTPRedirectHandler,), {"redirect_request": lambda *_: None})())
 
             def redirect_location(url: str, host: str | None = None) -> str:
@@ -752,7 +953,7 @@ class AuthGuardRuntime:
     @staticmethod
     def _standalone_login(namespace: str) -> tuple[str, str]:
         username, password = AuthGuardRuntime._ensure_acceptance_credentials(namespace)
-        authn_service = f"{config.RESOURCE_PREFIX}-authguard-authn"
+        authn_service = f"{AUTHGUARD_NAME}-authn"
         with AuthGuardRuntime._forward(namespace, authn_service, 8082) as authn_port:
             payload = {
                 "login": username,
@@ -852,9 +1053,9 @@ class AuthGuardRuntime:
     def _wait_authguard_ready(namespace: str) -> None:
         resources = (
             f"statefulset/{AUTHGUARD_REDIS_NAME}",
-            f"deployment/{config.RESOURCE_PREFIX}-authguard",
-            f"deployment/{config.RESOURCE_PREFIX}-authguard-authn",
-            f"deployment/{config.RESOURCE_PREFIX}-authguard-web",
+            f"deployment/{AUTHGUARD_NAME}",
+            f"deployment/{AUTHGUARD_NAME}-authn",
+            f"deployment/{AUTHGUARD_NAME}-web",
             f"deployment/{ENVOY_GATEWAY_NAME}",
         )
         for resource in resources:
@@ -899,13 +1100,21 @@ class AuthGuardRuntime:
         raise RuntimeError("AuthGuard Gateway listener was not programmed within 300s")
 
     @staticmethod
-    def bootstrap_and_verify(namespace: str, *, verify_resource_scope: bool = True) -> None:
+    def bootstrap_and_verify(
+        namespace: str,
+        *,
+        flowgent_namespace: str,
+        mock_github_namespace: str,
+        verify_resource_scope: bool = True,
+    ) -> None:
         print("\n-- Verifying LDAP federation, GitHub AuthN, and Envoy/AuthGuard authorization --")
         AuthGuardRuntime._wait_authguard_ready(namespace)
-        token, github_principal_id = AuthGuardRuntime._social_login(namespace)
+        token, github_principal_id = AuthGuardRuntime._social_login(
+            namespace, mock_github_namespace
+        )
         acceptance_token, acceptance_principal_id = AuthGuardRuntime._standalone_login(namespace)
         api_token = AuthGuardRuntime._secret_value(namespace, "AUTHGUARD__AUTHZ__API__TOKEN")
-        authz_service = f"{config.RESOURCE_PREFIX}-authguard"
+        authz_service = AUTHGUARD_NAME
         materializations = (
             ("global-platform-security", "GROUP", "principal-global-platform-security"),
             ("security-automation-owners", "GROUP", "principal-security-automation-owners"),
@@ -945,7 +1154,9 @@ class AuthGuardRuntime:
             # Config import intentionally follows Helm deployment in runner.py.
             # Only the post-import scenario may assert against this fixture; the
             # deployment bootstrap still proves the identity and edge contracts.
-            with AuthGuardRuntime._forward(namespace, f"{config.RELEASE_NAME}-apiserver", 9990) as internal_api_port:
+            with AuthGuardRuntime._forward(
+                flowgent_namespace, f"{config.RELEASE_NAME}-apiserver", 9990
+            ) as internal_api_port:
                 status, _, _ = AuthGuardRuntime._api(
                     internal_api_port,
                     f"/api/v1/{config.NAMESPACE_ID}/flows/security-autonomy-fixer",
@@ -1067,7 +1278,9 @@ class AuthGuardRuntime:
             )
             if status not in (401, 403):
                 raise RuntimeError(f"invalid JWT did not fail closed: HTTP {status}")
-        with AuthGuardRuntime._forward(namespace, f"{config.RELEASE_NAME}-apiserver", 9999) as external_api_port:
+        with AuthGuardRuntime._forward(
+            flowgent_namespace, f"{config.RELEASE_NAME}-apiserver", 9999
+        ) as external_api_port:
             status, _, _ = AuthGuardRuntime._api(
                 external_api_port,
                 f"/api/v1/{config.NAMESPACE_ID}/flows",
@@ -1078,7 +1291,9 @@ class AuthGuardRuntime:
                     "direct external Flowgent API without AuthGuard context did not fail closed: "
                     f"HTTP {status}"
                 )
-        with AuthGuardRuntime._forward(namespace, f"{config.RELEASE_NAME}-web", 8080) as web_port:
+        with AuthGuardRuntime._forward(
+            flowgent_namespace, f"{config.RELEASE_NAME}-web", 8080
+        ) as web_port:
             status, _, _ = AuthGuardRuntime._api(
                 web_port,
                 f"/api/v1/{config.NAMESPACE_ID}/flows",
@@ -1143,14 +1358,14 @@ class AuthGuardDeployer(BaseDeployer):
         self,
         context: RunContext,
         *,
-        pg_container: str,
         pg_host: str,
         pg_port: str,
         pg_user: str,
         pg_password: str,
     ) -> None:
         super().__init__(context)
-        self.pg_container = pg_container
+        self.namespace = config.AUTHGUARD_NAMESPACE
+        self.release = config.AUTHGUARD_RELEASE_NAME
         self.pg_host = pg_host
         self.pg_port = pg_port
         self.pg_user = pg_user
@@ -1161,12 +1376,23 @@ class AuthGuardDeployer(BaseDeployer):
         self.values = self.step(
             "prepare LDAP, GitHub identity, Redis, and AuthGuard values",
             lambda: AuthGuardRuntime.prepare(
-                self.context.namespace,
-                self.pg_container,
+                self.namespace,
                 self.pg_host,
                 self.pg_port,
                 self.pg_user,
                 self.pg_password,
+            ),
+        )
+        self.step(
+            "install isolated AuthGuard middleware release",
+            lambda: AuthGuardRuntime.install_or_upgrade(
+                self.release, self.namespace, self.values
+            ),
+        )
+        self.step(
+            "publish least-privilege adapter secret to Flowgent namespace",
+            lambda: AuthGuardRuntime.sync_adapter_secret(
+                self.namespace, self.context.namespace
             ),
         )
 
@@ -1174,7 +1400,9 @@ class AuthGuardDeployer(BaseDeployer):
         self.step(
             "verify LDAP federation, GitHub authentication, Envoy, and resource policy",
             lambda: AuthGuardRuntime.bootstrap_and_verify(
-                self.context.namespace,
+                self.namespace,
+                flowgent_namespace=self.context.namespace,
+                mock_github_namespace=config.MOCK_GITHUB_NAMESPACE,
                 verify_resource_scope=resource_scope,
             ),
         )

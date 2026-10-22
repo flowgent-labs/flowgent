@@ -23,9 +23,9 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 It verifies LDAP federated Principal discovery and the complete GitHub OAuth →
 AuthGuard AuthN → Envoy JWT → AuthGuard AuthZ → Flowgent path. A successful
 release is retained for manual use; `python3 e2e/runner.py --deployer k8s --access` keeps the
-local tunnels open. All owned resources use the `e2e-flowgent-*` boundary,
-separate workload namespaces, a dedicated Gateway controller name, and special
-ports. Flowgent and AuthGuard use the dedicated PostgreSQL schemas
+local tunnels open. Namespaces use the `e2e-flowgent-*` boundary while resources
+inside them retain production-style names, with separate workload namespaces, a
+dedicated Gateway controller name, and special ports. Flowgent and AuthGuard use the dedicated PostgreSQL schemas
 `e2e_flowgent` and `e2e_flowgent_authguard`, so AuthGuard's adjacent default
 E2E can run concurrently without sharing application state.
 
@@ -36,8 +36,15 @@ only with `FLOWGENT_E2E_APPLICATION_HOST`. Run the runner without
 The Web remains available on diagnostic NodePort `31080`, but its API proxy uses
 the protected Flowgent listener and anonymous requests fail closed. The retained
 standalone acceptance login is stored (not printed) in the Kubernetes Secret
-`e2e-flowgent-acceptance-credentials`; TOTP is deliberately disabled for this
+`acceptance-credentials` in `e2e-flowgent-authguard-system`; TOTP is deliberately disabled for this
 password-only acceptance account.
+
+The copy/paste-ready human review procedure is in
+[`e2e/MANUAL_ACCEPTANCE.md`](e2e/MANUAL_ACCEPTANCE.md). After acceptance,
+`python3 e2e/runner.py --deployer k8s --cleanup` first performs normal Helm and
+namespace deletion, then applies bounded finalizer recovery only to owned E2E
+objects and verifies that no release, namespace, Pod, PV, or cluster-scoped
+E2E object remains.
 
 AuthGuard's `standalone.totp.enabled` flag enables the TOTP enrollment/verifier
 capability and publishes `standalone.totp=true` in application metadata, which
@@ -90,9 +97,11 @@ security-autonomy-fixer/
 │   │   ├── base/                   # Kubernetes and Docker Compose backend implementations
 │   │   ├── authguard/              # LDAP, GitHub OAuth, AuthGuard, and Envoy setup
 │   │   ├── flowgent/               # isolated Helm release lifecycle
-│   │   ├── mocksvc-github-service/  # isolated OAuth-provider mock implementation
-│   │   ├── mocksvc-notification-service/ # authenticated webhook-receiver mock implementation
-│   │   ├── sonarqube/              # external or local SonarQube lifecycle
+│   │   ├── mock-github-service/     # isolated OAuth-provider mock implementation
+│   │   ├── mock-llm-service/        # deterministic OpenAI-compatible E2E fixture
+│   │   ├── mock-notification-service/ # authenticated webhook-receiver mock implementation
+│   │   ├── postgres/               # Kubernetes pgvector lifecycle
+│   │   ├── sonarqube/              # Kubernetes or Compose SonarQube lifecycle
 │   │   └── docker/                 # Compose topology
 │   ├── verifier/
 │   │   ├── __init__.py             # BaseVerifier step and evidence contract

@@ -21,8 +21,9 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 LDAP 联邦 Principal 搜索/物化。成功后不会卸载 Helm；执行
 `python3 e2e/runner.py --deployer k8s --access` 可保持人工体验所需的本地隧道。
 
-部署固定使用 `e2e-flowgent-system`、`e2e-flowgent-workload-*` 与
-`e2e-flowgent-*` 资源前缀，并使用独立 Gateway controllerName 和特殊端口，
+部署固定使用 `e2e-flowgent-system`、`e2e-flowgent-workload-*` 等 namespace
+作为环境隔离边界；namespace 内资源保持正式命名，不再重复 `e2e-` 前缀，并使用独立
+Gateway controllerName 和特殊端口，
 Flowgent/AuthGuard 数据分别使用 `e2e_flowgent` 与
 `e2e_flowgent_authguard` schema，不会清理、读取或接管隔壁 AuthGuard 默认 E2E。
 
@@ -31,8 +32,15 @@ AuthGuard Application 默认直接使用该真实域名；仅在其他指定环�
 `FLOWGENT_E2E_APPLICATION_HOST` 覆盖。运行时不要传 `--clean-after-run`，即可保留
 导入的资源、运行记录和验证证据。Web 仍保留诊断用 NodePort `31080`，但其 API
 反代只能进入受保护的 Flowgent listener，匿名请求会 fail-closed。保留的独立验收
-账号保存在 Kubernetes Secret `e2e-flowgent-acceptance-credentials` 中（运行日志不会
+账号保存在 `e2e-flowgent-authguard-system` 的 Kubernetes Secret
+`acceptance-credentials` 中（运行日志不会
 打印密码）；该密码验收账号特意关闭 TOTP。
+
+可复制执行的人工验收步骤见
+[`e2e/MANUAL_ACCEPTANCE.md`](e2e/MANUAL_ACCEPTANCE.md)。验收完成后执行
+`python3 e2e/runner.py --deployer k8s --cleanup`：命令先走正常 Helm/Namespace
+删除，仅在有界超时后对本 E2E 拥有的对象移除 finalizer，并最终确认 release、
+namespace、Pod、PV 和集群级 E2E 资源均已消失。
 
 AuthGuard 的 `standalone.totp.enabled` 会启用 TOTP 注册/校验能力，并在 Application
 metadata 中发布 `standalone.totp=true`，Hosted Login 据此显示验证码输入框；但该开关
@@ -89,9 +97,11 @@ security-autonomy-fixer/
 │   │   ├── base/                   # Kubernetes 与 Docker Compose 后端实现
 │   │   ├── authguard/              # LDAP、GitHub OAuth、AuthGuard 与 Envoy 配置
 │   │   ├── flowgent/               # 隔离 Helm release 生命周期
-│   │   ├── mocksvc-github-service/ # OAuth provider mock 实现
-│   │   ├── mocksvc-notification-service/ # 认证 webhook receiver mock 实现
-│   │   ├── sonarqube/              # 外部或本地 SonarQube 生命周期
+│   │   ├── mock-github-service/    # OAuth provider mock 实现
+│   │   ├── mock-llm-service/       # 确定性的 OpenAI-compatible E2E fixture
+│   │   ├── mock-notification-service/ # 认证 webhook receiver mock 实现
+│   │   ├── postgres/               # Kubernetes pgvector 生命周期
+│   │   ├── sonarqube/              # Kubernetes 或 Compose SonarQube 生命周期
 │   │   └── docker/                 # Compose 拓扑
 │   ├── verifier/
 │   │   ├── __init__.py             # BaseVerifier、有序 Step 与证据契约

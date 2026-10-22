@@ -19,11 +19,11 @@ from common.project import FlowgentE2EProject
 
 API = config.K8S_APISERVER_URL
 NAMESPACE = config.NAMESPACE_ID
-SYSTEM_NAMESPACE = config.SYSTEM_NAMESPACE
+MOCK_NOTIFICATION_NAMESPACE = config.MOCK_NOTIFICATION_NAMESPACE
 EMQX = config.EMQX_HOST
 EMQX_PORT = config.EMQX_PORT
 CHANNEL_NAME = "security-autonomy-alerts"
-RECEIVER = f"{config.RESOURCE_PREFIX}-webhook"
+RECEIVER = "mock-notification"
 
 
 class NotifierVerifier(BaseVerifier):
@@ -45,7 +45,7 @@ class NotifierVerifier(BaseVerifier):
             return response.json()
         pod_response = subprocess.run(
             [
-                "kubectl", "get", "pod", "-n", SYSTEM_NAMESPACE,
+                "kubectl", "get", "pod", "-n", MOCK_NOTIFICATION_NAMESPACE,
                 "-l", f"app={RECEIVER}", "--field-selector=status.phase=Running", "-o", "json",
             ],
             capture_output=True, text=True, timeout=20, check=True,
@@ -64,7 +64,7 @@ class NotifierVerifier(BaseVerifier):
         pod = candidates[-1]["metadata"]["name"]
         result = subprocess.run(
             [
-                "kubectl", "exec", "-n", SYSTEM_NAMESPACE, pod, "--",
+                "kubectl", "exec", "-n", MOCK_NOTIFICATION_NAMESPACE, pod, "--",
                 "curl", "-fsS", "http://127.0.0.1:8080/receipts",
             ],
             capture_output=True, text=True, timeout=20, check=True,

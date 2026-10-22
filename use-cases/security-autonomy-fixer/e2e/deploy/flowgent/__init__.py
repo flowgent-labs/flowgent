@@ -18,7 +18,6 @@ import json
 import secrets
 import socket
 import subprocess
-import tempfile
 from pathlib import Path
 import requests
 from urllib.parse import urlsplit, urlunsplit
@@ -34,19 +33,20 @@ DEFAULT_NAMESPACE = config.SYSTEM_NAMESPACE
 DEFAULT_RELEASE = config.RELEASE_NAME
 DEFAULT_TIMEOUT = 300
 FLOWGENT_IMAGE = "localhost/flowgent:latest"
-FLOWGENT_PG_CONTAINER = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "flowgent-test-pgvector")
 WORKLOAD_NAMESPACE_PREFIX = os.getenv(
     "FLOWGENT_K8S_WORKLOAD_NAMESPACE_PREFIX",
     f"{config.RESOURCE_PREFIX}-workload-",
 )
 TENANT_NAMESPACE = os.getenv("FLOWGENT_NAMESPACE_ID", config.NAMESPACE_ID)
-RUNTIME_CREDENTIAL_SECRET = os.getenv("FLOWGENT_E2E_RUNTIME_SECRET", f"{config.RESOURCE_PREFIX}-runtime-env")
+RUNTIME_CREDENTIAL_SECRET = os.getenv("FLOWGENT_E2E_RUNTIME_SECRET", "flowgent-runtime-env")
 RUNTIME_CREDENTIAL_KEYS = (
     "GITHUB_TOKEN",
     "GH_TOKEN",
     "SONARQUBE_TOKEN",
+    "SONARQUBE_MCP_URL",
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_API_KEY_FLOWGENT",
+    "FLOWGENT_E2E_LLM_API_KEY",
 )
 RUNTIME_PROXY_KEYS = (
     "HTTP_PROXY",
@@ -60,10 +60,10 @@ PROXY_ALLOWLIST_ENV = "FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY"
 NOTIFICATION_TOKEN_ENV = "FLOWGENT_E2E_NOTIFICATION_TOKEN"
 NOTIFICATION_KEY_ENV = "FLOWGENT_NOTIFICATION_KEY_V1"
 NOTIFICATION_KEY_NAME = "key-v1"
-NOTIFICATION_RECEIVER = f"{config.RESOURCE_PREFIX}-webhook"
+NOTIFICATION_RECEIVER = "mock-notification"
 MOCK_NOTIFICATION_SCRIPT = (
     Path(__file__).resolve().parents[1]
-    / "mocksvc-notification-service"
+    / "mock-notification-service"
     / "app"
     / "server.py"
 )
@@ -111,6 +111,35 @@ class FlowgentRuntime:
     @staticmethod
     def _helm(args, timeout=300):
         return CommandRunner.legacy(["helm"] + args, timeout=timeout)
+
+    @staticmethod
+    def _ensure_namespace(namespace: str, component: str) -> None:
+        if not namespace.startswith(f"{config.RESOURCE_PREFIX}-"):
+            raise ValueError(
+                f"E2E namespace must start with {config.RESOURCE_PREFIX}-: {namespace}"
+            )
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {
+                "name": namespace,
+                "labels": {
+                    "flowgent.io/e2e-owner": config.RESOURCE_PREFIX,
+                    "flowgent.io/e2e-component": component,
+                },
+            },
+        }
+        result = subprocess.run(
+            ["kubectl", "apply", "-f", "-"],
+            input=json.dumps(manifest),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"apply namespace {namespace} failed: {result.stderr[-400:]}"
+            )
 
     @staticmethod
     def _run_sensitive(cmd, printable, timeout=120, input_text=None, print_stdout=True):
@@ -220,88 +249,30 @@ class FlowgentRuntime:
         return False
 
     @staticmethod
-    def _force_finalize_terminating_runtime_namespaces():
-        rc, out = FlowgentRuntime._kubectl([
-            "get", "ns", "-l", "flowgent.io/runtime-boundary=namespace", "-o", "json",
-        ], timeout=20)
-        if rc != 0:
-            return
-        try:
-            namespaces = json.loads(out).get("items", [])
-        except json.JSONDecodeError:
-            return
-        for ns in namespaces:
-            meta = ns.get("metadata", {})
-            name = meta.get("name")
-            if not name or not meta.get("deletionTimestamp"):
-                continue
-            print(f"  Finalizing stuck terminating namespace: {name}")
-            ns.setdefault("spec", {})["finalizers"] = []
-            result = subprocess.run(
-                ["kubectl", "replace", "--raw", f"/api/v1/namespaces/{name}/finalize", "-f", "-"],
-                input=json.dumps(ns),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                print(f"  WARN: namespace finalize failed for {name}: {result.stderr[:200]}")
-
-    @staticmethod
-    def _uninstall_release(release, namespace):
-        print("\n-- Uninstalling existing Helm release --")
-        rc, out = FlowgentRuntime._helm(["list", "-n", namespace, "-q", "--filter", f"^{release}$"], timeout=30)
-        if rc != 0 or release not in out.splitlines():
-            print(f"  Release '{release}' not installed in namespace '{namespace}'.")
-            return True
-        # A GatewayClass cannot disappear while one of its Gateways still exists.
-        # Delete this release's precisely named Gateway while its Envoy Gateway
-        # controller is still running, otherwise Helm may remove the controller
-        # first and strand the GatewayClass finalizer indefinitely.
-        gateway_name = f"{config.RESOURCE_PREFIX}-gateway"
-        FlowgentRuntime._kubectl([
-            "delete", "gateway", gateway_name, "-n", namespace,
-            "--ignore-not-found=true", "--wait=true", "--timeout=90s",
-        ], timeout=120)
-        rc, _ = FlowgentRuntime._helm(["uninstall", release, "-n", namespace, "--wait", "--timeout", "180s"], timeout=240)
-        if rc != 0:
-            print(f"  ERROR: helm uninstall failed for {release}")
-            return False
-        return True
-
-    @staticmethod
     def cleanup_after_run(release, namespace):
-        """Remove only the isolated resources owned by this E2E deployment."""
+        """Remove the full E2E topology and verify that no owned objects remain."""
         print("\n-- Cleaning isolated Flowgent E2E deployment --")
-        ok = FlowgentRuntime._uninstall_release(release, namespace)
-        FlowgentRuntime._cleanup_runtime_resources(namespace)
-        workload_namespace = FlowgentRuntime._workload_namespace()
-        for target_namespace in sorted({namespace, workload_namespace}):
-            rc, _ = FlowgentRuntime._kubectl([
-                "delete", "namespace", target_namespace,
-                "--ignore-not-found=true", "--wait=true", "--timeout=180s",
-            ], timeout=210)
-            ok = ok and rc == 0
-        FlowgentRuntime._kubectl([
-            "delete", "gatewayclass", f"{config.RESOURCE_PREFIX}-gateway",
-            "--ignore-not-found=true", "--wait=true", "--timeout=90s",
-        ], timeout=120)
-        return ok
+        from deploy.base.kubernetes_cleanup import KubernetesCleanup
 
-    @staticmethod
-    def _docker_container_ip(container):
-        rc, out = CommandRunner.legacy([
-            "docker", "inspect", container,
-            "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
-        ], timeout=20)
-        if rc == 0 and out.strip():
-            return out.strip().split()[0]
-        return os.getenv("FLOWGENT_PG_HOST", "127.0.0.1")
+        cleaner = KubernetesCleanup(
+            releases=(
+                (release, namespace),
+                (config.AUTHGUARD_RELEASE_NAME, config.AUTHGUARD_NAMESPACE),
+            ),
+            namespaces=(*config.K8S_MANAGED_NAMESPACES, namespace),
+        )
+        return cleaner.run(
+            before_namespace_delete=lambda: FlowgentRuntime._cleanup_runtime_resources(
+                namespace
+            )
+        )
 
     @staticmethod
     def _runtime_env(namespace, release):
-        pg_host = FlowgentRuntime._docker_container_ip(FLOWGENT_PG_CONTAINER)
-        pg_port = os.getenv("FLOWGENT_PG_PORT", "5432")
+        from deploy.postgres import PgvectorRuntime
+
+        pg_host = PgvectorRuntime.service_fqdn()
+        pg_port = "5432"
         pg_user = os.getenv("FLOWGENT_PG_USER", "test")
         pg_password = os.getenv("FLOWGENT_PG_PASSWORD", "test")
         pg_database = os.getenv("FLOWGENT_PG_DATABASE", "flowgent")
@@ -328,7 +299,7 @@ class FlowgentRuntime:
             "FLOWGENT__RUNTIME__K8S_NAMESPACE": namespace,
             "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE": TENANT_NAMESPACE,
             "FLOWGENT__RUNTIME__NAMESPACE__NAMESPACE_PREFIX": WORKLOAD_NAMESPACE_PREFIX,
-            "FLOWGENT__RUNTIME__RESOURCE_OWNER": config.RESOURCE_PREFIX,
+            "FLOWGENT__RUNTIME__RESOURCE_OWNER": "flowgent",
             "FLOWGENT__RUNTIME__JM_IMAGE": FLOWGENT_IMAGE,
             "FLOWGENT__RUNTIME__TM_IMAGE": FLOWGENT_IMAGE,
             "FLOWGENT__SANDBOX__DEPLOYMENT__IMAGE": FLOWGENT_IMAGE,
@@ -346,7 +317,16 @@ class FlowgentRuntime:
                 f"kubectl set env deployment/{deploy} -n {namespace} <runtime env redacted>",
                 timeout=60,
             )
-            ok = ok and rc == 0
+            if rc != 0:
+                ok = False
+                continue
+            # E2E resets the database schema before every run. Helm/set-env may
+            # otherwise leave an unchanged process connected to the newly empty
+            # schema, so force the owning binary to rerun its migrations.
+            restart_rc, _ = FlowgentRuntime._kubectl([
+                "rollout", "restart", f"deployment/{deploy}", "-n", namespace,
+            ], timeout=60)
+            ok = ok and restart_rc == 0
         return ok
 
     @staticmethod
@@ -491,6 +471,17 @@ class FlowgentRuntime:
             if value:
                 data[key] = FlowgentRuntime._rewrite_local_proxy_for_pod(value)
 
+        # A conventional HTTP forward proxy (including the local GFW proxy used
+        # by this suite) serves both HTTP and HTTPS CONNECT traffic.  CI often
+        # exports only one of HTTP_PROXY/HTTPS_PROXY, while runtime pods need the
+        # canonical pair because different SDKs consult different variables.
+        http_proxy = data.get("HTTP_PROXY") or data.get("http_proxy")
+        https_proxy = data.get("HTTPS_PROXY") or data.get("https_proxy")
+        if not http_proxy and https_proxy:
+            data["HTTP_PROXY"] = https_proxy
+        if not https_proxy and http_proxy:
+            data["HTTPS_PROXY"] = http_proxy
+
         for upper, lower in (("HTTP_PROXY", "http_proxy"), ("HTTPS_PROXY", "https_proxy"), ("ALL_PROXY", "all_proxy")):
             if upper in data and lower not in data:
                 data[lower] = data[upper]
@@ -505,6 +496,9 @@ class FlowgentRuntime:
 
     @staticmethod
     def _runtime_credential_data():
+        # This value authenticates only the in-cluster deterministic fixture;
+        # it is intentionally not a production credential.
+        os.environ.setdefault("FLOWGENT_E2E_LLM_API_KEY", "e2e-fixture-only")
         data = {key: os.environ[key] for key in RUNTIME_CREDENTIAL_KEYS if os.environ.get(key)}
         if "GITHUB_TOKEN" not in data and data.get("GH_TOKEN"):
             data["GITHUB_TOKEN"] = data["GH_TOKEN"]
@@ -558,6 +552,12 @@ class FlowgentRuntime:
         if not token:
             token = secrets.token_urlsafe(32)
             os.environ[NOTIFICATION_TOKEN_ENV] = token
+        FlowgentRuntime._ensure_namespace(namespace, "mock-notification")
+        labels = {
+            "app.kubernetes.io/name": "mock-notification",
+            "app.kubernetes.io/part-of": config.RESOURCE_PREFIX,
+            "flowgent.io/e2e-owner": config.RESOURCE_PREFIX,
+        }
         resources = {
             "apiVersion": "v1",
             "kind": "List",
@@ -565,25 +565,25 @@ class FlowgentRuntime:
                 {
                     "apiVersion": "v1",
                     "kind": "Secret",
-                    "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace},
+                    "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace, "labels": labels},
                     "type": "Opaque",
                     "stringData": {"token": token},
                 },
                 {
                     "apiVersion": "v1",
                     "kind": "ConfigMap",
-                    "metadata": {"name": f"{NOTIFICATION_RECEIVER}-script", "namespace": namespace},
+                    "metadata": {"name": f"{NOTIFICATION_RECEIVER}-script", "namespace": namespace, "labels": labels},
                     "data": {"server.py": MOCK_NOTIFICATION_SCRIPT.read_text(encoding="utf-8")},
                 },
                 {
                     "apiVersion": "apps/v1",
                     "kind": "Deployment",
-                    "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace},
+                    "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace, "labels": labels},
                     "spec": {
                         "replicas": 1,
                         "selector": {"matchLabels": {"app": NOTIFICATION_RECEIVER}},
                         "template": {
-                            "metadata": {"labels": {"app": NOTIFICATION_RECEIVER}},
+                            "metadata": {"labels": {"app": NOTIFICATION_RECEIVER, **labels}},
                             "spec": {
                                 "volumes": [{
                                     "name": "script",
@@ -618,7 +618,7 @@ class FlowgentRuntime:
                 {
                     "apiVersion": "v1",
                     "kind": "Service",
-                    "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace},
+                    "metadata": {"name": NOTIFICATION_RECEIVER, "namespace": namespace, "labels": labels},
                     "spec": {
                         "selector": {"app": NOTIFICATION_RECEIVER},
                         "ports": [{"name": "http", "port": 8080, "targetPort": 8080}],
@@ -643,14 +643,14 @@ class FlowgentRuntime:
         return rc == 0
 
     @staticmethod
-    def _ensure_notification_channel(namespace, release):
+    def _ensure_notification_channel(namespace, release, receiver_namespace):
         """Provision the encrypted channel used by the console-mode E2E."""
         token = os.environ.get(NOTIFICATION_TOKEN_ENV, "")
         if not token:
             print("  ERROR: notification receiver token is unavailable")
             return False
         receiver_url = (
-            f"http://{NOTIFICATION_RECEIVER}.{namespace}.svc.cluster.local:8080"
+            f"http://{NOTIFICATION_RECEIVER}.{receiver_namespace}.svc.cluster.local:8080"
         )
         os.environ["FLOWGENT_E2E_NOTIFICATION_URL"] = receiver_url
         api_ip = FlowgentRuntime._service_cluster_ip(namespace, f"{release}-apiserver")
@@ -731,6 +731,7 @@ class FlowgentRuntime:
             "label", "namespace", workload_ns,
             "flowgent.io/runtime-boundary=namespace",
             f"flowgent.io/namespace={TENANT_NAMESPACE}",
+            f"flowgent.io/e2e-owner={config.RESOURCE_PREFIX}",
             "--overwrite",
         ], timeout=20)
 
@@ -797,31 +798,11 @@ class FlowgentRuntime:
             print(f"  ERROR: Helm chart not found: {HELM_CHART}")
             return False
 
-        if not FlowgentRuntime._uninstall_release(release, namespace):
-            return False
-        # Stop Helm-owned controllers before removing the runtime objects they
-        # create. Otherwise a session JobManager can recreate a TaskManager in the
-        # short window between cleanup and release removal, leaving an orphan that
-        # consumes capacity and can deadlock the next rollout.
+        # Stop dynamically created workers before reconciling their controllers.
+        # The Helm releases themselves are upgraded in place, preserving the
+        # middleware lifecycle and retained acceptance state.
         FlowgentRuntime._cleanup_runtime_resources(namespace)
-
-        create_namespace = subprocess.run(
-            ["kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if create_namespace.returncode != 0:
-            return False
-        namespace_apply = subprocess.run(
-            ["kubectl", "apply", "-f", "-"],
-            input=create_namespace.stdout,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if namespace_apply.returncode != 0:
-            return False
+        FlowgentRuntime._ensure_namespace(namespace, "flowgent")
 
         # AuthGuard preparation creates the mock GitHub pod from the core image,
         # so core must already be available at this boundary.
@@ -830,14 +811,21 @@ class FlowgentRuntime:
             return False
 
         runtime_env = FlowgentRuntime._runtime_env(namespace, release)
-        from deploy.authguard import AuthGuardDeployer
-        pg_host = FlowgentRuntime._docker_container_ip(FLOWGENT_PG_CONTAINER)
-        pg_port = os.getenv("FLOWGENT_PG_PORT", "5432")
+        from deploy.authguard import (
+            ADAPTER_SECRET,
+            APPLICATION_HOST,
+            BROWSER_HOST,
+            GATEWAY_NAME,
+            AuthGuardDeployer,
+        )
+        from deploy.postgres import PgvectorRuntime
+
+        pg_host = PgvectorRuntime.service_fqdn()
+        pg_port = "5432"
         pg_user = os.getenv("FLOWGENT_PG_USER", "test")
         pg_password = os.getenv("FLOWGENT_PG_PASSWORD", "test")
         authguard = authguard or AuthGuardDeployer(
             RunContext(0, False, DEFAULT_TIMEOUT, False, namespace, release),
-            pg_container=FLOWGENT_PG_CONTAINER,
             pg_host=pg_host,
             pg_port=pg_port,
             pg_user=pg_user,
@@ -845,7 +833,6 @@ class FlowgentRuntime:
         )
         try:
             authguard.deploy()
-            authguard_values = authguard.values
         except Exception as exc:
             print(f"  ERROR: preparing AuthGuard E2E failed: {exc}")
             return False
@@ -863,11 +850,13 @@ class FlowgentRuntime:
             return False
 
         cmd = [
-            "install", release, HELM_CHART,
+            "upgrade", "--install", release, HELM_CHART,
             "-n", namespace, "--create-namespace", "--timeout", "300s",
-            "--post-renderer", str(
-                config.E2E_DIR / "deploy" / "envoy_gateway_post_renderer.py"
-            ),
+            "--wait",
+            "--set", "application.enabled=true",
+            "--set", "authguard-middleware.enabled=false",
+            "--set", "authguard-middleware.adapter.enabled=true",
+            "--set", f"authguard-middleware.adapter.existingSecret={ADAPTER_SECRET}",
             "--set", "global.image.repository=localhost/flowgent",
             "--set", "global.image.tag=latest",
             "--set", "global.image.pullPolicy=IfNotPresent",
@@ -877,7 +866,7 @@ class FlowgentRuntime:
             "--set", f"runtime.systemNamespace={namespace}",
             "--set", f"runtime.namespace.defaultNamespace={TENANT_NAMESPACE}",
             "--set", f"runtime.namespace.namespacePrefix={WORKLOAD_NAMESPACE_PREFIX}",
-            "--set", f"runtime.resourceOwner={config.RESOURCE_PREFIX}",
+            "--set", "runtime.resourceOwner=flowgent",
             "--set", f"runtime.credentialEnvSecret={RUNTIME_CREDENTIAL_SECRET}",
             # This isolated profile coexists with the adjacent AuthGuard E2E on a
             # single 4-core K8s node.  Lower requests preserve scheduler headroom;
@@ -912,18 +901,31 @@ class FlowgentRuntime:
             "--set", "a2a.replicas=2",
             "--set", "a2a.service.nodePort=31992",
             "--set", "web.service.nodePort=31080",
-            "--set", f"controller.serviceAccount.name={config.RESOURCE_PREFIX}-controller",
+            "--set", "controller.serviceAccount.name=flowgent-controller",
+            "--set", f"controller.rbac.clusterRoleName={config.RESOURCE_PREFIX}-controller-cluster",
+            "--set", "apiserver.route.enabled=true",
+            "--set", f"apiserver.route.name={release}-api",
+            "--set", f"apiserver.route.gatewayName={GATEWAY_NAME}",
+            "--set", f"apiserver.route.gatewayNamespace={config.AUTHGUARD_NAMESPACE}",
+            "--set", "apiserver.route.sectionName=http",
+            "--set", f"apiserver.route.hostnames[0]={APPLICATION_HOST}",
+            "--set", f"apiserver.route.hostnames[1]={BROWSER_HOST}",
+            "--set-string", "apiserver.route.path=/api/",
+            "--set", "web.route.enabled=true",
+            "--set", f"web.route.name={release}-web",
+            "--set", f"web.route.gatewayName={GATEWAY_NAME}",
+            "--set", f"web.route.gatewayNamespace={config.AUTHGUARD_NAMESPACE}",
+            "--set", "web.route.sectionName=http",
+            "--set", f"web.route.hostnames[0]={APPLICATION_HOST}",
+            "--set", f"web.route.hostnames[1]={BROWSER_HOST}",
             "--set", "wallet.enabled=false",
         ]
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as authguard_values_file:
-            json.dump(authguard_values, authguard_values_file)
-            authguard_values_file.flush()
-            cmd.extend(["-f", authguard_values_file.name])
-            rc, _ = FlowgentRuntime._run_sensitive(
-                ["helm"] + cmd,
-                f"helm install {release} {HELM_CHART} -n {namespace} <sensitive values redacted>",
-                timeout=600,
-            )
+        rc, _ = FlowgentRuntime._run_sensitive(
+            ["helm"] + cmd,
+            f"helm upgrade --install {release} {HELM_CHART} -n {namespace} "
+            "<sensitive values redacted>",
+            timeout=600,
+        )
         if rc != 0:
             return False
         # The apiserver initializes its lifecycle publisher once at startup.  Make
@@ -957,9 +959,13 @@ class FlowgentRuntime:
             return False
         if not FlowgentRuntime._ensure_runtime_credential_secret([namespace, FlowgentRuntime._workload_namespace()]):
             return False
-        if not FlowgentRuntime._ensure_notification_receiver(namespace):
+        if not FlowgentRuntime._ensure_notification_receiver(
+            config.MOCK_NOTIFICATION_NAMESPACE
+        ):
             return False
-        if not FlowgentRuntime._ensure_notification_channel(namespace, release):
+        if not FlowgentRuntime._ensure_notification_channel(
+            namespace, release, config.MOCK_NOTIFICATION_NAMESPACE
+        ):
             return False
         if not FlowgentRuntime.wait_for_rollouts(namespace, release, DEFAULT_TIMEOUT):
             return False
@@ -1089,10 +1095,15 @@ class FlowgentDeployer(BaseDeployer):
 
     def __init__(self, context: RunContext) -> None:
         super().__init__(context)
-        if not context.namespace.startswith("e2e-flowgent-"):
-            raise ValueError("Flowgent E2E namespace must start with e2e-flowgent-")
-        if not context.release.startswith("e2e-flowgent"):
-            raise ValueError("Flowgent E2E release must start with e2e-flowgent")
+        if not context.namespace.startswith(f"{config.RESOURCE_PREFIX}-"):
+            raise ValueError(
+                f"Flowgent E2E namespace must start with {config.RESOURCE_PREFIX}-"
+            )
+        if context.release != "flowgent":
+            raise ValueError(
+                "Flowgent E2E release must use the production-style name 'flowgent'; "
+                "the namespace owns environment isolation"
+            )
 
     def configure(self) -> None:
         self.step("configure runtime proxy allowlist", FlowgentRuntime.configure_runtime_proxy_env)

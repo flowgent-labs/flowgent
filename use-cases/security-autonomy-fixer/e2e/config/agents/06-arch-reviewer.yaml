@@ -8,7 +8,7 @@ metadata:
   description: Architecture reviewer that validates patches against system design principles, coupling, and cohesion
 
 data:
-  model: deepseek/deepseek-chat
+  model: e2e-llm/e2e-deterministic
   max_tokens: 16384
   soul: |-
     You are an architecture reviewer.

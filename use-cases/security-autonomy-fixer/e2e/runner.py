@@ -68,7 +68,10 @@ class E2ERunner:
             "command",
             nargs="?",
             choices=("cleanup",),
-            help="Remove only resources owned by the selected E2E deployer.",
+            help=(
+                "Remove resources owned by the selected E2E deployer. Kubernetes cleanup "
+                "uses graceful Helm/namespace deletion first, then bounded finalizer recovery."
+            ),
         )
         parser.add_argument(
             "--deployer",
@@ -88,7 +91,11 @@ class E2ERunner:
             default=False,
             help="Remove selected-backend resources after the run (default: retain).",
         )
-        parser.add_argument("--cleanup", action="store_true", help="Alias for cleanup command")
+        parser.add_argument(
+            "--cleanup",
+            action="store_true",
+            help="Alias for the ownership-scoped cleanup command.",
+        )
         parser.add_argument("--access", action="store_true", help="Print/open manual endpoints")
         parser.add_argument("--namespace", "-n", default=config.K8S_NAMESPACE)
         parser.add_argument("--release", "-r", default=config.RELEASE_NAME)

@@ -108,6 +108,16 @@ apiserver:
       rest: 30999
       internal: 30990
       mgmt: 30991
+  # Optional protected edge route. The Gateway may live in a dedicated
+  # AuthGuard namespace while this backend remains local to Flowgent.
+  route:
+    enabled: false
+    name: flowgent-api
+    gatewayName: ""
+    gatewayNamespace: ""
+    sectionName: http
+    hostnames: []
+    path: /api/
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
@@ -149,6 +159,7 @@ web:
     enabled: false
     name: flowgent-web
     gatewayName: ""
+    gatewayNamespace: ""
     sectionName: http
     hostnames: []
   resources:
@@ -167,6 +178,10 @@ controller:
     name: flowgent-controller
   rbac:
     create: true
+    # Cluster-scoped names cannot rely on namespace isolation. Empty derives
+    # the production default from serviceAccount.name; isolated E2E profiles
+    # should provide a globally unique value.
+    clusterRoleName: ""
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }

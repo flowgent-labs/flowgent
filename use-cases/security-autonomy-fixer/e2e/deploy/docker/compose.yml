@@ -78,7 +78,7 @@ services:
     image: localhost/flowgent:latest
     entrypoint: ["python3", "/opt/e2e/server.py"]
     volumes:
-      - ../mocksvc-github-service/app/server.py:/opt/e2e/server.py:ro
+      - ../mock-github-service/app/server.py:/opt/e2e/server.py:ro
     ports:
       - "127.0.0.1:18087:8080"
 
@@ -88,9 +88,19 @@ services:
     environment:
       EXPECTED_TOKEN: "${FLOWGENT_E2E_NOTIFICATION_TOKEN}"
     volumes:
-      - ../mocksvc-notification-service/app/server.py:/opt/e2e/server.py:ro
+      - ../mock-notification-service/app/server.py:/opt/e2e/server.py:ro
     ports:
       - "127.0.0.1:21081:8080"
+
+  mock-llm:
+    image: localhost/flowgent:latest
+    entrypoint: ["python3", "/opt/e2e/server.py"]
+    volumes:
+      - ../mock-llm-service/app/server.py:/opt/e2e/server.py:ro
+    networks:
+      default:
+        aliases:
+          - mock-llm.e2e-flowgent-mock-llm.svc.cluster.local
 
   authguard-authn:
     image: localhost/e2e-flowgent-authguard:0.1.0
@@ -132,12 +142,14 @@ services:
       FLOWGENT_NOTIFICATION_KEY_V1: "${FLOWGENT_NOTIFICATION_KEY_V1}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_API_KEY_FLOWGENT: "${DEEPSEEK_API_KEY:-}"
+      FLOWGENT_E2E_LLM_API_KEY: "e2e-fixture-only"
       SONARQUBE_TOKEN: "${SONARQUBE_TOKEN:-}"
+      SONARQUBE_MCP_URL: "${SONARQUBE_MCP_URL:-http://host.docker.internal:18080/mcp}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
       GH_TOKEN: "${GH_TOKEN:-}"
       # A host-loopback proxy is not reachable as 127.0.0.1 from a container.
       HTTPS_PROXY: "${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY:-http://host.docker.internal:8800}"
-      NO_PROXY: "localhost,127.0.0.1,postgres,emqx,jaeger,authguard-authn,authguard-authz,ldap,mock-github,notification-receiver"
+      NO_PROXY: "localhost,127.0.0.1,postgres,emqx,jaeger,authguard-authn,authguard-authz,ldap,mock-github,notification-receiver,mock-llm,mock-llm.e2e-flowgent-mock-llm.svc.cluster.local"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -149,6 +161,7 @@ services:
       emqx: {condition: service_healthy}
       jaeger: {condition: service_started}
       notification-receiver: {condition: service_started}
+      mock-llm: {condition: service_started}
     ports:
       - "127.0.0.1:29999:9990"
       - "127.0.0.1:29998:9999"

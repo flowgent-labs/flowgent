@@ -47,7 +47,7 @@ class A2AProtocolVerifier(BaseVerifier):
             result = subprocess.run(
                 [
                     "kubectl", "get", "secret", AUTH_SECRET,
-                    "-n", config.SYSTEM_NAMESPACE,
+                    "-n", config.AUTHGUARD_NAMESPACE,
                     "-o", "jsonpath={.data.AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}",
                 ],
                 capture_output=True,

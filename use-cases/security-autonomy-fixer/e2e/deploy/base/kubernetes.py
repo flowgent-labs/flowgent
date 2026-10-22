@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import glob
 import json
 import os
-import re
 import shutil
 import shlex
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.request
 from typing import Iterator
@@ -39,6 +38,14 @@ AUTHGUARD_SOURCE_IMAGE = os.getenv(
 AUTHGUARD_WEB_SOURCE_IMAGE = os.getenv(
     "FLOWGENT_E2E_AUTHGUARD_WEB_IMAGE",
     "ghcr.io/wl4g/authguard-web:1.0.1",
+)
+LOCAL_PATH_HELPER_IMAGE = os.getenv(
+    "FLOWGENT_E2E_LOCAL_PATH_HELPER_IMAGE",
+    "docker.io/rancher/mirrored-library-busybox:1.37.0",
+)
+LOCAL_PATH_HELPER_SOURCE_IMAGE = os.getenv(
+    "FLOWGENT_E2E_LOCAL_PATH_HELPER_SOURCE_IMAGE",
+    "registry.cn-shenzhen.aliyuncs.com/wl4g/rancher_mirrored-library-busybox:1.37.0",
 )
 
 
@@ -106,10 +113,10 @@ class KubernetesImageRuntime:
         """Keep the K8s endpoints for the retained Flowgent deployment available."""
         core = PortForwards(context).start()
         specs = (
-            (f"{context.release}-authguard-authn", config.LOCAL_AUTHN_PORT, 8082),
-            (f"{context.release}-authguard-authn", config.LOCAL_AUTHN_MGMT_PORT, 9091),
-            (f"{context.release}-authguard", config.LOCAL_AUTHZ_API_PORT, 9090),
-            (f"{context.release}-authguard", config.LOCAL_AUTHZ_MGMT_PORT, 9091),
+            ("authguard-authn", config.LOCAL_AUTHN_PORT, 8082),
+            ("authguard-authn", config.LOCAL_AUTHN_MGMT_PORT, 9091),
+            ("authguard", config.LOCAL_AUTHZ_API_PORT, 9090),
+            ("authguard", config.LOCAL_AUTHZ_MGMT_PORT, 9091),
         )
         processes = [
             subprocess.Popen(
@@ -117,7 +124,7 @@ class KubernetesImageRuntime:
                     "kubectl",
                     "port-forward",
                     "-n",
-                    context.namespace,
+                    config.AUTHGUARD_NAMESPACE,
                     f"service/{service}",
                     f"{local}:{remote}",
                 ],
@@ -314,28 +321,62 @@ class KubernetesImageManager:
     def import_authguard_web() -> bool:
         return KubernetesImageRuntime._import_authguard_web_image()
 
+    @staticmethod
+    def import_local_path_helper() -> bool:
+        """Preload k3s' local-path helper without relying on Docker Hub."""
+        provisioner = KubernetesImageRuntime._image_command(
+            (
+                "kubectl",
+                "get",
+                "storageclass",
+                "local-path",
+                "-o",
+                "jsonpath={.provisioner}",
+            ),
+            allowed_codes={0, 1},
+        )
+        if provisioner.return_code != 0 or provisioner.output.strip() != "rancher.io/local-path":
+            return True
+        try:
+            KubernetesImageRuntime._ensure_local_image(LOCAL_PATH_HELPER_SOURCE_IMAGE)
+            KubernetesImageRuntime._image_command(
+                ("docker", "tag", LOCAL_PATH_HELPER_SOURCE_IMAGE, LOCAL_PATH_HELPER_IMAGE)
+            )
+            loader = KubernetesLocalImageLoader.detect()
+            loader.import_image(LOCAL_PATH_HELPER_IMAGE)
+            print(
+                "  Preloaded local-path helper through "
+                f"{loader.description}: {LOCAL_PATH_HELPER_IMAGE}"
+            )
+            return True
+        except RuntimeError as error:
+            print(f"  ERROR: preparing local-path helper image failed: {error}")
+            return False
+
 
 class PortForwards:
     """Own only the localhost tunnels required by black-box verifiers."""
 
     def __init__(self, context: RunContext) -> None:
-        from deploy.authguard import GATEWAY_LISTENER_PORT, MOCK_GITHUB_NAME
+        from deploy.authguard import GATEWAY_LISTENER_PORT, GATEWAY_NAME, MOCK_GITHUB_NAME
 
         self.context = context
         self.processes: dict[str, subprocess.Popen] = {}
         release = context.release
         self.specs = (
-            (f"{release}-apiserver", (f"{config.LOCAL_API_PORT}:9990",)),
-            (f"{release}-a2a", (f"{config.LOCAL_A2A_PORT}:9992",)),
+            (context.namespace, f"{release}-apiserver", (f"{config.LOCAL_API_PORT}:9990",)),
+            (context.namespace, f"{release}-a2a", (f"{config.LOCAL_A2A_PORT}:9992",)),
             (
+                context.namespace,
                 f"{release}-emqx",
                 (
                     f"{config.LOCAL_MQTT_PORT}:1883",
                     f"{config.LOCAL_EMQX_DASHBOARD_PORT}:18083",
                 ),
             ),
-            (f"{release}-jaeger", (f"{config.LOCAL_JAEGER_PORT}:16686",)),
+            (context.namespace, f"{release}-jaeger", (f"{config.LOCAL_JAEGER_PORT}:16686",)),
             (
+                config.MOCK_GITHUB_NAMESPACE,
                 MOCK_GITHUB_NAME,
                 (f"{config.LOCAL_MOCK_GITHUB_PORT}:8080",),
             ),
@@ -346,9 +387,9 @@ class PortForwards:
                 "get",
                 "service",
                 "-n",
-                context.namespace,
+                config.AUTHGUARD_NAMESPACE,
                 "-l",
-                f"gateway.envoyproxy.io/owning-gateway-name={config.RESOURCE_PREFIX}-gateway",
+                f"gateway.envoyproxy.io/owning-gateway-name={GATEWAY_NAME}",
                 "-o",
                 "jsonpath={.items[0].metadata.name}",
             )
@@ -356,7 +397,11 @@ class PortForwards:
         if not gateway:
             raise RuntimeError("Envoy Gateway data-plane Service was not created")
         self.specs += (
-            (gateway, (f"{config.LOCAL_GATEWAY_PORT}:{GATEWAY_LISTENER_PORT}",)),
+            (
+                config.AUTHGUARD_NAMESPACE,
+                gateway,
+                (f"{config.LOCAL_GATEWAY_PORT}:{GATEWAY_LISTENER_PORT}",),
+            ),
         )
 
     @staticmethod
@@ -373,16 +418,16 @@ class PortForwards:
         return all(self._reachable(self._local_port(spec)) for spec in specs)
 
     def _cleanup_stale(self) -> None:
-        pattern = (
-            f"kubectl port-forward -n {self.context.namespace} "
-            f"service/{self.context.release}-"
-        )
-        subprocess.run(
-            ["pkill", "-f", pattern],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        for namespace, service, _ in self.specs:
+            subprocess.run(
+                [
+                    "pkill", "-f",
+                    f"kubectl port-forward -n {namespace} service/{service}",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
         time.sleep(0.5)
 
     def _service_probe_ok(self) -> bool:
@@ -412,7 +457,9 @@ class PortForwards:
             time.sleep(0.5)
         raise RuntimeError("local verification tunnels did not stay healthy")
 
-    def _start_one(self, service: str, specs: tuple[str, ...]) -> None:
+    def _start_one(
+        self, namespace: str, service: str, specs: tuple[str, ...]
+    ) -> None:
         if self._ports_reachable(specs):
             print(f"  Reusing local ports for {service}: {', '.join(specs)}")
             return
@@ -421,7 +468,7 @@ class PortForwards:
                 "kubectl",
                 "port-forward",
                 "-n",
-                self.context.namespace,
+                namespace,
                 f"service/{service}",
                 *specs,
             ],
@@ -429,7 +476,7 @@ class PortForwards:
             stderr=subprocess.PIPE,
             text=True,
         )
-        self.processes[service] = process
+        self.processes[f"{namespace}/{service}"] = process
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if self._ports_reachable(specs) and process.poll() is None:
@@ -447,11 +494,11 @@ class PortForwards:
         return self
 
     def ensure(self) -> None:
-        for service, specs in self.specs:
-            process = self.processes.get(service)
+        for namespace, service, specs in self.specs:
+            process = self.processes.get(f"{namespace}/{service}")
             if self._ports_reachable(specs) and (process is None or process.poll() is None):
                 continue
-            self._start_one(service, specs)
+            self._start_one(namespace, service, specs)
         self._wait_healthy()
 
     def healthy(self) -> bool:
@@ -481,11 +528,23 @@ class KubernetesDeployer(BaseDeployer):
     """K8s backend for one isolated Flowgent release on any supported runtime."""
 
     def __init__(self, context: RunContext) -> None:
+        config.SONARQUBE_URL = config.K8S_SONARQUBE_URL
+        os.environ["FLOWGENT_SONARQUBE_URL"] = config.K8S_SONARQUBE_URL
+        os.environ["FLOWGENT_E2E_SONARQUBE_MCP_URL"] = (
+            config.K8S_SONARQUBE_MCP_URL
+        )
+        os.environ["SONARQUBE_MCP_URL"] = (
+            f"http://sonarqube-mcp.{config.SONARQUBE_NAMESPACE}.svc.cluster.local:8080/mcp"
+        )
         from deploy.flowgent import FlowgentDeployer
+        from deploy.mock_llm import MockLLMDeployer
+        from deploy.postgres import PgvectorDeployer
         from deploy.sonarqube import SonarQubeDeployer
 
         super().__init__(context)
         self.flowgent = FlowgentDeployer(context)
+        self.mock_llm = MockLLMDeployer(context)
+        self.pgvector = PgvectorDeployer(context)
         self.sonarqube = SonarQubeDeployer(context)
     backend = "k8s"
 
@@ -501,6 +560,7 @@ class KubernetesDeployer(BaseDeployer):
         # Always resolve the dedicated pgvector endpoint so --skip-deploy can
         # never fall back to an unrelated localhost PostgreSQL instance.
         self.step("start and verify dedicated pgvector persistence", self._ensure_pgvector)
+        self.step("start and verify deterministic LLM fixture", self._ensure_mock_llm)
         super().prepare(
             skip_sonarqube=skip_sonarqube,
             skip_build=skip_build,
@@ -531,167 +591,34 @@ class KubernetesDeployer(BaseDeployer):
         self.sonarqube.verify()
 
     def _ensure_pgvector(self) -> None:
-        container = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "flowgent-test-pgvector")
-        os.environ["FLOWGENT_E2E_PG_CONTAINER"] = container
-        if container == "flowgent-test-pgvector":
-            self._run(
-                ("make", "-C", str(config.PROJECT_ROOT), "test-it-deps"),
-                timeout_seconds=180,
-                environment={"HTTPS_PROXY": "http://127.0.0.1:8800"},
-            )
+        if not KubernetesImageManager.import_local_path_helper():
+            raise RuntimeError("local-path helper image could not be prepared")
+        self.pgvector.deploy()
+        self.pgvector.verify()
+        self.details.extend(self.pgvector.details)
 
-        inspect = subprocess.run(
-            ["docker", "inspect", container, "--format", "{{json .Config.Env}}"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if inspect.returncode != 0:
-            raise RuntimeError(f"dedicated pgvector container is unavailable: {container}")
-        container_env = {}
-        for entry in json.loads(inspect.stdout):
-            key, separator, value = entry.partition("=")
-            if separator:
-                container_env[key] = value
-        defaults = {
-            "FLOWGENT_PG_USER": container_env.get("POSTGRES_USER", ""),
-            "FLOWGENT_PG_PASSWORD": container_env.get("POSTGRES_PASSWORD", ""),
-            "FLOWGENT_PG_DATABASE": container_env.get("POSTGRES_DB", ""),
-            "FLOWGENT_PG_PORT": "5432",
-        }
-        for key, value in defaults.items():
-            if not os.getenv(key) and value:
-                os.environ[key] = value
-
-        ip_result = subprocess.run(
-            [
-                "docker",
-                "inspect",
-                container,
-                "--format",
-                "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        pg_host = ip_result.stdout.strip().split()[0] if ip_result.returncode == 0 and ip_result.stdout.strip() else ""
-        if not os.getenv("FLOWGENT_PG_HOST") and pg_host:
-            os.environ["FLOWGENT_PG_HOST"] = pg_host
-        required = (
-            "FLOWGENT_PG_HOST",
-            "FLOWGENT_PG_PORT",
-            "FLOWGENT_PG_USER",
-            "FLOWGENT_PG_PASSWORD",
-            "FLOWGENT_PG_DATABASE",
-        )
-        if missing := [key for key in required if not os.getenv(key)]:
-            raise RuntimeError(f"pgvector connection configuration is incomplete: {missing}")
-
-        user = os.environ["FLOWGENT_PG_USER"]
-        database = os.environ["FLOWGENT_PG_DATABASE"]
-        vector_probe = subprocess.run(
-            [
-                "docker",
-                "exec",
-                container,
-                "psql",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-U",
-                user,
-                "-d",
-                database,
-                "-Atc",
-                (
-                    "CREATE EXTENSION IF NOT EXISTS vector; "
-                    "SELECT extversion FROM pg_extension WHERE extname='vector'; "
-                    "SELECT typname FROM pg_type WHERE typname='vector'; "
-                    "SELECT round(('[1,2,3]'::vector <-> '[1,2,4]'::vector)::numeric, 6);"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        probe_lines = vector_probe.stdout.splitlines()
-        if vector_probe.returncode != 0 or "vector" not in probe_lines or "1.000000" not in probe_lines:
-            detail = (vector_probe.stdout + vector_probe.stderr).strip()[-500:]
-            raise RuntimeError(f"native pgvector write/distance probe failed: {detail}")
-
-        try:
-            import psycopg2
-
-            connection = psycopg2.connect(
-                host=os.environ["FLOWGENT_PG_HOST"],
-                port=int(os.environ["FLOWGENT_PG_PORT"]),
-                user=user,
-                password=os.environ["FLOWGENT_PG_PASSWORD"],
-                dbname=database,
-                connect_timeout=5,
-            )
-            try:
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector")
-                    if float(cursor.fetchone()[0]) != 1.0:
-                        raise RuntimeError("unexpected pgvector distance over the runtime TCP path")
-            finally:
-                connection.close()
-        except Exception as error:
-            raise RuntimeError(
-                "K8s runtime cannot reach the dedicated pgvector TCP endpoint"
-            ) from error
-
-        config.PG_HOST = os.environ["FLOWGENT_PG_HOST"]
-        config.PG_PORT = int(os.environ["FLOWGENT_PG_PORT"])
-        config.PG_USER = user
-        config.PG_PASSWORD = os.environ["FLOWGENT_PG_PASSWORD"]
-        config.PG_DATABASE = database
-        version = next(
-            (line for line in probe_lines if re.fullmatch(r"\d+\.\d+\.\d+", line)),
-            "unknown",
-        )
-        print(
-            f"  Dedicated pgvector ready: container={container}, database={database}, "
-            f"extension={version}, native_distance=1.000000"
-        )
+    def _ensure_mock_llm(self) -> None:
+        if not KubernetesImageManager.import_core():
+            raise RuntimeError("Flowgent core image required by mock LLM could not be imported")
+        self.mock_llm.deploy()
+        self.mock_llm.verify()
+        self.details.extend(self.mock_llm.details)
 
     def reset_database(self) -> None:
-        container = os.getenv("FLOWGENT_E2E_PG_CONTAINER", "flowgent-test-pgvector")
-        schema = config.PG_SCHEMA
-        if not re.fullmatch(r"[a-z_][a-z0-9_]*", schema):
-            raise ValueError(f"invalid isolated PostgreSQL schema: {schema!r}")
-        user = os.getenv("FLOWGENT_PG_USER", "test")
-        database = os.getenv("FLOWGENT_PG_DATABASE", "flowgent")
-        sql = (
-            f'DROP SCHEMA IF EXISTS "{schema}" CASCADE; '
-            f'CREATE SCHEMA "{schema}" AUTHORIZATION "{user}";'
-        )
-        self._run(
-            (
-                "docker",
-                "exec",
-                container,
-                "psql",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-U",
-                user,
-                "-d",
-                database,
-                "-c",
-                sql,
-            ),
-            timeout_seconds=60,
-        )
+        from deploy.postgres import PgvectorRuntime
+
+        PgvectorRuntime.reset_schema(config.PG_SCHEMA)
 
     def build_images(self) -> None:
         build_environment = {"GOFLAGS": "-p=1", "GOMAXPROCS": "1", "GOGC": "50"}
-        self._run(
-            ("make", "-C", str(config.PROJECT_ROOT), "build:core"),
-            timeout_seconds=CORE_BUILD_TIMEOUT_SECONDS,
-            environment=build_environment,
-        )
+        # Isolate Go's transient work tree so disk-pressure recovery can never
+        # delete another build's /tmp/go-build* directory on this shared host.
+        with tempfile.TemporaryDirectory(prefix="flowgent-e2e-go-build-") as go_tmp:
+            self._run(
+                ("make", "-C", str(config.PROJECT_ROOT), "build:core"),
+                timeout_seconds=CORE_BUILD_TIMEOUT_SECONDS,
+                environment={**build_environment, "GOTMPDIR": go_tmp},
+            )
         if not config.CONSOLE_BIN.is_file():
             raise RuntimeError(f"console binary missing after build: {config.CONSOLE_BIN}")
         self._ensure_disk_headroom("before image build")
@@ -706,7 +633,7 @@ class KubernetesDeployer(BaseDeployer):
                 timeout_seconds=1200,
                 environment=image_environment,
             )
-        self._ensure_disk_headroom("after image build", prune_builder_cache=False)
+        self._ensure_disk_headroom("after image build", prune_dangling_images=False)
 
     def deploy(self) -> None:
         self.flowgent.deploy()
@@ -716,13 +643,12 @@ class KubernetesDeployer(BaseDeployer):
 
     def verify_authguard(self, *, resource_scope: bool = True) -> None:
         from deploy.authguard import AuthGuardDeployer
-        from deploy.flowgent import FLOWGENT_PG_CONTAINER, FlowgentRuntime
+        from deploy.postgres import PgvectorRuntime
 
         deployer = AuthGuardDeployer(
             self.context,
-            pg_container=FLOWGENT_PG_CONTAINER,
-            pg_host=FlowgentRuntime._docker_container_ip(FLOWGENT_PG_CONTAINER),
-            pg_port=os.getenv("FLOWGENT_PG_PORT", "5432"),
+            pg_host=PgvectorRuntime.service_fqdn(),
+            pg_port="5432",
             pg_user=os.getenv("FLOWGENT_PG_USER", "test"),
             pg_password=os.getenv("FLOWGENT_PG_PASSWORD", "test"),
         )
@@ -800,7 +726,7 @@ class KubernetesDeployer(BaseDeployer):
         *,
         min_free_gib: int = 12,
         max_used_percent: int = 88,
-        prune_builder_cache: bool = True,
+        prune_dangling_images: bool = True,
     ) -> None:
         usage = shutil.disk_usage("/")
         free_gib = usage.free / (1024**3)
@@ -811,13 +737,13 @@ class KubernetesDeployer(BaseDeployer):
             f"  WARN: low disk headroom {label}: free={free_gib:.1f}GiB "
             f"used={used_percent}%"
         )
-        if prune_builder_cache:
+        if prune_dangling_images:
+            # Only remove untagged image objects. A shared E2E host may contain
+            # intentionally retained, formally named images for other suites;
+            # an all-build-cache prune can invalidate their concurrent builds.
             result = CommandRunner.run(
-                ("docker", "builder", "prune", "-af"),
+                ("docker", "image", "prune", "-f"),
                 timeout_seconds=120,
             )
             if not result.passed:
-                CommandRunner.run(("podman", "builder", "prune", "-af"), timeout_seconds=120)
-        for path in glob.glob("/tmp/go-build*"):
-            if os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
+                CommandRunner.run(("podman", "image", "prune", "-f"), timeout_seconds=120)

@@ -43,14 +43,18 @@ class DiscoveryAnalyzeVerifier(BaseVerifier):
         task = c.node_task(tasks_by_node, "scan-sonarqube")
         if c.task_completed(task):
             output = c.parse_output(task)
-            issues = output.get("issues") or output.get("results") or output.get("data")
-            if issues and isinstance(issues, list) and len(issues) > 0:
+            issues = output.get("issues")
+            if issues is None:
+                issues = output.get("results")
+            if issues is None:
+                issues = output.get("data")
+            if isinstance(issues, list) and len(issues) > 0:
                 print(f"  OK scan-sonarqube: {len(issues)} issues found")
                 passed += 1
-            elif issues and isinstance(issues, list):
+            elif isinstance(issues, list):
                 print(f"  OK scan-sonarqube: issues array present (empty)")
                 passed += 1
-            elif issues and isinstance(issues, dict):
+            elif isinstance(issues, dict):
                 inner = issues.get("issues") or issues.get("results") or []
                 print(f"  OK scan-sonarqube: issues wrapped in outer key ({len(inner) if isinstance(inner, list) else '?'})")
                 passed += 1

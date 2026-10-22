@@ -11,4 +11,4 @@ metadata:
 data:
   name: sonarqube
   transport: http
-  rpc_url: http://172.29.235.101:18080/mcp
+  rpc_url: ${SONARQUBE_MCP_URL}

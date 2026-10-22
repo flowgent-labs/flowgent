@@ -96,5 +96,54 @@ spec:
 {{- if and (eq (.Values.apiserver.service.type | default "ClusterIP") "NodePort") .Values.apiserver.service.nodePorts.mgmt }}
       nodePort: {{ .Values.apiserver.service.nodePorts.mgmt }}
 {{- end }}
+{{- if .Values.apiserver.route.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.apiserver.route.name }}
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+    authguard.io/protected: "true"
+spec:
+  parentRefs:
+    - name: {{ required "apiserver.route.gatewayName is required" .Values.apiserver.route.gatewayName }}
+      {{- with .Values.apiserver.route.gatewayNamespace }}
+      namespace: {{ . | quote }}
+      {{- end }}
+      sectionName: {{ .Values.apiserver.route.sectionName }}
+  {{- with .Values.apiserver.route.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .Values.apiserver.route.path | quote }}
+      backendRefs:
+        - name: {{ include "flowgent.fullname" . }}-apiserver
+          port: {{ .Values.apiserver.service.restPort }}
+{{- with .Values.apiserver.route.gatewayNamespace }}
+---
+# A selector-based SecurityPolicy may target an HTTPRoute in another namespace
+# only when the target namespace grants that reference explicitly.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: {{ $.Values.apiserver.route.name }}-authguard-policy
+  labels:
+    {{- include "flowgent.labels" $ | nindent 4 }}
+spec:
+  from:
+    - group: gateway.envoyproxy.io
+      kind: SecurityPolicy
+      namespace: {{ . | quote }}
+  to:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $.Values.apiserver.route.name }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

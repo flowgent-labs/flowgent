@@ -77,6 +77,9 @@ metadata:
 spec:
   parentRefs:
     - name: {{ required "web.route.gatewayName is required" .Values.web.route.gatewayName }}
+      {{- with .Values.web.route.gatewayNamespace }}
+      namespace: {{ . | quote }}
+      {{- end }}
       sectionName: {{ .Values.web.route.sectionName }}
   {{- with .Values.web.route.hostnames }}
   hostnames:

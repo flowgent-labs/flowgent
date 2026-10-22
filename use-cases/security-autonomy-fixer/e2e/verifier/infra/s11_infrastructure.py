@@ -194,6 +194,7 @@ class InfrastructureReadinessVerifier(BaseVerifier):
                            "-l", f"app.kubernetes.io/instance={RELEASE}"])
         output_lines = result.stdout.strip().split("\n")
         print(f"  [2.6] K8s resources: {max(0, len(output_lines) - 1)} items (deploy/svc/configmap)")
+        InfrastructureReadinessVerifier._verify_namespace_topology(failures)
 
         # ── L3: Pod Readiness ──────────────────────────────────
         print("\n── L3: Pod Readiness ──")
@@ -366,6 +367,126 @@ class InfrastructureReadinessVerifier(BaseVerifier):
         print(f"\n  Preflight check complete.")
         if failures:
             raise AssertionError(f"Infrastructure readiness failed: {failures}")
+
+    @staticmethod
+    def _verify_namespace_topology(failures: list[str]) -> None:
+        print("\n── L2.7: Namespace Ownership and Resource Names ──")
+        expected_namespaces = set(config.K8S_MANAGED_NAMESPACES)
+        namespaces = InfrastructureReadinessVerifier.kubectl_json(["get", "namespaces"])
+        actual = {
+            item.get("metadata", {}).get("name")
+            for item in (namespaces or {}).get("items", [])
+        }
+        missing = sorted(expected_namespaces - actual)
+        if missing:
+            failures.append(f"managed namespaces missing: {missing}")
+
+        authguard_releases = subprocess.run(
+            ["helm", "list", "-n", config.AUTHGUARD_NAMESPACE, "-o", "json"],
+            capture_output=True,
+            text=True,
+        )
+        try:
+            releases = json.loads(authguard_releases.stdout) if authguard_releases.returncode == 0 else []
+        except json.JSONDecodeError:
+            releases = []
+        if not any(
+            item.get("name") == config.AUTHGUARD_RELEASE_NAME
+            and item.get("status") == "deployed"
+            for item in releases
+        ):
+            failures.append(
+                f"AuthGuard release {config.AUTHGUARD_NAMESPACE}/{config.AUTHGUARD_RELEASE_NAME} not deployed"
+            )
+
+        expected_workloads = {
+            config.SYSTEM_NAMESPACE: {
+                "deployment": {
+                    "flowgent-apiserver",
+                    "flowgent-controller",
+                    "flowgent-web",
+                    "flowgent-notifier",
+                    "flowgent-a2a",
+                    "flowgent-session-jobmanager",
+                    "flowgent-emqx",
+                    "flowgent-jaeger",
+                },
+            },
+            config.AUTHGUARD_NAMESPACE: {
+                "deployment": {
+                    "authguard",
+                    "authguard-authn",
+                    "authguard-web",
+                    "envoy-gateway",
+                },
+                "statefulset": {"authguard-redis"},
+            },
+            config.MOCK_GITHUB_NAMESPACE: {"deployment": {"mock-github"}},
+            config.MOCK_NOTIFICATION_NAMESPACE: {"deployment": {"mock-notification"}},
+            config.MOCK_LLM_NAMESPACE: {"deployment": {"mock-llm"}},
+            config.STORAGE_NAMESPACE: {"statefulset": {"pgvector"}},
+            config.SONARQUBE_NAMESPACE: {
+                "deployment": {"sonarqube", "sonarqube-mcp"},
+                "statefulset": {"sonarqube-postgres"},
+            },
+        }
+        for namespace, kinds in expected_workloads.items():
+            for kind, expected in kinds.items():
+                payload = InfrastructureReadinessVerifier.kubectl_json(
+                    ["get", kind, "-n", namespace]
+                )
+                names = {
+                    item.get("metadata", {}).get("name")
+                    for item in (payload or {}).get("items", [])
+                }
+                if absent := sorted(expected - names):
+                    failures.append(f"{namespace} missing {kind}: {absent}")
+
+        namespaced_kinds = (
+            "deployments",
+            "statefulsets",
+            "services",
+            "configmaps",
+            "secrets",
+            "httproutes",
+            "gateways",
+            "referencegrants",
+        )
+        for namespace in sorted(expected_namespaces):
+            for kind in namespaced_kinds:
+                resources = InfrastructureReadinessVerifier.kubectl_json(
+                    ["get", kind, "-n", namespace]
+                )
+                for resource in (resources or {}).get("items", []):
+                    resource_name = resource.get("metadata", {}).get("name", "")
+                    if resource_name.startswith("e2e-"):
+                        failures.append(
+                            "namespaced resource repeats E2E prefix: "
+                            f"{namespace}/{kind}/{resource_name}"
+                        )
+            pods = InfrastructureReadinessVerifier.kubectl_json(
+                ["get", "pods", "-n", namespace]
+            )
+            for pod in (pods or {}).get("items", []):
+                name = pod.get("metadata", {}).get("name", "")
+                if name.startswith("e2e-"):
+                    failures.append(
+                        f"namespaced pod repeats E2E prefix: {namespace}/{name}"
+                    )
+                phase = pod.get("status", {}).get("phase")
+                if phase == "Succeeded":
+                    continue
+                statuses = pod.get("status", {}).get("containerStatuses", [])
+                if phase != "Running" or not statuses or not all(
+                    item.get("ready") for item in statuses
+                ):
+                    failures.append(
+                        f"managed pod not ready: {namespace}/{name} phase={phase}"
+                    )
+        print(
+            f"  [2.7] {len(expected_namespaces)} isolated namespaces; "
+            "namespaced workloads use production-style names"
+        )
 
     scenario_id = "11"
     title = "Infrastructure — Pre-Deployment & Pod Readiness"

@@ -43,10 +43,11 @@ class BrowserConsoleVerifier:
     def mock_github_host(self) -> str:
         if self.context.deployer == "docker":
             return "mock-github"
-        return (
-            f"{config.RESOURCE_PREFIX}-github-oauth.{self.context.namespace}"
-            ".svc.cluster.local"
-        )
+        # The mock has its own isolated namespace, while the Service itself uses
+        # the same production-style name as a real deployment.  Keep this in
+        # sync with AuthGuardRuntime.runtime_config so Chromium can resolve the
+        # OAuth provider through the retained localhost port-forward.
+        return f"mock-github.{config.MOCK_GITHUB_NAMESPACE}.svc.cluster.local"
 
     @property
     def web_namespace(self) -> str:
@@ -198,7 +199,7 @@ class BrowserConsoleVerifier:
                 "secret",
                 ACCEPTANCE_SECRET,
                 "-n",
-                self.context.namespace,
+                config.AUTHGUARD_NAMESPACE,
                 "-o",
                 "json",
             ],

@@ -73,7 +73,10 @@ class KubernetesConfiguration:
 
 # ── Isolated deployment identity / local tunnels ─────────────────
 RESOURCE_PREFIX = os.getenv("FLOWGENT_E2E_RESOURCE_PREFIX", "e2e-flowgent")
-RELEASE_NAME = os.getenv("FLOWGENT_E2E_RELEASE", RESOURCE_PREFIX)
+RELEASE_NAME = os.getenv("FLOWGENT_E2E_RELEASE", "flowgent")
+AUTHGUARD_RELEASE_NAME = os.getenv(
+    "FLOWGENT_E2E_AUTHGUARD_RELEASE", f"{RESOURCE_PREFIX}-authguard"
+)
 LOCAL_API_PORT = int(os.getenv("FLOWGENT_E2E_API_PORT", "29999"))
 LOCAL_A2A_PORT = int(os.getenv("FLOWGENT_E2E_A2A_PORT", "19992"))
 LOCAL_MQTT_PORT = int(os.getenv("FLOWGENT_E2E_MQTT_PORT", "11883"))
@@ -86,6 +89,9 @@ LOCAL_AUTHZ_MGMT_PORT = int(os.getenv("FLOWGENT_E2E_AUTHZ_MGMT_PORT", "19091"))
 LOCAL_GATEWAY_PORT = int(os.getenv("FLOWGENT_E2E_GATEWAY_PORT", "18089"))
 LOCAL_MOCK_GITHUB_PORT = int(os.getenv("FLOWGENT_E2E_MOCK_GITHUB_PORT", "18087"))
 LOCAL_PG_PORT = int(os.getenv("FLOWGENT_E2E_PG_PORT", "25432"))
+PG_NODE_PORT = int(os.getenv("FLOWGENT_E2E_PG_NODE_PORT", "32432"))
+SONARQUBE_NODE_PORT = int(os.getenv("FLOWGENT_E2E_SONARQUBE_NODE_PORT", "32000"))
+SONARQUBE_MCP_NODE_PORT = int(os.getenv("FLOWGENT_E2E_SONARQUBE_MCP_NODE_PORT", "32080"))
 
 # ── K8S / K8s API ───────────────────────────────────────────────
 K8S_APISERVER_URL = os.getenv("FLOWGENT_K8S_APISERVER", f"http://localhost:{LOCAL_API_PORT}")
@@ -93,6 +99,24 @@ K8S_A2A_URL       = os.getenv("FLOWGENT_K8S_A2A",       f"http://localhost:{LOCA
 K8S_KUBECONFIG    = KubernetesConfiguration._default_kubeconfig()
 os.environ["KUBECONFIG"] = K8S_KUBECONFIG
 SYSTEM_NAMESPACE  = os.getenv("FLOWGENT_SYSTEM_NAMESPACE", f"{RESOURCE_PREFIX}-system")
+AUTHGUARD_NAMESPACE = os.getenv(
+    "FLOWGENT_AUTHGUARD_NAMESPACE", f"{RESOURCE_PREFIX}-authguard-system"
+)
+MOCK_GITHUB_NAMESPACE = os.getenv(
+    "FLOWGENT_MOCK_GITHUB_NAMESPACE", f"{RESOURCE_PREFIX}-mock-github"
+)
+MOCK_NOTIFICATION_NAMESPACE = os.getenv(
+    "FLOWGENT_MOCK_NOTIFICATION_NAMESPACE", f"{RESOURCE_PREFIX}-mock-notification"
+)
+MOCK_LLM_NAMESPACE = os.getenv(
+    "FLOWGENT_MOCK_LLM_NAMESPACE", f"{RESOURCE_PREFIX}-mock-llm"
+)
+STORAGE_NAMESPACE = os.getenv(
+    "FLOWGENT_STORAGE_NAMESPACE", f"{RESOURCE_PREFIX}-storage-system"
+)
+SONARQUBE_NAMESPACE = os.getenv(
+    "FLOWGENT_SONARQUBE_NAMESPACE", f"{RESOURCE_PREFIX}-sonarqube-system"
+)
 NAMESPACE_ID      = os.getenv("FLOWGENT_NAMESPACE_ID", "security-fixer")
 K8S_NAMESPACE     = SYSTEM_NAMESPACE
 # Must match runtime.namespace.namespace_prefix (etc/flowgent.yaml /
@@ -105,6 +129,16 @@ K8S_WORKLOAD_NAMESPACE_PREFIX = os.getenv(
     f"{RESOURCE_PREFIX}-workload-",
 )
 K8S_WORKLOAD_NAMESPACE = f"{K8S_WORKLOAD_NAMESPACE_PREFIX}{NAMESPACE_ID}"
+K8S_MANAGED_NAMESPACES = (
+    SYSTEM_NAMESPACE,
+    AUTHGUARD_NAMESPACE,
+    MOCK_GITHUB_NAMESPACE,
+    MOCK_NOTIFICATION_NAMESPACE,
+    MOCK_LLM_NAMESPACE,
+    STORAGE_NAMESPACE,
+    SONARQUBE_NAMESPACE,
+    K8S_WORKLOAD_NAMESPACE,
+)
 
 # ── PostgreSQL ───────────────────────────────────────────────────
 PG_HOST     = os.getenv("FLOWGENT_PG_HOST",     "localhost")
@@ -127,6 +161,13 @@ JAEGER_OTLP    = os.getenv("FLOWGENT_JAEGER_OTLP", "http://localhost:4318")
 # ── SonarQube ────────────────────────────────────────────────────
 SONARQUBE_URL   = os.getenv("FLOWGENT_SONARQUBE_URL",   "http://localhost:9000")
 SONARQUBE_TOKEN = os.getenv("FLOWGENT_SONARQUBE_TOKEN", "")
+K8S_SONARQUBE_URL = os.getenv(
+    "FLOWGENT_K8S_SONARQUBE_URL", f"http://127.0.0.1:{SONARQUBE_NODE_PORT}"
+)
+K8S_SONARQUBE_MCP_URL = os.getenv(
+    "FLOWGENT_K8S_SONARQUBE_MCP_URL",
+    f"http://127.0.0.1:{SONARQUBE_MCP_NODE_PORT}/mcp",
+)
 
 # ── K8S / kubectl paths ──────────────────────────────────────────
 KUBECTL_BIN = os.getenv("KUBECTL_BIN", "kubectl")

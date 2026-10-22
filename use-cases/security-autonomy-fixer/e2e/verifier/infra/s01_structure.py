@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from common import config
 from common.config import E2E_DIR, SCENARIOS
 from common.model import VerificationResult
 from verifier import BaseVerifier
@@ -25,6 +26,10 @@ class E2EStructureVerifier(BaseVerifier):
         self.step("verify Docker and K8s functional matrix parity", self._verify_parity)
         self.step("verify same-origin Hosted Login and sign-out routing", self._verify_gateway_browser)
         self.step("verify K8s image-runtime discovery contract", self._verify_image_importer)
+        self.step(
+            "verify namespace isolation and production-style resource names",
+            self._verify_namespace_contract,
+        )
         self.step("verify obsolete procedural modules are absent", self._verify_forbidden_paths)
 
     def _verify_deployers(self) -> None:
@@ -36,8 +41,11 @@ class E2EStructureVerifier(BaseVerifier):
             "deploy/envoy_gateway_post_renderer.py",
             "deploy/authguard/__init__.py",
             "deploy/flowgent/__init__.py",
-            "deploy/mocksvc-github-service/app/server.py",
-            "deploy/mocksvc-notification-service/app/server.py",
+            "deploy/mock-github-service/app/server.py",
+            "deploy/mock-notification-service/app/server.py",
+            "deploy/mock-llm-service/app/server.py",
+            "deploy/mock_llm/__init__.py",
+            "deploy/postgres/__init__.py",
             "deploy/sonarqube/__init__.py",
             "deploy/docker/compose.yml",
             "config/envoy/envoy.yaml",
@@ -78,6 +86,7 @@ class E2EStructureVerifier(BaseVerifier):
             ("deploy/authguard/__init__.py", "AuthGuardDeployer"),
             ("deploy/flowgent/__init__.py", "FlowgentDeployer"),
             ("deploy/sonarqube/__init__.py", "SonarQubeDeployer"),
+            ("deploy/postgres/__init__.py", "PgvectorDeployer"),
         ):
             candidate = self._class(self._tree(E2E_DIR / relative), class_name)
             if "BaseDeployer" not in {self._name(base) for base in candidate.bases}:
@@ -189,6 +198,7 @@ class E2EStructureVerifier(BaseVerifier):
             "ldap",
             "mock-github",
             "notification-receiver",
+            "mock-llm",
             "envoy",
         }
         if missing := required - services:
@@ -218,6 +228,55 @@ class E2EStructureVerifier(BaseVerifier):
         required_methods = {"import_core", "import_web", "import_authguard", "import_authguard_web"}
         if missing := required_methods - manager_methods:
             raise AssertionError(f"K8s image manager misses methods: {sorted(missing)}")
+
+    def _verify_namespace_contract(self) -> None:
+        expected_namespaces = {
+            "e2e-flowgent-system",
+            "e2e-flowgent-authguard-system",
+            "e2e-flowgent-mock-github",
+            "e2e-flowgent-mock-notification",
+            "e2e-flowgent-mock-llm",
+            "e2e-flowgent-storage-system",
+            "e2e-flowgent-sonarqube-system",
+            "e2e-flowgent-workload-security-fixer",
+        }
+        if set(config.K8S_MANAGED_NAMESPACES) != expected_namespaces:
+            raise AssertionError(
+                "K8s namespace topology drifted: "
+                f"{sorted(config.K8S_MANAGED_NAMESPACES)}"
+            )
+        if config.RELEASE_NAME != "flowgent":
+            raise AssertionError("business release must use the production-style name flowgent")
+        source = "\n".join(
+            (E2E_DIR / relative).read_text(encoding="utf-8")
+            for relative in (
+                "deploy/authguard/__init__.py",
+                "deploy/flowgent/__init__.py",
+                "deploy/postgres/__init__.py",
+                "deploy/mock_llm/__init__.py",
+                "deploy/sonarqube/__init__.py",
+            )
+        )
+        for obsolete in (
+            "mocksvc-github-service",
+            "mocksvc-notification-service",
+            'PGVECTOR_NAME = f"{config.RESOURCE_PREFIX}',
+            'SONARQUBE_NAME = f"{config.RESOURCE_PREFIX}',
+        ):
+            if obsolete in source:
+                raise AssertionError(f"obsolete E2E-prefixed resource contract remains: {obsolete}")
+        chart_root = E2E_DIR.parents[2] / "deploy/helm/flowgent"
+        apiserver = (chart_root / "templates/apiserver.yaml").read_text(encoding="utf-8")
+        web = (chart_root / "templates/web.yaml").read_text(encoding="utf-8")
+        for rendered in (apiserver, web):
+            if "gatewayNamespace" not in rendered:
+                raise AssertionError("cross-namespace Gateway parentRef is not explicit")
+        if 'authguard.io/protected: "true"' not in apiserver:
+            raise AssertionError("Flowgent API route is not selected by AuthGuard SecurityPolicy")
+        if "kind: ReferenceGrant" not in apiserver or "kind: SecurityPolicy" not in apiserver:
+            raise AssertionError(
+                "cross-namespace AuthGuard SecurityPolicy ReferenceGrant is missing"
+            )
 
     def _verify_gateway_browser(self) -> None:
         browser = (E2E_DIR / "verifier/web/browser.py").read_text(encoding="utf-8")
@@ -314,6 +373,8 @@ class E2EStructureVerifier(BaseVerifier):
             "deploy/flowgent.py",
             "deploy/sonarqube.py",
             "deploy/docker-compose.yml",
+            "deploy/mocksvc-github-service",
+            "deploy/mocksvc-notification-service",
             "support",
             "verifier/agentflow/base.py",
             "verifier/core/base.py",
