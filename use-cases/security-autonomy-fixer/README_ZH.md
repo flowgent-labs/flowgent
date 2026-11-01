@@ -130,6 +130,10 @@ containerd Socket 或存储目录。远程/多节点集群可通过
 `FLOWGENT_E2E_IMAGE_IMPORT_COMMAND` 配置带 `{image}` 或 `{archive}` 占位符的
 导入命令。
 
+Agent 默认通过 `--e2e-llm-provider=mock` 使用确定性 Fixture。指定
+`--e2e-llm-provider=official` 时会选择已导入的 DeepSeek Provider，并在部署
+Flowgent 前校验其 `api_key_env` 指定的环境变量。
+
 ## Flow 契约
 
 主流程有 **29 个 Nodes、33 条 Edges**，使用 8 种通用 AgentFlow Node：

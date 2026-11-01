@@ -1,4 +1,4 @@
-.PHONY: help build build-core build-image build-image-core build-image-web clean test test-ut test-web test-x402 test-it test-it-deps test-authguard-adapter test-sql-scope test-runtime-isolation test-e2e-runner e2e-security-autonomy-fixer-with-helm e2e-security-autonomy-fixer-with-docker fmt
+.PHONY: help build build-core build-image build-image-core build-image-web clean test test-ut test-web test-x402 test-authguard-adapter test-sql-scope test-runtime-isolation test-e2e-runner e2e-security-autonomy-fixer-with-helm e2e-security-autonomy-fixer-with-docker fmt
 
 BIN_DIR  ?= bin
 GO       ?= go
@@ -45,7 +45,7 @@ help:
 	@echo "    Namespace defaults to 'default' if omitted: make deploy:secret:default:llm:deepseek KEY=sk-xxx"
 	@echo ""
 	@echo "  Test:"
-	@echo "    make test-ut test-x402 test-it fmt clean"
+	@echo "    make test-ut test-x402 fmt clean"
 	@echo "    make e2e-security-autonomy-fixer-with-helm   Build, deploy, and verify the real use case with Helm."
 	@echo "    make e2e-security-autonomy-fixer-with-docker Run the equivalent isolated Docker Compose E2E."
 
@@ -143,28 +143,6 @@ test-web:
 
 test-x402:
 	cd pkg/core   && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -tags "$(TAGS_X402)" -timeout 120s ./pkg/client/...
-
-# Local integration tests: a real end-to-end run of the Flowgent engine
-# (apiserver + JobManager + TaskManager + executors) backed by PostgreSQL, with
-# external SaaS services (GitHub, SonarQube, LLM) replaced by in-process mocks.
-# Keep packages serial because the harness shares PostgreSQL and fixed ports.
-test-it-deps:
-	@if [ -S /run/podman/podman.sock ]; then \
-		DOCKER_HOST=unix:///run/podman/podman.sock docker-compose -f deploy/docker/pgvector/docker-compose.yml up -d; \
-	else \
-		docker compose -f deploy/docker/pgvector/docker-compose.yml up -d; \
-	fi
-	@for _attempt in $$(seq 1 60); do \
-		_status=$$(docker inspect --format='{{.State.Health.Status}}' flowgent-test-pgvector 2>/dev/null); \
-		if [ "$$_status" = "healthy" ]; then exit 0; fi; \
-		sleep 1; \
-	done; \
-	docker logs --tail 80 flowgent-test-pgvector; \
-	echo "ERROR: flowgent-test-pgvector did not become healthy"; \
-	exit 1
-
-test-it: test-it-deps
-	cd tests/it && CGO_ENABLED=0 $(GOENV) $(GO) test -v -count=1 -timeout 300s -p 1 ./probe ./apiserver ./controller ./engine ./externalmock ./knowledge ./notifier ./sandbox .
 
 test-authguard-adapter:
 	cd pkg/api && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/authz

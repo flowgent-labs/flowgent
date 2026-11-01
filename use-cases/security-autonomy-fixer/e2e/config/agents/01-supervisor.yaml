@@ -8,7 +8,7 @@ metadata:
   description: Senior autonomous orchestration controller that plans, routs, and supervises the security fix pipeline
 
 data:
-  model: e2e-llm/e2e-deterministic
+  model: ${FLOWGENT_E2E_AGENT_MODEL}
   max_tokens: 16384
   temperature: 0.2
   soul: |-

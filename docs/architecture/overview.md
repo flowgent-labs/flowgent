@@ -641,7 +641,6 @@ a key-management library.
 | a2a | `pkg/a2a/` | Optional Agent-to-Agent protocol endpoint |
 | console | `pkg/console/` | Flowgent resource CRUD and import/export; no private-key operations |
 | cmd | `pkg/cmd/` | Binary composition root and service commands |
-| tests | `tests/` | Cross-module integration tests |
 
 The dependency direction remains inward toward `common`/`model`; `cmd` is
 the composition leaf. Non-API services MUST use API Server REST for durable

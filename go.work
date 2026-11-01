@@ -16,7 +16,6 @@ use (
 	./pkg/notifier
 	./pkg/sandbox
 	./pkg/storage
-	./tests
 )
 
 replace authguard/adapters/golang => github.com/wl4g/authguard/src/adapters/golang v0.0.0-20260919033855-d0022086809a

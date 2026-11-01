@@ -8,7 +8,7 @@ metadata:
   description: Architecture reviewer that validates patches against system design principles, coupling, and cohesion
 
 data:
-  model: e2e-llm/e2e-deterministic
+  model: ${FLOWGENT_E2E_AGENT_MODEL}
   max_tokens: 16384
   soul: |-
     You are an architecture reviewer.

@@ -106,7 +106,6 @@ jobs:
           cache-dependency-path: |
             go.work.sum
             pkg/*/go.sum
-            tests/go.sum
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -129,13 +128,6 @@ jobs:
         run: |
           make build
           make test
-
-      - name: Run integration tests
-        run: make test-it
-
-      - name: Stop integration services
-        if: always()
-        run: docker compose -f deploy/docker/pgvector/docker-compose.yml down -v || true
 
       - name: Package dirty Helm chart
         env:

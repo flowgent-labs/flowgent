@@ -502,7 +502,6 @@ Flowgent 只依赖 wire contract，不依赖 Wallet source 或 key-management li
 | a2a | `pkg/a2a/` | 可选 Agent-to-Agent protocol endpoint |
 | console | `pkg/console/` | Flowgent resource CRUD/import/export；不操作 private key |
 | cmd | `pkg/cmd/` | Binary composition root 与 service commands |
-| tests | `tests/` | 跨 module integration tests |
 
 依赖方向保持向内指向 `common`/`model`，`cmd` 是 composition leaf。非 API
 服务 **MUST** 通过 API Server REST 访问 durable engine state。

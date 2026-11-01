@@ -143,6 +143,8 @@ class DockerDeployer(BaseDeployer):
         self._compose(
             "exec",
             "-T",
+            "-e",
+            f"FLOWGENT_E2E_AGENT_MODEL={self.environment['FLOWGENT_E2E_AGENT_MODEL']}",
             "flowgent",
             "/app/flowgent",
             "--config",

@@ -134,6 +134,11 @@ recognized. Select a supported runtime explicitly with
 `FLOWGENT_E2E_KUBERNETES_CLUSTER`. An unsupported remote runtime fails closed
 rather than importing an image to the wrong node store.
 
+Agent execution defaults to the deterministic fixture with
+`--e2e-llm-provider=mock`. Use `--e2e-llm-provider=official` to select the
+imported DeepSeek provider; the runner requires the environment variable named
+by its `api_key_env` before deploying Flowgent.
+
 ## Flow Contract
 
 The main flow has **29 nodes and 33 edges**. It uses eight generic AgentFlow

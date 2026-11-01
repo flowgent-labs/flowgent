@@ -13,6 +13,10 @@ import traceback
 
 
 SHELL_ENV_FILES = ("~/.bashrc", "~/.bash_profile", "~/.wl4gshrc.sec")
+LLM_PROVIDER_FILES = {
+    "mock": "e2e-deterministic.yaml",
+    "official": "deepseek.yaml",
+}
 
 
 class E2ERunner:
@@ -80,6 +84,12 @@ class E2ERunner:
             default=E2ERunner._deployer_name(os.getenv("FLOWGENT_E2E_DEPLOYER", "k8s")),
             help="Deployment backend; both run the same functional verifier matrix.",
         )
+        parser.add_argument(
+            "--e2e-llm-provider",
+            choices=tuple(LLM_PROVIDER_FILES),
+            default="mock",
+            help="Agent LLM backend: deterministic fixture (mock) or imported official provider.",
+        )
         parser.add_argument("--skip-sonarqube", action="store_true")
         parser.add_argument("--skip-build", action="store_true")
         parser.add_argument("--skip-import", action="store_true")
@@ -138,6 +148,39 @@ class E2ERunner:
             release=args.release,
             deployer=args.deployer,
         )
+
+    @staticmethod
+    def configure_llm_provider(provider: str, *, require_credentials: bool) -> str:
+        import yaml
+
+        provider_path = config.CONFIG_DIR / "llmproviders" / LLM_PROVIDER_FILES[provider]
+        document = yaml.safe_load(provider_path.read_text(encoding="utf-8"))
+        data = document.get("data", {}) if isinstance(document, dict) else {}
+        provider_name = data.get("name")
+        default_model = data.get("default_model")
+        if not provider_name or not default_model:
+            raise ValueError(f"invalid LLMProvider resource: {provider_path}")
+
+        if provider == "official":
+            api_key_env = data.get("api_key_env")
+            if not api_key_env:
+                raise ValueError(f"official LLMProvider has no api_key_env: {provider_path}")
+            fallback_env = api_key_env.removesuffix("_FLOWGENT")
+            if (
+                not os.getenv(api_key_env)
+                and fallback_env != api_key_env
+                and os.getenv(fallback_env)
+            ):
+                os.environ[api_key_env] = os.environ[fallback_env]
+            if require_credentials and not os.getenv(api_key_env):
+                raise ValueError(
+                    f"--e2e-llm-provider=official requires environment variable {api_key_env}"
+                )
+
+        model = f"{provider_name}/{default_model}"
+        os.environ["FLOWGENT_E2E_LLM_PROVIDER"] = provider
+        os.environ["FLOWGENT_E2E_AGENT_MODEL"] = model
+        return model
 
     @staticmethod
     def cleanup_deployment(context: RunContext) -> bool:
@@ -218,6 +261,15 @@ class E2ERunner:
             config.K8S_APISERVER_URL = args.api
         if args.pg:
             config.E2EConfiguration.apply_postgres_override(args.pg)
+        try:
+            llm_model = E2ERunner.configure_llm_provider(
+                args.e2e_llm_provider,
+                require_credentials=not args.skip_deploy,
+            )
+        except (OSError, ValueError) as failure:
+            print(failure, file=sys.stderr)
+            return 2
+        print(f"E2E LLM provider: {args.e2e_llm_provider} ({llm_model})")
 
         exit_code = 1
         started = time.monotonic()
