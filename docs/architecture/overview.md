@@ -15,14 +15,15 @@ their owning documents.
 | Layer | Document | Physical or logical ownership |
 |---|---|---|
 | Security | [AuthGuard integration](authguard-integration.md) | Gateway trust boundary, adapters SDK, and repository SQL scope |
-| L1 Engine | [API Server](engine/apiserver.md) | External REST/A2A gateway and sole database client |
+| Data | [Durable data lifecycle](data-lifecycle.md) | Identity/revision, snapshot, Knowledge/vector, execution-memory, and approval contracts |
+| L1 Engine | [API Server](engine/apiserver.md) | External REST/A2A gateway and canonical business-state client |
 | L1 Engine | [Controller](engine/controller.md) | Flow discovery and active-run JobManager lifecycle |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters.md) | Application/session runtime lifecycle and isolation |
 | L1 Engine | [JobManager](engine/jobmanager.md) | Per-run DAG readiness, plan creation, and runtime capacity |
 | L1 Engine | [TaskManager](engine/taskmanager.md) | Slot workers and executor routing |
 | L1 Engine | [Sandbox](engine/sandbox.md) | Isolated script execution and shared workspace |
 | L1 Engine | [Notifier](engine/notifier.md) | Multi-channel delivery and WebSocket UI push |
-| L1 Engine | [Wallet and x402](engine/wallet.md) | Optional external EOA key custody and EIP-712 digest signing boundary |
+| L1 Engine | [AgentVault and x402](engine/wallet.md) | External custody boundary and legacy x402 client migration status |
 | L2 AgentFlow | [AgentFlow application architecture](agent-flow.md) | DAG configuration, node semantics, limits, and best practices |
 
 ## Cross-Component Call Contract
@@ -53,14 +54,14 @@ flowchart LR
     NOTIFY --> Channels[Slack / Email / Webhook / UI]
 
     TM -->|EIP-712 digest| WMQ[(Wallet MQTT / Unix socket)]
-    WMQ --> WALLET[External walletd]
+    WMQ --> WALLET[External AgentVault / legacy walletd]
     WALLET -->|recoverable signature| WMQ
     WMQ --> TM
 ```
 
 | Contract | Use | Prohibited shortcut |
 |---|---|---|
-| API Server REST | Durable flow, run, task, approval, and resource state | Non-API components must not connect to the DB |
+| API Server REST | Durable Flow, Run, NodeRun, approval, and resource state | Execution components must not connect to business tables |
 | Flowgent MQTT | Lifecycle events, execution plans/results, sandbox work, and notifications | Do not use WebSocket/SSE for internal engine coordination |
 | Wallet protocol | Bounded digest signing over independent MQTT topics or a Unix socket | Private keys and Wallet server configuration MUST NOT enter Flowgent |
 | Shared workspace | Large scripts, repositories, and sandbox result files | Do not move large artifacts through task-state JSON |
@@ -69,10 +70,11 @@ flowchart LR
 
 ## System Call Architecture
 
-Flowgent is a distributed multi-namespace AI agent orchestration engine. **Only the API Server
-connects to the database** — all other Flowgent components communicate exclusively via MQTT (real-time
-scheduling bus) or call the API Server REST endpoints for state updates. Optional signing crosses a
-separate external Wallet protocol boundary. Internal
+Flowgent is a distributed multi-namespace AI agent orchestration engine. **The API Server is the
+canonical business-state database gateway** — execution components communicate via MQTT (real-time
+scheduling bus) or call API Server REST endpoints for state updates. The standalone A2A server owns
+only `orh_a2a_task`, and JobManager may use a database-backed coordination lock without accessing
+business tables. Optional signing crosses a separate external AgentVault/legacy wallet protocol boundary. Internal
 inter-component communication never uses SSE/WebSocket; WS is reserved for notifier→UI only.
 This aligns with Kubernetes' single-etcd-access pattern and Flink's Akka-based TM coordination.
 
@@ -87,7 +89,7 @@ PHASE 1 — Flow Design & Trigger (Sync)
   ┌──────────────────────────────────────────┼──────────────────────────┐
   │                           API Server                               │
   │                                                                    │
-  │  • Flow/Agent CRUD → PG (sole DB client)           port 9999       │
+  │  • Flow/Agent CRUD → PG (business-state gateway)   port 9999       │
   │  • Trigger → CREATE PENDING run                    port 9992 (A2A) │
   │  • Flow lifecycle → MQTT events (create/update/delete)             │
   │  • Flow cache + hot-reload (static YAML dir)                       │
@@ -97,7 +99,7 @@ PHASE 1 — Flow Design & Trigger (Sync)
              ▼                                 ▼
   ┌────────────────────┐            ┌──────────────────────────────────┐
   │   PG / SQLite      │            │         MQTT (EMQX)             │
-  │   (apiserver-only) │            │    real-time scheduling bus     │
+  │   (business state) │            │    real-time scheduling bus     │
   └────────────────────┘            └──────────────┬───────────────────┘
                                                    │
 ═══════════════════════════════════════════════════╪═══════════════════════
@@ -142,7 +144,7 @@ PHASE 3 — Execution (Async)                       │
   • MQTT: notify.result.{namespace}.{flow} ───────────┤  → confirmation
   • WS → UI clients only (human approval push)     │
                                                    │
-  All state writes: → FlowgentClient REST → apiserver → PG/DB
+  Business-state writes: → FlowgentClient REST → apiserver → PG/DB
 ═══════════════════════════════════════════════════════════════════════════
 ```
 
@@ -150,12 +152,12 @@ PHASE 3 — Execution (Async)                       │
 
 | Constraint | Detail |
 |------------|--------|
-| **Only apiserver connects to DB** | Single PG/SQLite client with flow cache |
-| **All other components: MQTT or apiserver REST** | controller, JM, TM, sandbox, notifier — no direct DB |
+| **API Server owns business tables** | PostgreSQL/SQLite gateway with Flow cache; standalone A2A owns only its task table |
+| **Execution components: MQTT or API REST** | Controller, JM, TM, Sandbox, Notifier — no direct business-table access |
 | **Management chain** | controller → JM → TM + Sandbox (JM manages both via K8sRM) |
-| **State writes via apiserver** | POST/PUT REST API for run/task status updates |
+| **State writes via API Server** | POST/PUT REST API for Run/NodeRun status updates |
 | **Real-time dispatch via MQTT** | ExecutionPlan distribution, sandbox triggers, notifier events |
-| **Internal communication: MQTT only** | No SSE/WS between components; WS is notifier→UI only |
+| **Internal scheduling uses MQTT; durable state uses REST** | No SSE/WS between engine components; WS is Notifier→UI only |
 
 ### Runtime Cluster Model
 
@@ -222,10 +224,11 @@ Pod names and labels carry `namespace_id` + `flow_id` for observability:
 | sandbox | yes | Workload namespace | Runtime-cluster isolated script execution |
 | notifier | yes | System namespace | Multi-channel push + WebSocket SSE |
 | a2a | **optional** | System namespace | Google Agent-to-Agent protocol endpoint |
-| walletd | **optional external** | Wallet release ownership | secp256k1 EOA custody and EIP-712 digest signing |
+| AgentVault / legacy walletd | **optional external** | AgentVault release ownership | custody, policy, approval, signing, and settlement; current Flowgent client still uses the legacy signing wire |
 
-> **Note**: `a2a` is an optional Flowgent Helm component. Wallet is deployed and
-> released independently; `wallet.enabled` configures only the Flowgent client.
+> **Note**: `a2a` is an optional Flowgent Helm component. AgentVault is deployed
+> and released independently; `wallet.enabled` currently configures only the
+> legacy Flowgent signing client, not the AgentVault SDK.
 > All-in-one mode does not embed private-key custody.
 
 ```
@@ -268,13 +271,13 @@ flowgent.io/runtime-boundary: "flow-jobmanager" # JM
 
 | Decision | Rationale |
 |----------|-----------|
-| **Only apiserver connects to DB (K8s-aligned)** | Single PG/SQLite client with caching — all other components (controller, JM, TM, sandbox, notifier) use MQTT or call apiserver REST. Aligns with Kubernetes' single-etcd-access pattern. Eliminates N×M connection pool complexity. |
+| **API Server owns business-table access** | Controller, JM, TM, Sandbox, and Notifier use MQTT or API REST. Standalone A2A owns only its task-store table, while coordination locks are not business-state access. |
 | **Controller gets flows via apiserver REST API, not PG scan** | `FlowgentClient.ListFlows()` and subscribes to MQTT lifecycle events for real-time changes. apiserver publishes flow lifecycle events on create/update/delete. Hash-mod sharding still applies. |
 | **Every Flow declares `runtime_mode`** | `application` creates a per-run runtime cluster; `session` uses the Helm-deployed session cluster. Run snapshots preserve scheduling determinism. |
 | **JobManager owns TM/Sandbox via `runtime_cluster_id`** | Controller owns application JM Deployments only while a real application run is active. Each JM/RM manages only workers carrying its cluster id. State flows back via MQTT → API Server → PG. |
 | **Runtime credentials enter pods through K8s Secret envFrom** | Host shell env is only a deployer/console-import input. Kubernetes runtime credentials for external MCPs, GitHub, SonarQube, and LLM calls are provided by the Secret named in `runtime.credential_env_secret`. Controller mounts it into per-flow JM pods, and JM's K8sRM mounts it into TM/Sandbox pods via optional `envFrom.secretRef`. |
-| **Resource definitions store credential references, not values** | LLM/MCP APIs accept environment reference names, redact reads, and resolve them only inside runtime pods. Actual values never belong in browser state, TaskRun payloads, OTel attributes, logs, or screenshots. Notification-channel secrets still need the same contract before production UI authoring is enabled. |
-| **Agent memory scoped by (flow_id, node_id), not run_id** | Persists across restarts; no cross-flow knowledge sharing (KISS); content accumulates monotonically for RAG-style recall |
+| **Resource definitions store credential references, not values** | LLM/MCP APIs accept environment reference names, redact reads, and resolve them only inside runtime pods. Notification secret fields are encrypted with AES-256-GCM and remain write-only. Values never belong in browser state, NodeRun payloads, OTel attributes, logs, or screenshots. |
+| **Instruction, Knowledge, and Execution Memory are separate** | Immutable Instructions govern behavior; scoped Knowledge stores retrievable facts; NodeRun checkpoints/messages/tool state belong only to that Run and attempt. See [Durable data lifecycle](data-lifecycle.md). |
 | **One JobManager contract** | Session JMs poll session runs; application JMs poll one flow/run. Both build the DAG and route every plan using the Run's immutable runtime mode and cluster id. |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
 | **Sandbox as independent pods managed by JM (defense-in-depth)** | Sandbox runs as separate K8s pods managed by JM's K8sRM (same goroutine pattern as TM scaling). The JM — as the job/flow-level orchestrator — is the natural owner for both TM and sandbox lifecycle. Two-layer isolation: pod-level (K8s NetworkPolicy + seccomp RuntimeDefault profile) blocks broad egress at the CNI/container runtime layer; process-level (seccomp-bpf + userspace notifier) enforces per-flow per-node dynamic allowlists. Independent CPU/mem/volume limits prevent noisy-neighbor resource contention between TM and sandbox. TM and sandbox share a ReadWriteMany PVC organized by flowId directory — TM writes scripts, sandbox executes them, TM reads results from the same volume. |
@@ -294,7 +297,9 @@ runtime cluster.
 
 All inter-component communication uses MQTT topics under `flowgent/v1/` with
 a hierarchical `{namespaceId}/flows/{flowId}/runs/{runId}` structure for
-observability and multi-namespace isolation. Only apiserver touches DB.
+observability and multi-namespace isolation. Durable business state is written
+through API Server; the documented A2A task-store and coordination-lock
+exceptions remain outside this event bus.
 
 ```
 # ── Execution Plan Dispatch: JM → TM ──────────────────────────
@@ -344,7 +349,7 @@ flowgent/v1/notify/pod/{podId}/ws/{wsId}
   Cross-pod WS message delivery for human approval push
 
 # ── State Write (via apiserver, NOT MQTT) ─────────────────────
-POST /api/v1/{namespace}/runs/{id}/tasks/{tid}
+PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}
   TM/sandbox/notifier → apiserver → PG
   (status updates, results, errors — persisted via REST)
 ```
@@ -379,7 +384,7 @@ for iteration=1,2,...:
     │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-{namespace}-{cluster}
     │                                                                       SlotWorker dequeue
     │                                                                       Executor.Execute()
-    │                                                                       PUT /tasks (REST)
+    │                                                                       PUT /node-runs (REST)
     │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_id,state}
     │                     Route er.NodeID → chan[nodeID]
     │                     delete chan[nodeID]
@@ -397,7 +402,7 @@ publish the result before the JM's callback is registered, causing the
 
 **State-only callback**: `exec/results` carries only `{plan_id, node_id,
 state}` — the actual output data is persisted by the TM via
-`PUT /api/v1/{namespace}/runs/{id}/tasks/{tid}` BEFORE publishing to
+`PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` BEFORE publishing to
 `exec/results`. The JM then reads output data from the task record (or relies
 on the in-memory `nodeOutputs` map populated from the Schedule return value
 for variable resolution in subsequent nodes). See
@@ -413,7 +418,7 @@ K8sRM accepts a lease only when the payload namespace, cluster, and role all mat
 
 ```yaml
 # flowgent.yaml
-messaging:
+messager:
   type: mqtt
   mqtt:
     broker: "tcp://<host>:1883"
@@ -426,7 +431,7 @@ full hierarchical path from routing keys.
 
 In distributed Kubernetes deployment, MQTT is mandatory:
 
-1. Config file `messaging.mqtt.broker` → try MQTT → failure = fatal
+1. Config file `messager.mqtt.broker` → try MQTT → failure = fatal
 2. `FLOWGENT_MQTT_BROKER` env var → try MQTT → failure = fatal
 3. Neither configured → fatal: `"MQTT broker not configured"`
 
@@ -444,25 +449,28 @@ The `ExecutionPlan` is the atomic unit of work dispatched to TM slots. The data
 hierarchy is:
 
 ```
-agentflow_definition (flow spec, defines Nodes + Edges)
-  └── agentflow_run (one invocation of a flow, status: PENDING→RUNNING→COMPLETED/FAILED)
+Flow revision (defines Nodes + Edges)
+  └── Run (one invocation, status: PENDING→RUNNING→COMPLETED/FAILED)
         ├── execution_plan (plan-node-A, 1:1 with DAG node A)
         ├── execution_plan (plan-node-B, 1:1 with DAG node B)
         └── execution_plan (plan-node-C, 1:1 with DAG node C)
 ```
 
-**Each DAG node produces exactly one ExecutionPlan, and every ExecutionPlan
-belongs to exactly one AgentFlowRun.** A flow with N nodes creates N plans per run.
-Each plan is serialized to JSON, persisted to PG, then dispatched to a TM slot for
-execution.
+**Each DAG node has one logical ExecutionPlan, and every ExecutionPlan belongs
+to exactly one Run.** Retry dispatches create distinct NodeRun attempts. The
+plan is serialized for dispatch; its durable execution representation is the
+NodeRun/checkpoint/dispatch state rather than a separate plan JSON table.
 
-Each ExecutionPlan contains: PlanID, NodeID, AgentFlowRunID, TaskType, Input,
+Each ExecutionPlan contains: PlanID, NodeID, AgentFlowRunID (legacy wire name
+for Run ID), TaskType, Input,
 RetryPolicy, and Agent/Tool references.
 
 ### TaskCheckpoint
 
-Periodic snapshot of DAG state (completed nodes, node outputs, pending set).
-Enables resume-after-failure without re-executing completed nodes.
+The schemas persist per-attempt checkpoint, execution memory, messages,
+workspace version, lease, and fencing state. The runtime can carry checkpoint
+data in an ExecutionPlan, but complete automatic reload/re-dispatch from every
+crash path is not yet implemented. See [Durable data lifecycle](data-lifecycle.md).
 
 ---
 
@@ -503,8 +511,8 @@ There are two paths to trigger a run:
 
 ```
 1. TRIGGER (sync)
-   → REST:     POST /api/v1/{namespace}/flows/trigger  {agentflow_id, vars}
-   → A2A 0.3:  POST /  JSON-RPC message/send         {action:start_run, agentflow_id, vars}
+   → REST:     POST /api/v1/{namespace}/flows/{flow_id}/trigger  {input}
+   → A2A 0.3:  POST /  JSON-RPC message/send          {action:start_run, agentflow_id, vars}
    → Webhook:  POST /api/v1/webhook/{provider}       (e.g, GitHub/GitLab/BitBucket req body)
        → per-provider adapter normalizes body → canonical WebhookEvent
        → for each flow whose triggers match {provider, event}: one run
@@ -513,6 +521,10 @@ There are two paths to trigger a run:
        → persist PENDING run with logical/Kubernetes namespaces and runtime_mode snapshot
        → publish ctrl/run/created lifecycle event on MQTT
        → return run_id(s) to caller    ← sync ends here
+
+   The A2A administration payload retains `agentflow_id`/`vars` as its current
+   external protocol contract; it is normalized to canonical Flow/Run fields at
+   the API boundary.
 
 2. JM POLL (async)
    → JM's runPoller (2s tick) finds PENDING run (namespace-filtered)
@@ -551,7 +563,8 @@ There are two paths to trigger a run:
      result := rm.Schedule(plan)  → MQTT (K8s) or standalone slot (all-in-one)
      Done(node) / Fail(node)
      condition → SetConditionResult → Skip(false-branch)
-     supervisor → validate action → Inject/Retry/Abort
+     supervisor → validate allowlisted action JSON
+       (JobManager does not yet apply Inject/Retry/Abort graph mutations)
 
 5. RM DISPATCH
    → Evaluates pending plans vs free slots
@@ -577,7 +590,8 @@ There are two paths to trigger a run:
 2. JM's K8s RM detects missing heartbeat after 30s
 3. Dead TM's leases expire → plans re-claimed by other TMs
 4. K8s Deployment controller restarts dead TM pod
-5. Orphaned plans re-executed from checkpoint
+5. Orphaned attempts can be re-delivered; complete durable-checkpoint reload is
+   still a known recovery gap
 ```
 
 ---
@@ -597,16 +611,16 @@ Execution truth and telemetry are intentionally separate but correlated:
 
 | Layer | Source of truth | Purpose |
 |---|---|---|
-| Run DAG | Flow definition + latest TaskRun attempt per node | Logical business progress and node status |
-| Node attempts | One durable TaskRun row per execution attempt | Exact attempt input/output/error, retry chain, timing, audit and recovery |
+| Run DAG | Flow definition + latest NodeRun attempt per node | Logical business progress and node status |
+| Node attempts | One durable NodeRun row per execution attempt | Exact attempt input/output/error, retry chain, timing, audit and recovery |
 | Runtime trace | OpenTelemetry spans stored by Jaeger | Actual cross-service call tree, events, latency and failure localization |
 
-The relationship is `DAG node 1 → N TaskRun attempts 1 → N spans`. Span
+The relationship is `DAG node 1 → N NodeRun attempts 1 → N spans`. Span
 attributes carry stable correlation identifiers (`run.id`,
 `flowgent.node_id`, `flowgent.task_id`, and one-based `flowgent.attempt`) plus
 bounded payload metadata (content type, byte size, SHA-256, capture flag).
 Full input/output, prompts, model responses, and arbitrary previews MUST NOT be
-stored in span attributes. They remain durable TaskRun data; a future
+stored in span attributes. They remain durable NodeRun data; a future
 large-payload reference policy must be explicit rather than abusing the trace
 backend as object storage.
 
@@ -620,9 +634,9 @@ Histogram boundaries (from sample config):
 
 ## Code Layout and Shared Module Map
 
-`go.work` joins 16 Go modules. Wallet is deliberately absent from that
-workspace: Flowgent depends only on its wire contract, never on Wallet source or
-a key-management library.
+`go.work` joins 15 Go modules. AgentVault is deliberately absent from that
+workspace: Flowgent currently depends on a legacy signing wire rather than
+AgentVault source or a key-management library.
 
 | Module | Path | Ownership |
 |---|---|---|
@@ -637,27 +651,27 @@ a key-management library.
 | notifier | `pkg/notifier/` | Delivery channels and UI event push |
 | core | `pkg/core/` | Executors, JM/TM/RM, LLM/MCP clients, x402 policy and external Wallet client |
 | controller | `pkg/controller/` | Application JM and runtime-cluster lifecycle reconciliation |
-| api | `pkg/api/` | REST handlers and the sole durable-state gateway |
+| api | `pkg/api/` | REST handlers and the canonical business-state gateway |
 | a2a | `pkg/a2a/` | Optional Agent-to-Agent protocol endpoint |
 | console | `pkg/console/` | Flowgent resource CRUD and import/export; no private-key operations |
 | cmd | `pkg/cmd/` | Binary composition root and service commands |
 
 The dependency direction remains inward toward `common`/`model`; `cmd` is
 the composition leaf. Non-API services MUST use API Server REST for durable
-engine state. `core/pkg/client/signclient` implements `wallet.sign.v1` over
-MQTT or a Unix socket, but imports no Wallet implementation.
+engine state. `core/pkg/client/signclient` implements the legacy
+`wallet.sign.v1` protocol over MQTT or a Unix socket, but imports no AgentVault
+implementation.
 
-The independent Rust service is located at `wallet/` while being extracted to
-its own remote. It owns `Cargo.toml`, `Cargo.lock`, `Dockerfile`, configuration,
-tests, and Makefile. Flowgent deployment assets configure only the external
-client; they MUST NOT recreate a Wallet Deployment, master-key Secret, or image
-build.
+The independent Rust service is pinned under `agentvault/` and owns its build,
+configuration, storage, policy, approval, settlement, and key lifecycle. The
+legacy Flowgent x402 client has not yet been migrated to the AgentVault SDK/API;
+see [AgentVault and x402](engine/wallet.md).
 
 ## Expected Behavior
 
-1. **Given** any non-API component, **when** it reads or writes durable engine
-   state, **then** the request MUST pass through API Server REST; no direct
-   database connection is permitted.
+1. **Given** an execution component, **when** it reads or writes durable
+   business state, **then** the request MUST pass through API Server REST; only
+   the documented A2A task-store and coordination-lock exceptions are allowed.
 2. **Given** an accepted trigger, **when** run creation succeeds, **then** one
    persisted `PENDING` run and its lifecycle event MUST be observable before
    asynchronous execution begins.

@@ -7,6 +7,10 @@ JobManager 是每个 Run 的 DAG 编排器。它通过 API Server 读取 Flow/Ru
 通过可插拔 ResourceManager 管理 TaskManager 与 Sandbox 容量。它从不直接
 连接数据库。
 
+一个节点 Attempt 的公开 API 与持久层规范名称是 **NodeRun**。`TaskRunInfo`、
+`SaveTask` 和 `task_id` 是 Go/Wire 兼容名称；新的 REST 路由与持久模型
+**MUST** 使用 NodeRun 术语。
+
 ```text
 API Server REST ──► JobManager / JobMaster
                          │
@@ -39,13 +43,14 @@ Execute(run, spec):
   for each ready node (all dependencies satisfied):
     plan := resolveInputs(node, previousOutputs)
     result := scheduleNodeWithRetry(ctx, plan)
-      → 每次 attempt 前：通过 REST 持久化独立的 PENDING TaskRun
+      → 每次 attempt 前：通过 REST 持久化独立的 PENDING NodeRun
       → rm.Schedule(ctx, plan)            // 分发至 TM（MQTT 或 Standalone）
       → 保存本次 attempt 的输出/错误，并在 Node policy 允许时重试
     state.UpdateRun(ctx, run)             // 通过 API Server REST 更新 Run 状态
     Done(nodeID)
     if condition → SetConditionResult → Skip(false-branch)
-    if supervisor → validate action → Inject/Retry/Abort
+    if supervisor → 校验 Allowlist Action JSON
+      // Inject/Retry/Abort 图变更尚未接入。
 
   // 第 3 步：结束
   → run.Status = COMPLETED | FAILED
@@ -66,7 +71,7 @@ API 会拒绝 `finished_at` 早于 `started_at` 的更新。
 | `Done(id)` | 标记 Node 完成 |
 | `Skip(id)` | 跳过 Node（Condition 的非匹配路径） |
 | `Fail(id)` | 标记 Node 失败 |
-| `Inject(id, deps)` | 注入 Supervisor 创建的 Node |
+| `Inject(id, deps)` | 为 Supervisor 注入节点保留的 DAG 原语；当前 JobManager 未根据 SupervisorExecutor 输出调用 |
 | `IsComplete()` | 所有 Node 已完成或跳过 |
 | `HasFailed()` | 是否存在失败 Node |
 | `SetConditionResult(id, bool)` | 保存 Condition 分支结果 |
@@ -140,7 +145,7 @@ TaskManager 仍不会破坏重试链。
 
 每次 attempt 同时产生 `jobmaster.node.attempt` Span。Attributes 只保存
 Run/Node/Task/Attempt ID 与有界输入输出元数据，不保存 payload 正文。模型 Schema
-修正等 Executor 内部纠错循环表现为嵌套 Span，不产生额外 TaskRun，因为它们
+修正等 Executor 内部纠错循环表现为嵌套 Span，不产生额外 NodeRun，因为它们
 不是 DAG Node 重试。
 
 #### 依赖解析——`depsDone()` 算法
@@ -291,4 +296,4 @@ FlowRun 不能静默借用其他 cluster 的 Worker。
 5. **给定** Task 或 Sandbox 需求，**当**协调容量时，**则**副本、Slot 与资源 **MUST** 匹配所选 runtime mode、cluster id、平台默认值及 application Pod size 覆盖。
 6. **给定**失败 Node，**当**执行循环观察到失败时，**则** Run **MUST** 变为失败，Child **MUST NOT** 按成功路径执行。
 7. **给定**多个 Ready Sibling，**当**当前 Scheduler 执行它们时，**则**可观察分发 **MUST** 保持顺序，直到并发调度被明确实现并验证。
-8. **给定** Node retry policy，**当**一次 attempt 失败时，**则** JobManager **MUST** 在退避前持久化该失败 attempt，并为下一次 attempt 使用独立且由 Parent 关联的 TaskRun。
+8. **给定** Node retry policy，**当**一次 attempt 失败时，**则** JobManager **MUST** 在退避前持久化该失败 attempt，并为下一次 attempt 使用独立且由 Parent 关联的 NodeRun。

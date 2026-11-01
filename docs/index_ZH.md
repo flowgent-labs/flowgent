@@ -11,14 +11,15 @@
 |---|---|---|
 | Security | [AuthGuard 集成](architecture/authguard-integration_ZH.md) | Gateway 信任边界、adapters SDK 与 Repository SQL Scope |
 | L1 引擎 | [引擎总览](architecture/overview_ZH.md) | 跨组件调用、状态与消息契约、部署及共享模块 |
-| L1 引擎 | [API Server](architecture/engine/apiserver_ZH.md) | 外部网关与唯一 durable-state client |
+| 数据 | [持久数据生命周期](architecture/data-lifecycle_ZH.md) | 稳定身份、不可变版本、快照、知识/向量检索、执行记忆与统一审批 |
+| L1 引擎 | [API Server](architecture/engine/apiserver_ZH.md) | 外部业务状态网关与规范 REST API |
 | L1 引擎 | [Controller](architecture/engine/controller_ZH.md) | 活跃 Run 的 JobManager 协调 |
 | L1 引擎 | [Runtime Clusters](architecture/engine/runtime-clusters_ZH.md) | Flink 风格 application/session 运行时隔离 |
 | L1 引擎 | [JobManager](architecture/engine/jobmanager_ZH.md) | DAG scheduling 与 runtime ownership |
 | L1 引擎 | [TaskManager](architecture/engine/taskmanager_ZH.md) | Slot execution 与 executor routing |
 | L1 引擎 | [Sandbox](architecture/engine/sandbox_ZH.md) | 隔离脚本执行 |
 | L1 引擎 | [Notifier](architecture/engine/notifier_ZH.md) | Delivery 与 UI event 边界 |
-| L1 引擎 | [Wallet](architecture/engine/wallet_ZH.md) | 外部 key custody 与 digest-signing 边界 |
+| L1 引擎 | [AgentVault / x402](architecture/engine/wallet_ZH.md) | 外部托管边界与尚未完成的旧客户端集成迁移 |
 | L2 AgentFlow | [AgentFlow 应用架构](architecture/agent-flow_ZH.md) | 通用 DAG 模型、能力、限制与编排实践 |
 
 ## 应用
@@ -30,7 +31,7 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 | 应用 | 范围 | 入口 |
 |---|---|---|
 | Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
-| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/config/flows/autotest-generation-v1.yaml) |
+| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/e2e/config/flows/autotest-generation-v1.yaml) |
 
 ## 运维
 
@@ -45,8 +46,9 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 | 活跃 | [`development/`](development/) | 仍承载当前验收条件的工作 |
 | 历史 | [`development/archive/`](development/archive/) | 早期设计意图和带日期的实施记录，仅作背景参考 |
 
-当前活动开发计划：
+当前活动开发文档：
 
+- [Coding Agent 迁移交接](development/HARDCOVER_ZH.md) · [English](development/HARDCOVER.md)
 
 ## 语言版本
 

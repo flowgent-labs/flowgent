@@ -37,7 +37,7 @@ Flow manifest + Agent/MCP/Skill definitions
 |---|---|
 | [DAG model and patterns](#manifest-and-dag-model) | Canonical manifest, data flow, composition, and 12 node types |
 | [Limits and practices](#flexibility-and-current-limits) | Current execution boundaries and safe authoring rules |
-| [Application resources](#agent-node-memory) | Memory, skills, agents, static manifests, and console lifecycle |
+| [Application resources](#execution-context-and-cross-run-knowledge) | Execution context, Knowledge, skills, agents, static manifests, and console lifecycle |
 
 ## Manifest and DAG Model
 
@@ -69,7 +69,7 @@ Unknown envelope and API request fields are rejected.
 
 | Flow field | Purpose | Flexibility / boundary |
 |---|---|---|
-| `id`, `namespace`, `labels` | Identity and ownership | IDs must be stable because state, memory, topics, and runtime names depend on them |
+| `id`, `namespace`, `labels` | Identity and ownership | IDs must be stable because revisions, Runs, topics, scopes, and runtime names depend on them |
 | `vars` | Defaults available as `${vars.name}` | Run variables override defaults; secrets should enter through runtime Secrets, not manifests |
 | `nodes` | Typed units of execution | Node IDs are unique within a flow and execute at most once in the current run state model |
 | `edges` | `from`/`to` dependencies | Optional edge `condition` is boolean only and matches a condition node result |
@@ -109,13 +109,13 @@ flowchart LR
 | Pattern | Configuration | Current behavior |
 |---|---|---|
 | Linear pipeline | One outgoing edge per stage | Fully supported |
-| Fan-out / fan-in | Sibling nodes plus committee or join | Dependency semantics are supported; ready siblings are currently dispatched sequentially |
+| Fan-out / fan-in | Sibling nodes plus committee or join | Static sibling dependencies work and ready siblings are sequential; dynamic `map` child dispatch is not wired into execution |
 | Boolean branch | `condition` node plus true/false edges | Supported; non-matching direct children are skipped |
-| Human gate | `human.approval` with timeout/action | Persisted pause/resume boundary |
-| Bounded node retry | `retry.max/initial/max_delay/factor` | JobManager-owned; each attempt is a distinct, parent-linked TaskRun and OTel attempt span |
-| Map and join | `map.source`, child node, concurrency, then `join` | Nested fan-out is modeled; control payload size and concurrency |
-| Nested flow | `agentflow` node | Reuses a flow as a subflow |
-| Skill | `skill` node | Reuses a skill-kinded sub-AgentFlow |
+| Human gate | `human.approval` with timeout/action | Creates a durable approval request, but JobManager pause/wait/resume is not yet wired |
+| Bounded node retry | `retry.max/initial/max_delay/factor` | JobManager-owned; each attempt is a distinct, parent-linked NodeRun and OTel attempt span |
+| Map and join | `map.source`, child node, concurrency, then `join` | `join` can merge supplied results; `map` currently returns a dispatch marker and does not schedule children |
+| Nested flow | `agentflow` node | Registered, but SubflowExecutor is a stub and does not execute a child Flow |
+| Skill | `skill` node | Registered, but SkillExecutor is a stub and does not execute a runtime Skill |
 | Isolated script | `sandbox` runtime/script/policy | Executed by independent Sandbox workers |
 | Feedback loop | Conditional back-edge | Representable in YAML, but an already completed node is not reset; repeated-node loop semantics are not currently implemented |
 
@@ -126,13 +126,13 @@ flowchart LR
 | `agent` | AgentExecutor | LLM reasoning with agent, instruction, args, and optional JSON output schema |
 | `tool` | ToolExecutor | Explicit remote MCP invocation selected by the DAG; HTTP Streamable transport only |
 | `condition` | ConditionExecutor | Deterministic boolean expression used by true/false edges |
-| `supervisor` | SupervisorExecutor | LLM control decision constrained by allowed actions and retry/node/injection quotas |
+| `supervisor` | SupervisorExecutor | Produces/validates an allowed JSON action; JobManager does not yet apply redirect/retry/inject/abort |
 | `committee` | CommitteeExecutor | Deterministic majority decision over already-produced votes |
-| `human` | HumanExecutor | Persisted approval gate with timeout and approve/reject behavior |
-| `map` | MapExecutor | Fan-out over a list with a child node and configured concurrency |
+| `human` | HumanExecutor | Persists an approval request and returns `WAITING_HUMAN`; DAG suspension/resume is incomplete |
+| `map` | MapExecutor | Stub marker; child fan-out runner is not connected to JobManager/TaskManager |
 | `join` | JoinExecutor | Merge map or fan-out results |
-| `agentflow` | SubflowExecutor | Nested AgentFlow execution; runtime task type is `subflow` |
-| `skill` | SkillExecutor | Dispatch a skill-kinded sub-AgentFlow |
+| `agentflow` | SubflowExecutor | Stub marker; nested AgentFlow execution is not implemented |
+| `skill` | SkillExecutor | Stub marker; runtime Skill execution is not implemented |
 | `sandbox` | SandboxExecutor | Bash, Python, or Node script with resource/workspace/network policy |
 | `noop` | NoopExecutor | Terminal or pass-through node |
 
@@ -145,15 +145,16 @@ behavior remain explicit in the graph.
 | Area | Flexible configuration | Current limit |
 |---|---|---|
 | Runtime topology | Same flow model across standalone and distributed execution | Distributed Flows choose `application` per-run isolation or `session` shared runtime |
-| Scheduling | Dependencies, conditional branches, retries, map concurrency | JobManager blocks on each `Schedule()`; ready siblings do not execute concurrently yet |
+| Scheduling | Dependencies, conditional branches, retries | JobManager blocks on each `Schedule()`; ready siblings are sequential and dynamic map fan-out is not connected |
 | Cycles | Back-edges can be parsed | Node state is one-shot; back-edges do not rerun a completed node |
 | Conditions | True/false edges from a condition result | Edge conditions are booleans, not arbitrary expressions; put expressions in the condition node |
 | Failure | Node failure, timeout, retry, checkpoint state | A malformed graph with no ready node can leave pending work; validate reachability and acyclicity |
 | MCP tools | Any independently deployed Streamable HTTP MCP service | No stdio subprocess MCP transport inside TaskManager |
 | LLM output | Per-agent/model controls and per-node JSON schema | Unstructured output weakens interpolation, voting, and auditability |
-| Memory | Persistent memory by `(flow_id, node_id)` | No run-scoped isolation in this model and no cross-flow memory sharing |
+| Execution context | NodeRun messages/tool state/checkpoints remain within one Run | Snapshot enforcement and durable checkpoint re-dispatch are not yet complete; see [data lifecycle](data-lifecycle.md) |
+| Cross-run Knowledge | Namespace/Flow/Run-scoped published revisions | Publication requires approval; no implicit inheritance of failed execution sessions |
 | Sandbox | Runtime, timeout, resources, workspace, allow/deny network policy | Requires supported Linux/Kubernetes isolation features; allowlists must include actual proxy endpoints |
-| Dynamic control | Supervisor retry/redirect/inject/abort | Actions and quotas are mandatory boundaries; supervisor is not an unrestricted ReAct loop |
+| Dynamic control | Supervisor returns schema-checked, allowlisted action JSON | JobManager does not yet apply retry/redirect/inject/abort; supervisor is not an operational control loop |
 
 ## Best Practices
 
@@ -161,20 +162,21 @@ behavior remain explicit in the graph.
    analyze or generate structured decisions, not hide network or Git mutations.
 2. Put `output_schema` on every agent whose result drives interpolation,
    conditions, committee votes, commits, or reports.
-3. Fan out independent reviews, then converge through a deterministic
-   `committee` or `join`. Treat current sibling execution as logically
-   parallel but physically sequential.
-4. Place human approval immediately before irreversible external side effects.
+3. Model independent reviews as static sibling nodes, then converge through a
+   deterministic `committee` or `join`. Treat them as logically parallel but
+   physically sequential; do not rely on dynamic `map` child execution yet.
+4. Use the implemented approval API/publication workflow before irreversible
+   side effects. Do not rely on a `human` DAG node to pause/resume a Run yet.
 5. Make side-effect nodes idempotent: query existing state before creating a
    branch, pull request, ticket, or deployment.
 6. Use node retry for bounded polling. Do not rely on a back-edge to rerun an
    already completed node until explicit loop/reset semantics exist.
 7. Pass large artifacts through the shared workspace and bounded references;
-   avoid copying full source trees or scan payloads through every task row.
+   avoid copying full source trees or scan payloads through every NodeRun row.
 8. Keep sandbox network policy concrete and minimal. Include the actual proxy
    host/port when a script connects through a proxy.
-9. Use stable node IDs. They are part of task identity, output references,
-   memory scope, traces, and workspace paths.
+9. Use stable node IDs. They are part of NodeRun identity, output references,
+   traces, and workspace paths.
 10. End every branch deliberately through a join or terminal node, and validate
     that no branch can leave permanently pending nodes.
 
@@ -185,91 +187,51 @@ behavior remain explicit in the graph.
 | Only `agent` and `supervisor` use LLM | All other nodes must be deterministic |
 | Vote must be deterministic | LLM "judges", vote "decides" |
 | Agent output must be JSON | Machine-readable, auditable |
-| Supervisor actions constrained | redirect/retry/inject/abort only |
-| Human node must persist + timeout | DB-backed, resume via API |
-| Map must support nesting | Multi-level fan-out |
+| Supervisor output constrained | Allowed action JSON is validated; applying graph mutations remains open work |
+| Human request is durable | Approval persistence exists; DAG pause/resume remains open work |
+| Map nesting is a target | Multi-level dynamic fan-out remains open work |
 
 ---
 
 
-## Agent Node Memory
+## Execution Context and Cross-Run Knowledge
 
-Each (flow_definition, node) pair accumulates a persistent memory entry. Unlike
-run-scoped memory, `NodeMemory` survives across ALL runs of the same flow —
-restarts and interruptions automatically benefit from prior execution context.
+Flowgent does not implement an append-only `(flow_id,node_id)` memory table.
+Execution context and reusable knowledge are intentionally separate:
 
-### Model
+- A NodeRun attempt owns its messages, tool state, execution memory, workspace
+  version, and checkpoints. Redelivery of the same physical attempt can resume
+  that attempt; a new Run does not inherit the prior session.
+- Reusable facts and experience are immutable Knowledge Document revisions with
+  Namespace/Flow/Run scope, provenance, ACL checks, full-text/vector indexes,
+  and approval-gated publication.
+- Behavior belongs to immutable Instruction/Agent revisions rather than a
+  generic memory blob.
 
-```go
-type NodeMemory struct {
-    FlowID    string         // agentflow definition ID (NOT run ID)
-    NodeID    string         // DAG node ID (empty = flow-level shared)
-    Content   string         // accumulated execution context (appended each run)
-    Embedding []float32      // vector for similarity search
-    Metadata  map[string]any // {retry_count, last_error, last_model, token_usage, ...}
-}
-```
-
-**Scoping rule**: memory is keyed by `(flow_id, node_id)` — same flow definition + same
-node, across all runs. Run ID is NOT part of the key. Cross-flow memory sharing is
-intentionally NOT supported (simplicity).
-
-### Lifecycle
-
-```
-1. BEFORE LLM call:
-   GetMemory(flowID, nodeID)
-   → if found, append prior content to prompt as context
-
-2. AFTER each attempt:
-   UpsertMemory({ flowID, nodeID, content })  ← accumulates, doesn't replace
-
-3. Content grows monotonically:
-   "attempt=0 prompt=... response=... error=..."
-   "attempt=1 prompt=... response=..."
-   → Richer context for every subsequent run
-```
-
-### PG Schema
-
-```sql
-CREATE TABLE node_memories (
-    flow_id    VARCHAR(255) NOT NULL,
-    node_id    VARCHAR(255) NOT NULL DEFAULT '',
-    content    TEXT NOT NULL,
-    embedding  JSONB,
-    metadata   JSONB DEFAULT '{}',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (flow_id, node_id)
-);
-```
-
-### Store Interface
-
-```go
-type NodeMemoryStore interface {
-    GetMemory(ctx, flowID, nodeID string) (*NodeMemory, error)
-    UpsertMemory(ctx, mem *NodeMemory) error
-    SearchMemory(ctx, flowID string, embedding []float32, topK int) ([]NodeMemory, error)
-    ListFlowMemories(ctx, flowID string) ([]NodeMemory, error)
-    DeleteMemory(ctx, flowID, nodeID string) error
-}
-```
-
-The `AgentExecutor` accepts an optional `NodeMemoryStore`; when present, memory is
-persisted after each attempt and queried before LLM calls.
+The Run captures a context snapshot at creation, but runtime enforcement of
+every captured Agent/Knowledge revision and all checkpoint re-dispatch paths is
+still incomplete. The authoritative lifecycle and known gaps are documented in
+[Durable data lifecycle](data-lifecycle.md).
 
 ---
 
 
-## Skills as Sub-AgentFlows
+## Runtime Skills and Portable Skill Definitions
 
 ### Core Insight
 
-**A Skill is a sub-AgentFlow.** Nothing more. A "skill" accomplishes a task — which inherently means orchestrating multiple tools and/or agents. That's exactly what an AgentFlow is. Users migrating from Claude Code, Codex, Copilot, or any other agent framework can drop their existing skills into Flowgent as AgentFlow YAML files and reference them as `kind: agentflow` nodes.
+Flowgent has two deliberately separate Skill resources:
 
-No new abstractions. No new executors. No ReAct loop. No mandatory schema.
+- A **runtime Skill** is a `kind: skill` Flow DAG invoked by a `skill` node. It
+  remains explicit orchestration and does not introduce an unrestricted ReAct
+  loop.
+- A **portable Skill definition** is a reusable instruction package backed by
+  stable identity, immutable revisions, and allowlisted `assets/` and
+  `scripts/` files. It is managed through `/skill-definitions` and is not a DAG.
+
+Migrating an existing skill therefore means choosing whether it is executable
+orchestration (runtime Skill) or reusable instruction/files (portable Skill
+definition); the two MUST NOT be silently conflated.
 
 ### AgentFlowSpec — Optional Fields for Skills
 
@@ -456,7 +418,8 @@ workflows.
 | MCP | `mcp` | `/api/v1/{namespace}/mcp` | yes | yes | yes |
 | LLMProvider | `llm` | `/api/v1/{namespace}/llm/providers` | yes | yes | yes |
 | NotifyChannel | `channel` | `/api/v1/{namespace}/notifications/channels` | yes | yes | yes |
-| Skill (Flow with kind=skill) | `skill` | (no REST endpoint — import/console only) | yes | yes | yes |
+| Runtime Skill (Flow with kind=skill) | `skill` | `/api/v1/{namespace}/skills` | yes | yes | yes |
+| Portable Skill definition | — | `/api/v1/{namespace}/skill-definitions` | no | no | API/UI CRUD + file upload |
 | AgentFlow | `flow` | `/api/v1/{namespace}/flows` | yes | yes | yes |
 | FlowRun | `flowrun` | `/api/v1/{namespace}/runs` | yes | yes | yes |
 
@@ -466,8 +429,8 @@ workflows.
 exported from one Flowgent instance must re-import cleanly into another,
 regardless of backend (PG → SQLite or vice versa).
 
-Wallet private keys are not Flowgent resources. They are managed offline by the
-external Wallet service and cannot appear in Flowgent import/export data.
+AgentVault private keys are not Flowgent resources and cannot appear in
+Flowgent import/export data.
 
 **Output format** is auto-detected from file extension:
 `.json` → JSON (indented), `.yaml`/`.yml` → YAML.
@@ -511,8 +474,8 @@ metadata:
   description: Example Streamable HTTP MCP service
 spec:
   enabled: true
-  type: http
-  url: https://mcp.example.com/mcp
+  transport: http
+  rpc_url: https://mcp.example.com/mcp
 ```
 
 Valid `kind` values: `Agent`, `MCP`, `LLMProvider`, `Flow`, `FlowRun`, `Skill`,
@@ -526,15 +489,16 @@ a top-level container:
 
 ```yaml
 llms:
-  - id: deepseek
-    provider: deepseek
-    model: deepseek-chat
+  - name: deepseek
+    type: openai
+    base_uri: https://api.deepseek.com
+    default_model: deepseek-chat
     ...
 mcps:
   - name: example-service
     enabled: true
-    type: http
-    url: https://mcp.example.com/mcp
+    transport: http
+    rpc_url: https://mcp.example.com/mcp
     ...
 agents:
   - name: supervisor
@@ -553,7 +517,9 @@ skills:
     edges: [...]
 flowRuns:
   - id: run-abc123
-    agentFlowID: example-flow
+    flow_id: 019...
+    flow_name: example-flow
+    input: {}
     status: COMPLETED
     ...
 channels:
@@ -584,7 +550,7 @@ flowgent console -c etc/dev.yaml -- import \
 
 ### Module Dependency
 
-`console` depends on `config` (FlowgentConfig), `model` (entities), and `store`
+`console` depends on `config` (FlowgentConfig), `model` (entities), and `storage`
 (database access). It sits at
 the same level as `core` in the dependency graph — both are mid-tier modules
 that `cmd` orchestrates. See the
@@ -614,8 +580,11 @@ config + model + store
 5. **Given** a side effect such as a commit, PR, or notification, **when** the
    flow reaches it, **then** the effect MUST occur in an explicit tool or
    sandbox node after all configured deterministic and human gates.
-6. **Given** a supervisor node, **when** it proposes control changes, **then**
-   only configured actions within retry, node, and injection quotas may apply.
+6. **Target contract (not current runtime behavior): Given** a supervisor node,
+   **when** it proposes control changes, **then** only configured actions within
+   retry, node, and injection quotas may apply. Today the action is validated
+   but JobManager does not apply the graph mutation.
 7. **Given** a back-edge to an already completed node, **when** the current
    runtime evaluates the graph, **then** the node MUST NOT be represented as a
-   newly executed iteration; authors MUST use supported retry/subflow semantics.
+   newly executed iteration. Authors may use node retry today; nested subflow
+   execution is a target capability and is not yet implemented.

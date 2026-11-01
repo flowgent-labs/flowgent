@@ -25,8 +25,8 @@ Bridges internal agentflow events to external communication channels.
   │  ┌──────────────────┐  ┌────────────────┐  │
   │  │ MQTT Queue       │  │ Human Approval │  │
   │  │ Consumer         │  │ Scanner (5s)   │  │
-  │  │ Topic: /flowgent/│  │ SELECT PENDING │  │
-  │  │ notify/queue/    │  │ human_approvals│  │
+  │  │ Topic: /flowgent/│  │ GET /approvals │  │
+  │  │ notify/queue/    │  │ via API Server │  │
   │  │ {namespace}/{flow}  │  └───────┬────────┘  │
   │  └────────┬─────────┘          │           │
   │           └──────────┬─────────┘           │

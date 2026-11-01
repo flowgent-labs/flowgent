@@ -12,14 +12,15 @@ that owns the subject.
 |---|---|---|
 | Security | [AuthGuard integration](architecture/authguard-integration.md) | Gateway trust boundary, adapters SDK, and repository SQL scope |
 | L1 Engine | [Engine overview](architecture/overview.md) | Cross-component calls, state and messaging contracts, deployment, and shared modules |
-| L1 Engine | [API Server](architecture/engine/apiserver.md) | External gateway and sole durable-state client |
+| Data | [Durable data lifecycle](architecture/data-lifecycle.md) | Stable identities, immutable revisions, snapshots, knowledge/vector retrieval, execution memory, and approvals |
+| L1 Engine | [API Server](architecture/engine/apiserver.md) | External business-state gateway and canonical REST API |
 | L1 Engine | [Controller](architecture/engine/controller.md) | Active-run JobManager reconciliation |
 | L1 Engine | [Runtime Clusters](architecture/engine/runtime-clusters.md) | Flink-style application/session runtime isolation |
 | L1 Engine | [JobManager](architecture/engine/jobmanager.md) | DAG scheduling and runtime ownership |
 | L1 Engine | [TaskManager](architecture/engine/taskmanager.md) | Slot execution and executor routing |
 | L1 Engine | [Sandbox](architecture/engine/sandbox.md) | Isolated script execution |
 | L1 Engine | [Notifier](architecture/engine/notifier.md) | Delivery and UI event boundary |
-| L1 Engine | [Wallet](architecture/engine/wallet.md) | External key custody and digest-signing boundary |
+| L1 Engine | [AgentVault / x402](architecture/engine/wallet.md) | External custody boundary and the remaining legacy client integration gap |
 | L2 AgentFlow | [AgentFlow application architecture](architecture/agent-flow.md) | Generic DAG model, capabilities, limits, and authoring practices |
 
 ## Applications
@@ -32,7 +33,7 @@ Shared DAG semantics belong to the
 | Application | Scope | Entries |
 |---|---|---|
 | Security Autonomy Fixer | SonarQube-to-GitHub remediation and post-change verification; 29-node/33-edge DAG | [Design and E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
-| AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/config/flows/autotest-generation-v1.yaml) |
+| AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/e2e/config/flows/autotest-generation-v1.yaml) |
 
 ## Operations
 
@@ -47,8 +48,9 @@ Shared DAG semantics belong to the
 | Active | [`development/`](development/) | Work that still carries current acceptance criteria |
 | Historical | [`development/archive/`](development/archive/) | Early intent and dated implementation records; context only |
 
-Current active development plan:
+Current active development documents:
 
+- [Coding-agent handover](development/HARDCOVER.md) · [中文](development/HARDCOVER_ZH.md)
 
 ## Language Versions
 

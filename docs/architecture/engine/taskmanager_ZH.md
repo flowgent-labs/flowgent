@@ -6,11 +6,14 @@ TaskManager 是执行 Worker。MQTT 共享订阅在 Pod 与 Slot 之间分配 Pl
 Slot 将一个 Plan 路由到对应 Executor，通过 API Server 持久化 Task 状态，并
 把路由/状态结果返回 JobManager。TaskManager 不直接访问数据库。
 
+一个节点 Attempt 的公开 API 与持久层规范名称是 **NodeRun**。`TaskRunInfo`、
+`TaskStateStore` 和 `task_id` 是 Go/Wire 兼容名称，不构成第二套外部资源。
+
 ```text
 JobManager ──ExecutionPlan/MQTT──► SlotWorker ──► TaskExecutorRouter
      ▲                                  │                 │
      └──────exec/result/MQTT────────────┘                 ├── LLM / MCP
-                                                         ├── Subflow / Skill
+                                                         ├── Subflow / Skill（已注册 Stub）
                                                          └── Sandbox via MQTT
 ```
 
@@ -26,11 +29,11 @@ Worker。TaskManager Worker 只订阅自己的 ExecutionPlan topic，并拒绝 n
 
 执行关系是：**1 Slot = 1 ExecutionPlan attempt**。JobManager 为每个 DAG Node
 保留一个逻辑 Plan，但在显式 Node retry policy 下可重复分发；每次分发都有独立
-TaskRun 标识。含 4 个 Slot 的 TM Pod 最多并发执行 4 个 attempt。
+NodeRun 标识。含 4 个 Slot 的 TM Pod 最多并发执行 4 个 attempt。
 
 JobManager 在经 MQTT 发布前把 W3C TraceContext 与 Baggage 注入
 `ExecutionPlan.trace_context`。SlotWorker 提取后创建 `taskmanager.execute`
-Child Span，并写入 Run/Node/Task/Attempt 关联 ID。输入输出正文保存在 TaskRun；
+Child Span，并写入 Run/Node/Task/Attempt 关联 ID。输入输出正文保存在 NodeRun；
 Trace attributes 只含有界的 content type、byte count、SHA-256 与 capture 元数据。
 
 ### Executor Router 边界
@@ -60,7 +63,7 @@ TM Pod (SlotWorker)
 
 PG `llm_mcp` 表中的 `McpInfo` 包含：
 
-- `url`——MCP Server 端点，例如 `http://172.29.235.101:18080/mcp`。
+- `rpc_url`——MCP Server 端点，应优先使用稳定的 Service/DNS URL。
 - `headers`——可选的认证/转发 Header；敏感值使用如
   `Bearer ${GITHUB_TOKEN}` 的模板，并从 Pod 环境解析。
 
@@ -86,5 +89,5 @@ TM 定期发送心跳。JM 的 KubernetesResourceManager 检测死亡 TM 并重�
 4. **给定**任意 Task 完成，**当**报告结果时，**则 MUST** 先通过 API Server 持久化完整 Task 状态/输出，再把仅含状态的 MQTT 回调视为已交付。
 5. **给定** Sandbox Node，**当**启用 Sandbox 执行时，**则** TaskManager **MUST** 通过 Sandbox Trigger/Result 契约委托，**MUST NOT** 静默启动内嵌 Sandbox Worker。
 6. **给定**活跃 Plan 执行期间心跳丢失，**当** JobManager 判定 TM 死亡时，**则**孤儿恢复 **MUST NOT** 为同一 Task 产生两个成功所有者。
-7. **给定**经 MQTT 收到 Plan，**当**开始执行时，**则** Worker **MUST** 提取 W3C Context、保存 TaskRun 时保留 Parent attempt ID，且 **MUST NOT** 把 payload 正文复制到 Span attributes。
+7. **给定**经 MQTT 收到 Plan，**当**开始执行时，**则** Worker **MUST** 提取 W3C Context、保存 NodeRun 时保留 Parent attempt ID，且 **MUST NOT** 把 payload 正文复制到 Span attributes。
 8. **给定** LLM/MCP 凭据引用，**当** Worker 构建 Client 时，**则 MUST** 从注入环境解析；缺失时必须明确失败且不得记录凭据值。

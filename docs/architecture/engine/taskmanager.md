@@ -7,11 +7,15 @@ across pods and slots; each slot routes one plan to the matching executor,
 persists task state through the API Server, and returns routing/status data to
 JobManager. TaskManager has no direct database access.
 
+The canonical public and persistence term for one node attempt is **NodeRun**.
+`TaskRunInfo`, `TaskStateStore`, and `task_id` remain internal Go/wire
+compatibility names and do not define a second external resource.
+
 ```text
 JobManager ──ExecutionPlan/MQTT──► SlotWorker ──► TaskExecutorRouter
      ▲                                  │                 │
      └──────exec/result/MQTT────────────┘                 ├── LLM / MCP
-                                                         ├── subflow / skill
+                                                         ├── subflow / skill (registered stubs)
                                                          └── Sandbox via MQTT
 ```
 
@@ -27,13 +31,13 @@ Each TM pod runs N `SlotWorker` goroutines (default 4). Each slot independently 
 
 The execution relationship is **1 Slot = 1 ExecutionPlan attempt**. JobManager
 retains one logical plan per DAG node but may dispatch it repeatedly under an
-explicit node retry policy; every dispatch has a distinct TaskRun identity. A TM
+explicit node retry policy; every dispatch has a distinct NodeRun identity. A TM
 pod with 4 slots executes up to 4 attempts concurrently.
 
 Before publishing through MQTT, JobManager injects W3C TraceContext and Baggage
 into `ExecutionPlan.trace_context`. SlotWorker extracts it and creates a
 `taskmanager.execute` child span with run/node/task/attempt correlation IDs.
-Input/output content remains in TaskRun; trace attributes contain only bounded
+Input/output content remains in NodeRun; trace attributes contain only bounded
 content type, byte count, SHA-256 and capture metadata.
 
 ### Executor Router Boundary
@@ -63,7 +67,7 @@ TM Pod (SlotWorker)
 ```
 
 The `McpInfo` entity stored in PG (`llm_mcp` table) carries:
-- `url` — MCP server endpoint (e.g. `http://172.29.235.101:18080/mcp`)
+- `rpc_url` — MCP server endpoint (prefer a stable service/DNS URL)
 - `headers` — optional auth/forwarding headers; sensitive values use templates
   such as `Bearer ${GITHUB_TOKEN}` and resolve from the pod environment
 
@@ -103,7 +107,7 @@ and re-dispatches orphaned plans.
    for the same task.
 7. **Given** a plan received over MQTT, **when** execution starts, **then** the
    worker MUST extract its W3C context, preserve the parent attempt ID when
-   saving TaskRun, and MUST NOT copy payload content into span attributes.
+   saving the NodeRun, and MUST NOT copy payload content into span attributes.
 8. **Given** an LLM/MCP credential reference, **when** a worker constructs the
    client, **then** it MUST resolve the value from its injected environment and
    MUST fail explicitly when missing without logging the value.

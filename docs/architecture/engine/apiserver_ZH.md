@@ -2,9 +2,12 @@
 
 [系统总览](../overview_ZH.md) · [AgentFlow 应用层](../agent-flow_ZH.md)
 
-API Server 是 Flowgent 的控制面网关，也是唯一允许连接 PostgreSQL 或 SQLite
-的进程。外部客户端通过 REST 或 A2A 进入系统；其他所有引擎组件都通过
-`FlowgentClient` REST 调用读写持久状态。Flow 生命周期变更通过 MQTT 发布。
+API Server 是 Flowgent 的控制面网关和持久业务状态的规范所有者。外部客户端通过
+REST 或 A2A 进入系统；Controller、JM、TM、Sandbox 与 Notifier 都通过
+`FlowgentClient` REST 调用读写业务状态。Flow 生命周期变更通过 MQTT 发布。
+
+独立 A2A Server 是窄例外，只拥有协议任务表 `orh_a2a_task`。JobManager 也可把
+PostgreSQL 或 Redis 用作协调锁后端，但不会绕过 API 访问业务表。
 
 ```text
 UI / REST / A2A / webhook
@@ -20,11 +23,10 @@ UI / REST / A2A / webhook
 
 ## API 与状态网关
 
-**唯一拥有数据库访问权的组件。** 其他组件只能通过 API Server REST 端点
-读写状态，或通过 MQTT 进行实时调度。这与 Kubernetes 的 apiserver→etcd
-模式一致。
+**唯一拥有通用业务表访问权的组件。** 其他执行组件通过 REST 读写业务状态，或通过
+MQTT 实时调度；A2A Task Store 与协调锁例外具有独立且受限的所有权。
 
-1. **唯一 DB 连接**——通过单个连接池访问 PG/SQLite，连接上限 20。
+1. **规范业务 DB 网关**——通过 Storage Interface 访问 PostgreSQL/SQLite。
 2. **Flow 定义缓存**——内存 Map；CRUD 时失效，并通过 watch 推送给 Controller。
 3. **MQTT 生命周期事件**——发布 Flow/Run 生命周期事件，供 Controller、JM 等实时消费。
 4. **状态写入端点**——JM/TM/Sandbox 通过 REST（FlowgentClient）更新 Run/Task 状态；Notifier 通过 API 读取 Channel。
@@ -45,31 +47,34 @@ Notifier 提供 dummy SDK SQL scope；不得把该端口发布到业务 Gateway�
 | `/api/v1/{namespace}/agents` | GET/POST | 列出/创建 Agent 定义 |
 | `/api/v1/{namespace}/flows` | GET/POST | 列出/创建 Flow |
 | `/api/v1/{namespace}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
-| `/api/v1/{namespace}/flows/{id}/runs[...]` | GET/POST/DELETE | 面向精确 Flow 授权的 Run/Task/Approval/Trace 嵌套接口 |
+| `/api/v1/{namespace}/flows/{id}/trigger` | POST | 从一个稳定 Flow 身份创建 `PENDING` Run |
+| `/api/v1/{namespace}/flows/{flow_id}/runs[...]` | GET/POST/DELETE | 面向精确 Flow 授权的 Run/NodeRun/Approval/Trace 嵌套接口 |
 | `/api/v1/{namespace}/runtime-config[/environment\|/secrets]` | GET/PUT | Namespace 环境变量默认值与只写 Secret |
 | `/api/v1/{namespace}/flows/{id}/runtime-config[/environment\|/secrets]` | GET/PUT | Flow 局部覆盖与脱敏后的有效继承结果 |
 | `/api/v1/{namespace}/flows/{id}/runtime-config/resolved` | GET | 仅 Controller 可读的 K8s 运行时物化值 |
 | `/api/v1/{namespace}/skills` | GET/POST | 列出/创建运行时 `kind=skill` DAG 定义 |
 | `/api/v1/{namespace}/skills/{id}` | GET/PUT/DELETE | 运行时 Skill CRUD |
-| `/api/v1/{namespace}/flows/trigger` | POST | 创建 `PENDING` Run |
+| `/api/v1/{namespace}/skill-definitions` | GET/POST | 列出/创建便携式 Skill Definition |
+| `/api/v1/{namespace}/skill-definitions/{name}` | GET/PUT/DELETE | 便携式 Skill Revision 生命周期 |
+| `/api/v1/{namespace}/skill-definitions/{name}/{assets\|scripts}` | POST | 上传白名单文件并创建新 Skill Revision |
 | `/api/v1/{namespace}/runs` | GET/POST | 列出 Run（JM 轮询）/创建 Run |
-| `/api/v1/{namespace}/runs/{id}` | GET/PUT | Run 状态查询与更新 |
-| `/api/v1/{namespace}/runs/{id}/tasks` | GET/POST | Task 列表与创建（JM/TM 写入） |
-| `/api/v1/{namespace}/runs/{id}/tasks/{tid}` | PUT | 更新 Task 状态（TM 写入） |
-| `/api/v1/{namespace}/runs/{id}/trace` | GET | 查询一个归属 Run 的规范化 OTel Trace |
-| `/api/v1/{namespace}/runs/{id}/cancel` | POST | 取消运行中的 Flow |
-| `/api/v1/{namespace}/runs/{id}/approvals` | GET | 列出一个归属 Run 的审批项 |
-| `/api/v1/{namespace}/runs/{id}/approvals/{token}/approve` | POST | 批准一个归属 Run 的 Gate |
-| `/api/v1/{namespace}/runs/{id}/approvals/{token}/reject` | POST | 拒绝一个归属 Run 的 Gate |
+| `/api/v1/{namespace}/runs/{run_id}` | GET/PUT/DELETE | Run 状态、更新与删除 |
+| `/api/v1/{namespace}/runs/{run_id}/node-runs` | GET/POST | NodeRun 列表与创建（JM/TM 写入） |
+| `/api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` | GET/PUT | 读取/更新一个 attempt |
+| `/api/v1/{namespace}/runs/{run_id}/trace` | GET | 查询一个归属 Run 的规范化 OTel Trace |
+| `/api/v1/{namespace}/runs/{run_id}/cancel` | POST | 取消运行中的 Flow |
+| `/api/v1/{namespace}/runs/{run_id}/approvals` | GET/POST | 列出/创建一个归属 Run 的审批项 |
+| `/api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}` | POST | 以 `approve` 或 `reject` 决定审批 |
+| `/api/v1/{namespace}/approvals` | GET | 面向 Notifier 的 Namespace 审批 Feed |
 | `/api/v1/{namespace}/notifications/channels` | GET/POST | 列出/创建 Notifier Channel |
 | `/api/v1/{namespace}/notifications/channels/{id}` | GET/PUT/DELETE | Notifier Channel CRUD |
 | `/api/v1/{namespace}/llm/providers` | GET/POST | 列出/创建 LLM Provider 定义 |
 | `/api/v1/{namespace}/mcp` | GET/POST | 列出/创建 Streamable HTTP MCP 定义 |
+| `/api/v1/{namespace}/knowledge` | GET | 列出已发布、不可变 Knowledge |
+| `/api/v1/{namespace}/knowledge/search` | POST | 带 Scope 的全文/向量检索 |
+| `/api/v1/{namespace}/knowledge/candidates` | POST | 创建绑定审批的发布 Candidate |
 | `/api/v1/{namespace}/flow-releases` | GET/POST | 不可变共享 Flow Release 目录 |
 | `/api/v1/{namespace}/flow-releases/{id}/{grants,install}` | GET/POST/DELETE | 生产方授权与消费方自有安装副本 |
-| `/api/v1/human/approvals` | GET/POST | 列出待审批项/创建人工审批 |
-| `/api/v1/human/{token}/approve` | POST | 人工批准 |
-| `/api/v1/human/{token}/reject` | POST | 人工拒绝 |
 
 ### Run Trace 查询
 
@@ -79,20 +84,20 @@ API Server 调用 Jaeger 的只读 Query API，并把 Jaeger 存储格式转换�
 查询后端返回 503，上游查询失败返回 502；成功响应使用 `private, no-store`。
 
 Jaeger 是可观测数据源，不是恢复数据库。每次 attempt 的精确输入/输出/错误
-仍保存于 TaskRun。Span 通过 `flowgent.task_id` 关联，
+仍保存于 NodeRun。Span 当前通过保持兼容的 `flowgent.task_id` 关联，
 `flowgent.node_id` 与 `flowgent.attempt` 用于辅助诊断。Query API 在
 `mgmt.otel.query_*` 下配置 timeout、lookback 与 trace 数量，并限制单次响应为
 16 MiB。
 
-Run 与 TaskRun Handler 在读取、修改、取消或列出 Task 前使用相同的 Namespace
-归属校验。Task 更新以已校验的路径 Run/Namespace 覆盖 Body 中的身份字段；若
-Task ID 已属于另一 Run，则拒绝该请求。
+Run 与 NodeRun Handler 在读取、修改、取消或列出 Attempt 前使用相同的 Namespace
+归属校验。NodeRun 更新以已校验的路径 Run/Namespace 覆盖 Body 中的身份字段；若
+NodeRun ID 已属于另一 Run，则拒绝该请求。
 
-### TaskRun Payload 存储
+### NodeRun Payload 存储
 
 每次 attempt 的完整输入/输出属于业务审计数据，而不是遥测数据。API Server
-持有 `ITaskPayloadProvider`，透明完成两个字段的持久化与还原；JobManager、
-TaskManager 和 UI 继续使用不变的 `TaskRunInfo` REST 契约。
+持有 `ITaskPayloadProvider`，透明完成两个字段的持久化与还原。公开 API 与持久层使用
+NodeRun；`TaskRunInfo` 只是暂存的 Go 内部类型名，**MUST NOT** 定义新的外部契约。
 
 配置属于 `storage.artifacts`，不属于 `mgmt.otel`：
 
@@ -131,13 +136,14 @@ Schema 明确定义的敏感字段在提交 Channel 记录前使用 AES-256-GCM 
 删除。部署通过 `notifier.secret_encryption` 提供带版本的主密钥环，主密钥绝不进入
 Flowgent 业务数据库。
 
-运行时 `/skills` 路由只管理 `kind=skill` Flow 定义；便携式 `SKILL.md` Package、
-文件、归档与部署属于独立的未来 API 生命周期。
+运行时 `/skills` 路由管理 `kind=skill` Flow 定义；便携式 `/skill-definitions` 是另一套
+已实现的生命周期，具有不可变 Revision 和白名单 `assets/`、`scripts/` 上传。
 
 ### A2A 协议（端口 9992）
 
-Standalone 与 All-in-one 使用同一个 A2A 0.3 Server 和数据库共享 Task Store。
-开启集成时，AuthGuard Adapter 校验 Gateway 签名 Context，Task Store 按已验证
+Standalone 与 All-in-one 使用同一个 A2A 0.3 Server 和数据库 Task Store；Standalone
+模式下 A2A 只拥有 `orh_a2a_task`。开启集成时，AuthGuard Adapter 校验 Gateway 签名
+Context，Task Store 按已验证
 Principal ID 的 SHA-256 摘要隔离。A2A 调用 API Server 走集群内私有控制面。
 
 | 路由 | 方法 | 说明 |
@@ -165,9 +171,9 @@ API Server 仅负责持久化，不直接调用 JM。Run 有两条进入系统�
 **路径 A：API 触发（同步写入、异步执行）**
 
 ```text
-POST /api/v1/{namespace}/flows/trigger
-  → agentFlowHandler 验证 Spec 存在
-  → run := { AgentFlowID, Vars, Status:PENDING, Namespace, Namespace:"" }
+POST /api/v1/{namespace}/flows/{flow_id}/trigger
+  → Flow Handler 解析稳定 Flow ID/名称和当前 Revision
+  → run := { FlowID, FlowRevisionID, Input, Status:PENDING, ContextSnapshot }
   → 通过 API Server Store 持久化       // ← 同步阶段在此结束
   → 向调用方返回 run_id
   ...（稍后异步执行）...
@@ -191,7 +197,8 @@ Controller 每 10 秒轮询 API Server ListFlows：
 
 ## 预期行为
 
-1. **给定**任意持久资源变更，**当**变更成功时，**则** API Server **MUST** 是将其提交到 PostgreSQL 或 SQLite 的进程。
+1. **给定**除受限 A2A Task Store 例外之外的 Flowgent 业务资源变更，**当**变更成功时，
+   **则** API Server **MUST** 是将其提交到 PostgreSQL 或 SQLite 的进程。
 2. **给定**有效的 REST、A2A 或 Webhook 触发，**当**请求被接受时，**则** API Server **MUST** 在返回 ID 前持久化一个 `PENDING` Run。
 3. **给定** Flow 创建、更新或删除，**当**持久化成功时，**则 MUST** 发布对应 MQTT 生命周期事件供 Controller 协调。
 4. **给定**未授权的 Namespace 请求，**当**认证或 RBAC 失败时，**则 MUST NOT** 泄露或修改任何资源状态。

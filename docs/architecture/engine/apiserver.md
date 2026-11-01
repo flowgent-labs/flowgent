@@ -2,10 +2,14 @@
 
 [System overview](../overview.md) · [AgentFlow application layer](../agent-flow.md)
 
-The API Server is Flowgent's control-plane gateway and the only process allowed
-to connect to PostgreSQL or SQLite. External clients enter through REST or A2A;
-all other engine components read and write durable state through
+The API Server is Flowgent's control-plane gateway and canonical owner of
+durable business-state access. External clients enter through REST or A2A;
+Controller, JM, TM, Sandbox, and Notifier read and write business state through
 `FlowgentClient` REST calls. Flow lifecycle changes are published to MQTT.
+
+The standalone A2A server is a narrow exception: it owns only its protocol task
+table (`orh_a2a_task`). JobManager may also use PostgreSQL or Redis as a
+coordination-lock backend, but it does not bypass the API for business tables.
 
 ```text
 UI / REST / A2A / webhook
@@ -21,11 +25,12 @@ UI / REST / A2A / webhook
 
 ## API and State Gateway
 
-**The only component with database access.** All other components read/write state
-through the API Server's REST endpoints or via MQTT (real-time scheduling). This
-aligns with Kubernetes' apiserver→etcd pattern.
+**The only component with general business-table access.** Other execution
+components read/write business state through REST or use MQTT for real-time
+scheduling. The A2A task-store and coordination-lock exceptions above have
+separate, bounded ownership.
 
-1. **Sole DB connection** — PG/SQLite via a single connection pool (20 max)
+1. **Canonical business DB gateway** — PostgreSQL/SQLite through the storage interfaces
 2. **Flow definition cache** — in-memory map, invalidated on CRUD, pushed to Controller via watch
 3. **MQTT lifecycle events** — publishes flow/run lifecycle events for real-time consumption by Controller, JM, and other components
 4. **State write endpoint** — JM/TM/sandbox update run/task status via REST (FlowgentClient), notifier reads channels via API
@@ -48,31 +53,34 @@ published through the business Gateway.
 | `/api/v1/{namespace}/agents` | GET/POST | List / Create agent definitions |
 | `/api/v1/{namespace}/flows` | GET/POST | List / Create flows |
 | `/api/v1/{namespace}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
-| `/api/v1/{namespace}/flows/{id}/runs[...]` | GET/POST/DELETE | Flow-scoped run/task/approval/trace surface for exact-Flow grants |
+| `/api/v1/{namespace}/flows/{id}/trigger` | POST | Create a `PENDING` Run from one stable Flow identity |
+| `/api/v1/{namespace}/flows/{flow_id}/runs[...]` | GET/POST/DELETE | Flow-scoped Run/NodeRun/approval/trace surface for exact-Flow grants |
 | `/api/v1/{namespace}/runtime-config[/environment\|/secrets]` | GET/PUT | Namespace environment defaults and write-only secrets |
 | `/api/v1/{namespace}/flows/{id}/runtime-config[/environment\|/secrets]` | GET/PUT | Flow-local overrides plus redacted effective inheritance |
 | `/api/v1/{namespace}/flows/{id}/runtime-config/resolved` | GET | Controller-only effective runtime values for K8s materialization |
 | `/api/v1/{namespace}/skills` | GET/POST | List / Create runtime `kind=skill` DAG definitions |
 | `/api/v1/{namespace}/skills/{id}` | GET/PUT/DELETE | Runtime Skill CRUD |
-| `/api/v1/{namespace}/flows/trigger` | POST | Create PENDING run |
+| `/api/v1/{namespace}/skill-definitions` | GET/POST | List / Create portable Skill definitions |
+| `/api/v1/{namespace}/skill-definitions/{name}` | GET/PUT/DELETE | Portable Skill revision lifecycle |
+| `/api/v1/{namespace}/skill-definitions/{name}/{assets\|scripts}` | POST | Add an allowlisted file and create a new Skill revision |
 | `/api/v1/{namespace}/runs` | GET/POST | List runs (JM polls this) / Create run |
-| `/api/v1/{namespace}/runs/{id}` | GET/PUT | Run status + update |
-| `/api/v1/{namespace}/runs/{id}/tasks` | GET/POST | Task list + create (JM/TM write) |
-| `/api/v1/{namespace}/runs/{id}/tasks/{tid}` | PUT | Update task status (TM writes) |
-| `/api/v1/{namespace}/runs/{id}/trace` | GET | Query normalized OTel trace data for one owned run |
-| `/api/v1/{namespace}/runs/{id}/cancel` | POST | Cancel a running flow |
-| `/api/v1/{namespace}/runs/{id}/approvals` | GET | List approvals for one owned run |
-| `/api/v1/{namespace}/runs/{id}/approvals/{token}/approve` | POST | Approve one owned run gate |
-| `/api/v1/{namespace}/runs/{id}/approvals/{token}/reject` | POST | Reject one owned run gate |
+| `/api/v1/{namespace}/runs/{run_id}` | GET/PUT/DELETE | Run status, update, and deletion |
+| `/api/v1/{namespace}/runs/{run_id}/node-runs` | GET/POST | NodeRun list + create (JM/TM write) |
+| `/api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` | GET/PUT | Read/update one attempt |
+| `/api/v1/{namespace}/runs/{run_id}/trace` | GET | Query normalized OTel trace data for one owned Run |
+| `/api/v1/{namespace}/runs/{run_id}/cancel` | POST | Cancel a running Flow |
+| `/api/v1/{namespace}/runs/{run_id}/approvals` | GET/POST | List / Create approvals for one owned Run |
+| `/api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}` | POST | Resolve with `approve` or `reject` |
+| `/api/v1/{namespace}/approvals` | GET | Namespace approval feed for Notifier |
 | `/api/v1/{namespace}/notifications/channels` | GET/POST | List / Create notification channels |
 | `/api/v1/{namespace}/notifications/channels/{id}` | GET/PUT/DELETE | Notification channel CRUD |
 | `/api/v1/{namespace}/llm/providers` | GET/POST | List / Create LLM provider definitions |
 | `/api/v1/{namespace}/mcp` | GET/POST | List / Create Streamable HTTP MCP definitions |
+| `/api/v1/{namespace}/knowledge` | GET | List published, immutable Knowledge |
+| `/api/v1/{namespace}/knowledge/search` | POST | Scoped full-text/vector retrieval |
+| `/api/v1/{namespace}/knowledge/candidates` | POST | Create an approval-bound publication candidate |
 | `/api/v1/{namespace}/flow-releases` | GET/POST | Immutable shared Flow release catalog |
 | `/api/v1/{namespace}/flow-releases/{id}/{grants,install}` | GET/POST/DELETE | Producer grants and consumer-owned installation copies |
-| `/api/v1/human/approvals` | GET/POST | List pending / Create human approval |
-| `/api/v1/human/{token}/approve` | POST | Human approval |
-| `/api/v1/human/{token}/reject` | POST | Human rejection |
 
 ### Run Trace Query
 
@@ -84,22 +92,23 @@ query backend returns 503, and an upstream query failure returns 502. Successful
 responses are `private, no-store`.
 
 Jaeger is an observability source, not a recovery database. Exact per-attempt
-input/output/error remains in TaskRun rows. Span correlation uses
+input/output/error remains in NodeRun rows. Span correlation currently uses the
+wire-compatible
 `flowgent.task_id`, with `flowgent.node_id` and `flowgent.attempt` available for
 diagnostics. The Query API is bounded by timeout, lookback, trace count, and a
 16 MiB response limit configured under `mgmt.otel.query_*`.
 
-Run and TaskRun handlers use the same exact namespace-ownership check before
-read, mutation, cancellation, or task listing. Task update paths override
+Run and NodeRun handlers use the same exact namespace-ownership check before
+read, mutation, cancellation, or attempt listing. NodeRun update paths override
 body-supplied run/namespace identity with the owned route identity and reject a
-task ID already attached to another run.
+NodeRun ID already attached to another Run.
 
-### TaskRun Payload Storage
+### NodeRun Payload Storage
 
 Complete per-attempt input/output is business audit data, not telemetry. The API
 Server owns an `ITaskPayloadProvider` and transparently persists/resolves both
-fields; JobManager, TaskManager, and the UI continue to use the unchanged
-`TaskRunInfo` REST contract.
+fields. The public/persistence term is NodeRun; `TaskRunInfo` remains a temporary
+internal Go type name and MUST NOT define a new external contract.
 
 Configuration belongs under `storage.artifacts`, not `mgmt.otel`:
 
@@ -143,14 +152,15 @@ AES-256-GCM before their channel row is committed. Reads return only
 versioned master-key ring through `notifier.secret_encryption`; master keys are
 never stored in the application database.
 
-Runtime `/skills` routes manage `kind=skill` Flow definitions only. Portable
-`SKILL.md` packages, files, archives, and deployment remain a separate future
-API lifecycle.
+Runtime `/skills` routes manage `kind=skill` Flow definitions. Portable
+`/skill-definitions` are a separate implemented lifecycle with immutable
+revisions and allowlisted `assets/` and `scripts/` uploads.
 
 ### A2A Protocol (Port 9992)
 
 The standalone and all-in-one compositions use the same A2A 0.3 server and
-shared database-backed task store. When enabled, the AuthGuard adapter verifies
+database-backed task store. In standalone mode A2A owns only `orh_a2a_task`.
+When enabled, the AuthGuard adapter verifies
 the signed gateway context and partitions tasks by a SHA-256 digest of the
 verified principal ID. Calls from A2A to the API Server use the private
 in-cluster control plane.
@@ -184,9 +194,9 @@ There are two ways runs enter the system:
 **Path A: API Trigger (sync write, async execution)**
 
 ```
-POST /api/v1/{namespace}/flows/trigger
-  → agentFlowHandler validates spec exists
-  → run := { AgentFlowID, Vars, Status:PENDING, Namespace, Namespace:"" }
+POST /api/v1/{namespace}/flows/{flow_id}/trigger
+  → flow handler resolves the stable Flow ID/name and current revision
+  → run := { FlowID, FlowRevisionID, Input, Status:PENDING, ContextSnapshot }
   → persist via apiserver store       // ← sync ends here
   → returns run_id to caller
   ... (later, asynchronously) ...
@@ -210,8 +220,9 @@ Controller polls apiserver ListFlows every 10s:
 
 ## Expected Behavior
 
-1. **Given** any durable resource mutation, **when** it succeeds, **then** API
-   Server MUST be the process that commits it to PostgreSQL or SQLite.
+1. **Given** any Flowgent business-resource mutation other than the bounded A2A
+   task-store exception, **when** it succeeds, **then** API Server MUST be the
+   process that commits it to PostgreSQL or SQLite.
 2. **Given** a valid REST, A2A, or webhook trigger, **when** it is accepted,
    **then** API Server MUST persist one `PENDING` run before returning its ID.
 3. **Given** a flow create, update, or delete, **when** persistence succeeds,

@@ -7,6 +7,10 @@ API Server, turns runnable DAG nodes into `ExecutionPlan` messages, consumes
 state-only execution results, and owns TaskManager and Sandbox capacity through
 a pluggable ResourceManager. It never connects to the database directly.
 
+The canonical public and persistence term for one node attempt is **NodeRun**.
+`TaskRunInfo`, `SaveTask`, and `task_id` remain internal Go/wire compatibility
+names; new REST routes and durable models MUST use NodeRun terminology.
+
 ```text
 API Server REST ──► JobManager / JobMaster
                          │
@@ -41,13 +45,14 @@ Execute(run, spec):
   for each ready node (all dependencies satisfied):
     plan := resolveInputs(node, previousOutputs)
     result := scheduleNodeWithRetry(ctx, plan)
-      → before each attempt: persist a distinct PENDING TaskRun via REST
+      → before each attempt: persist a distinct PENDING NodeRun via REST
       → rm.Schedule(ctx, plan)            // dispatch to TM (MQTT or standalone)
       → persist attempt output/error and retry if the node policy permits
     state.UpdateRun(ctx, run)             // update run status via apiserver REST
     Done(nodeID)
     if condition → SetConditionResult → Skip(false-branch)
-    if supervisor → validate action → Inject/Retry/Abort
+    if supervisor → validate allowlisted action JSON
+      // Graph mutation for Inject/Retry/Abort is not wired yet.
 
   // Step 3: Finalize
   → run.Status = COMPLETED | FAILED
@@ -70,7 +75,7 @@ time precedes its start time.
 | `Done(id)` | Mark node complete |
 | `Skip(id)` | Skip node (condition false path) |
 | `Fail(id)` | Mark node failed |
-| `Inject(id, deps)` | Supervisor-injected node |
+| `Inject(id, deps)` | DAG primitive reserved for supervisor-injected nodes; current JobManager does not invoke it from SupervisorExecutor output |
 | `IsComplete()` | All nodes done or skipped |
 | `HasFailed()` | Any node failed |
 | `SetConditionResult(id, bool)` | Store condition branch result |
@@ -155,7 +160,7 @@ the worker writes its result.
 Every attempt also creates a `jobmaster.node.attempt` span. Its attributes carry
 run/node/task/attempt IDs and bounded input/output metadata, not payload content.
 Executor-internal correction loops, such as model schema correction, are nested
-spans and do not create extra TaskRun rows because they are not DAG-node retries.
+spans and do not create extra NodeRun rows because they are not DAG-node retries.
 
 #### Dependency Resolution — `depsDone()` Algorithm
 
@@ -336,4 +341,4 @@ cluster.
    scheduling is explicitly implemented and tested.
 8. **Given** a node retry policy, **when** an attempt fails, **then** JobManager
    MUST persist that failed attempt before backoff and MUST use a distinct,
-   parent-linked TaskRun for the next attempt.
+   parent-linked NodeRun for the next attempt.

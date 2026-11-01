@@ -13,14 +13,15 @@ Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义
 | 层级 | 文档 | 物理或逻辑职责 |
 |---|---|---|
 | Security | [AuthGuard 集成](authguard-integration_ZH.md) | Gateway 信任边界、adapters SDK 与 Repository SQL Scope |
-| L1 Engine | [API Server](engine/apiserver_ZH.md) | 外部 REST/A2A 网关及唯一数据库客户端 |
+| 数据 | [持久数据生命周期](data-lifecycle_ZH.md) | 身份/版本、快照、Knowledge/向量、Execution Memory 与审批契约 |
+| L1 Engine | [API Server](engine/apiserver_ZH.md) | 外部 REST/A2A 网关及规范业务状态客户端 |
 | L1 Engine | [Controller](engine/controller_ZH.md) | Flow 发现与活跃 Run 的 JobManager 生命周期 |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters_ZH.md) | application/session 运行时生命周期与隔离 |
 | L1 Engine | [JobManager](engine/jobmanager_ZH.md) | 单次运行的 DAG 就绪判断、计划创建与运行时容量 |
 | L1 Engine | [TaskManager](engine/taskmanager_ZH.md) | Slot worker 与执行器路由 |
 | L1 Engine | [Sandbox](engine/sandbox_ZH.md) | 隔离脚本执行与共享工作区 |
 | L1 Engine | [Notifier](engine/notifier_ZH.md) | 多渠道投递与 WebSocket UI 推送 |
-| L1 Engine | [Wallet 与 x402](engine/wallet_ZH.md) | 可选的外部 EOA key custody 与 EIP-712 digest 签名边界 |
+| L1 Engine | [AgentVault 与 x402](engine/wallet_ZH.md) | 外部托管边界及旧 x402 Client 迁移状态 |
 | L2 AgentFlow | [AgentFlow 应用架构](agent-flow_ZH.md) | DAG 配置、节点语义、限制与最佳实践 |
 
 ## 跨组件调用契约
@@ -51,14 +52,14 @@ flowchart LR
     NOTIFY --> Channels[Slack / Email / Webhook / UI]
 
     TM -->|EIP-712 digest| WMQ[(Wallet MQTT / Unix socket)]
-    WMQ --> WALLET[External walletd]
+    WMQ --> WALLET[External AgentVault / legacy walletd]
     WALLET -->|recoverable signature| WMQ
     WMQ --> TM
 ```
 
 | 契约 | 用途 | 禁止的捷径 |
 |---|---|---|
-| API Server REST | 持久化流程、运行、任务、审批与资源状态 | 非 API 组件 MUST NOT 直连数据库 |
+| API Server REST | 持久 Flow、Run、NodeRun、Approval 与资源状态 | 执行组件 MUST NOT 直连业务表 |
 | Flowgent MQTT | 生命周期事件、执行计划/结果、沙箱工作与通知 | 内部引擎协作 MUST NOT 使用 WebSocket/SSE |
 | Wallet protocol | 通过独立 MQTT topics 或 Unix socket 执行有界 digest 签名 | Private key 与 Wallet server 配置 MUST NOT 进入 Flowgent |
 | 共享工作区 | 大型脚本、仓库与沙箱结果文件 | 大型产物 MUST NOT 经任务状态 JSON 搬运 |
@@ -67,7 +68,10 @@ flowchart LR
 
 ## 系统调用架构
 
-只有 API Server 连接数据库。其他 Flowgent 组件只通过 MQTT 实时调度总线通信，或调用 API Server REST 更新状态；可选签名通过独立的外部 Wallet protocol 边界完成。内部组件间不使用 SSE/WebSocket；WebSocket 仅供 Notifier 向 UI 推送。
+API Server 是规范业务状态数据库网关。执行组件通过 MQTT 实时调度总线通信，或调用
+API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 可使用数据库
+协调锁但不访问业务表。可选签名通过外部 AgentVault/旧 Wallet Protocol 边界完成。
+内部组件间不使用 SSE/WebSocket；WebSocket 仅供 Notifier 向 UI 推送。
 
 ```
 ═══════════════════════════════════════════════════════════════════════════════════
@@ -80,7 +84,7 @@ flowchart LR
   ┌──────────────────────────────────────────┼──────────────────────────┐
   │                           API Server                               │
   │                                                                    │
-  │  • Flow/Agent CRUD → PG（唯一 DB 客户端）          port 9999       │
+  │  • Flow/Agent CRUD → PG（业务状态网关）            port 9999       │
   │  • Trigger → 创建 PENDING run                     port 9992 (A2A) │
   │  • Flow lifecycle → MQTT create/update/delete 事件                 │
   │  • Flow cache + 热加载（静态 YAML 目录）                            │
@@ -135,7 +139,7 @@ flowchart LR
   • MQTT: notify.result.{namespace}.{flow} ───────────┤ → 投递确认
   • WS → 仅 UI 客户端（人工审批推送）                │
                                                    │
-  所有状态写入：FlowgentClient REST → apiserver → PG
+  业务状态写入：FlowgentClient REST → apiserver → PG
 ═══════════════════════════════════════════════════════════════════════════
 ```
 
@@ -143,12 +147,12 @@ flowchart LR
 
 | 约束 | 说明 |
 |---|---|
-| **只有 apiserver 连接 DB** | PG/SQLite 单一客户端并带流程缓存 |
-| **其他组件只用 MQTT 或 apiserver REST** | controller、JM、TM、sandbox、notifier 均不直连 DB |
+| **API Server 拥有业务表** | PostgreSQL/SQLite 网关与 Flow Cache；独立 A2A 只拥有自身 Task 表 |
+| **执行组件只用 MQTT 或 API REST** | Controller、JM、TM、Sandbox、Notifier 均不直连业务表 |
 | **管理链** | controller → JM → TM + Sandbox，后两者由 JM 的 K8sRM 管理 |
-| **状态经 apiserver 写入** | 运行/任务状态使用 POST/PUT REST API |
+| **状态经 API Server 写入** | Run/NodeRun 状态使用 POST/PUT REST API |
 | **实时分派经 MQTT** | ExecutionPlan、沙箱 trigger 与通知事件 |
-| **内部通信只用 MQTT** | 组件间不使用 SSE/WS；WS 仅 Notifier→UI |
+| **内部调度用 MQTT，持久状态用 REST** | 引擎组件间不使用 SSE/WS；WS 仅 Notifier→UI |
 
 ### Runtime Cluster 运行时模型
 
@@ -178,7 +182,7 @@ Helm 部署的 session JM 消费 session Run，并只管理相同 cluster id 的
 | 单活并进行 leader election | 按 pod 做 hash-mod N 路分片 |
 | CRD 驱动 reconciliation | API 扫描式 reconciliation |
 
-API 轮询避免 CRD 复杂度，并让流程目录始终位于唯一 DB 网关 apiserver 之后。
+API 轮询避免 CRD 复杂度，并让 Flow 目录始终位于规范业务状态网关 API Server 之后。
 
 ### 部署命名空间与 Pod 命名
 
@@ -194,10 +198,10 @@ API 轮询避免 CRD 复杂度，并让流程目录始终位于唯一 DB 网关 
 | sandbox | 是 | 工作负载 | 只消费匹配 Namespace/Cluster 的隔离脚本任务 |
 | notifier | 是 | 系统 | 多渠道推送与 WebSocket SSE |
 | a2a | 可选 | 系统 | Google Agent-to-Agent 协议入口 |
-| walletd | 可选外部服务 | Wallet release 自主管理 | secp256k1 EOA custody 与 EIP-712 digest 签名 |
+| AgentVault / legacy walletd | 可选外部服务 | AgentVault release 自主管理 | 托管、Policy、Approval、签名与结算；Flowgent 当前仍使用旧签名 Wire |
 
-`a2a` 是可选的 Flowgent Helm 组件。Wallet 独立部署和发布；
-`wallet.enabled` 只配置 Flowgent client。All-in-one 模式不嵌入 private-key
+`a2a` 是可选的 Flowgent Helm 组件。AgentVault 独立部署和发布；
+`wallet.enabled` 当前只配置 Flowgent 旧签名 Client，并非 AgentVault SDK。All-in-one 模式不嵌入 private-key
 custody。
 
 ```
@@ -246,13 +250,13 @@ flowgent.io/managed-by:      "runtime-cluster"
 
 | 决策 | 理由 |
 |---|---|
-| **只有 apiserver 连接 DB** | 以单一 PG/SQLite 客户端和缓存消除 N×M 连接池复杂度；其余组件使用 MQTT 或 REST。 |
+| **API Server 拥有业务表访问权** | Controller、JM、TM、Sandbox、Notifier 使用 MQTT 或 API REST。独立 A2A 只拥有 Task Store 表，协调锁不属于业务状态访问。 |
 | **Controller 经 REST 取流程，而非扫描 PG** | `ListFlows()` 配合 MQTT 生命周期事件实现实时更新，仍保留 hash-mod 分片。 |
 | **每个 Flow 声明 `runtime_mode`** | `application` 为每次 Run 创建独立 runtime cluster；`session` 使用 Helm 部署的共享 session cluster；Run 快照保证调度确定性。 |
 | **JM 通过 `runtime_cluster_id` 管理 TM/Sandbox** | 仅 `PENDING`/`RUNNING`/`PAUSED` 的 application 运行令 Controller 保留 JM；导入流程/skill 仅登记元数据。JM 只管理匹配 cluster id 的 TM/Sandbox；无活动运行或流程删除时回收。活动运行期间 JM 意外消失时，先观察 `runtime.tm_orphan_timeout`（默认 `3m`）再清理。 |
 | **运行时凭据通过 K8s Secret `envFrom` 进入 pod** | 主机 shell 环境只作为部署器/console import 输入；`runtime.credential_env_secret` 指定的 Secret 由 Controller 注入 JM，再由 JM K8sRM 可选注入 TM/Sandbox。 |
-| **资源定义只保存凭据引用，不保存值** | LLM/MCP API 接受环境变量引用名、读取时脱敏，并只在运行时 Pod 内解析。实际值不得进入浏览器状态、TaskRun payload、OTel attributes、日志或截图。Notification Channel Secret 仍需同等契约后才能开放生产 UI 配置。 |
-| **Agent memory 以 `(flow_id, node_id)` 为作用域** | 跨 run 与重启保留；流程间不共享；内容单调累积以供 RAG 召回。 |
+| **资源定义只保存凭据引用，不保存值** | LLM/MCP API 接受环境变量引用名、读取时脱敏，并只在运行时 Pod 内解析；Notification Secret 使用 AES-256-GCM 加密并保持只写。值不得进入浏览器状态、NodeRun Payload、OTel Attribute、日志或截图。 |
+| **Instruction、Knowledge 与 Execution Memory 分离** | 不可变 Instruction 控制行为；带 Scope 的 Knowledge 保存可检索事实；NodeRun Checkpoint/Message/Tool State 只属于该 Run 与 Attempt。见[持久数据生命周期](data-lifecycle_ZH.md)。 |
 | **一个 JobManager 控制线** | Session JM 轮询 session Run；application JM 轮询单个 FlowRun。两者使用同一 DAG 引擎，并按 `runtime_cluster_id` 路由计划。 |
 | **A2A 直接使用 `a2aproject/a2a-go` 类型** | ADK `adka2a` 绑定其 session、genai 与内部类型，不兼容 Flowgent DAG；官方 SDK 提供无框架耦合的协议类型。 |
 | **Sandbox 是 JM 管理的独立 pod** | K8s NetworkPolicy + RuntimeDefault 提供 pod 级边界，seccomp-bpf + userspace notifier 提供每流程/节点动态 allowlist；独立资源限制避免 TM 与 Sandbox 相互干扰；二者通过按 flowId 组织的 ReadWriteMany PVC 交换脚本与结果。 |
@@ -261,7 +265,9 @@ flowgent.io/managed-by:      "runtime-cluster"
 
 ## MQTT 事件总线
 
-所有组件间通信都位于 `flowgent/v1/` 统一层级下，以 `{namespaceId}/flows/{flowId}/runs/{runId}` 提供可观测性和多命名空间隔离。只有 apiserver 访问数据库。
+组件间消息通信位于 `flowgent/v1/` 统一层级下，以
+`{namespaceId}/flows/{flowId}/runs/{runId}` 提供可观测性和多命名空间隔离。持久业务
+状态经 API Server 写入；A2A Task Store 与协调锁例外不属于该消息总线。
 
 ```text
 # ExecutionPlan：JM → TM
@@ -293,7 +299,7 @@ flowgent/v1/heartbeat/{tmId}
 flowgent/v1/notify/pod/{podId}/ws/{wsId}
 
 # 状态写入使用 apiserver，不走 MQTT
-POST /api/v1/{namespace}/runs/{id}/tasks/{tid}
+PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}
 ```
 
 | 发布者 | Topic | 消费者 | 机制 |
@@ -319,14 +325,14 @@ for iteration=1,2,...:
     │                     Register chan[nodeID]
     │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-{namespace}-{cluster}
     │                                                                       Executor.Execute()
-    │                                                                       PUT /tasks (REST)
+    │                                                                       PUT /node-runs (REST)
     │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_id,state}
     │                     Route er.NodeID → chan[nodeID]
     ◄── TaskResult ──────
     Done(nodeID)          // 下一轮释放子节点
 ```
 
-`K8sRM.Schedule()` MUST 在发布 `exec/plans` 前注册 `exec/results` 的节点 channel，否则快速 TM 可能先返回结果，令调用一直等待到 `planTimeout`。结果 topic 只携带 `{plan_id,node_id,state}`；TM MUST 先通过 `PUT /api/v1/{namespace}/runs/{id}/tasks/{tid}` 持久化实际输出，再发布状态。JM 之后从 task record 或 `Schedule` 返回值填充的 `nodeOutputs` 读取数据，供后继节点解析变量。
+`K8sRM.Schedule()` MUST 在发布 `exec/plans` 前注册 `exec/results` 的节点 channel，否则快速 TM 可能先返回结果，令调用一直等待到 `planTimeout`。结果 topic 只携带 `{plan_id,node_id,state}`；TM MUST 先通过 `PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` 持久化实际输出，再发布状态。JM 之后从 NodeRun record 或 `Schedule` 返回值填充的 `nodeOutputs` 读取数据，供后继节点解析变量。
 
 ### Runtime Cluster 标识与队列配置
 
@@ -339,27 +345,33 @@ Worker 身份与 Topic 同时包含 Namespace/Cluster；消费者还必须校验
 `namespace_id` 与 `runtime_cluster_id`，避免错误订阅导致跨 Cluster 执行。
 
 ```yaml
-messaging:
+messager:
   type: mqtt
   mqtt:
     broker: "tcp://<host>:1883"
 ```
 
-`flowgent/v1/` 是 messager 包中的常量；`messager.ExecPlansTopic(namespace, cluster, flow, run)` 等 builder 用路由键生成完整路径。分布式部署 MUST 配置 `messaging.mqtt.broker` 或 `FLOWGENT_MQTT_BROKER`，连接失败或未配置均立即失败。本地 All-in-One 可使用 `StandaloneMessager`。
+`flowgent/v1/` 是 messager 包中的常量；`messager.ExecPlansTopic(namespace, cluster, flow, run)` 等 builder 用路由键生成完整路径。分布式部署 MUST 配置 `messager.mqtt.broker` 或 `FLOWGENT_MQTT_BROKER`，连接失败或未配置均立即失败。本地 All-in-One 可使用 `StandaloneMessager`。
 
 ## ExecutionPlan 与 Checkpoint 契约
 
 ```
-agentflow_definition（定义 Nodes + Edges）
-  └── agentflow_run（一次调用，PENDING→RUNNING→COMPLETED/FAILED）
+Flow Revision（定义 Nodes + Edges）
+  └── Run（一次调用，PENDING→RUNNING→COMPLETED/FAILED）
         ├── execution_plan（plan-node-A，与节点 A 1:1）
         ├── execution_plan（plan-node-B，与节点 B 1:1）
         └── execution_plan（plan-node-C，与节点 C 1:1）
 ```
 
-每个 DAG 节点产生且只产生一个 `ExecutionPlan`，每个 plan 只属于一个 `AgentFlowRun`。N 节点流程每次运行创建 N 个 plan；plan 序列化为 JSON、持久化至 PG，再分派给 TM slot。字段包括 PlanID、NodeID、AgentFlowRunID、TaskType、Input、RetryPolicy 与 Agent/Tool 引用。
+每个 DAG 节点对应一个逻辑 `ExecutionPlan`，每个 Plan 只属于一个 Run；Retry 分派会创建
+独立 NodeRun Attempt。Plan 序列化后用于分派，其持久表示是 NodeRun、Checkpoint 与
+Dispatch 状态，而不是独立 Plan JSON 表。字段包括 PlanID、NodeID、AgentFlowRunID
+（Run ID 的旧 Wire 名称）、
+TaskType、Input、RetryPolicy 与 Agent/Tool 引用。
 
-`TaskCheckpoint` 是 DAG 状态的周期快照，包含已完成节点、节点输出与 pending 集合；它允许故障恢复时跳过已完成节点。
+Schema 会保存每 Attempt 的 Checkpoint、Execution Memory、Message、Workspace Version、
+Lease 与 Fencing 状态；Runtime 可在 ExecutionPlan 携带 Checkpoint，但并非所有 Crash Path
+都已实现持久 Checkpoint 的自动 Reload/Re-dispatch。见[持久数据生命周期](data-lifecycle_ZH.md)。
 
 ## 部署拓扑
 
@@ -388,7 +400,7 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
 
 ```
 1. TRIGGER（同步）
-   → REST:    POST /api/v1/{namespace}/flows/trigger {agentflow_id, vars}
+   → REST:    POST /api/v1/{namespace}/flows/{flow_id}/trigger {input}
    → A2A 0.3: POST /  JSON-RPC message/send          {action:start_run, agentflow_id, vars}
    → Webhook: POST /api/v1/webhook/{provider}
        → provider adapter 规范化为 WebhookEvent
@@ -398,6 +410,9 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
        → 持久化 PENDING run
        → MQTT 发布 ctrl/run/created
        → 返回 run_id；同步阶段结束
+
+   A2A 管理 Payload 当前仍以 `agentflow_id`/`vars` 作为外部协议契约，并在 API 边界
+   归一化到规范 Flow/Run 字段。
 
 2. JM POLL（异步）
    → runPoller 每 2s 查找本流程的 PENDING run
@@ -435,7 +450,8 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
    → Ready() 取得可运行节点
    → buildPlan → rm.Schedule → Done/Fail
    → condition 记录判断并跳过 false 分支
-   → supervisor 校验 Inject/Retry/Abort 动作
+   → supervisor 校验 Allowlist Action JSON
+     （JobManager 尚未应用 Inject/Retry/Abort 图变更）
 
 5. RM DISPATCH
    → StandaloneRM 使用 goroutine pool，容量满返回 INSUFFICIENT_RESOURCES
@@ -451,7 +467,9 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
    → 经 RunStateStore.UpdateRun / apiserver REST 持久化终态
 ```
 
-TM 故障转移：TM 每 5 秒心跳；JM K8sRM 在 30 秒无心跳后认定死亡；租约到期后由其他 TM 重新领取 plan；K8s Deployment 重启 pod；孤儿 plan 从 checkpoint 重新执行。
+TM 故障转移：TM 每 5 秒心跳；JM K8sRM 在 30 秒无心跳后认定死亡；租约到期后其他 TM
+可重新领取 Attempt，K8s Deployment 会重启 Pod。所有 Crash Path 的持久 Checkpoint
+自动 Reload 仍是已知恢复缺口。
 
 ## 指标与可观测性
 
@@ -465,15 +483,15 @@ TM 故障转移：TM 每 5 秒心跳；JM K8sRM 在 30 秒无心跳后认定死�
 
 | 层次 | 事实来源 | 用途 |
 |---|---|---|
-| Run DAG | Flow 定义 + 每个 Node 最新的 TaskRun attempt | 逻辑业务进度与 Node 状态 |
-| Node attempts | 每次执行一个持久化 TaskRun | 精确的输入/输出/错误、重试链、时间、审计与恢复 |
+| Run DAG | Flow 定义 + 每个 Node 最新的 NodeRun attempt | 逻辑业务进度与 Node 状态 |
+| Node attempts | 每次执行一个持久化 NodeRun | 精确的输入/输出/错误、重试链、时间、审计与恢复 |
 | Runtime trace | 存储在 Jaeger 的 OpenTelemetry Span | 真实跨服务调用树、事件、延迟与故障定位 |
 
-三者关系为 `DAG Node 1 → N TaskRun attempts 1 → N Spans`。Span attributes
+三者关系为 `DAG Node 1 → N NodeRun attempts 1 → N Spans`。Span attributes
 只携带稳定关联标识（`run.id`、`flowgent.node_id`、`flowgent.task_id`、从 1
 开始的 `flowgent.attempt`）和有界 payload 元数据（content type、byte size、
 SHA-256、capture flag）。完整输入输出、Prompt、模型响应及任意长度预览
-**MUST NOT** 写入 Span attributes；它们属于持久化 TaskRun。未来若采用大对象
+**MUST NOT** 写入 Span attributes；它们属于持久化 NodeRun。未来若采用大对象
 引用，必须定义显式策略，不能把 tracing backend 当作对象存储。
 
 - Task execution：`[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]s`
@@ -482,8 +500,8 @@ SHA-256、capture flag）。完整输入输出、Prompt、模型响应及任意�
 
 ## 代码布局与共享模块
 
-`go.work` 串联 16 个 Go module。Wallet 被刻意排除在该 workspace 之外：
-Flowgent 只依赖 wire contract，不依赖 Wallet source 或 key-management library。
+`go.work` 串联 15 个 Go Module。AgentVault 被刻意排除在该 Workspace 之外：
+Flowgent 当前依赖旧签名 Wire，不依赖 AgentVault Source 或 Key-management Library。
 
 | Module | 路径 | 职责 |
 |---|---|---|
@@ -498,24 +516,24 @@ Flowgent 只依赖 wire contract，不依赖 Wallet source 或 key-management li
 | notifier | `pkg/notifier/` | Delivery channels 与 UI event push |
 | core | `pkg/core/` | Executors、JM/TM/RM、LLM/MCP client、x402 policy 与外部 Wallet client |
 | controller | `pkg/controller/` | Application JM 与 runtime cluster reconciliation/lifecycle |
-| api | `pkg/api/` | REST handlers 与唯一 durable-state gateway |
+| api | `pkg/api/` | REST Handler 与规范业务状态网关 |
 | a2a | `pkg/a2a/` | 可选 Agent-to-Agent protocol endpoint |
 | console | `pkg/console/` | Flowgent resource CRUD/import/export；不操作 private key |
 | cmd | `pkg/cmd/` | Binary composition root 与 service commands |
 
 依赖方向保持向内指向 `common`/`model`，`cmd` 是 composition leaf。非 API
 服务 **MUST** 通过 API Server REST 访问 durable engine state。
-`core/pkg/client/signclient` 通过 MQTT 或 Unix socket 实现
-`wallet.sign.v1`，但不导入任何 Wallet implementation。
+`core/pkg/client/signclient` 通过 MQTT 或 Unix Socket 实现旧
+`wallet.sign.v1`，但不导入任何 AgentVault Implementation。
 
-独立 Rust 服务在拆分到自身 remote 期间位于 `wallet/`。它独占
-`Cargo.toml`、`Cargo.lock`、`Dockerfile`、配置、测试与 Makefile。
-Flowgent deployment assets 只配置外部 client，**MUST NOT** 重建 Wallet
-Deployment、master-key Secret 或 image build。
+独立 Rust 服务固定在 `agentvault/`，独占 Build、Config、Storage、Policy、Approval、
+Settlement 与 Key 生命周期。Flowgent 旧 x402 Client 尚未迁移到 AgentVault SDK/API；
+见 [AgentVault 与 x402](engine/wallet_ZH.md)。
 
 ## 预期行为
 
-1. **Given** 任一非 API 组件，**when** 它读取或写入持久引擎状态，**then** 请求 MUST 经过 API Server REST，MUST NOT 建立数据库直连。
+1. **Given** 任一执行组件，**when** 它读取或写入持久业务状态，**then** 请求 MUST 经过
+   API Server REST；只允许本文记录的 A2A Task Store 与协调锁例外。
 2. **Given** 一个被接受的触发，**when** run 创建成功，**then** 异步执行开始前 MUST 可观察到一个持久化的 `PENDING` run 及其生命周期事件。
 3. **Given** 存在活动 Run，**when** Controller/JM 完成 reconcile，**then** 该 Run MUST 存在所选模式的受管 runtime，且 TaskManager/Sandbox 容量 MUST 匹配 Run 的 runtime cluster。
 4. **Given** 一个可运行 DAG 节点，**when** JobManager 分派它，**then** `exec/results` 订阅路径 MUST 先于 `exec/plans` 发布就绪；只有收到匹配结果后节点才能推进。

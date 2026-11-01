@@ -11,8 +11,8 @@ or delete. The adapter compiles AuthGuard grants
 for `urn:iam:prod:flowgent:global:<tenant>:namespace/<namespace>/**` into a
 `FlowgentSqlScope` that embeds the official `model.SqlScope`; repositories
 append it to business queries. Each repository declares its concrete resource
-path (for example `flows/{agentflow_id}` or
-`runs/{agentflow_run_id}/tasks/{id}`). The signed request `resource_urn`
+path (for example `flows/{flow_id}` or
+`runs/{run_id}/node-runs/{node_run_id}`). The signed request `resource_urn`
 selects the matching mapping before the SDK compiles allow and deny grants, so
 aliases that share a table cannot authorize one another. Reads, updates, and
 deletes include the compiled predicate; creates and upserts validate the
@@ -26,6 +26,15 @@ expired, action-mismatched, or conflicting AuthGuard context always fails
 closed. Controller, JM, TM, Sandbox, and Notifier use a separate `:9990`
 control-plane listener with a dummy SDK scope. That listener implements no
 Flowgent authentication and must never be attached to a public Gateway.
+
+When AuthGuard and Flowgent run in different namespaces, the Flowgent namespace
+MUST explicitly grant the AuthGuard `SecurityPolicy` permission to target its
+protected `HTTPRoute` through a Gateway API `ReferenceGrant`. The E2E topology
+installs AuthGuard as a separate release in
+`e2e-flowgent-authguard-system`, synchronizes only the adapter secret into the
+Flowgent namespace, and keeps the same-origin Hosted Login and account-security
+routes behind the gateway. The production chart can instead own the optional
+AuthGuard dependency through `authguard-middleware.enabled`.
 
 LDAP discovery, GitHub login, hosted login, principal lifecycle, roles,
 policies, and audit decisions are configured and operated in AuthGuard. The

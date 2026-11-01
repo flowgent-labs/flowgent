@@ -24,8 +24,8 @@ Notifier 将内部 AgentFlow 事件桥接到外部通信 Channel。
   │  ┌──────────────────┐  ┌────────────────┐  │
   │  │ MQTT Queue       │  │ Human Approval │  │
   │  │ Consumer         │  │ Scanner（5s）   │  │
-  │  │ Topic: /flowgent/│  │ SELECT PENDING │  │
-  │  │ notify/queue/    │  │ human_approvals│  │
+  │  │ Topic: /flowgent/│  │ GET /approvals │  │
+  │  │ notify/queue/    │  │ 经 API Server  │  │
   │  │ {namespace}/{flow}  │  └───────┬────────┘  │
   │  └────────┬─────────┘          │           │
   │           └──────────┬─────────┘           │

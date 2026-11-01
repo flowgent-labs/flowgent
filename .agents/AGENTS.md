@@ -7,11 +7,13 @@
   - Docker: `make build:image` / `make build:image:core`
   - Host dev: `make build` / `make build:core`
   - Utilities: `make test-ut` / `make test-x402` / `make test-it` / `make fmt` / `make clean`
-- **The independent Rust Wallet MUST use only `wallet/Makefile` for its build,
-  test, lint, and image lifecycle.** Use `make -C wallet help`. The Flowgent
-  root Makefile MUST NOT proxy Wallet targets.
+- **The independent Rust AgentVault submodule MUST use only
+  `agentvault/Makefile` for its build, test, lint, and image lifecycle.** Use
+  `make -C agentvault help`. The Flowgent root Makefile MUST NOT proxy
+  AgentVault targets.
 - **NEVER run `go build` directly** outside of `make build:xxx`
-- **NEVER run `cargo build`, `cargo test`, or `docker build` directly for Wallet.**
+- **NEVER run `cargo build`, `cargo test`, or `docker build` directly for
+  AgentVault.**
 - Binaries under `bin/` are git-ignored. Do NOT commit them.
 - **Git commit messages must be concise.** Keep subject under 72 chars.
   - No `Co-Authored-By` trailers, no `via .HAPI` attribution.
@@ -48,34 +50,35 @@ historical context and are not authoritative for the current implementation.
 |-----|---------|
 | [docs/architecture/overview.md](../docs/architecture/overview.md) | L1 engine overview: cross-component calls, MQTT/ExecutionPlan contracts, deployment, observability, and physical component links |
 | [docs/architecture/agent-flow.md](../docs/architecture/agent-flow.md) | Generic L2 application architecture: DAG model, capabilities, limits, and authoring practices |
-| [docs/architecture/engine/wallet.md](../docs/architecture/engine/wallet.md) | Optional external L1 Wallet: process-isolated secp256k1 key custody and EIP-712 digest signing |
+| [docs/architecture/data-lifecycle.md](../docs/architecture/data-lifecycle.md) | Durable identity/revision model, instruction/knowledge/execution-memory separation, approvals, and vector retrieval |
+| [docs/architecture/engine/wallet.md](../docs/architecture/engine/wallet.md) | AgentVault boundary and the remaining legacy x402 client integration gap |
 | [docs/runbooks/build-dependency-images.md](../docs/runbooks/build-dependency-images.md) | Build and operate x402 facilitator, EVM Anvil, and Solana validator images |
 
 ### Use Cases
 
 | Doc | Summary |
 |-----|---------|
-| [docs/use-cases/overview.md](../docs/use-cases/overview.md) | Concise application catalog and use-case README ownership rules |
-| [usecase/security-autonomy-fixer/README.md](../usecase/security-autonomy-fixer/README.md) | Security Autonomy Fixer application design, nodes, edges, resources, limits, and verification entry points |
-| [usecase/security-autonomy-fixer/e2e/VERIFICATION.md](../usecase/security-autonomy-fixer/e2e/VERIFICATION.md) | Current E2E environment, scenarios, assertions, and verification results |
-| [usecase/security-autonomy-fixer/config/mcps/sonarqube.yaml](../usecase/security-autonomy-fixer/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer flow |
-| [usecase/autotest-generator/README.md](../usecase/autotest-generator/README.md) | AutoTest Generator draft, owned resources, current execution gaps, and expected behavior |
+| [docs/index.md#applications](../docs/index.md#applications) | Application catalog and use-case README ownership rules |
+| [use-cases/security-autonomy-fixer/README.md](../use-cases/security-autonomy-fixer/README.md) | Security Autonomy Fixer application design, nodes, edges, resources, limits, and verification entry points |
+| [use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md](../use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md) | Current K8s E2E topology and reproducible manual acceptance checklist |
+| [use-cases/security-autonomy-fixer/e2e/config/mcps/sonarqube.yaml](../use-cases/security-autonomy-fixer/e2e/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer flow |
+| [use-cases/autotest-generator/README.md](../use-cases/autotest-generator/README.md) | AutoTest Generator draft, owned resources, current execution gaps, and expected behavior |
 
-### Plans
+### Active Development and History
 
 | Doc | Summary |
 |-----|---------|
-| [docs/plans/e2e-improvements.md](../docs/plans/e2e-improvements.md) | Active integration and distributed E2E improvement requirements |
-| [docs/plans/archive/](../docs/plans/archive/) | Low-priority historical drafts and dated progress notes; not current specifications |
+| [docs/development/HARDCOVER.md](../docs/development/HARDCOVER.md) | Coding-agent migration handover, implemented matrix, known gaps, and next priorities |
+| [docs/development/archive/](../docs/development/archive/) | Low-priority historical drafts and dated progress notes; not current specifications |
 
 ### Key Directories
 
 ```
-pkg/          Flowgent Go modules (api, cache, cmd, config, core, messager, model, notifier, sandbox, store)
-wallet/       Git submodule pinned to the independent Rust Wallet repository
+pkg/          Flowgent Go modules (api, cache, cmd, config, core, messager, model, notifier, sandbox, storage, ...)
+agentvault/   Git submodule/symlink to the independent Rust AgentVault repository
 deploy/       Docker (docker/) + Helm chart (helm/flowgent/)
 etc/          Reference config (flowgent.yaml)
-usecase/     Primary use case (security-autonomy-fixer: agents, flows, skills, e2e)
+use-cases/    Applications and their self-contained manifests/E2E assets
 docs/         Current architecture, use cases, runbooks, active plans, and historical archives
 tests/        E2E/integration tests
 ```

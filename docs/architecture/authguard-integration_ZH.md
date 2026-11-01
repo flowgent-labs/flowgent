@@ -8,8 +8,8 @@ Flowgent API 仅使用官方 AuthGuard Go adapters SDK 校验网关注入的签�
 Adapter 把
 `urn:iam:prod:flowgent:global:<tenant>:namespace/<namespace>/**` Grant 编译为
 嵌入官方 `model.SqlScope` 的 `FlowgentSqlScope`，由 Repository 附加到业务查询。每个
-Repository 声明自身的实体资源路径，例如 `flows/{agentflow_id}` 或
-`runs/{agentflow_run_id}/tasks/{id}`。Adapter 先根据签名请求中的 `resource_urn`
+Repository 声明自身的实体资源路径，例如 `flows/{flow_id}` 或
+`runs/{run_id}/node-runs/{node_run_id}`。Adapter 先根据签名请求中的 `resource_urn`
 选择匹配映射，再由 SDK 编译 allow/deny Grant，避免共表别名互相越权。读取、更新、删除
 均附加该谓词；创建与 upsert 则通过候选行查询或事务校验授权范围。Helm 关闭集成时，
 `FlowgentSqlScope` 使用空实现，因此 Flowgent 不会强制依赖 AuthGuard 运行时。
@@ -19,6 +19,13 @@ API Service 默认是 `ClusterIP`。公网请求必须经过 AuthGuard 管理的
 一律失败关闭。Controller、JM、TM、Sandbox 与 Notifier 使用独立的 `:9990` 内部
 控制面监听器，其 dummy SDK scope 仅用于维持分布式执行，不实现任何 Flowgent AuthN，
 也不得挂载到公网 Gateway。
+
+当 AuthGuard 与 Flowgent 位于不同 Namespace 时，Flowgent Namespace **MUST** 通过
+Gateway API `ReferenceGrant` 显式允许 AuthGuard `SecurityPolicy` 选择受保护的
+`HTTPRoute`。E2E 拓扑把 AuthGuard 作为独立 Release 部署到
+`e2e-flowgent-authguard-system`，只把 Adapter Secret 同步到 Flowgent Namespace，
+并让同源 Hosted Login 与账户安全页面继续位于 Gateway 后。生产 Chart 也可通过
+`authguard-middleware.enabled` 选择由 Umbrella Chart 管理 AuthGuard 依赖。
 
 LDAP Discovery、GitHub Login、Hosted Login、Principal 生命周期、Role、Policy 与
 授权审计均在 AuthGuard 中配置和运维。Flowgent Helm Chart 只负责是否部署 AuthGuard
