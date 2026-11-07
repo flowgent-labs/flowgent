@@ -2,6 +2,9 @@ package policy
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -28,6 +31,7 @@ func TestEngine_Allow(t *testing.T) {
 
 	intent := &model.PaymentIntent{
 		ID: "i1", URL: "https://api.openai.com/v1/chat",
+		Payer: "0xpayer",
 		Asset: "USDC", Amount: decimal.NewFromFloat(0.5),
 		Chain: "base", Recipient: "0x1234",
 	}
@@ -104,16 +108,48 @@ func TestEngine_DenyDailyBudget(t *testing.T) {
 	ctx := context.Background()
 
 	// Spend $9.5 first
-	eng.RecordSpend(ctx, "0x", decimal.NewFromFloat(9.5))
+	if err := eng.ReserveSpend(ctx, "0xpayer", decimal.NewFromFloat(9.5)); err != nil {
+		t.Fatalf("reserve initial spend: %v", err)
+	}
 
 	// $1.0 would push to $10.5 > $10 budget
 	intent := &model.PaymentIntent{
 		ID: "i7", URL: "https://api.openai.com",
+		Payer: "0xpayer",
 		Asset: "USDC", Amount: decimal.NewFromFloat(1.0),
 		Chain: "base", Recipient: "0x",
 	}
 	if err := eng.Allow(ctx, intent); err == nil {
 		t.Fatal("should deny when daily budget exceeded")
+	}
+}
+
+func TestEngine_ReserveSpendIsAtomic(t *testing.T) {
+	eng := NewEngine(testCfg(), nil)
+	ctx := context.Background()
+	var started sync.WaitGroup
+	var finished sync.WaitGroup
+	var successes atomic.Int32
+	started.Add(2)
+	finished.Add(2)
+	for range 2 {
+		go func() {
+			defer finished.Done()
+			started.Done()
+			started.Wait()
+			err := eng.ReserveSpend(ctx, "0xpayer", decimal.NewFromInt(6))
+			if err == nil {
+				successes.Add(1)
+				return
+			}
+			if !errors.Is(err, model.ErrPaymentDenied) {
+				t.Errorf("unexpected reservation error: %v", err)
+			}
+		}()
+	}
+	finished.Wait()
+	if got := successes.Load(); got != 1 {
+		t.Fatalf("exactly one concurrent reservation must succeed, got %d", got)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 //
 //	{basePath}/{namespace}/secret/.credentials          (namespace-level, lower priority)
 //	{basePath}/{namespace}/{flow}/secret/.credentials   (flow-level, highest priority)
-func LoadCredentials(basePath, namespace, flow string, flowCreds map[string]string) map[string]string {
+func LoadCredentials(basePath, namespace, flow string) map[string]string {
 	if basePath == "" {
 		basePath = "/var/flowgent"
 	}
@@ -45,11 +45,6 @@ func LoadCredentials(basePath, namespace, flow string, flowCreds map[string]stri
 			slog.Debug("credentials loaded flow-level", "path", flowPath, "vars", len(m))
 		}
 
-		// 3. Inline flow credentials from FlowInfo (highest of all)
-		for k, v := range flowCreds {
-			result[k] = v
-			found = true
-		}
 	}
 
 	if !found {

@@ -3,134 +3,104 @@
 package client
 
 import (
-	"bytes"
+	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/shopspring/decimal"
 	"github.com/x402-foundation/x402/go/types"
 )
 
-func TestParse_V2Body(t *testing.T) {
-	pr := types.PaymentRequired{
+func testPaymentRequired(t *testing.T) types.PaymentRequired {
+	t.Helper()
+	return types.PaymentRequired{
 		X402Version: 2,
 		Accepts: []types.PaymentRequirements{{
-			Scheme: "x402", Network: "base", Asset: "USDC",
-			Amount: "0.01", PayTo: "0x1234",
+			Scheme: "exact", Network: "eip155:8453",
+			Asset:  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+			Amount: "10000", PayTo: "0x1234",
 		}},
 	}
-	body, _ := json.Marshal(pr)
+}
 
-	resp := &http.Response{
-		StatusCode: http.StatusPaymentRequired,
-		Body:       io.NopCloser(bytes.NewReader(body)),
-	}
-
-	parsed, err := Parse(resp)
+func TestParseV2Header(t *testing.T) {
+	raw, err := json.Marshal(testPaymentRequired(t))
 	if err != nil {
-		t.Fatalf("Parse V2 body: %v", err)
+		t.Fatal(err)
 	}
-	if len(parsed.Accepts) != 1 {
-		t.Fatalf("expected 1 accept, got %d", len(parsed.Accepts))
-	}
-	accept := parsed.Accepts[0]
-	if accept.Asset != "USDC" {
-		t.Errorf("expected USDC, got %s", accept.Asset)
-	}
-	if accept.Amount != "0.01" {
-		t.Errorf("expected 0.01, got %s", accept.Amount)
-	}
-}
-
-func TestParse_Not402(t *testing.T) {
-	resp := &http.Response{StatusCode: http.StatusOK}
-	_, err := Parse(resp)
-	if err == nil {
-		t.Fatal("expected error for non-402 response")
-	}
-}
-
-func TestParse_V1HeaderFallback(t *testing.T) {
 	resp := &http.Response{
 		StatusCode: http.StatusPaymentRequired,
 		Header: http.Header{
-			"X402-Payment": []string{`{"asset":"USDC","amount":"0.05","chain":"base","recipient":"0x1234","settlement":"x402","facilitator":"http://f.example.com"}`},
+			http.CanonicalHeaderKey(HeaderPaymentRequired): []string{base64.StdEncoding.EncodeToString(raw)},
 		},
-		Body: io.NopCloser(bytes.NewReader([]byte(`not valid json`))),
 	}
 
 	parsed, err := Parse(resp)
 	if err != nil {
-		t.Fatalf("Parse V1 fallback: %v", err)
+		t.Fatalf("Parse V2 header: %v", err)
 	}
-	accept := parsed.Accepts[0]
-	if accept.Asset != "USDC" {
-		t.Errorf("expected USDC, got %s", accept.Asset)
+	if len(parsed.Accepts) != 1 || parsed.Accepts[0].Amount != "10000" {
+		t.Fatalf("unexpected payment requirements: %+v", parsed.Accepts)
 	}
 }
 
-func TestParse_EmptyResponse(t *testing.T) {
-	resp := &http.Response{
-		StatusCode: http.StatusPaymentRequired,
-		Header:     http.Header{},
-		Body:       io.NopCloser(bytes.NewReader([]byte{})),
+func TestParseRejectsInvalidResponses(t *testing.T) {
+	versionOne, err := json.Marshal(types.PaymentRequired{X402Version: 1, Accepts: []types.PaymentRequirements{{}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, err := Parse(resp)
-	if err == nil {
-		t.Fatal("expected error for empty 402 response")
+	tests := map[string]*http.Response{
+		"nil":     nil,
+		"not 402": {StatusCode: http.StatusOK},
+		"missing header": {
+			StatusCode: http.StatusPaymentRequired,
+			Header:     make(http.Header),
+		},
+		"unsupported version": {
+			StatusCode: http.StatusPaymentRequired,
+			Header: http.Header{
+				http.CanonicalHeaderKey(HeaderPaymentRequired): []string{base64.StdEncoding.EncodeToString(versionOne)},
+			},
+		},
+	}
+	for name, resp := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse(resp); err == nil {
+				t.Fatal("expected parse error")
+			}
+		})
 	}
 }
 
 func TestIsX402Response(t *testing.T) {
-	resp := &http.Response{StatusCode: http.StatusPaymentRequired}
-	if !IsX402Response(resp) {
-		t.Fatal("should detect x402 response by 402 status")
+	if !IsX402Response(&http.Response{StatusCode: http.StatusPaymentRequired}) {
+		t.Fatal("should detect x402 response by status")
 	}
-	resp2 := &http.Response{StatusCode: http.StatusOK}
-	if IsX402Response(resp2) {
-		t.Fatal("should NOT detect x402 on 200")
+	if IsX402Response(&http.Response{StatusCode: http.StatusOK}) || IsX402Response(nil) {
+		t.Fatal("should reject non-x402 responses")
 	}
 }
 
-func TestSetAuthorizationHeader(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
-	SetAuthorizationHeader(req, "tok-123")
-	if req.Header.Get(HeaderX402Auth) != "tok-123" {
-		t.Error("header should be set")
-	}
-}
-
-func TestFirstAccept(t *testing.T) {
-	pr := &types.PaymentRequired{
-		Accepts: []types.PaymentRequirements{
-			{Scheme: "exact", Asset: "USDC"},
-			{Scheme: "permit2", Asset: "ETH"},
-		},
-	}
-	first := FirstAccept(pr)
-	if first.Asset != "USDC" {
-		t.Errorf("expected USDC, got %s", first.Asset)
-	}
-
-	if a := FirstAccept(&types.PaymentRequired{}); a != nil {
-		t.Error("expected nil for empty accepts")
-	}
-	if a := FirstAccept(nil); a != nil {
-		t.Error("expected nil for nil")
-	}
-}
-
-func TestParseAssetAmount(t *testing.T) {
-	d, err := ParseAssetAmount(" 0.05 ")
+func TestParsePaymentAmountUSD(t *testing.T) {
+	requirement := testPaymentRequired(t).Accepts[0]
+	requirement.Amount = "50000"
+	amount, err := ParsePaymentAmountUSD(requirement)
 	if err != nil {
-		t.Fatalf("ParseAssetAmount: %v", err)
+		t.Fatalf("ParsePaymentAmountUSD: %v", err)
 	}
-	if !d.Equals(decimal.NewFromFloat(0.05)) {
-		t.Errorf("expected 0.05, got %s", d)
+	if !amount.Equals(decimal.NewFromFloat(0.05)) {
+		t.Fatalf("expected 0.05, got %s", amount)
+	}
+	for _, invalid := range []string{"", "invalid", "0", "-1", "0.5"} {
+		requirement.Amount = invalid
+		if _, err := ParsePaymentAmountUSD(requirement); err == nil {
+			t.Fatalf("expected amount %q to be rejected", invalid)
+		}
+	}
+	requirement.Amount = "50000"
+	requirement.Asset = "0x1111111111111111111111111111111111111111"
+	if _, err := ParsePaymentAmountUSD(requirement); err == nil {
+		t.Fatal("expected unknown token to be rejected")
 	}
 }
-
-var _ = httptest.NewServer

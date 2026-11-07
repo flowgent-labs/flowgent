@@ -1,37 +1,38 @@
-# CI/CD Architecture
+# CI/CD lifecycle
 
-Two workflows covering the full lifecycle from PR to release.
+Flowgent follows the same PR-to-release lifecycle as AuthGuard. Delivery files
+remain in their owning root directories: workflows and helper scripts under
+`.github/`, the product chart under `deploy/helm/flowgent/`, the backend image
+under `deploy/docker/`; the frontend source stays under `web/` and its image
+recipe is `deploy/docker/Dockerfile.web`.
 
-## Workflows
+## Pull requests
 
-| File | Purpose | Trigger | Jobs |
-|------|---------|---------|------|
-| `ci.yml` | PR validation + daily/weekly regression | `pull_request: opened, synchronize, reopened` + `schedule` | `build-and-test` → `make build` + `make test-ut`; `integration-it` → `make test-it` |
-| `release.yml` | Semver tag, cross-platform binaries, Docker images | `pull_request: closed + merged` + `push: main` | DAG: `release` (bump → tag) → `build-binaries` ∥ `build-images` → `upload-release` |
+`.github/workflows/ci.yml` runs for every PR revision targeting `main`:
 
-## Trigger Matrix
+1. Derive immutable `dirty-<head-sha-8>` image tags.
+2. Build and push `flowgent` and `flowgent-web` dirty images.
+3. Build the Go binary and run Go, web, runner, Helm, and integration tests.
+4. Package a dirty Flowgent chart as a retained workflow artifact.
+5. Run the complete security-autonomy-fixer E2E against those exact images and
+   upload its reports and screenshots.
 
-| Event | ci.yml | release.yml | What happens |
-|-------|--------|-------------|--------------|
-| PR opened / new commits pushed | ✅ | — | build + unit tests + integration tests |
-| PR merged to main | — | ✅ | semver bump (feat:/fix:/refactor:) → git tag → cross-compile binaries → docker build & push to ghcr.io → GitHub Release |
-| Direct push to main | — | ✅ | same as merge (commit message parsed for bump level) |
-| Daily 03:07 UTC | ✅ | — | scheduled full test against main |
-| Weekly Mon 08:37 UTC | ✅ | — | same as daily, plus deploy E2E if k8s available |
+The workflow maintains one CI status comment on the PR rather than adding a new
+comment for every revision.
 
-## Key Design Decisions
+## Merged PR releases
 
-**PR merge does NOT run tests.** Tests ran on every push to the PR branch already; re-running on main is redundant and doubles CI spend.
+`.github/workflows/release.yml` runs only for merged PRs. The PR title selects
+the semantic version bump:
 
-**`release.yml` handles both `pull_request:closed+merged` AND `push:main`.** Dual trigger ensures the green check appears on the main-branch commit status. `concurrency: release-${{ github.ref }}` serialises the two events for a single merge so they don't race (second arrival is a no-op).
+- `refactor:` — major
+- `feat:` — minor
+- `fix:` — patch
 
-**Semver from commit type, not label.** `refactor:` → major, `feat:` → minor, `fix:` → patch. On squash-merge the original PR title becomes HEAD's message; on merge-commit the feature-branch tip's first line is used.
-
-**Integration tests run in their own job with a longer timeout.** `integration-it` needs a PostgreSQL service container (pgvector on port 15432). If neither is available the affected tests skip gracefully rather than failing the build.
-
-## `IN_CN_GFW` Environment Variable
-
-| Value | Behaviour |
-|-------|-----------|
-| `"false"` (CI default) | No Go proxy/CDN — direct network (GitHub Actions has unthrottled access) |
-| `"true"` (local behind GFW) | Routes `go mod download` through `goproxy.cn` inside Docker build; if `HTTPS_PROXY` is set it is used instead |
+Other titles do not publish a release. A release publishes multi-architecture
+`flowgent` and `flowgent-web` images with immutable version and `latest` tags,
+publishes `flowgent-<version>.tgz` to
+`oci://ghcr.io/flowgent-labs/charts/flowgent`, pull-verifies that chart, and
+attaches the same tgz to the GitHub release. Dirty images created by every
+revision of the merged PR are removed only after all official artifacts publish
+successfully.

@@ -77,18 +77,6 @@ func buildSwaggerHTML(title, specURL string) string {
 </html>`, title, specURL)
 }
 
-// ── Legacy aliases (backwards-compatible) ─────────────────────
-
-// OpenAPIHandler serves the embedded OAS spec.
-func OpenAPIHandler(w http.ResponseWriter, r *http.Request) {
-	NewOpenAPIHandler(DefaultSwaggerConfig())(w, r)
-}
-
-// SwaggerUIHandler serves the Swagger UI page.
-func SwaggerUIHandler(w http.ResponseWriter, r *http.Request) {
-	NewSwaggerUIHandler(DefaultSwaggerConfig())(w, r)
-}
-
 // OASInfo returns basic API metadata.
 func OASInfo() map[string]any {
 	return map[string]any{

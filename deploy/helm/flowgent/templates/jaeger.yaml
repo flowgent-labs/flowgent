@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.jaeger.enabled }}
 {{- if eq .Values.jaeger.mode "all-in-one" }}
 apiVersion: v1
@@ -50,5 +51,6 @@ spec:
               name: ui
           resources:
             {{- toYaml .Values.jaeger.resources | nindent 12 }}
+{{- end }}
 {{- end }}
 {{- end }}

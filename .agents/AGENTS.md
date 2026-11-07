@@ -2,12 +2,18 @@
 
 ## Development (Requirements)
 
-- **All builds MUST use `make` from the repository root.** `make help` shows all targets.
-  Output goes to `bin/`.
-  - Docker: `make build` / `make build:image:all` / `make build:image:core` / `make build:image:wallet` / `make build:image:all-in-one`
-  - Host dev: `make build:all` / `make build:core` / `make build:wallet`
-  - Utilities: `make test-ut` / `make fmt` / `make clean` / `make help`
+- **All Flowgent Go builds and tests MUST use the repository-root `Makefile`.**
+  `make help` shows the supported targets; binaries go to `bin/`.
+  - Docker: `make build:image` / `make build:image:core`
+  - Host dev: `make build` / `make build:core`
+  - Utilities: `make test-ut` / `make test-x402` / `make test-it` / `make fmt` / `make clean`
+- **The independent Rust AgentVault submodule MUST use only
+  `agentvault/Makefile` for its build, test, lint, and image lifecycle.** Use
+  `make -C agentvault help`. The Flowgent root Makefile MUST NOT proxy
+  AgentVault targets.
 - **NEVER run `go build` directly** outside of `make build:xxx`
+- **NEVER run `cargo build`, `cargo test`, or `docker build` directly for
+  AgentVault.**
 - Binaries under `bin/` are git-ignored. Do NOT commit them.
 - **Git commit messages must be concise.** Keep subject under 72 chars.
   - No `Co-Authored-By` trailers, no `via .HAPI` attribution.
@@ -33,44 +39,46 @@
   `pkg/` don't share a test-only module dependency)
 - E2E scenario files named `01-xxx` format
 
-## Cost Awareness
+## Documentation Indexing
 
-- Delegate bulk exploration/file reading to Explore subagents
-- Offload "dirty reads" to save main-context quality
+Start with [docs/index.md](../docs/index.md). Archived plans are low-priority
+historical context and are not authoritative for the current implementation.
 
----
-
-# Documentation Indexing
-
-## Architecture & Design (L1)
+### Current Architecture & Design
 
 | Doc | Summary |
 |-----|---------|
-| [docs/01-L1-Engine-Architecture.md](../docs/01-L1-Engine-Architecture.md) | Engine architecture: apiserver-DB pattern, MQTT bus, component roles, session/application modes, Helm deployment, sandbox-in-TM design |
-| [docs/02-L1-x402-Economic-Support.md](../docs/02-L1-x402-Economic-Support.md) | Optional x402 HTTP 402 payment layer: facilitator settlement, wallet, policy engine |
-| [docs/03-L1-Build-Deploy-Deps-Images.md](../docs/03-L1-Build-Deploy-Deps-Images.md) | Docker images for x402 facilitator, EVM Anvil, Solana validator |
+| [docs/architecture/overview.md](../docs/architecture/overview.md) | L1 engine overview: cross-component calls, MQTT/ExecutionPlan contracts, deployment, observability, and physical component links |
+| [docs/architecture/agent-flow.md](../docs/architecture/agent-flow.md) | Generic L2 application architecture: DAG model, capabilities, limits, and authoring practices |
+| [docs/architecture/data-lifecycle.md](../docs/architecture/data-lifecycle.md) | Durable identity/revision model, instruction/knowledge/execution-memory separation, approvals, and vector retrieval |
+| [docs/architecture/engine/wallet.md](../docs/architecture/engine/wallet.md) | AgentVault boundary and the remaining legacy x402 client integration gap |
+| [docs/runbooks/build-dependency-images.md](../docs/runbooks/build-dependency-images.md) | Build and operate x402 facilitator, EVM Anvil, and Solana validator images |
 
-## Use Cases (L2)
-
-| Doc | Summary |
-|-----|---------|
-| [docs/10-L2-USE-CASES.md](../docs/10-L2-USE-CASES.md) | Use case catalog; primary: Security Autonomy Fixer (12-phase CI/CD security pipeline) |
-| [usecase/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md](../usecase/security-autonomy-fixer/e2e-verification/E2E-security-fixer.md) | E2E verification context doc for Python scenario suite (runner.py, 8 scenarios) |
-| [usecase/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md](../usecase/security-autonomy-fixer/e2e-verification/Integration-SonarQube.md) | SonarQube v26.4.0 Docker Compose deployment guide |
-
-## Skills & MCPs
+### Use Cases
 
 | Doc | Summary |
 |-----|---------|
-| [usecase/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md](../usecase/security-autonomy-fixer/config/skills/nexus3-retrieval/SKILL.md) | nexus3-retrieval skill: AI-agent tool catalog for Nexus3 REST API + SonatypeIQ |
+| [docs/index.md#applications](../docs/index.md#applications) | Application catalog and use-case README ownership rules |
+| [use-cases/security-autonomy-fixer/README.md](../use-cases/security-autonomy-fixer/README.md) | Security Autonomy Fixer application design, nodes, edges, resources, limits, and verification entry points |
+| [use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md](../use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md) | Current K8s E2E topology and reproducible manual acceptance checklist |
+| [use-cases/security-autonomy-fixer/e2e/config/mcps/sonarqube.yaml](../use-cases/security-autonomy-fixer/e2e/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer flow |
+| [use-cases/autotest-generator/README.md](../use-cases/autotest-generator/README.md) | AutoTest Generator draft, owned resources, current execution gaps, and expected behavior |
 
-## Key Directories
+### Active Development and History
+
+| Doc | Summary |
+|-----|---------|
+| [docs/development/HARDCOVER.md](../docs/development/HARDCOVER.md) | Coding-agent migration handover, implemented matrix, known gaps, and next priorities |
+| [docs/development/archive/](../docs/development/archive/) | Low-priority historical drafts and dated progress notes; not current specifications |
+
+### Key Directories
 
 ```
-pkg/          Go modules (api, cache, cmd, config, core, messager, model, notifier, sandbox, store, wallet)
+pkg/          Flowgent Go modules (api, cache, cmd, config, core, messager, model, notifier, sandbox, storage, ...)
+agentvault/   Git submodule/symlink to the independent Rust AgentVault repository
 deploy/       Docker (docker/) + Helm chart (helm/flowgent/)
 etc/          Reference config (flowgent.yaml)
-usecase/     Primary use case (security-autonomy-fixer: agents, flows, skills, e2e-verification)
-docs/         Architecture (01-03 L1) + Use Cases (10 L2)
+use-cases/    Applications and their self-contained manifests/E2E assets
+docs/         Current architecture, use cases, runbooks, active plans, and historical archives
 tests/        E2E/integration tests
 ```

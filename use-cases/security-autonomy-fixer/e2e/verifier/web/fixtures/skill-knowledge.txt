@@ -1,0 +1,2 @@
+Flowgent security autonomy skill knowledge fixture.
+Only browser-uploaded test content belongs in this file.

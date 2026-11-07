@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
-	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	notifierpkg "github.com/flowgent-labs/flowgent/notifier/pkg"
 )
 
@@ -47,8 +47,11 @@ func startNotifierService(cfgPath string) error {
 	}
 
 	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
-	httpClient := client.NewHttpClient(serviceCfg, nil)
-	notifSvc := notifierpkg.CreateNotifierService(apiClient, serviceCfg, httpClient)
+	httpClient := client.NewGenericHttpClient(30 * time.Second)
+	notifSvc, err := notifierpkg.CreateNotifierService(apiClient, serviceCfg, httpClient)
+	if err != nil {
+		return err
+	}
 	defer notifSvc.Shutdown()
 
 	if err := notifSvc.Start(context.Background()); err != nil {

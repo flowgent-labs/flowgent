@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretref"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
@@ -36,7 +37,8 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
-				slog.Debug("llm loaded provider", "id", dbp.ID, "provider", dbp.Provider, "status", dbp.Status, "apiKeyLen", len(dbp.ApiKey))
+				dbp.NormalizeAliases()
+				slog.Debug("llm loaded provider", "id", dbp.ID, "name", dbp.Name, "type", dbp.Type, "status", dbp.Status, "keyConfigured", dbp.KeyConfigured || dbp.ApiKeyEnv != "" || dbp.ApiKey != "")
 				if dbp.Status != "ACTIVE" || dbp.ID == "" {
 					slog.Debug("llm skip provider", "id", dbp.ID, "status", dbp.Status)
 					continue
@@ -53,15 +55,17 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 }
 
 func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
-	// DB stores apikey in the apikey column directly.
-	// Also check Credentials map for backward compatibility.
-	if dbP.ApiKey == "" {
-		if v, ok := dbP.Credentials["apikey"]; ok {
-			if vs, ok := v.(string); ok {
-				dbP.ApiKey = vs
-			}
-		}
+	dbP.NormalizeAliases()
+	reference := dbP.ApiKey
+	if dbP.ApiKeyEnv != "" {
+		reference = secretref.Prefix + dbP.ApiKeyEnv
 	}
+	resolved, err := secretref.Resolve(reference)
+	if err != nil {
+		slog.Error("llm provider secret reference is unavailable", "id", dbP.ID, "name", dbP.Name, "error", err)
+		return
+	}
+	dbP.ApiKey = resolved
 	// Convert DB timeout_ms (int) to Timeout duration string for provider constructors.
 	if dbP.TimeoutMs > 0 && dbP.Timeout == "" {
 		dbP.Timeout = fmt.Sprintf("%dms", dbP.TimeoutMs)
@@ -69,17 +73,19 @@ func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 	pc := newProvider(&dbP)
 	if pc != nil {
 		m.providers[dbP.ID] = pc
-		if dbP.Provider != "" && dbP.Provider != dbP.ID {
-			m.providers[dbP.Provider] = pc
+		if dbP.Name != "" && dbP.Name != dbP.ID {
+			m.providers[dbP.Name] = pc
 		}
 	}
 }
 
 func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
+	p.NormalizeAliases()
+	providerType := p.Type
 	switch {
-	case strings.EqualFold(p.Provider, "anthropic"):
+	case strings.EqualFold(providerType, "anthropic"):
 		return newAnthropicProvider(p)
-	case strings.EqualFold(p.Provider, "gemini"):
+	case strings.EqualFold(providerType, "gemini"):
 		return newGeminiProvider(p)
 	default:
 		return newOpenAIProvider(p)

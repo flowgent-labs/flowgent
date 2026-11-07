@@ -1,0 +1,23 @@
+consoleVersion: core.flowgent.io/v1
+kind: LLMProvider
+metadata:
+  name: e2e-llm
+  namespace: security-fixer
+  labels:
+    provider: deterministic-e2e
+    catalog: llm,test-fixture
+  status: active
+  description: Explicit deterministic OpenAI-compatible fixture for complete E2E orchestration coverage
+
+data:
+  name: e2e-llm
+  type: openai
+  base_uri: http://mock-llm.e2e-flowgent-mock-llm.svc.cluster.local:8080/v1
+  api_key_env: FLOWGENT_E2E_LLM_API_KEY
+  default_model: e2e-deterministic
+  timeout: 30s
+  rate_limit: 600
+  models:
+    - name: e2e-deterministic
+      temperature: 0
+      topk: 1

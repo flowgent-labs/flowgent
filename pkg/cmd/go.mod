@@ -3,6 +3,7 @@ module github.com/flowgent-labs/flowgent/cmd
 go 1.26.0
 
 require (
+	authguard/adapters/golang v0.0.0
 	github.com/a2aproject/a2a-go v0.3.15
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/flowgent-labs/flowgent/a2a v0.0.0
@@ -16,13 +17,11 @@ require (
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/flowgent-labs/flowgent/notifier v0.0.0
 	github.com/flowgent-labs/flowgent/sandbox v0.0.0
-	github.com/flowgent-labs/flowgent/store v0.0.0
-	github.com/google/uuid v1.6.0
+	github.com/flowgent-labs/flowgent/storage v0.0.0
 	github.com/spf13/cobra v1.10.1
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.46.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
@@ -33,11 +32,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/flowgent-labs/flowgent/cache v0.0.0 // indirect
-	github.com/flowgent-labs/flowgent/wallet v0.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.7 // indirect
-	github.com/go-ldap/ldap/v3 v3.4.10 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
@@ -45,7 +41,6 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
@@ -137,6 +132,7 @@ require (
 )
 
 replace (
+	authguard/adapters/golang => github.com/wl4g/authguard/src/adapters/golang v0.0.0-20260919033855-d0022086809a
 	github.com/flowgent-labs/flowgent/a2a => ../a2a
 	github.com/flowgent-labs/flowgent/api => ../api
 	github.com/flowgent-labs/flowgent/cache => ../cache
@@ -146,9 +142,9 @@ replace (
 	github.com/flowgent-labs/flowgent/controller => ../controller
 	github.com/flowgent-labs/flowgent/core => ../core
 	github.com/flowgent-labs/flowgent/messager => ../messager
+	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../sandbox
-	github.com/flowgent-labs/flowgent/store => ../store
-	github.com/flowgent-labs/flowgent/wallet => ../wallet
+	github.com/flowgent-labs/flowgent/storage => ../storage
 )

@@ -30,7 +30,7 @@ func NewQueueFromConfig(cfg *config.FlowgentConfig, clientID string) IMessager {
 		slog.Warn("MQTT connect failed, falling back to memory queue", "err", err)
 	}
 	if distributed {
-					log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGER__MQTT__BROKER env var.")
+		log.Fatalf("FATAL: MQTT broker not configured. Set messager.mqtt.broker in flowgent.yaml or FLOWGENT__MESSAGER__MQTT__BROKER env var.")
 	}
 	slog.Warn("Using in-memory queue (local dev mode — not suitable for distributed deployment)")
 	return NewLocalMessager(1000)

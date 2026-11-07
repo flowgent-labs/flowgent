@@ -1,102 +1,1044 @@
 openapi: "3.1.0"
 info:
-  title: Flowgent AgentFlow Orchestration API
-  version: "1.0.0"
-  description: Autonomous agentflow orchestration engine with DAG execution, human approval, and AI agent orchestration.
+  title: Flowgent Orchestration API
+  version: "2.0.0"
+  description: >
+    Namespace-scoped orchestration, immutable revisions, execution, unified
+    approvals, published knowledge, integrations, and notification management.
 servers:
   - url: /api/v1
 paths:
-  /flows:
+  /{namespace}/flows:
     get:
-      summary: List agentflow definitions
-      operationId: listAgentFlows
+      operationId: listFlows
+      summary: List stable Flows at their current revision
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
       responses:
-        '200': { description: AgentFlow definitions }
-  /flows/trigger:
+        '200': { $ref: '#/components/responses/FlowList' }
     post:
-      summary: Trigger an agentflow
-      operationId: triggerAgentFlow
+      operationId: createFlow
+      summary: Create a Flow and immutable revision 1
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/Flow' }
+      responses:
+        '201': { $ref: '#/components/responses/Flow' }
+  /{namespace}/flows/{flow_name}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/FlowName' }
+    get:
+      operationId: getFlow
+      summary: Get a Flow by its namespace-local name
+      responses:
+        '200': { $ref: '#/components/responses/Flow' }
+    put:
+      operationId: reviseFlow
+      summary: Save a new immutable Flow revision
+      requestBody: { $ref: '#/components/requestBodies/Flow' }
+      responses:
+        '200': { $ref: '#/components/responses/Flow' }
+    delete:
+      operationId: deleteFlow
+      summary: Retire a Flow
+      responses:
+        '204': { description: Flow retired }
+  /{namespace}/flows/{flow_name}/trigger:
+    post:
+      operationId: triggerFlow
+      summary: Create a Run locked to the current Flow revision
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/FlowName' }
       requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerRequest' }
+      responses:
+        '200':
+          description: Run accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TriggerResult' }
+
+  /{namespace}/runs:
+    get:
+      operationId: listRuns
+      summary: List Runs
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: runtime_mode, in: query, schema: { type: string, enum: [application, session] } }
+        - { name: k8s_namespace, in: query, schema: { type: string } }
+        - { name: flow_id, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Paginated Runs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunPage' }
+    post:
+      operationId: createRun
+      summary: Create a Run using explicit stable Flow and revision IDs
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Run' }
+      responses:
+        '201':
+          description: Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+  /{namespace}/runs/metrics:
+    get:
+      operationId: getRunMetrics
+      summary: Aggregate Run status and duration buckets
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { name: hours, in: query, schema: { type: integer, minimum: 1, maximum: 720, default: 24 } }
+        - { name: buckets, in: query, schema: { type: integer, minimum: 1, maximum: 120, default: 12 } }
+      responses:
+        '200':
+          description: Run metrics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunMetrics' }
+  /{namespace}/runs/{run_id}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/RunID' }
+    get:
+      operationId: getRun
+      summary: Get a Run and its locked context snapshot
+      responses:
+        '200': { $ref: '#/components/responses/Run' }
+    put:
+      operationId: updateRunLifecycle
+      summary: Persist a narrow JobManager lifecycle transition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunLifecycleUpdate' }
+      responses:
+        '200': { description: Run lifecycle updated }
+    delete:
+      operationId: deleteRun
+      summary: Delete a Run owned by the namespace
+      responses:
+        '204': { description: Run deleted }
+  /{namespace}/runs/{run_id}/cancel:
+    post:
+      operationId: cancelRun
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/RunID' }
+      responses:
+        '200': { description: Cancellation recorded }
+  /{namespace}/runs/{run_id}/node-runs:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/RunID' }
+    get:
+      operationId: listNodeRuns
+      summary: List all node attempts for a Run
+      responses:
+        '200':
+          description: NodeRun attempts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/NodeRun' } }
+    post:
+      operationId: createNodeRun
+      summary: Persist one node attempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NodeRun' }
+      responses:
+        '201': { $ref: '#/components/responses/NodeRun' }
+  /{namespace}/runs/{run_id}/node-runs/{node_run_id}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/RunID' }
+      - { $ref: '#/components/parameters/NodeRunID' }
+    get:
+      operationId: getNodeRun
+      responses:
+        '200': { $ref: '#/components/responses/NodeRun' }
+    put:
+      operationId: updateNodeRun
+      summary: Update one fenced node attempt/checkpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NodeRun' }
+      responses:
+        '200': { description: NodeRun updated }
+  /{namespace}/runs/{run_id}/approvals:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/RunID' }
+    get:
+      operationId: listRunApprovals
+      summary: List pending approvals owned by a Run
+      responses:
+        '200':
+          description: Pending approvals
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Approval' } }
+    post:
+      operationId: createRunApproval
+      summary: Create a frozen, hash-bound approval request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Approval' }
+      responses:
+        '201': { $ref: '#/components/responses/Approval' }
+  /{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}:
+    post:
+      operationId: resolveRunApproval
+      summary: Make an immutable approval decision
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/RunID' }
+        - { $ref: '#/components/parameters/ApprovalID' }
+        - { name: decision, in: path, required: true, schema: { type: string, enum: [approve, reject] } }
+      responses:
+        '200': { description: Approval resolved or identical callback replayed }
+        '404': { description: Approval is outside the owned Run }
+        '409': { description: Conflicting terminal decision or stale publication baseline }
+        '410': { description: Approval expired }
+  /{namespace}/approvals:
+    get:
+      operationId: listNamespaceApprovals
+      summary: List namespace approval work queue
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      responses:
+        '200':
+          description: Pending approvals
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Approval' } }
+
+  /{namespace}/agents:
+    get:
+      operationId: listAgents
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      responses:
+        '200': { $ref: '#/components/responses/AgentPage' }
+    post:
+      operationId: createAgent
+      summary: Create an Agent and immutable revision 1
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/Agent' }
+      responses:
+        '201': { $ref: '#/components/responses/Agent' }
+  /{namespace}/agents/{name}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/ResourceName' }
+    get:
+      operationId: getAgent
+      responses:
+        '200': { $ref: '#/components/responses/Agent' }
+    put:
+      operationId: reviseAgent
+      summary: Save a new immutable Agent revision
+      requestBody: { $ref: '#/components/requestBodies/Agent' }
+      responses:
+        '200': { $ref: '#/components/responses/Agent' }
+    delete:
+      operationId: deleteAgent
+      responses:
+        '204': { description: Agent retired }
+
+  /{namespace}/skill-definitions:
+    get:
+      operationId: listSkillDefinitions
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      responses:
+        '200': { $ref: '#/components/responses/SkillPage' }
+    post:
+      operationId: createSkillDefinition
+      summary: Create a reusable Skill and immutable revision 1
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/Skill' }
+      responses:
+        '201': { $ref: '#/components/responses/Skill' }
+  /{namespace}/skill-definitions/{name}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/ResourceName' }
+    get:
+      operationId: getSkillDefinition
+      responses:
+        '200': { $ref: '#/components/responses/Skill' }
+    put:
+      operationId: reviseSkillDefinition
+      summary: Save a new immutable Skill revision
+      requestBody: { $ref: '#/components/requestBodies/Skill' }
+      responses:
+        '200': { $ref: '#/components/responses/Skill' }
+    delete:
+      operationId: deleteSkillDefinition
+      responses:
+        '204': { description: Skill retired }
+  /{namespace}/skill-definitions/{name}/assets:
+    post:
+      operationId: uploadSkillAsset
+      summary: Upload an allowlisted knowledge asset and create a new Skill revision
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/ResourceName' }
+      requestBody: { $ref: '#/components/requestBodies/FileUpload' }
+      responses:
+        '201': { $ref: '#/components/responses/Skill' }
+  /{namespace}/skill-definitions/{name}/scripts:
+    post:
+      operationId: uploadSkillScript
+      summary: Upload a helper script and create a new Skill revision
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/ResourceName' }
+      requestBody: { $ref: '#/components/requestBodies/FileUpload' }
+      responses:
+        '201': { $ref: '#/components/responses/Skill' }
+
+  /{namespace}/mcp:
+    get:
+      operationId: listMcpServers
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      responses:
+        '200': { $ref: '#/components/responses/McpList' }
+    post:
+      operationId: createMcpServer
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/Mcp' }
+      responses:
+        '201': { $ref: '#/components/responses/Mcp' }
+  /{namespace}/mcp/{name}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/ResourceName' }
+    get:
+      operationId: getMcpServer
+      responses:
+        '200': { $ref: '#/components/responses/Mcp' }
+    put:
+      operationId: updateMcpServer
+      requestBody: { $ref: '#/components/requestBodies/Mcp' }
+      responses:
+        '200': { $ref: '#/components/responses/Mcp' }
+    delete:
+      operationId: deleteMcpServer
+      responses:
+        '204': { description: MCP server deleted }
+
+  /{namespace}/llm/providers:
+    get:
+      operationId: listLlmProviders
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      responses:
+        '200': { $ref: '#/components/responses/LlmList' }
+    post:
+      operationId: createLlmProvider
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/Llm' }
+      responses:
+        '201': { $ref: '#/components/responses/Llm' }
+  /{namespace}/llm/providers/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getLlmProvider
+      responses:
+        '200': { $ref: '#/components/responses/Llm' }
+    put:
+      operationId: updateLlmProvider
+      requestBody: { $ref: '#/components/requestBodies/Llm' }
+      responses:
+        '200': { $ref: '#/components/responses/Llm' }
+    delete:
+      operationId: deleteLlmProvider
+      responses:
+        '204': { description: LLM provider deleted }
+
+  /{namespace}/notifications/channels:
+    get:
+      operationId: listNotificationChannels
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      responses:
+        '200': { $ref: '#/components/responses/NotificationPage' }
+    post:
+      operationId: createNotificationChannel
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/NotificationChannel' }
+      responses:
+        '201': { $ref: '#/components/responses/NotificationChannel' }
+  /{namespace}/notifications/channels/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getNotificationChannel
+      responses:
+        '200': { $ref: '#/components/responses/NotificationChannel' }
+    put:
+      operationId: updateNotificationChannel
+      requestBody: { $ref: '#/components/requestBodies/NotificationChannel' }
+      responses:
+        '200': { $ref: '#/components/responses/NotificationChannel' }
+    delete:
+      operationId: deleteNotificationChannel
+      responses:
+        '204': { description: Notification channel deleted }
+  /{namespace}/notifications/test:
+    post:
+      operationId: testNotificationChannel
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              required: [agentflow_id]
+              required: [channel_id, message]
               properties:
-                agentflow_id: { type: string }
-                vars: { type: object }
+                channel_id: { type: string }
+                delivery_id: { type: string }
+                message: { type: string }
       responses:
-        '200': { description: AgentFlow triggered }
-  /runs:
+        '202': { description: Delivery queued }
+
+  /{namespace}/knowledge:
     get:
-      summary: List agentflow runs
+      operationId: listPublishedKnowledge
+      summary: List only approved, published Knowledge
       parameters:
-        - name: agentflow_id
-          in: query
-          schema: { type: string }
+        - { $ref: '#/components/parameters/Namespace' }
+        - { name: scope, in: query, schema: { type: string, enum: [namespace, flow, run] } }
+        - { name: tags, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
       responses:
-        '200': { description: List of agentflow runs }
-  /runs/{id}:
+        '200': { $ref: '#/components/responses/KnowledgePage' }
+  /{namespace}/knowledge/{id}:
     get:
-      summary: Get agentflow run
+      operationId: getPublishedKnowledge
+      summary: Get one published immutable document revision
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
+        - { $ref: '#/components/parameters/Namespace' }
+        - { name: id, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: AgentFlow run details }
-  /runs/{run_id}/tasks:
+        '200': { $ref: '#/components/responses/Knowledge' }
+  /{namespace}/knowledge/candidates:
+    post:
+      operationId: createKnowledgeCandidate
+      summary: Freeze a candidate and create its unified human approval
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KnowledgeCandidate' }
+      responses:
+        '201':
+          description: Candidate and pending approval
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [candidate, approval]
+                properties:
+                  candidate: { $ref: '#/components/schemas/KnowledgeCandidate' }
+                  approval: { $ref: '#/components/schemas/Approval' }
+  /{namespace}/knowledge/search:
+    post:
+      operationId: searchPublishedKnowledge
+      summary: Search with backend-enforced scope, ACL, profile, and dimension isolation
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KnowledgeSearch' }
+      responses:
+        '200':
+          description: Authorized published results
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Knowledge' } }
+
+  /{namespace}/runtime-config:
     get:
-      summary: Get task runs for an agentflow run
-      parameters:
-        - name: run_id
-          in: path
-          required: true
-          schema: { type: string }
+      operationId: getNamespaceRuntimeConfig
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
       responses:
-        '200': { description: Task runs }
+        '200': { $ref: '#/components/responses/RuntimeConfig' }
+  /{namespace}/runtime-config/environment:
+    put:
+      operationId: updateNamespaceEnvironment
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/RuntimeEnvironment' }
+      responses:
+        '200': { $ref: '#/components/responses/RuntimeConfig' }
+  /{namespace}/runtime-config/secrets:
+    put:
+      operationId: updateNamespaceSecrets
+      parameters: [{ $ref: '#/components/parameters/Namespace' }]
+      requestBody: { $ref: '#/components/requestBodies/RuntimeSecrets' }
+      responses:
+        '200': { $ref: '#/components/responses/RuntimeConfig' }
+  /{namespace}/flows/{flow_id}/runtime-config:
+    get:
+      operationId: getFlowRuntimeConfig
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/FlowID' }
+      responses:
+        '200': { $ref: '#/components/responses/RuntimeConfig' }
+  /{namespace}/flows/{flow_id}/runtime-config/environment:
+    put:
+      operationId: updateFlowEnvironment
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/FlowID' }
+      requestBody: { $ref: '#/components/requestBodies/RuntimeEnvironment' }
+      responses:
+        '200': { $ref: '#/components/responses/RuntimeConfig' }
+  /{namespace}/flows/{flow_id}/runtime-config/secrets:
+    put:
+      operationId: updateFlowSecrets
+      parameters:
+        - { $ref: '#/components/parameters/Namespace' }
+        - { $ref: '#/components/parameters/FlowID' }
+      requestBody: { $ref: '#/components/requestBodies/RuntimeSecrets' }
+      responses:
+        '200': { $ref: '#/components/responses/RuntimeConfig' }
+
   /webhook/{provider}:
     post:
-      summary: Receive an SCM (GitHub/GitLab/Gitea) webhook and trigger matching flows
-      description: >
-        Global (non namespace-scoped) endpoint. The per-provider request body is
-        normalized into a canonical event; every flow whose triggers declare a
-        matching {provider, event} gets a new PENDING run created under its own
-        namespace. Returns 202 with the list of triggered run IDs (empty list is
-        not an error — most deliveries match no configured trigger).
       operationId: receiveWebhook
+      summary: Normalize an SCM webhook and trigger matching Flows
       parameters:
-        - name: provider
-          in: path
-          required: true
-          description: One of github, gitlab, gitea
-          schema: { type: string, enum: [github, gitlab, gitea] }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [github, gitlab, gitea] } }
       requestBody:
-        description: Raw provider webhook payload (GitHub/Gitea or GitLab schema)
         content:
           application/json:
             schema: { type: object }
       responses:
-        '202': { description: Webhook accepted; body contains triggered run IDs }
-        '400': { description: Unsupported provider or unparseable body }
-  /human/{token}/approve:
-    post:
-      summary: Approve human task
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: Approved }
-  /human/{token}/reject:
-    post:
-      summary: Reject human task
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200': { description: Rejected }
+        '202': { description: Webhook accepted }
+
+components:
+  parameters:
+    Namespace:
+      name: namespace
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }
+    ResourceName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+    FlowName:
+      name: flow_name
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+    FlowID:
+      name: flow_id
+      in: path
+      required: true
+      schema: { type: string }
+    RunID:
+      name: run_id
+      in: path
+      required: true
+      schema: { type: string }
+    NodeRunID:
+      name: node_run_id
+      in: path
+      required: true
+      schema: { type: string }
+    ApprovalID:
+      name: approval_id
+      in: path
+      required: true
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Size:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, default: 50 }
+
+  requestBodies:
+    Flow:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Flow' }
+    Agent:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Agent' }
+    Skill:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Skill' }
+    Mcp:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/McpServer' }
+    Llm:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/LlmProvider' }
+    NotificationChannel:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/NotificationChannel' }
+    FileUpload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file: { type: string, format: binary }
+    RuntimeEnvironment:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuntimeEnvironmentUpdate' }
+    RuntimeSecrets:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuntimeSecretUpdate' }
+
+  responses:
+    Flow:
+      description: Flow at its current revision
+      content: { application/json: { schema: { $ref: '#/components/schemas/Flow' } } }
+    FlowList:
+      description: Flow list
+      content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Flow' } } } }
+    Run:
+      description: Run
+      content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } }
+    NodeRun:
+      description: NodeRun
+      content: { application/json: { schema: { $ref: '#/components/schemas/NodeRun' } } }
+    Approval:
+      description: Unified approval
+      content: { application/json: { schema: { $ref: '#/components/schemas/Approval' } } }
+    Agent:
+      description: Agent current revision
+      content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } }
+    AgentPage:
+      description: Agent page
+      content: { application/json: { schema: { $ref: '#/components/schemas/AgentPage' } } }
+    Skill:
+      description: Skill current revision and file metadata
+      content: { application/json: { schema: { $ref: '#/components/schemas/Skill' } } }
+    SkillPage:
+      description: Skill page
+      content: { application/json: { schema: { $ref: '#/components/schemas/SkillPage' } } }
+    Mcp:
+      description: MCP server
+      content: { application/json: { schema: { $ref: '#/components/schemas/McpServer' } } }
+    McpList:
+      description: MCP servers
+      content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/McpServer' } } } }
+    Llm:
+      description: LLM provider
+      content: { application/json: { schema: { $ref: '#/components/schemas/LlmProvider' } } }
+    LlmList:
+      description: LLM providers
+      content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LlmProvider' } } } }
+    NotificationChannel:
+      description: Redacted notification channel
+      content: { application/json: { schema: { $ref: '#/components/schemas/NotificationChannel' } } }
+    NotificationPage:
+      description: Notification channel page
+      content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPage' } } }
+    Knowledge:
+      description: Published Knowledge projection
+      content: { application/json: { schema: { $ref: '#/components/schemas/Knowledge' } } }
+    KnowledgePage:
+      description: Published Knowledge page
+      content: { application/json: { schema: { $ref: '#/components/schemas/KnowledgePage' } } }
+    RuntimeConfig:
+      description: Redacted local, inherited, and effective configuration
+      content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeConfigView' } } }
+
+  schemas:
+    AuditFields:
+      type: object
+      properties:
+        id: { type: string, readOnly: true }
+        namespace_id: { type: string, readOnly: true }
+        status: { type: string }
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+        created_by: { type: string, readOnly: true }
+        updated_by: { type: string, readOnly: true }
+        row_version: { type: integer, format: int64, readOnly: true }
+        metadata: { type: object }
+    Flow:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [name, kind, runtime_mode, nodes, edges]
+          properties:
+            name: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+            revision: { type: integer, format: int64, minimum: 1, readOnly: true }
+            summarize_enabled: { type: boolean, default: false }
+            kind: { type: string, enum: [flow] }
+            description: { type: string }
+            input_schema: { type: object }
+            output_schema: { type: object }
+            vars: { type: object }
+            nodes: { type: array, items: { type: object } }
+            edges: { type: array, items: { type: object } }
+            runtime_mode: { type: string, enum: [application, session] }
+            resources: { type: object }
+    TriggerRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        input: { type: object }
+        trigger:
+          type: object
+          properties:
+            type: { type: string }
+            source: { type: string }
+            payload: { type: object }
+    TriggerResult:
+      type: object
+      required: [run_id, flow_id, status, namespace]
+      properties:
+        run_id: { type: string }
+        flow_id: { type: string, description: Namespace-local Flow name }
+        status: { type: string, enum: [PENDING] }
+        namespace: { type: string }
+    Run:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [flow_id, flow_revision_id, status, context_snapshot, summarize_enabled]
+          properties:
+            flow_id: { type: string, description: Stable Flow ID }
+            flow_name: { type: string, readOnly: true }
+            flow_revision_id: { type: string }
+            flow_revision: { type: integer, format: int64, readOnly: true }
+            status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED, PAUSED, CANCELLED] }
+            input: { type: object }
+            output: { type: object }
+            error: { type: string }
+            run_instruction: { type: string }
+            summarize_enabled: { type: boolean }
+            summarize_override: { type: [boolean, 'null'], writeOnly: true }
+            context_snapshot: { type: object, readOnly: true }
+            started_at: { type: [string, 'null'], format: date-time }
+            finished_at: { type: [string, 'null'], format: date-time }
+            runtime_mode: { type: string, enum: [application, session] }
+    RunLifecycleUpdate:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED, PAUSED, CANCELLED] }
+        error: { type: string }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+    NodeRun:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [run_id, node_key, attempt, status]
+          properties:
+            run_id: { type: string }
+            node_key: { type: string }
+            attempt: { type: integer, minimum: 1 }
+            agent_revision_id: { type: string }
+            status: { type: string }
+            input: { type: object }
+            output: { type: object }
+            error: { type: string }
+            execution_memory: { type: object }
+            checkpoint: { type: object }
+            workspace_version: { type: string }
+            execution_id: { type: string }
+            lease_owner: { type: string }
+            lease_expires_at: { type: [string, 'null'], format: date-time }
+            fencing_token: { type: integer, format: int64 }
+            parent_node_run_id: { type: string }
+            started_at: { type: [string, 'null'], format: date-time }
+            finished_at: { type: [string, 'null'], format: date-time }
+    Approval:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [type, subject_type, subject_id, request, request_hash, status, idempotency_key]
+          properties:
+            run_id: { type: string }
+            node_run_id: { type: string }
+            type: { type: string, enum: [human_gate, tool_call, payment, knowledge_publish, instruction_publish] }
+            subject_type: { type: string }
+            subject_id: { type: string }
+            request: { type: object }
+            request_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+            status: { type: string, enum: [pending, approved, rejected, expired, cancelled] }
+            decision: { type: object }
+            decided_by: { type: string, readOnly: true }
+            decided_at: { type: [string, 'null'], format: date-time, readOnly: true }
+            expires_at: { type: [string, 'null'], format: date-time }
+            consumed_at: { type: [string, 'null'], format: date-time, readOnly: true }
+            idempotency_key: { type: string }
+    Agent:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [name, model, soul, instruction]
+          properties:
+            name: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+            model: { type: string }
+            soul: { type: string }
+            instruction: { type: string }
+            input_schema: { type: object }
+            output_schema: { type: object }
+            revision: { type: integer, format: int64, minimum: 1, readOnly: true }
+            temperature: { type: number }
+            max_tokens: { type: integer }
+            labels: { type: object, additionalProperties: { type: string } }
+    Skill:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [name, instruction]
+          properties:
+            name: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+            instruction: { type: string }
+            model: { type: string }
+            tools: { type: array, items: { type: string } }
+            revision: { type: integer, format: int64, minimum: 1, readOnly: true }
+            assets: { type: array, readOnly: true, items: { $ref: '#/components/schemas/SkillFile' } }
+            scripts: { type: array, readOnly: true, items: { $ref: '#/components/schemas/SkillFile' } }
+    SkillFile:
+      type: object
+      required: [id, kind, relative_path, media_type, size_bytes, content_hash]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [asset, script] }
+        relative_path: { type: string }
+        media_type: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        content_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+        metadata: { type: object }
+    McpServer:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [name, transport, rpc_url, enabled]
+          properties:
+            name: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+            transport: { type: string, enum: [http] }
+            rpc_url: { type: string, format: uri }
+            enabled: { type: boolean }
+            header_refs: { type: object, additionalProperties: { type: string } }
+            env_refs: { type: object, additionalProperties: { type: string } }
+            labels: { type: object, additionalProperties: { type: string } }
+    LlmProvider:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [name, type, base_uri, default_model, enabled]
+          properties:
+            name: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
+            type: { type: string, enum: [openai, anthropic, gemini] }
+            base_uri: { type: string, format: uri }
+            default_model: { type: string }
+            enabled: { type: boolean }
+            timeout_ms: { type: integer, minimum: 0 }
+            credential_ref: { type: string }
+            api_key_env: { type: string, writeOnly: true }
+            key_configured: { type: boolean, readOnly: true }
+            env_refs: { type: object, additionalProperties: { type: string } }
+            models: { type: array, items: { type: object } }
+            labels: { type: object, additionalProperties: { type: string } }
+    NotificationChannel:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [name, provider, config, enabled]
+          properties:
+            name: { type: string }
+            provider: { type: string, enum: [webhook, slack, dingtalk, telegram, email] }
+            config:
+              type: object
+              description: Provider secret fields are write-only and never returned.
+              writeOnly: true
+            enabled: { type: boolean }
+            labels: { type: object, additionalProperties: { type: string } }
+            configured_secret_fields: { type: array, readOnly: true, items: { type: string } }
+            clear_secret_fields: { type: array, writeOnly: true, items: { type: string } }
+    Knowledge:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [revision, title, content, content_type, source, scope]
+          properties:
+            document_revision_id: { type: string }
+            revision: { type: integer, format: int64 }
+            content_id: { type: string }
+            parent_content_id: { type: string }
+            title: { type: string }
+            content: { type: string }
+            content_type: { type: string }
+            content_kind: { type: string, enum: [section, chunk, summary] }
+            source: { type: string }
+            source_ref: { type: string }
+            source_revision: { type: string }
+            scope: { type: string, enum: [namespace, flow, run] }
+            flow_id: { type: string }
+            flow_name: { type: string }
+            run_id: { type: string }
+            acl_ref: { type: string }
+            classification: { type: string }
+            heading_path: { type: string }
+            provenance: { type: object }
+            tags: { type: array, items: { type: string } }
+            profile_key: { type: string }
+            distance: { type: number }
+    KnowledgeCandidate:
+      allOf:
+        - { $ref: '#/components/schemas/AuditFields' }
+        - type: object
+          required: [source_run_id, target_scope, type, content, provenance, expected_revision, idempotency_key]
+          properties:
+            source_run_id: { type: string }
+            target_scope: { type: string, enum: [namespace, flow] }
+            target_flow_id: { type: string }
+            target_flow_name: { type: string }
+            target_document_id: { type: string }
+            type: { type: string, enum: [knowledge, instruction] }
+            content: { type: string }
+            content_hash: { type: string, readOnly: true }
+            provenance: { type: object }
+            expected_revision: { type: integer, format: int64, minimum: 0 }
+            approval_id: { type: string, readOnly: true }
+            idempotency_key: { type: string }
+    KnowledgeSearch:
+      type: object
+      properties:
+        query: { type: string }
+        embedding: { type: array, items: { type: number, format: float } }
+        profile_key: { type: string }
+        top_k: { type: integer, minimum: 1 }
+        tags: { type: array, items: { type: string } }
+        scope: { type: string, enum: [namespace, flow, run] }
+        flow_id: { type: string }
+        flow_name: { type: string }
+        run_id: { type: string }
+    RunMetricBucket:
+      type: object
+      properties:
+        start_time: { type: string, format: date-time }
+        end_time: { type: string, format: date-time }
+        running: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+        average_duration_ms: { type: integer, format: int64 }
+    RunMetrics:
+      type: object
+      properties:
+        total: { type: integer }
+        running: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        success_rate: { type: number }
+        failure_rate: { type: number }
+        average_duration_ms: { type: integer, format: int64 }
+        buckets: { type: array, items: { $ref: '#/components/schemas/RunMetricBucket' } }
+    PageEnvelope:
+      type: object
+      properties:
+        total_count: { type: integer, format: int64 }
+        request: { type: object }
+        total_pages: { type: integer }
+    RunPage:
+      allOf:
+        - { $ref: '#/components/schemas/PageEnvelope' }
+        - type: object
+          properties: { items: { type: array, items: { $ref: '#/components/schemas/Run' } } }
+    AgentPage:
+      allOf:
+        - { $ref: '#/components/schemas/PageEnvelope' }
+        - type: object
+          properties: { items: { type: array, items: { $ref: '#/components/schemas/Agent' } } }
+    SkillPage:
+      allOf:
+        - { $ref: '#/components/schemas/PageEnvelope' }
+        - type: object
+          properties: { items: { type: array, items: { $ref: '#/components/schemas/Skill' } } }
+    NotificationPage:
+      allOf:
+        - { $ref: '#/components/schemas/PageEnvelope' }
+        - type: object
+          properties: { items: { type: array, items: { $ref: '#/components/schemas/NotificationChannel' } } }
+    KnowledgePage:
+      allOf:
+        - { $ref: '#/components/schemas/PageEnvelope' }
+        - type: object
+          properties: { items: { type: array, items: { $ref: '#/components/schemas/Knowledge' } } }
+    RuntimeConfigLayer:
+      type: object
+      required: [environment, secret_keys]
+      properties:
+        environment: { type: object, additionalProperties: { type: string } }
+        secret_keys: { type: array, items: { type: string } }
+    RuntimeConfigView:
+      type: object
+      required: [local, inherited, effective]
+      properties:
+        local: { $ref: '#/components/schemas/RuntimeConfigLayer' }
+        inherited: { $ref: '#/components/schemas/RuntimeConfigLayer' }
+        effective: { $ref: '#/components/schemas/RuntimeConfigLayer' }
+    RuntimeEnvironmentUpdate:
+      type: object
+      additionalProperties: false
+      required: [environment]
+      properties:
+        environment: { type: object, additionalProperties: { type: string, maxLength: 65536 } }
+    RuntimeSecretUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        secrets: { type: object, writeOnly: true, additionalProperties: { type: string, minLength: 1, maxLength: 65536 } }
+        clear_secret_keys: { type: array, uniqueItems: true, items: { type: string } }

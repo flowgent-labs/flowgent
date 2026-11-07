@@ -17,20 +17,39 @@ const (
 
 // ─── TM-side heartbeat ─────────────────────────────────
 
-func startHeartbeat(tmID string, q messager.IMessager, interval time.Duration) {
+func startHeartbeat(ctx context.Context, tmID, namespace, clusterID string, q messager.IMessager, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultHeartbeatInterval
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
+		publish := func() {
 			hb := &messager.Heartbeat{TMID: tmID, Timestamp: time.Now()}
 			data, _ := json.Marshal(hb)
-			_ = q.Publish(context.Background(), messager.HeartbeatTopic(tmID), &messager.InterMessage{
+			_ = q.Publish(ctx, messager.HeartbeatTopic(tmID), &messager.InterMessage{
 				ID:      fmt.Sprintf("hb-%s-%d", tmID, time.Now().UnixNano()),
 				Payload: data,
 			})
+			if namespace != "" && clusterID != "" {
+				ready := &messager.RuntimeReady{
+					WorkerID: tmID, Role: "taskmanager", Namespace: namespace,
+					ClusterID: clusterID, Timestamp: time.Now(),
+				}
+				readyData, _ := json.Marshal(ready)
+				_ = q.Publish(ctx, messager.RuntimeReadyTopic(namespace, clusterID, ready.Role, tmID), &messager.InterMessage{
+					ID: fmt.Sprintf("ready-%s-%d", tmID, time.Now().UnixNano()), Payload: readyData,
+				})
+			}
+		}
+		publish()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				publish()
+			}
 		}
 	}()
 }

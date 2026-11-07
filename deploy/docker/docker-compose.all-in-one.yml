@@ -1,7 +1,7 @@
 version: '3.8'
 # Flowgent All-in-One deployment with optional economic layer services.
-# Includes: flowgent (daemon), postgres (optional), emqx (optional),
-#           flowgent-wallet, coinbase/facilitator
+# Includes Flowgent plus optional local middleware. The Wallet service is
+# deployed from its independent repository and joins this network when used.
 services:
   # ─── Flowgent Daemon (all-in-one: REST + A2A) ──────────────
   flowgent:
@@ -16,31 +16,12 @@ services:
     networks:
       - flowgent-net
     command: start
-    environment:
-      FLOWGENT_MASTER_KEY: "${FLOWGENT_MASTER_KEY:-change-me-in-production}"
     volumes:
       - ../../etc:/app/etc:ro
       - flowgent_data:/var/lib/flowgent
-    depends_on:
-      - facilitator
-
-  # ─── Flowgent Wallet Daemon ──────────────────────────────────
-  flowgent-wallet:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
-    container_name: flowgent-wallet
-    restart: unless-stopped
-    ports:
-      - "9901:9901"
-    networks:
-      - flowgent-net
-    environment:
-      FLOWGENT_MASTER_KEY: "${FLOWGENT_MASTER_KEY:-change-me-in-production}"
-    volumes:
-      - wallet_data:/var/lib/flowgent/wallet
-
   # ─── Coinbase x402 Facilitator ──────────────────────────────
+  # Resource servers may use this optional development dependency. Flowgent
+  # sends PAYMENT-SIGNATURE to the resource and does not call it directly.
   facilitator:
     image: registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
     container_name: x402-facilitator
@@ -53,6 +34,8 @@ services:
       FACILITATOR_PORT: "8085"
       FACILITATOR_CHAIN: base
       FACILITATOR_SETTLEMENT: x402
+    profiles:
+      - economic
 
   # ─── PostgreSQL (optional, for distributed mode) ────────────
   postgres:
@@ -98,6 +81,5 @@ networks:
     driver: bridge
 volumes:
   flowgent_data:
-  wallet_data:
   pg_data:
   emqx_data:

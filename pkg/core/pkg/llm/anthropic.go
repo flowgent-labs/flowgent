@@ -19,6 +19,7 @@ type AnthropicProvider struct {
 }
 
 func newAnthropicProvider(p *entities.LlmProviderInfo) *AnthropicProvider {
+	p.NormalizeAliases()
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {
@@ -33,8 +34,8 @@ func newAnthropicProvider(p *entities.LlmProviderInfo) *AnthropicProvider {
 		anthropicopt.WithAPIKey(apiKey),
 		anthropicopt.WithRequestTimeout(timeout),
 	}
-	if p.Endpoint != "" {
-		opts = append(opts, anthropicopt.WithBaseURL(p.Endpoint))
+	if p.BaseURI != "" {
+		opts = append(opts, anthropicopt.WithBaseURL(p.BaseURI))
 	}
 	c := anthropic.NewClient(opts...)
 	return &AnthropicProvider{

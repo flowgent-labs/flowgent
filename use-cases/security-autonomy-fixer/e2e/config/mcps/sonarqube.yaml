@@ -1,0 +1,14 @@
+consoleVersion: core.flowgent.io/v1
+kind: MCP
+metadata:
+  name: sonarqube
+  namespace: security-fixer
+  labels:
+    catalog: security,code-quality
+    protocol: streamable-http
+  status: active
+  description: SonarQube MCP server exposing 385 native Web API tools for SAST issue scanning, quality gate status, and re-analysis triggers
+data:
+  name: sonarqube
+  transport: http
+  rpc_url: ${SONARQUBE_MCP_URL}

@@ -203,11 +203,16 @@ func (q *MQTTMessager) messageHandler(topic string) mqtt.MessageHandler {
 		handlers := q.dispatchHandlers(topic)
 		slog.Debug("mqtt message received", "topic", m.Topic(), "len", len(m.Payload()), "handlers", len(handlers))
 		var msg InterMessage
-		if json.Unmarshal(m.Payload(), &msg) == nil {
-			for i, h := range handlers {
-				slog.Debug("mqtt dispatch handler", "topic", topic, "handler", i+1, "total", len(handlers))
-				go h(topic, msg.Payload)
-			}
+		payload := m.Payload()
+		// Lifecycle publishers predate InterMessage and intentionally send raw
+		// JSON. Unknown JSON fields unmarshal successfully into an empty struct,
+		// so Payload must be non-nil before treating a message as an envelope.
+		if json.Unmarshal(m.Payload(), &msg) == nil && msg.Payload != nil {
+			payload = msg.Payload
+		}
+		for i, h := range handlers {
+			slog.Debug("mqtt dispatch handler", "topic", topic, "handler", i+1, "total", len(handlers))
+			go h(m.Topic(), payload)
 		}
 	}
 }

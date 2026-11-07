@@ -4,17 +4,16 @@ import (
 	"strings"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 )
 
-// ExportAll collects all non-wallet resources from the database and returns
-// them as an ExportData structure. Wallets are intentionally excluded — they
-// can only be imported or deleted, never exported.
+// ExportAll collects all Flowgent-owned resources from the database.
 func (fc *FlowgentConsole) ExportAll() (*ExportData, error) {
 	return fc.ExportKinds(nil)
 }
 
 // ExportKinds exports only the specified resource kinds. An empty or nil
-// kinds slice exports all supported kinds (everything except wallets).
+// kinds slice exports all supported kinds.
 // Valid kinds: llm, channel, mcp, skill, agent, flow, flowrun.
 func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 	ls := fc.getStores()
@@ -28,7 +27,7 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 	include := func(k string) bool { return all || kindSet[k] }
 
 	if include("llm") {
-		if page, err := ls.llm.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.llm.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, p := range page.Items {
 				if p != nil {
 					data.LLMs = append(data.LLMs, *p)
@@ -37,7 +36,7 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 		}
 	}
 	if include("channel") {
-		if page, err := ls.channels.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.channels.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, ch := range page.Items {
 				if ch != nil {
 					data.Channels = append(data.Channels, *ch)
@@ -46,7 +45,7 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 		}
 	}
 	if include("mcp") {
-		if page, err := ls.mcps.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.mcps.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, m := range page.Items {
 				if m != nil {
 					data.MCPs = append(data.MCPs, *m)
@@ -55,7 +54,7 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 		}
 	}
 	if include("agent") {
-		if page, err := ls.agents.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.agents.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, a := range page.Items {
 				if a != nil {
 					data.AgentDefs = append(data.AgentDefs, *a)
@@ -64,12 +63,12 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 		}
 	}
 	if include("flow") || include("skill") {
-		if page, err := ls.flows.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, fv := range page.Items {
 				if fv == nil {
 					continue
 				}
-				spec, _ := ls.flows.GetSpec(fc.ctx, fv.FlowID)
+				spec, _ := ls.flows.GetSpec(fc.ctx, fc.namespace, fv.FlowID)
 				if spec == nil {
 					continue
 				}
@@ -86,7 +85,10 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 		}
 	}
 	if include("flowrun") {
-		if page, err := ls.runs.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+		if page, err := ls.runs.List(fc.ctx, flowrun.ListFilter{
+			Namespace: fc.namespace,
+			Page:      entities.PageRequest{Page: 1, Size: 10000},
+		}); err == nil {
 			for _, r := range page.Items {
 				if r != nil {
 					data.FlowRuns = append(data.FlowRuns, *r)

@@ -3,6 +3,7 @@
 package seccomp
 
 import (
+	"errors"
 	"os/exec"
 
 	"github.com/flowgent-labs/flowgent/model/pkg"
@@ -10,6 +11,9 @@ import (
 
 // Filter is a seccomp BPF filter; a no-op on non-Linux platforms.
 type Filter struct{}
+
+// ChildMain reports that the seccomp child process requires Linux.
+func ChildMain() error { return errors.New("seccomp-child: seccomp is only supported on Linux") }
 
 // BuildFilter returns an empty filter on non-Linux — seccomp is unsupported.
 func BuildFilter(policy *model.NetworkPolicy) (*Filter, error) { return &Filter{}, nil }

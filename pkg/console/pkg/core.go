@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
 )
 
 // ─── LLM Provider ────────────────────────────────────────────────
@@ -14,7 +15,7 @@ import (
 // ListLLMs returns all LLM providers.
 func (fc *FlowgentConsole) ListLLMs() ([]entities.LlmProviderInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.llm.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.llm.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +30,7 @@ func (fc *FlowgentConsole) ListLLMs() ([]entities.LlmProviderInfo, error) {
 
 // GetLLM returns a single LLM provider by ID.
 func (fc *FlowgentConsole) GetLLM(id string) (*entities.LlmProviderInfo, error) {
-	return fc.getStores().llm.Get(fc.ctx, id)
+	return fc.getStores().llm.Get(fc.ctx, fc.namespace, id)
 }
 
 // AddLLM saves a new LLM provider. It assigns an ID, namespace, and timestamps.
@@ -43,7 +44,7 @@ func (fc *FlowgentConsole) AddLLM(p *entities.LlmProviderInfo) error {
 
 // RemoveLLM deletes an LLM provider by ID.
 func (fc *FlowgentConsole) RemoveLLM(id string) error {
-	return fc.getStores().llm.Delete(fc.ctx, id)
+	return fc.getStores().llm.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Channel ─────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ func (fc *FlowgentConsole) RemoveLLM(id string) error {
 // ListChannels returns all notification channels.
 func (fc *FlowgentConsole) ListChannels() ([]entities.NotifyChannelInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.channels.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.channels.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func (fc *FlowgentConsole) ListChannels() ([]entities.NotifyChannelInfo, error) 
 
 // GetChannel returns a single channel by ID.
 func (fc *FlowgentConsole) GetChannel(id string) (*entities.NotifyChannelInfo, error) {
-	return fc.getStores().channels.Get(fc.ctx, id)
+	return fc.getStores().channels.Get(fc.ctx, fc.namespace, id)
 }
 
 // AddChannel saves a new notification channel.
@@ -75,12 +76,15 @@ func (fc *FlowgentConsole) AddChannel(ch *entities.NotifyChannelInfo) error {
 	ch.Namespace = fc.namespace
 	ch.CreatedAt = time.Now()
 	ch.UpdatedAt = time.Now()
+	if err := fc.protectChannelSecrets(ch); err != nil {
+		return err
+	}
 	return fc.getStores().channels.Save(fc.ctx, ch)
 }
 
 // RemoveChannel deletes a channel by ID.
 func (fc *FlowgentConsole) RemoveChannel(id string) error {
-	return fc.getStores().channels.Delete(fc.ctx, id)
+	return fc.getStores().channels.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Agent ───────────────────────────────────────────────────────
@@ -88,7 +92,7 @@ func (fc *FlowgentConsole) RemoveChannel(id string) error {
 // ListAgents returns all agents.
 func (fc *FlowgentConsole) ListAgents() ([]entities.AgentInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.agents.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.agents.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -103,11 +107,14 @@ func (fc *FlowgentConsole) ListAgents() ([]entities.AgentInfo, error) {
 
 // GetAgent returns a single agent by name.
 func (fc *FlowgentConsole) GetAgent(name string) (*entities.AgentInfo, error) {
-	return fc.getStores().agents.Get(fc.ctx, name)
+	return fc.getStores().agents.Get(fc.ctx, fc.namespace, name)
 }
 
 // AddAgent saves a new agent.
 func (fc *FlowgentConsole) AddAgent(a *entities.AgentInfo) error {
+	if a.ID == "" {
+		a.ID = uuid.New().String()
+	}
 	a.Namespace = fc.namespace
 	a.CreatedAt = time.Now()
 	a.UpdatedAt = time.Now()
@@ -116,7 +123,7 @@ func (fc *FlowgentConsole) AddAgent(a *entities.AgentInfo) error {
 
 // RemoveAgent deletes an agent by name.
 func (fc *FlowgentConsole) RemoveAgent(name string) error {
-	return fc.getStores().agents.Delete(fc.ctx, name)
+	return fc.getStores().agents.Delete(fc.ctx, fc.namespace, name)
 }
 
 // ─── MCP ─────────────────────────────────────────────────────────
@@ -124,7 +131,7 @@ func (fc *FlowgentConsole) RemoveAgent(name string) error {
 // ListMCPs returns all MCPs.
 func (fc *FlowgentConsole) ListMCPs() ([]entities.McpInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.mcps.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.mcps.List(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +146,14 @@ func (fc *FlowgentConsole) ListMCPs() ([]entities.McpInfo, error) {
 
 // GetMCP returns a single MCP by name.
 func (fc *FlowgentConsole) GetMCP(name string) (*entities.McpInfo, error) {
-	return fc.getStores().mcps.Get(fc.ctx, name)
+	return fc.getStores().mcps.Get(fc.ctx, fc.namespace, name)
 }
 
 // AddMCP saves a new MCP.
 func (fc *FlowgentConsole) AddMCP(m *entities.McpInfo) error {
+	if m.ID == "" {
+		m.ID = uuid.New().String()
+	}
 	m.Namespace = fc.namespace
 	m.CreatedAt = time.Now()
 	m.UpdatedAt = time.Now()
@@ -152,7 +162,7 @@ func (fc *FlowgentConsole) AddMCP(m *entities.McpInfo) error {
 
 // RemoveMCP deletes an MCP by name.
 func (fc *FlowgentConsole) RemoveMCP(name string) error {
-	return fc.getStores().mcps.Delete(fc.ctx, name)
+	return fc.getStores().mcps.Delete(fc.ctx, fc.namespace, name)
 }
 
 // ─── Flow ────────────────────────────────────────────────────────
@@ -160,7 +170,7 @@ func (fc *FlowgentConsole) RemoveMCP(name string) error {
 // ListFlows returns all flow version entries.
 func (fc *FlowgentConsole) ListFlows() ([]entities.FlowVersionInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.flows.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +185,7 @@ func (fc *FlowgentConsole) ListFlows() ([]entities.FlowVersionInfo, error) {
 
 // GetFlow returns a full flow spec by ID.
 func (fc *FlowgentConsole) GetFlow(id string) (*entities.FlowInfo, error) {
-	return fc.getStores().flows.GetSpec(fc.ctx, id)
+	return fc.getStores().flows.GetSpec(fc.ctx, fc.namespace, id)
 }
 
 // AddFlow saves a new flow spec. It generates an ID if empty and defaults Kind to "flow".
@@ -192,7 +202,7 @@ func (fc *FlowgentConsole) AddFlow(spec *entities.FlowInfo) error {
 
 // RemoveFlow deletes a flow by ID.
 func (fc *FlowgentConsole) RemoveFlow(id string) error {
-	return fc.getStores().flows.Delete(fc.ctx, id)
+	return fc.getStores().flows.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Skill ───────────────────────────────────────────────────────
@@ -200,7 +210,7 @@ func (fc *FlowgentConsole) RemoveFlow(id string) error {
 // ListSkills returns all skill version entries.
 func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.flows.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +219,7 @@ func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 		if fv == nil {
 			continue
 		}
-		spec, _ := ls.flows.GetSpec(fc.ctx, fv.FlowID)
+		spec, _ := ls.flows.GetSpec(fc.ctx, fc.namespace, fv.FlowID)
 		if spec != nil && spec.Kind == "skill" {
 			result = append(result, *fv)
 		}
@@ -219,7 +229,7 @@ func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 
 // GetSkill returns a single skill by ID.
 func (fc *FlowgentConsole) GetSkill(id string) (*entities.FlowInfo, error) {
-	spec, err := fc.getStores().flows.GetSpec(fc.ctx, id)
+	spec, err := fc.getStores().flows.GetSpec(fc.ctx, fc.namespace, id)
 	if err != nil || spec == nil {
 		return nil, fmt.Errorf("skill not found: %s", id)
 	}
@@ -238,7 +248,7 @@ func (fc *FlowgentConsole) AddSkill(spec *entities.FlowInfo) error {
 
 // RemoveSkill deletes a skill by ID.
 func (fc *FlowgentConsole) RemoveSkill(id string) error {
-	return fc.getStores().flows.Delete(fc.ctx, id)
+	return fc.getStores().flows.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Run ─────────────────────────────────────────────────────────
@@ -246,7 +256,10 @@ func (fc *FlowgentConsole) RemoveSkill(id string) error {
 // ListRuns returns all flow runs.
 func (fc *FlowgentConsole) ListRuns() ([]entities.FlowRunInfo, error) {
 	ls := fc.getStores()
-	page, err := ls.runs.Select(fc.ctx, entities.PageRequest{Page: 1, Size: 50})
+	page, err := ls.runs.List(fc.ctx, flowrun.ListFilter{
+		Namespace: fc.namespace,
+		Page:      entities.PageRequest{Page: 1, Size: 50},
+	})
 	if err != nil {
 		return nil, err
 	}

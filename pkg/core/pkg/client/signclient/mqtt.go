@@ -1,9 +1,5 @@
 //go:build x402
 
-// Package signclient provides async payment signing via MQTT messaging.
-// In production, the TaskManager (TM) publishes unsigned payment payloads to
-// the sign/request MQTT topic. The wallet daemon subscribes, signs using its
-// private key, and publishes the signed result to sign/response.
 package signclient
 
 import (
@@ -13,113 +9,136 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
-	model "github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/messager/pkg"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-// MqttSignClient sends unsigned payment payloads to the wallet daemon
-// for signing via MQTT, and waits for the signed result.
-type MqttSignClient struct {
-	messager messager.IMessager
-	namespaceID string
-	flowID   string
-	runID    string
-	timeout  time.Duration
-
-	mu      sync.Mutex
-	pending map[string]chan signResult
+type MQTTConfig struct {
+	Broker              string
+	ClientID            string
+	Username            string
+	Password            string
+	RequestTopicPrefix  string
+	ResponseTopicPrefix string
+	Timeout             time.Duration
 }
 
-type signResult struct {
-	signature string
-	err       error
+type MQTTTransport struct {
+	client        mqtt.Client
+	requestTopic  string
+	responseTopic string
+	timeout       time.Duration
+	mu            sync.Mutex
+	pending       map[string]chan *SignResponse
 }
 
-// NewMqttSignClient creates an async sign client that communicates with the
-// wallet daemon via MQTT. It subscribes to the sign/response topic for the
-// given run context and dispatches responses to waiting callers by request ID.
-func NewMqttSignClient(m messager.IMessager, namespaceID, flowID, runID string, timeout time.Duration) (*MqttSignClient, error) {
-	c := &MqttSignClient{
-		messager: m,
-		namespaceID: namespaceID,
-		flowID:   flowID,
-		runID:    runID,
-		timeout:  timeout,
-		pending:  make(map[string]chan signResult),
+func NewMQTTTransport(config MQTTConfig) (*MQTTTransport, error) {
+	if config.Broker == "" {
+		return nil, fmt.Errorf("wallet MQTT transport requires messager.mqtt.broker")
 	}
-	if err := m.Subscribe(context.Background(), messager.SignResponseTopic(namespaceID, flowID, runID), c.handleResponse); err != nil {
-		return nil, fmt.Errorf("subscribe sign response: %w", err)
+	if err := validateIdentifier("client_id", config.ClientID); err != nil {
+		return nil, err
 	}
-	return c, nil
+	if config.RequestTopicPrefix == "" {
+		config.RequestTopicPrefix = DefaultRequestTopicPrefix
+	}
+	if config.ResponseTopicPrefix == "" {
+		config.ResponseTopicPrefix = DefaultResponseTopicPrefix
+	}
+	if config.Timeout <= 0 {
+		config.Timeout = 30 * time.Second
+	}
+	transport := &MQTTTransport{
+		requestTopic:  config.RequestTopicPrefix + "/" + config.ClientID,
+		responseTopic: config.ResponseTopicPrefix + "/" + config.ClientID,
+		timeout:       config.Timeout,
+		pending:       make(map[string]chan *SignResponse),
+	}
+	options := mqtt.NewClientOptions().
+		AddBroker(config.Broker).
+		SetClientID(config.ClientID).
+		SetCleanSession(true).
+		SetKeepAlive(30 * time.Second).
+		SetPingTimeout(10 * time.Second).
+		SetConnectTimeout(10 * time.Second).
+		SetAutoReconnect(true).
+		SetResumeSubs(true).
+		SetConnectionLostHandler(func(_ mqtt.Client, err error) {})
+	if config.Username != "" {
+		options.SetUsername(config.Username)
+		options.SetPassword(config.Password)
+	}
+	transport.client = mqtt.NewClient(options)
+	if token := transport.client.Connect(); !token.WaitTimeout(config.Timeout) {
+		return nil, fmt.Errorf("connect to wallet MQTT broker: timeout")
+	} else if token.Error() != nil {
+		return nil, fmt.Errorf("connect to wallet MQTT broker: %w", token.Error())
+	}
+	if token := transport.client.Subscribe(transport.responseTopic, 1, transport.handleResponse); !token.WaitTimeout(config.Timeout) {
+		transport.client.Disconnect(250)
+		return nil, fmt.Errorf("subscribe to wallet response topic: timeout")
+	} else if token.Error() != nil {
+		transport.client.Disconnect(250)
+		return nil, fmt.Errorf("subscribe to wallet response topic: %w", token.Error())
+	}
+	return transport, nil
 }
 
-func (c *MqttSignClient) handleResponse(_ string, payload []byte) {
-	var resp messager.SignResponse
-	if err := json.Unmarshal(payload, &resp); err != nil {
+func (t *MQTTTransport) RoundTrip(ctx context.Context, request *SignRequest) (*SignResponse, error) {
+	result := make(chan *SignResponse, 1)
+	t.mu.Lock()
+	t.pending[request.RequestID] = result
+	t.mu.Unlock()
+	defer func() {
+		t.mu.Lock()
+		delete(t.pending, request.RequestID)
+		t.mu.Unlock()
+	}()
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("encode wallet signing request: %w", err)
+	}
+	if token := t.client.Publish(t.requestTopic, 1, false, payload); !token.WaitTimeout(t.timeout) {
+		return nil, fmt.Errorf("publish wallet signing request: timeout")
+	} else if token.Error() != nil {
+		return nil, fmt.Errorf("publish wallet signing request: %w", token.Error())
+	}
+
+	timer := time.NewTimer(t.timeout)
+	defer timer.Stop()
+	select {
+	case response := <-result:
+		return response, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, fmt.Errorf("wallet signing request timed out after %s", t.timeout)
+	}
+}
+
+func (t *MQTTTransport) Close() {
+	if t.client != nil && t.client.IsConnected() {
+		t.client.Disconnect(250)
+	}
+}
+
+func (t *MQTTTransport) handleResponse(_ mqtt.Client, message mqtt.Message) {
+	if len(message.Payload()) > maxResponseBytes {
 		return
 	}
-	c.mu.Lock()
-	ch, ok := c.pending[resp.RequestID]
-	delete(c.pending, resp.RequestID)
-	c.mu.Unlock()
-	if ok {
-		var err error
-		if resp.Error != "" {
-			err = fmt.Errorf("%s", resp.Error)
+	var response SignResponse
+	if err := json.Unmarshal(message.Payload(), &response); err != nil {
+		return
+	}
+	t.mu.Lock()
+	result := t.pending[response.RequestID]
+	t.mu.Unlock()
+	if result != nil {
+		select {
+		case result <- &response:
+		default:
 		}
-		ch <- signResult{signature: resp.Signature, err: err}
 	}
 }
 
-// Sign sends an unsigned payload to the wallet daemon via MQTT and waits for
-// the signed result. The wallet daemon handles key management and signing.
-func (c *MqttSignClient) Sign(ctx context.Context, walletAddr string, payload []byte) ([]byte, error) {
-	reqID := uuid.New().String()
-
-	ch := make(chan signResult, 1)
-	c.mu.Lock()
-	c.pending[reqID] = ch
-	c.mu.Unlock()
-
-	req := messager.SignRequest{
-		RequestID: reqID,
-		Wallet:    walletAddr,
-		Payload:   string(payload),
-		Namespace:  c.namespaceID,
-		FlowID:    c.flowID,
-		RunID:     c.runID,
-	}
-	body, _ := json.Marshal(req)
-
-	if err := c.messager.Publish(ctx, messager.SignRequestTopic(c.namespaceID, c.flowID, c.runID), &messager.InterMessage{
-		ID:      reqID,
-		Payload: body,
-	}); err != nil {
-		c.mu.Lock()
-		delete(c.pending, reqID)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("publish sign request: %w", err)
-	}
-
-	select {
-	case result := <-ch:
-		if result.err != nil {
-			return nil, result.err
-		}
-		return []byte(result.signature), nil
-	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.pending, reqID)
-		c.mu.Unlock()
-		return nil, ctx.Err()
-	case <-time.After(c.timeout):
-		c.mu.Lock()
-		delete(c.pending, reqID)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("sign request %s timed out after %s", reqID, c.timeout)
-	}
-}
-
-var _ model.SignClient = (*MqttSignClient)(nil)
+var _ Transport = (*MQTTTransport)(nil)

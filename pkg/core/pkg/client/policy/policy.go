@@ -18,17 +18,15 @@ import (
 
 // Engine evaluates payment intents against configured spending policies.
 type Engine struct {
-	cfg        *config.PoliciesConfig
-	mu         sync.Mutex
-	dailySpent map[string]decimal.Decimal // wallet -> daily spent
-	dailyDate  string
-	store      SpendingStore
+	cfg   *config.PoliciesConfig
+	store SpendingStore
 }
 
-// SpendingStore tracks daily spending for budget enforcement.
+// SpendingStore tracks daily spending for budget enforcement. ReserveSpend
+// MUST compare and add atomically so concurrent clients cannot exceed maxTotal.
 type SpendingStore interface {
 	GetDailySpent(ctx context.Context, wallet string, date string) (decimal.Decimal, error)
-	RecordSpend(ctx context.Context, wallet string, date string, amount decimal.Decimal) error
+	ReserveSpend(ctx context.Context, wallet string, date string, amount, maxTotal decimal.Decimal) error
 }
 
 // memorySpendingStore is an in-memory implementation for single-process mode.
@@ -47,12 +45,28 @@ func (s *memorySpendingStore) GetDailySpent(_ context.Context, wallet, date stri
 	return decimal.Zero, nil
 }
 
-func (s *memorySpendingStore) RecordSpend(_ context.Context, wallet, date string, amount decimal.Decimal) error {
+func (s *memorySpendingStore) ReserveSpend(
+	_ context.Context,
+	wallet string,
+	date string,
+	amount decimal.Decimal,
+	maxTotal decimal.Decimal,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := wallet + ":" + date
 	current := s.ledger[key]
-	s.ledger[key] = current.Add(amount)
+	next := current.Add(amount)
+	if maxTotal.IsPositive() && next.GreaterThan(maxTotal) {
+		return fmt.Errorf(
+			"%w: daily budget %s would be exceeded (spent: %s, pending: %s)",
+			model.ErrPaymentDenied,
+			maxTotal,
+			current,
+			amount,
+		)
+	}
+	s.ledger[key] = next
 	return nil
 }
 
@@ -62,9 +76,8 @@ func NewEngine(cfg *config.PoliciesConfig, store SpendingStore) *Engine {
 		store = &memorySpendingStore{ledger: make(map[string]decimal.Decimal)}
 	}
 	return &Engine{
-		cfg:        cfg,
-		dailySpent: make(map[string]decimal.Decimal),
-		store:      store,
+		cfg:   cfg,
+		store: store,
 	}
 }
 
@@ -103,7 +116,10 @@ func (e *Engine) Allow(ctx context.Context, intent *model.PaymentIntent) error {
 	// Daily budget
 	if e.cfg.MaxDailyBudgetUSD > 0 {
 		today := time.Now().Format("2006-01-02")
-		spent, err := e.store.GetDailySpent(ctx, intent.Recipient, today)
+		if intent.Payer == "" {
+			return fmt.Errorf("%w: payer address is required for daily budget enforcement", model.ErrPaymentDenied)
+		}
+		spent, err := e.store.GetDailySpent(ctx, intent.Payer, today)
 		if err != nil {
 			return fmt.Errorf("check daily budget: %w", err)
 		}
@@ -125,10 +141,23 @@ func (e *Engine) RequiresHumanApproval(intent *model.PaymentIntent) bool {
 	return intent.Amount.GreaterThanOrEqual(threshold)
 }
 
-// RecordSpend records a completed payment for daily budget tracking.
-func (e *Engine) RecordSpend(ctx context.Context, wallet string, amount decimal.Decimal) error {
+// ReserveSpend atomically reserves a payment before network dispatch.
+func (e *Engine) ReserveSpend(ctx context.Context, wallet string, amount decimal.Decimal) error {
+	if wallet == "" {
+		return fmt.Errorf("%w: payer address is required for daily budget enforcement", model.ErrPaymentDenied)
+	}
+	if !amount.IsPositive() {
+		return fmt.Errorf("%w: payment amount must be positive", model.ErrPaymentDenied)
+	}
 	today := time.Now().Format("2006-01-02")
-	return e.store.RecordSpend(ctx, wallet, today, amount)
+	limit := decimal.Zero
+	if e.cfg.MaxDailyBudgetUSD > 0 {
+		limit = decimal.NewFromFloat(e.cfg.MaxDailyBudgetUSD)
+	}
+	if err := e.store.ReserveSpend(ctx, wallet, today, amount, limit); err != nil {
+		return fmt.Errorf("reserve daily budget: %w", err)
+	}
+	return nil
 }
 
 func (e *Engine) checkDomain(domain string) error {

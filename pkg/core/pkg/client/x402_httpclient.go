@@ -13,41 +13,71 @@ import (
 	"github.com/google/uuid"
 	"github.com/x402-foundation/x402/go/types"
 
-	model "github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/core/pkg/client/facilitator"
 	"github.com/flowgent-labs/flowgent/core/pkg/client/policy"
+	model "github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// ApprovalHandler is called when a payment requires human approval.
+// ApprovalHandler gates payment signing when policy requires human approval.
+// The returned receipt records the approval decision.
 type ApprovalHandler interface {
 	RequestApproval(ctx context.Context, intent *model.PaymentIntent) (*model.PaymentReceipt, error)
 }
 
-// X402Config configures the x402 payment HTTP client.
-type X402Config struct {
-	HTTPTimeout time.Duration
-	MaxRetries  int
+// PaymentClient selects a supported requirement and creates its signed x402
+// payload. Only its final EIP-712 digest is delegated to the Wallet service.
+type PaymentClient interface {
+	SelectPaymentRequirements([]types.PaymentRequirements) (types.PaymentRequirements, error)
+	CreatePaymentPayload(context.Context, types.PaymentRequirements, *types.ResourceInfo, map[string]interface{}) (types.PaymentPayload, error)
 }
 
-// X402PaymentHttpClient is a self-contained, pluggable implementation of
-// IFlowgentAPIClient with transparent x402 payment handling. When a server
-// returns 402 Payment Required, the full payment flow (policy check, signing,
-// facilitator settlement) is handled transparently and the request is retried
-// with the payment token.
+// PaymentHeaderEncoder converts the signed payload into protocol-version-aware
+// HTTP headers. The official x402 HTTP adapter implements this interface.
+type PaymentHeaderEncoder interface {
+	EncodePaymentSignatureHeader([]byte) (map[string]string, error)
+}
+
+// X402Config configures one x402-aware HTTP client.
+type X402Config struct {
+	HTTPTimeout  time.Duration
+	PayerAddress string
+}
+
+// X402PaymentHttpClient applies payment policy, requests a signature from the
+// external Wallet, and retries a resource once with the standard x402 payment
+// header. The resource server, not Flowgent, owns facilitator settlement.
 type X402PaymentHttpClient struct {
-	httpClient   *http.Client
-	policyEngine *policy.Engine
-	facilitator  *facilitator.Client
-	signClient   model.SignClient
-	approver     ApprovalHandler
-	defaultAddr  string
+	httpClient    *http.Client
+	policyEngine  *policy.Engine
+	paymentClient PaymentClient
+	headerEncoder PaymentHeaderEncoder
+	approver      ApprovalHandler
+	payerAddress  string
 }
 
 // NewX402PaymentHttpClient creates an x402-aware HTTP client.
-func NewX402PaymentHttpClient(cfg X402Config, policyEngine *policy.Engine, fClient *facilitator.Client, signClient model.SignClient, approver ApprovalHandler) *X402PaymentHttpClient {
+func NewX402PaymentHttpClient(
+	cfg X402Config,
+	policyEngine *policy.Engine,
+	paymentClient PaymentClient,
+	headerEncoder PaymentHeaderEncoder,
+	approver ApprovalHandler,
+) (*X402PaymentHttpClient, error) {
+	if policyEngine == nil {
+		return nil, fmt.Errorf("x402: policy engine is required")
+	}
+	if paymentClient == nil {
+		return nil, fmt.Errorf("x402: payment client is required")
+	}
+	if headerEncoder == nil {
+		return nil, fmt.Errorf("x402: payment header encoder is required")
+	}
+	if cfg.PayerAddress == "" {
+		return nil, fmt.Errorf("x402: payer address is required")
+	}
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 30 * time.Second
 	}
+
 	return &X402PaymentHttpClient{
 		httpClient: &http.Client{
 			Timeout: cfg.HTTPTimeout,
@@ -57,114 +87,137 @@ func NewX402PaymentHttpClient(cfg X402Config, policyEngine *policy.Engine, fClie
 				DisableCompression: false,
 			},
 		},
-		policyEngine: policyEngine,
-		facilitator:  fClient,
-		signClient:   signClient,
-		approver:     approver,
-		defaultAddr:  "",
-	}
+		policyEngine:  policyEngine,
+		paymentClient: paymentClient,
+		headerEncoder: headerEncoder,
+		approver:      approver,
+		payerAddress:  cfg.PayerAddress,
+	}, nil
 }
 
-// SetDefaultWallet sets the default wallet address used for payments.
-func (c *X402PaymentHttpClient) SetDefaultWallet(addr string) {
-	c.defaultAddr = addr
-}
-
-// Do executes an HTTP request with x402 payment awareness.
-// If the server returns 402 Payment Required, the full payment flow is handled
-// transparently: parse 402, evaluate policy, get approval, sign, settle, retry.
+// Do executes an HTTP request with one bounded x402 payment retry.
 func (c *X402PaymentHttpClient) Do(req *http.Request) (*http.Response, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("x402: request failed: %w", err)
 	}
-
 	if !IsX402Response(resp) {
 		return resp, nil
 	}
 
-	// Parse x402 payment request
-	paymentReq, err := Parse(resp)
+	paymentRequired, err := Parse(resp)
+	closeResponse(resp)
 	if err != nil {
 		return nil, fmt.Errorf("x402: parse 402 response: %w", err)
 	}
-	accept := FirstAccept(paymentReq)
-	if accept == nil {
-		return nil, fmt.Errorf("x402: no payment option in 402 response")
+
+	selected, err := c.paymentClient.SelectPaymentRequirements(paymentRequired.Accepts)
+	if err != nil {
+		return nil, fmt.Errorf("x402: select payment requirement: %w", err)
+	}
+	amount, err := ParsePaymentAmountUSD(selected)
+	if err != nil {
+		return nil, fmt.Errorf("x402: validate payment requirement: %w", err)
 	}
 
-	// Create payment intent
-	amt, _ := ParseAssetAmount(accept.Amount)
+	retryReq, err := cloneForPaymentRetry(req)
+	if err != nil {
+		return nil, err
+	}
 	intent := &model.PaymentIntent{
-		ID:          uuid.NewString(),
-		URL:         req.URL.String(),
-		Asset:       accept.Asset,
-		Amount:      amt,
-		Chain:       accept.Network,
-		Recipient:   accept.PayTo,
-		Facilitator: req.URL.Host,
-		Status:      model.IntentPending,
-		CreatedAt:   time.Now(),
+		ID:        uuid.NewString(),
+		URL:       req.URL.String(),
+		Payer:     c.payerAddress,
+		Asset:     selected.Asset,
+		Amount:    amount,
+		Chain:     selected.Network,
+		Recipient: selected.PayTo,
+		Status:    model.IntentPending,
+		CreatedAt: time.Now(),
 	}
 
-	// Evaluate policy
 	if err := c.policyEngine.Allow(req.Context(), intent); err != nil {
 		intent.Status = model.IntentDenied
 		return nil, err
 	}
-
-	// Human approval if required
 	if c.policyEngine.RequiresHumanApproval(intent) {
 		if c.approver == nil {
 			return nil, model.ErrPaymentRequiresApproval
 		}
-		receipt, err := c.approver.RequestApproval(req.Context(), intent)
-		if err != nil {
+		if _, err := c.approver.RequestApproval(req.Context(), intent); err != nil {
 			intent.Status = model.IntentDenied
 			return nil, fmt.Errorf("x402: approval denied: %w", err)
 		}
-		if receipt != nil {
-			return c.retryWithToken(req, receipt.Authorization)
-		}
 	}
+	intent.Status = model.IntentApproved
 
-	// Build PaymentPayload
-	payload := &types.PaymentPayload{
-		X402Version: 2,
-		Payload: map[string]interface{}{
-			"intent_id": intent.ID,
-			"url":       intent.URL,
-		},
-		Accepted: *accept,
-	}
-
-	// Sign the payload via the configured SignClient
-	payloadBytes, _ := json.Marshal(payload)
-	sig, err := c.signClient.Sign(req.Context(), c.defaultAddr, payloadBytes)
+	payload, err := c.paymentClient.CreatePaymentPayload(
+		req.Context(),
+		selected,
+		paymentRequired.Resource,
+		paymentRequired.Extensions,
+	)
 	if err != nil {
 		intent.Status = model.IntentFailed
-		return nil, fmt.Errorf("x402: sign authorization: %w", err)
+		return nil, fmt.Errorf("x402: create signed payment payload: %w", err)
 	}
-	payload.Payload["signature"] = string(sig)
-
-	// Send to facilitator
-	receipt, err := c.facilitator.Authorize(req.Context(), payload)
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		intent.Status = model.IntentFailed
-		return nil, fmt.Errorf("x402: facilitator authorize: %w", err)
+		return nil, fmt.Errorf("x402: encode signed payment payload: %w", err)
+	}
+	paymentHeaders, err := c.headerEncoder.EncodePaymentSignatureHeader(payloadBytes)
+	if err != nil {
+		intent.Status = model.IntentFailed
+		return nil, fmt.Errorf("x402: encode payment header: %w", err)
+	}
+	for name, value := range paymentHeaders {
+		retryReq.Header.Set(name, value)
 	}
 
-	intent.Status = model.IntentPaid
-	_ = c.policyEngine.RecordSpend(req.Context(), c.defaultAddr, intent.Amount)
+	// Reserve the authorization amount before dispatch. This intentionally
+	// counts an ambiguous network outcome against the local safety budget.
+	if err := c.policyEngine.ReserveSpend(req.Context(), c.payerAddress, intent.Amount); err != nil {
+		intent.Status = model.IntentFailed
+		return nil, fmt.Errorf("x402: reserve payment budget: %w", err)
+	}
 
-	// Retry original request with payment token
-	return c.retryWithToken(req, receipt.Authorization)
+	retryResp, err := c.httpClient.Do(retryReq)
+	if err != nil {
+		intent.Status = model.IntentFailed
+		return nil, fmt.Errorf("x402: payment retry failed: %w", err)
+	}
+	if IsX402Response(retryResp) {
+		intent.Status = model.IntentFailed
+	} else {
+		intent.Status = model.IntentPaid
+	}
+	return retryResp, nil
 }
 
-func (c *X402PaymentHttpClient) retryWithToken(req *http.Request, token string) (*http.Response, error) {
+func cloneForPaymentRetry(req *http.Request) (*http.Request, error) {
 	retryReq := req.Clone(req.Context())
-	SetAuthorizationHeader(retryReq, token)
-	return c.httpClient.Do(retryReq)
+	switch {
+	case req.Body == nil:
+		retryReq.Body = nil
+	case req.Body == http.NoBody:
+		retryReq.Body = http.NoBody
+	case req.GetBody != nil:
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("x402: recreate request body: %w", err)
+		}
+		retryReq.Body = body
+	default:
+		return nil, fmt.Errorf("x402: request body is not replayable")
+	}
+	return retryReq, nil
+}
+
+func closeResponse(resp *http.Response) {
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 }
 
 // Get performs a GET request with x402 payment awareness.
@@ -173,8 +226,8 @@ func (c *X402PaymentHttpClient) Get(ctx context.Context, url string, headers map
 	if err != nil {
 		return nil, err
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	return c.Do(req)
 }
@@ -186,8 +239,8 @@ func (c *X402PaymentHttpClient) Post(ctx context.Context, url string, body []byt
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	return c.Do(req)
 }

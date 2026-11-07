@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.emqx.enabled }}
 apiVersion: v1
 kind: Service
@@ -47,4 +48,5 @@ spec:
               value: "flowgent-emqx-cookie"
             - name: EMQX_MQTT__MAX_PACKET_SIZE
               value: {{ .Values.emqx.maxPacketSize | quote }}
+{{- end }}
 {{- end }}

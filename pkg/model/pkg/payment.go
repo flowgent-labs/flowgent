@@ -13,6 +13,7 @@ import (
 type PaymentIntent struct {
 	ID          string          `json:"id"`
 	URL         string          `json:"url"`
+	Payer       string          `json:"payer"`
 	Asset       string          `json:"asset"`
 	Amount      decimal.Decimal `json:"amount"`
 	Chain       string          `json:"chain"`
