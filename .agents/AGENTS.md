@@ -52,7 +52,6 @@ historical context and are not authoritative for the current implementation.
 | [docs/architecture/agent-flow.md](../docs/architecture/agent-flow.md) | Generic L2 application architecture: DAG model, capabilities, limits, and authoring practices |
 | [docs/architecture/data-lifecycle.md](../docs/architecture/data-lifecycle.md) | Durable identity/revision model, instruction/knowledge/execution-memory separation, approvals, and vector retrieval |
 | [docs/architecture/engine/wallet.md](../docs/architecture/engine/wallet.md) | AgentVault boundary and the remaining legacy x402 client integration gap |
-| [docs/runbooks/build-dependency-images.md](../docs/runbooks/build-dependency-images.md) | Build and operate x402 facilitator, EVM Anvil, and Solana validator images |
 
 ### Use Cases
 

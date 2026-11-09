@@ -1,7 +1,5 @@
 version: '3.8'
-# Flowgent All-in-One deployment with optional economic layer services.
-# Includes Flowgent plus optional local middleware. The Wallet service is
-# deployed from its independent repository and joins this network when used.
+# Flowgent All-in-One deployment with optional local middleware.
 services:
   # ─── Flowgent Daemon (all-in-one: REST + A2A) ──────────────
   flowgent:
@@ -19,24 +17,6 @@ services:
     volumes:
       - ../../etc:/app/etc:ro
       - flowgent_data:/var/lib/flowgent
-  # ─── Coinbase x402 Facilitator ──────────────────────────────
-  # Resource servers may use this optional development dependency. Flowgent
-  # sends PAYMENT-SIGNATURE to the resource and does not call it directly.
-  facilitator:
-    image: registry.cn-shenzhen.aliyuncs.com/wl4g/x402_facilitator:1.4.9
-    container_name: x402-facilitator
-    restart: unless-stopped
-    ports:
-      - "8085:8085"
-    networks:
-      - flowgent-net
-    environment:
-      FACILITATOR_PORT: "8085"
-      FACILITATOR_CHAIN: base
-      FACILITATOR_SETTLEMENT: x402
-    profiles:
-      - economic
-
   # ─── PostgreSQL (optional, for distributed mode) ────────────
   postgres:
     image: postgres:16-alpine

@@ -90,6 +90,11 @@ that path is part of this migration.
 
 ## Independent Lifecycle
 
+Payment E2E infrastructure, including Anvil, the x402 facilitator, and Solana,
+belongs to the independent AgentVault repository under
+`use-cases/marketpulse-feed-subscription/e2e/deploy/`. Flowgent MUST NOT maintain
+duplicate payment test deployments or include them in its all-in-one stack.
+
 AgentVault commands MUST go through its own Makefile; the Flowgent root Makefile
 MUST NOT proxy them:
 

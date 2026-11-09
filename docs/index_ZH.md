@@ -33,12 +33,6 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 | Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
 | AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/e2e/config/flows/autotest-generation-v1.yaml) |
 
-## 运维
-
-| 文档 | 范围 |
-|---|---|
-| [依赖镜像](runbooks/build-dependency-images_ZH.md) | 构建和运行本地 Facilitator、EVM 与 Solana 镜像 |
-
 ## 开发与历史
 
 | 状态 | 位置 | 含义 |

@@ -35,12 +35,6 @@ Shared DAG semantics belong to the
 | Security Autonomy Fixer | SonarQube-to-GitHub remediation and post-change verification; 29-node/33-edge DAG | [Design and E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
 | AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/e2e/config/flows/autotest-generation-v1.yaml) |
 
-## Operations
-
-| Document | Scope |
-|---|---|
-| [Dependency images](runbooks/build-dependency-images.md) | Build and operate local facilitator, EVM, and Solana images |
-
 ## Development and History
 
 | Status | Location | Meaning |

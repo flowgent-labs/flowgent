@@ -79,6 +79,10 @@ JobManager、Notifier 和管理路径 **MUST NOT** 打开旧签名 Transport；
 
 ## 独立生命周期
 
+支付 E2E 基础设施（包括 Anvil、x402 Facilitator 与 Solana）归属独立 AgentVault
+仓库的 `use-cases/marketpulse-feed-subscription/e2e/deploy/`。Flowgent **MUST NOT**
+维护重复的支付测试部署，也不得将其纳入自身 all-in-one 部署。
+
 AgentVault 命令 **MUST** 经过自身 Makefile；Flowgent 根 Makefile **MUST NOT** 代理：
 
 ```bash
