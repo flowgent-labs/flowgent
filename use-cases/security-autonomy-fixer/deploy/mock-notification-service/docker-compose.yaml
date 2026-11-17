@@ -1,0 +1,13 @@
+services:
+  notification-receiver:
+    image: ${E2E_IMAGE_PYTHON}
+    environment:
+      EXPECTED_TOKEN: ${FLOWGENT_E2E_NOTIFICATION_TOKEN}
+    ports:
+    - 127.0.0.1:21081:8080
+    entrypoint:
+    - python3
+    - /opt/e2e/server.py
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/deploy/mock-notification-service/source/server.py:/opt/e2e/server.py:ro
+    platform: ${E2E_PLATFORM_PYTHON}

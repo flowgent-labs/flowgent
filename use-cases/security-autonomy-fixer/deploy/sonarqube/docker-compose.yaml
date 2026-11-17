@@ -1,0 +1,32 @@
+services:
+  sonarqube:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/sonarqube/docker-compose.yml
+      service: sonarqube
+    image: ${E2E_IMAGE_SONARQUBE}
+    mem_limit: 2g
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 768m
+    environment:
+      SONAR_SEARCH_JAVAOPTS: -Xms128m -Xmx256m
+      SONAR_WEB_JAVAOPTS: -Xms128m -Xmx256m
+      SONAR_CE_JAVAOPTS: -Xms128m -Xmx256m
+    container_name: ${COMPOSE_PROJECT_NAME}-sonarqube
+    platform: ${E2E_PLATFORM_SONARQUBE}
+  sonarqube-init:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/sonarqube/docker-compose.yml
+      service: sonarqube-init
+    image: ${E2E_IMAGE_SONARQUBE}
+    container_name: ${COMPOSE_PROJECT_NAME}-sonarqube-init
+    platform: ${E2E_PLATFORM_SONARQUBE}
+networks:
+  sonarqube-net: {}
+volumes:
+  sonarqube_data: {}
+  sonarqube_extensions: {}
+  sonarqube_logs: {}

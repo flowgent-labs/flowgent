@@ -2,6 +2,10 @@
 
 [系统总览](../overview_ZH.md) · [Runtime Clusters](runtime-clusters_ZH.md) · [JobManager](jobmanager_ZH.md)
 
+**Sandbox 目标（2026-11-14）：** Controller 还将按 Namespace + `sandbox_id`
+独立协调已注册池，不依赖活跃 FlowRun。下文 Sandbox 归属/GC 描述仍是当前
+Runtime Cluster 实现；待迁移的[固定池契约](sandbox_ZH.md)替代这些旧边界。
+
 Controller 是分布式运行时协调者。它通过 API Server 获取 Flow 与活跃
 application Run，通过 hash-mod 在多个 Controller 副本之间分片，并创建或删除每
 FlowRun 专用 application JobManager；同时回收 application runtime Deployment。

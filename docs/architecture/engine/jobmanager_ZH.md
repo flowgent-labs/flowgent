@@ -2,6 +2,10 @@
 
 [系统总览](../overview_ZH.md) · [TaskManager](taskmanager_ZH.md) · [Sandbox](sandbox_ZH.md)
 
+**Sandbox 目标（2026-11-14）：** JM 继续管理 TM，Controller 独立管理 Sandbox
+固定池。Run 结束时 JM **MUST NOT** 扩缩或删除被引用池。下文 Sandbox 管理
+描述属于当前实现，待迁移目标以[固定池设计](sandbox_ZH.md)为准。
+
 JobManager 是每个 Run 的 DAG 编排器。它通过 API Server 读取 Flow/Run 状态，
 将可运行 DAG Node 转换为 `ExecutionPlan` 消息，消费仅含状态的执行结果，并
 通过可插拔 ResourceManager 管理 TaskManager 与 Sandbox 容量。它从不直接

@@ -42,7 +42,6 @@ replace (
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/config => ../config
 	github.com/flowgent-labs/flowgent/core => ../core
-	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/storage => ../storage
 )

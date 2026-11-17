@@ -1,0 +1,101 @@
+{{- if .Values.prometheus.enabled }}
+{{- $p := .Values.prometheus }}
+{{- $name := $p.name | default (printf "%s-prometheus" (include "flowgent.fullname" .)) }}
+{{- $ns := $p.namespace | default .Release.Namespace }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-scrape
+  namespace: {{ $ns }}
+data:
+  prometheus.yaml: |
+    {{- if $p.configuration }}
+    {{- $p.configuration | nindent 4 }}
+    {{- else }}
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: flowgent
+        static_configs:
+          - targets: [{{ printf "%s-apiserver:%v" (include "flowgent.fullname" .) .Values.apiserver.service.mgmtPort | quote }}]
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flowgent.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ $name }}}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ $p.configuration | sha256sum }}
+      labels:
+        app: {{ $name }}
+        {{- with $p.labels }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      {{- if $p.watchedNamespaces }}
+      serviceAccountName: {{ $name }}
+      {{- end }}
+      containers:
+        - name: prometheus
+          image: {{ $p.image | quote }}
+          args: ["--config.file=/etc/prometheus/prometheus.yaml"]
+          ports: [{name: http, containerPort: 9090}]
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus, readOnly: true}
+          resources: {{ toYaml $p.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: {name: {{ $name }}-scrape}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+spec:
+  selector: {app: {{ $name }}}
+  ports: [{name: http, port: 9090, targetPort: http}]
+{{- if $p.watchedNamespaces }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+{{- range $p.watchedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-scrape
+  namespace: {{ . }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-scrape
+  namespace: {{ . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-scrape
+{{- end }}
+{{- end }}
+{{- end }}

@@ -43,6 +43,29 @@ Approval does not equal execution success. A Flowgent payment node MUST verify
 the AgentVault execution/settlement result and persist an idempotent side-effect
 reference before unblocking downstream work.
 
+## SDK Placement (Target)
+
+| Flowgent boundary | AgentVault integration | Responsibility |
+|---|---|---|
+| A2A Server | Payee SDK | Intercept inbound requests, challenge/verify payment, then release the business operation. |
+| Independent generated MCP server | Payee SDK | Enforce collection before executing the generated tool handler. |
+| Outbound A2A/MCP clients in TaskManager | Payer SDK | Intercept payment challenges, request AgentVault authorization/payment, attach proof and retry. |
+| Separate AgentVault service | SDK backend | Own payment policy, approval, custody, verification and settlement. |
+
+mcpfather generates the standalone MCP service from Flowgent's OpenAPI/Swagger
+specification. It calls Flowgent HTTP APIs with the required authorization and
+does not become a database gateway or an embedded Flowgent MCP process. Envoy
+routes protected Flowgent, protocol and AgentVault APIs; AuthGuard access checks
+and payment collection are separate gates. Protected SDK backend calls also
+use those gateway routes; diagrams show payment dependencies without repeating
+every gateway hop.
+
+The SDKs run at the Flowgent server/client boundaries. The payment zone in the
+diagrams denotes integration responsibility, not AgentVault ownership of the
+A2A/MCP service deployment. These SDK paths and the generated MCP endpoint are
+not implemented in the current Flowgent runtime; the existing A2A server does
+not yet have Payee SDK middleware. The legacy signer below is not a Payer SDK.
+
 ## Legacy Client (Implemented but Transitional)
 
 The current `pkg/core/pkg/client/signclient` path sends one bounded JSON

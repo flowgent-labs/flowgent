@@ -22,7 +22,7 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 
 It verifies LDAP federated Principal discovery and the complete GitHub OAuth →
 AuthGuard AuthN → Envoy JWT → AuthGuard AuthZ → Flowgent path. A successful
-release is retained for manual use; `python3 e2e/runner.py --deployer k8s --access` keeps the
+release is retained for manual use; `python3 runner.py --deployer k8s --access` keeps the
 local tunnels open. Namespaces use the `e2e-flowgent-*` boundary while resources
 inside them retain production-style names, with separate workload namespaces, a
 dedicated Gateway controller name, and special ports. Flowgent and AuthGuard use the dedicated PostgreSQL schemas
@@ -40,8 +40,8 @@ standalone acceptance login is stored (not printed) in the Kubernetes Secret
 password-only acceptance account.
 
 The copy/paste-ready human review procedure is in
-[`e2e/MANUAL_ACCEPTANCE.md`](e2e/MANUAL_ACCEPTANCE.md). After acceptance,
-`python3 e2e/runner.py --deployer k8s --cleanup` first performs normal Helm and
+[`MANUAL_ACCEPTANCE.md`](MANUAL_ACCEPTANCE.md). After acceptance,
+`python3 runner.py --deployer k8s --cleanup` first performs normal Helm and
 namespace deletion, then applies bounded finalizer recovery only to owned E2E
 objects and verifies that no release, namespace, Pod, PV, or cluster-scoped
 E2E object remains.
@@ -78,47 +78,38 @@ disabled.
 
 ```text
 security-autonomy-fixer/
-├── README.md / README_ZH.md       # application design and review entry
-└── e2e/
-│   ├── runner.py                  # only command entry point
-│   ├── config/
-│   │   ├── flows/                 # main flow and optional subflow
-│   │   ├── agents/                # application-specific agent roles
-│   │   ├── mcps/                  # GitHub and SonarQube integrations
-│   │   ├── llmproviders/          # model/provider definitions
-│   │   ├── notifiers/             # delivery-channel definitions
-│   │   └── envoy/                 # Envoy edge-proxy declaration
-│   ├── common/
-│   │   ├── agentflow.py            # shared Flow fixture and MQTT evidence operations
-│   │   ├── mqtt.py                 # reusable lifecycle and InterMessage probes
-│   │   └── project.py              # Flowgent API, database, state, and verifier orchestration
-│   ├── deploy/
-│   │   ├── __init__.py             # BaseDeployer and backend factory
-│   │   ├── base/                   # Kubernetes and Docker Compose backend implementations
-│   │   ├── authguard/              # LDAP, GitHub OAuth, AuthGuard, and Envoy setup
-│   │   ├── flowgent/               # isolated Helm release lifecycle
-│   │   ├── mock-github-service/     # isolated OAuth-provider mock implementation
-│   │   ├── mock-llm-service/        # deterministic OpenAI-compatible E2E fixture
-│   │   ├── mock-notification-service/ # authenticated webhook-receiver mock implementation
-│   │   ├── postgres/               # Kubernetes pgvector lifecycle
-│   │   ├── sonarqube/              # Kubernetes or Compose SonarQube lifecycle
-│   │   └── docker/                 # Compose topology
-│   ├── verifier/
-│   │   ├── __init__.py             # BaseVerifier step and evidence contract
-│   │   ├── infra/                  # InfrastructureVerifier scenarios
-│   │   ├── core/                   # CoreVerifier scenarios
-│   │   └── agentflow/              # AgentFlowVerifier scenarios
-│   └── reports/                    # ignored round reports and evidence artifacts
+├── runner.py
+├── deploy/                       # horizontal service/component ownership
+│   ├── flowgent/                 # official Docker links + config/ + docker-compose.yaml
+│   └── <mock-xxx-service-or-case-dependency>/
+│       ├── source/
+│       ├── Dockerfile
+│       ├── docker-compose.yaml
+│       └── helm/
+├── util/                         # generic helper entry points only
+├── verifier/
+│   ├── context.py                # shared context, lifecycle and application API
+│   ├── infra/sNN_*.py
+│   ├── core/sNN_*.py
+│   ├── agentflow/sNN_*.py
+│   ├── otel/sNN_*.py
+│   └── web/sNN_*.py
+└── reports/                      # ignored evidence and rolling archives
 ```
+
+Formal middleware is defined once in [`deploy/helm/flowgent`](../../deploy/helm/flowgent/) and [`deploy/docker/docker-compose.yaml`](../../deploy/docker/docker-compose.yaml). This case inherits those definitions; it does not own PostgreSQL, Redis, EMQX, Jaeger, Prometheus, Envoy or AuthGuard deployments. AuthGuard is the official Helm dependency, as in AgentVault; identity fixtures and verification remain case-owned.
+
+Reusable runtime machinery lives in `tests/e2e_util/`; each case exposes the prescribed helper names through `util/`. `E2EImagesDefinitions` selects upstream or Aliyun addresses using `IN_GFW=true/false` (also accepting `IN_CN_GFW`). The three stdlib-only Python mocks reuse one official Python image by default. Their Dockerfiles support optional packaging; E2E builds no additional fixture images. The [confirmed review scope](../../docs/development/use-cases-review.md) records implemented checks and deferred work. UI and main-run telemetry are tied to persisted execution evidence; known runtime gaps fail explicitly.
+
 
 | Resource  | Canonical file                                                              | Role                                                                                 |
 | --------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Main flow | [`security-autonomy-fixer.yaml`](e2e/config/flows/security-autonomy-fixer.yaml) | 29-node, 33-edge remediation DAG                                                     |
-| Subflow   | [`sub-fix.yaml`](e2e/config/flows/sub-fix.yaml)                                 | Three-node analyze → patch → validate flow; currently a separate reusable definition |
-| Agents    | [`e2e/config/agents/`](e2e/config/agents/)                                      | Supervisor, detector, fixer, and three reviewers plus Git role                       |
-| MCPs      | [`e2e/config/mcps/`](e2e/config/mcps/)                                          | GitHub delivery and SonarQube issue/scan access                                      |
-| Envoy     | [`e2e/config/envoy/envoy.yaml`](e2e/config/envoy/envoy.yaml)                    | Declarative edge-proxy configuration, separate from deployment code                  |
-| E2E       | [`e2e/runner.py`](e2e/runner.py)                                                  | Single entry for deployment, verification, manual access, and optional cleanup       |
+| Main flow | [`security-autonomy-fixer.yaml`](deploy/flowgent/config/flows/security-autonomy-fixer.yaml) | 29-node, 33-edge remediation DAG                                                     |
+| Subflow   | [`sub-fix.yaml`](deploy/flowgent/config/flows/sub-fix.yaml)                                 | Three-node analyze → patch → validate flow; currently a separate reusable definition |
+| Agents    | [`deploy/flowgent/config/agents/`](deploy/flowgent/config/agents/)                                      | Supervisor, detector, fixer, and three reviewers plus Git role                       |
+| MCPs      | [`deploy/flowgent/config/mcps/`](deploy/flowgent/config/mcps/)                                          | GitHub delivery and SonarQube issue/scan access                                      |
+| Envoy     | [`deploy/flowgent/config/envoy/envoy.yaml`](deploy/flowgent/config/envoy/envoy.yaml)                    | Declarative edge-proxy configuration, separate from deployment code                  |
+| E2E       | [`runner.py`](runner.py)                                                  | Single entry for deployment, verification, manual access, and optional cleanup       |
 
 The YAML manifest is the executable source of truth. This README explains its
 intent and current behavior; when they differ, the manifest and observed E2E
@@ -146,9 +137,9 @@ node types:
 
 | Node type    | Count | Application use                                                          |
 | ------------ | ----: | ------------------------------------------------------------------------ |
-| `tool`       |    10 | GitHub and SonarQube MCP operations                                      |
+| `tool`       |    11 | GitHub, SonarQube and scanner MCP operations                                      |
 | `agent`      |     7 | Finding normalization, patch generation, reviews, comparison, and report |
-| `sandbox`    |     3 | Repository clone, bounded source read, and scan wait                     |
+| `sandbox`    |     2 | Repository clone and bounded source read                     |
 | `condition`  |     3 | Review approval, PR route, and completion route                          |
 | `committee`  |     1 | Deterministic majority vote                                              |
 | `supervisor` |     1 | Quota-bounded orchestration decision                                     |
@@ -189,9 +180,9 @@ flowchart TD
     N17 --> N18[create-pr]
     N15 -->|true| N19[commit-to-existing]
 
-    N18 --> N20[trigger-rescan<br/>tool: SonarQube]
+    N18 --> N20[trigger-rescan<br/>tool: StartAnalysis]
     N19 --> N20
-    N20 --> N21[wait-rescan<br/>sandbox + retry]
+    N20 --> N21[wait-rescan<br/>tool: WaitAnalysis]
     N21 --> N22[check-resolved<br/>tool: SonarQube]
     N22 --> N23[compare-results<br/>agent]
     N23 --> N24{fix-complete}
@@ -220,7 +211,7 @@ or run boundary until node reset semantics exist.
 |     7. Deterministic control | `committee`, `supervisor-check`, `is-approved`                                                       | Majority voting stays deterministic; supervisor actions are bounded by retry, node, injection, and action quotas.                      |
 |                8. Human gate | `human-approval`                                                                                     | Persists a 24-hour approve/reject gate before any Git mutation.                                                                        |
 | 9. Idempotent delivery route | `check-existing-pr`, `pr-exists`, `create-branch`, `commit-fixes`, `create-pr`, `commit-to-existing` | Chooses a new-PR or existing-PR path, then pushes complete file content.                                                               |
-|             10. Verification | `trigger-rescan`, `wait-rescan`, `check-resolved`, `compare-results`, `fix-complete`                 | Requests SonarQube findings export, performs bounded polling, compares before/after findings, and determines completion.               |
+|             10. Verification | `trigger-rescan`, `wait-rescan`, `check-resolved`, `compare-results`, `fix-complete`                 | Submits analysis for the delivered commit, waits for its exact CE task, compares findings, and determines completion.               |
 |                   11. Report | `summary-report`, `notify-pr`, `end`                                                                 | Produces structured summary data, posts it as a GitHub issue/PR comment, and terminates.                                               |
 
 ## Nodes and Edges
@@ -243,8 +234,8 @@ or run boundary until node reset semantics exist.
 |    14 | `check-existing-pr`                                                | `tool`       | GitHub `list_pull_requests`                                 |
 |    15 | `pr-exists`                                                        | `condition`  | Current manifest expression is literal `true`               |
 | 16–19 | `create-branch`, `commit-fixes`, `create-pr`, `commit-to-existing` | `tool`       | GitHub delivery to `fix/flowgent_sec_auto_fix`              |
-|    20 | `trigger-rescan`                                                   | `tool`       | SonarQube `GetProjectsExportFindings`                       |
-|    21 | `wait-rescan`                                                      | `sandbox`    | Poll CE activity with 12 attempts and fixed 10-second delay |
+|    20 | `trigger-rescan`                                                   | `tool`       | Scanner `StartAnalysis` for the delivered commit                       |
+|    21 | `wait-rescan`                                                      | `tool`       | Scanner `WaitAnalysis`, exact job/CE task, 1,200-second bound |
 |    22 | `check-resolved`                                                   | `tool`       | SonarQube post-change `GetIssuesSearch`                     |
 |    23 | `compare-results`                                                  | `agent`      | Classify complete/partial/none/max-iterations result        |
 |    24 | `fix-complete`                                                     | `condition`  | Complete or max-iterations decision                         |
@@ -270,11 +261,11 @@ explicit Boolean condition:
 
 | Resource          | Files                                                          | Role                                                                                                                      |
 | ----------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Agent definitions | `e2e/config/agents/01-supervisor.yaml` through `07-git-agent.yaml` | Model, instruction, schema, and role configuration                                                                        |
-| LLM provider      | `e2e/config/llmproviders/deepseek.yaml`                            | Model/provider connection used by the agents                                                                              |
-| GitHub MCP        | `e2e/config/mcps/github.yaml`                                      | Commit lookup, PR lookup, branch creation, file push, PR creation, and comment delivery                                   |
-| SonarQube MCP     | `e2e/config/mcps/sonarqube.yaml`                                   | Finding discovery, export/recheck, and post-change comparison input                                                       |
-| Notifiers         | `e2e/config/notifiers/email.yaml`, `webhook.yaml`                  | Importable notification-channel definitions; the main 29-node DAG currently terminates through a GitHub comment tool node |
+| Agent definitions | `deploy/flowgent/config/agents/01-supervisor.yaml` through `07-git-agent.yaml` | Model, instruction, schema, and role configuration                                                                        |
+| LLM provider      | `deploy/flowgent/config/llmproviders/deepseek.yaml`                            | Model/provider connection used by the agents                                                                              |
+| GitHub MCP        | `deploy/flowgent/config/mcps/github.yaml`                                      | Commit lookup, PR lookup, branch creation, file push, PR creation, and comment delivery                                   |
+| SonarQube MCP     | `deploy/flowgent/config/mcps/sonarqube.yaml`                                   | Finding discovery, export/recheck, and post-change comparison input                                                       |
+| Notifiers         | `deploy/flowgent/config/notifiers/email.yaml`, `webhook.yaml`                  | Importable notification-channel definitions; the main 29-node DAG currently terminates through a GitHub comment tool node |
 
 Runtime credentials MUST enter through the configured deployment Secret or
 environment contract. They MUST NOT be embedded in flow, agent, MCP, or README
@@ -292,9 +283,9 @@ files.
    `max_iterations` comparison does not by itself implement repeated runs.
 4. Review siblings are logically independent but are currently dispatched
    sequentially because JobManager blocks on each `Schedule()`.
-5. `trigger-rescan` calls `GetProjectsExportFindings`; `wait-rescan` observes CE
-   activity. The exact external scan trigger behavior remains defined by the
-   deployed SonarQube integration and project CI.
+5. Re-analysis uses the E2E scanner CI adapter. It requires the actual delivery
+   SHA, a new successful CE task and an analysis revision matching that SHA.
+   Deployments outside this fixture need an equivalent CI adapter contract.
 6. The `sub-fix` definition is not referenced by a node in the main manifest;
    it is a separate reusable flow, not part of the 29-node execution path.
 
@@ -311,7 +302,7 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 
 The unified runner builds the Flowgent images, deploys either the root Helm
 chart or the equivalent Compose topology with AuthGuard/Envoy, imports
-`e2e/config`, and verifies
+`config`, and verifies
 infrastructure, LDAP discovery, GitHub OAuth, edge allow/deny policy, telemetry,
 API Server, Notifier, Controller, MQTT, A2A, remediation, PR delivery, knowledge,
 the shared workspace, and a real Chromium console lifecycle (create, execute,
@@ -319,9 +310,9 @@ update, and delete a sandbox Flow through the shipped Web UI). Install the E2E
 requirements and Chromium before running the browser scenario outside CI:
 
 ```bash
-python3 -m venv use-cases/security-autonomy-fixer/e2e/.venv
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m pip install -r use-cases/security-autonomy-fixer/e2e/requirements.txt
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m playwright install chromium
+python3 -m venv use-cases/security-autonomy-fixer/.venv
+use-cases/security-autonomy-fixer/.venv/bin/python -m pip install -r use-cases/security-autonomy-fixer/requirements.txt
+use-cases/security-autonomy-fixer/.venv/bin/python -m playwright install chromium
 ```
 
 Useful focused modes are:
@@ -329,10 +320,10 @@ Useful focused modes are:
 ```bash
 E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
 E2E_ARGS="--scenario 41 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
-python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
+python3 use-cases/security-autonomy-fixer/runner.py --deployer k8s --access
 E2E_ARGS="--clean-after-run" make e2e-security-autonomy-fixer-with-helm
 make e2e-security-autonomy-fixer-with-docker
-python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker cleanup
+python3 use-cases/security-autonomy-fixer/runner.py --deployer docker cleanup
 ```
 
 Cleanup is opt-in: `--clean-after-run` defaults to false. A successful ordinary
@@ -340,7 +331,7 @@ run retains the selected backend for manual evaluation. Cleanup removes only
 the isolated `e2e-flowgent-*` Helm namespaces or the
 `e2e-flowgent-docker` Compose project and its named volumes.
 
-Generated data is organized as `e2e/reports/round-XX/`: verifier Markdown sits
+Generated data is organized as `reports/round-XX/`: verifier Markdown sits
 at the round root and machine evidence/screenshots live under
 `evidence/<scenario>/`. Transient cross-verifier state remains hidden under
 `reports/.state/`. These artifacts are execution evidence, not design sources;
@@ -367,3 +358,12 @@ PostgreSQL, Kubernetes resources, or external-system outcomes.
 7. **Given** application review or E2E verification, **when** observed behavior
    conflicts with this explanation, **then** the executable manifest and
    observed runtime evidence MUST be treated as authoritative.
+
+The real-analysis fixture lives in `deploy/sonar-scanner-service/`. It reuses the pinned
+SonarSource scanner image, downloads the exact GitHub commit archive, and runs
+actual analysis. Scenario 31 records the initial CE task, analysis revision and
+source findings. Re-analysis requires the delivered commit and a different,
+successful CE task; selected finding IDs are checked directly after analysis.
+
+The Java source analysis currently runs without compiling dependency bytecode;
+its results do not establish complete bytecode/type-resolution coverage.

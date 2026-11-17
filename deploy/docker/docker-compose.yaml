@@ -1,0 +1,227 @@
+# Formal Flowgent stack. Set *_ENABLED=0 to omit managed middleware.
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/pgvector_pgvector:pg16}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flowgent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowgent}
+      POSTGRES_DB: ${POSTGRES_DB:-flowgent}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+    - 127.0.0.1:${POSTGRES_PORT:-5432}:5432
+    volumes:
+    - postgres-data:/var/lib/postgresql/data
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${POSTGRES_ENABLED:-1}
+    restart: unless-stopped
+  emqx:
+    image: ${EMQX_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/emqx_emqx:5.5.0-elixir-amd64}
+    environment:
+      ERL_AFLAGS: ${EMQX_ERLANG_FLAGS:-}
+      EMQX_NODE__NAME: emqx@127.0.0.1
+      EMQX_NODE__COOKIE: flowgent-emqx-cookie
+      EMQX_MQTT__MAX_PACKET_SIZE: 8MB
+    mem_limit: 1g
+    cpus: 1
+    ports:
+    - 127.0.0.1:${MQTT_PORT:-1883}:1883
+    - 127.0.0.1:${EMQX_DASHBOARD_PORT:-18083}:18083
+    healthcheck:
+      test:
+      - CMD
+      - emqx
+      - ctl
+      - status
+      interval: 10s
+      timeout: 20s
+      retries: 20
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${EMQX_ENABLED:-1}
+    restart: unless-stopped
+  jaeger:
+    image: ${JAEGER_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0}
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+    - 127.0.0.1:${JAEGER_UI_PORT:-16686}:16686
+    - 127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${JAEGER_ENABLED:-1}
+    restart: unless-stopped
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/prom_prometheus:v3.5.0}
+    command:
+    - --config.file=/etc/prometheus/prometheus.yaml
+    ports:
+    - 127.0.0.1:${PROMETHEUS_PORT:-9090}:9090
+    volumes:
+    - ${PROMETHEUS_CONFIG:-./config/prometheus.yaml}:/etc/prometheus/prometheus.yaml:ro
+    - prometheus-data:/prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+      replicas: ${PROMETHEUS_ENABLED:-1}
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    restart: unless-stopped
+  envoy:
+    image: ${ENVOY_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4}
+    command:
+    - -c
+    - /etc/envoy/envoy.yaml
+    - --log-level
+    - info
+    volumes:
+    - ${ENVOY_CONFIG:-./config/envoy.yaml}:/etc/envoy/envoy.yaml:ro
+    ports:
+    - 127.0.0.1:${GATEWAY_PORT:-8080}:8080
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${ENVOY_ENABLED:-1}
+    restart: unless-stopped
+  authguard-authn:
+    image: ${AUTHGUARD_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/ghcr.io_wl4g_authguard:1.0.1}
+    command:
+    - --config
+    - /etc/authguard/authguard.yaml
+    - authn
+    - --bind
+    - 0.0.0.0:8082
+    volumes:
+    - ${AUTHGUARD_CONFIG:-./config/authguard.yaml}:/etc/authguard/authguard.yaml:ro
+    ports:
+    - 127.0.0.1:${AUTHN_PORT:-18082}:8082
+    - 127.0.0.1:${AUTHN_MGMT_PORT:-18083}:9091
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${AUTHGUARD_ENABLED:-0}
+    restart: unless-stopped
+  authguard-authz:
+    image: ${AUTHGUARD_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/ghcr.io_wl4g_authguard:1.0.1}
+    command:
+    - --config
+    - /etc/authguard/authguard.yaml
+    - authz
+    volumes:
+    - ${AUTHGUARD_CONFIG:-./config/authguard.yaml}:/etc/authguard/authguard.yaml:ro
+    ports:
+    - 127.0.0.1:${AUTHZ_API_PORT:-19090}:9090
+    - 127.0.0.1:${AUTHZ_MGMT_PORT:-19091}:9091
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${AUTHGUARD_ENABLED:-0}
+    restart: unless-stopped
+  authguard-web:
+    image: ${AUTHGUARD_WEB_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g/ghcr.io_wl4g_authguard-web:1.0.1}
+    volumes:
+    - ${FLOWGENT_REPO_DIR:-../..}/deploy/helm/flowgent/files/authguard-theme:/usr/share/nginx/html/assets/themes/custom:ro
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${AUTHGUARD_ENABLED:-0}
+    restart: unless-stopped
+  flowgent:
+    image: ${FLOWGENT_IMAGE:-localhost/flowgent:latest}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command:
+    - all-in-one
+    - start
+    - -c
+    - /app/etc/flowgent.yaml
+    environment:
+      FLOWGENT__STORAGE__TYPE: POSTGRE
+      FLOWGENT__STORAGE__POSTGRES__DSN: ${POSTGRES_DSN:-postgres://${POSTGRES_USER:-flowgent}:${POSTGRES_PASSWORD:-flowgent}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-flowgent}?sslmode=disable}
+      FLOWGENT__MESSAGER__TYPE: mqtt
+      FLOWGENT__MESSAGER__MQTT__BROKER: ${MQTT_BROKER:-tcp://emqx:1883}
+      FLOWGENT__MGMT__OTEL__ENDPOINT: ${OTLP_ENDPOINT:-http://jaeger:4318}
+      FLOWGENT__MGMT__OTEL__QUERY_ENDPOINT: ${JAEGER_QUERY_ENDPOINT:-http://jaeger:16686}
+      FLOWGENT__MGMT__METRICS__ENABLED: 'true'
+    volumes:
+    - ${FLOWGENT_CONFIG:-${FLOWGENT_REPO_DIR:-../..}/etc/flowgent.yaml}:/app/etc/flowgent.yaml:ro
+    - flowgent-data:/var/flowgent
+    ports:
+    - 127.0.0.1:${API_PORT:-9999}:9999
+    - 127.0.0.1:${MGMT_PORT:-9991}:9991
+    - 127.0.0.1:${A2A_PORT:-9992}:9992
+    restart: unless-stopped
+  web:
+    image: ${FLOWGENT_WEB_IMAGE:-localhost/flowgent-web:latest}
+    environment:
+      FLOWGENT_API_UPSTREAM: http://flowgent:9999
+    ports:
+    - 127.0.0.1:${WEB_PORT:-3000}:8080
+    restart: unless-stopped
+  redis-0:
+    image: ${REDIS_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14}
+    environment:
+      ALLOW_EMPTY_PASSWORD: 'no'
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-flowgent}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-flowgent}
+      REDIS_NODES: redis-0 redis-1 redis-2
+      REDIS_CLUSTER_REPLICAS: '0'
+      REDIS_CLUSTER_DYNAMIC_IPS: 'yes'
+      REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: '1'
+      REDIS_CLUSTER_CREATOR: 'yes'
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" cluster info | grep -q cluster_state:ok
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${REDIS_ENABLED:-1}
+    restart: unless-stopped
+    volumes:
+    - redis-0-data:/bitnami/redis/data
+  redis-1:
+    image: ${REDIS_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14}
+    environment:
+      ALLOW_EMPTY_PASSWORD: 'no'
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-flowgent}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-flowgent}
+      REDIS_NODES: redis-0 redis-1 redis-2
+      REDIS_CLUSTER_REPLICAS: '0'
+      REDIS_CLUSTER_DYNAMIC_IPS: 'yes'
+      REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: '1'
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${REDIS_ENABLED:-1}
+    restart: unless-stopped
+    volumes:
+    - redis-1-data:/bitnami/redis/data
+  redis-2:
+    image: ${REDIS_IMAGE:-registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14}
+    environment:
+      ALLOW_EMPTY_PASSWORD: 'no'
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-flowgent}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-flowgent}
+      REDIS_NODES: redis-0 redis-1 redis-2
+      REDIS_CLUSTER_REPLICAS: '0'
+      REDIS_CLUSTER_DYNAMIC_IPS: 'yes'
+      REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: '1'
+    platform: ${FLOWGENT_PLATFORM:-linux/amd64}
+    deploy:
+      replicas: ${REDIS_ENABLED:-1}
+    restart: unless-stopped
+    volumes:
+    - redis-2-data:/bitnami/redis/data
+volumes:
+  postgres-data: {}
+  prometheus-data: {}
+  flowgent-data: {}
+  redis-0-data: {}
+  redis-1-data: {}
+  redis-2-data: {}

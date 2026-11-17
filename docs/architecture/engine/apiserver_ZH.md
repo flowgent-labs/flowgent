@@ -2,6 +2,10 @@
 
 [系统总览](../overview_ZH.md) · [AgentFlow 应用层](../agent-flow_ZH.md)
 
+**Sandbox 目标（2026-11-14）：** API Server 将归口 Namespace Sandbox 目录、
+UI CRUD、Flow 绑定校验和池观察状态。[固定池设计](sandbox_ZH.md)中的建议资源
+尚未实现，不属于下文当前 API 目录中已经可用的接口。
+
 API Server 是 Flowgent 的控制面网关和持久业务状态的规范所有者。外部客户端通过
 REST 或 A2A 进入系统；Controller、JM、TM、Sandbox 与 Notifier 都通过
 `FlowgentClient` REST 调用读写业务状态。Flow 生命周期变更通过 MQTT 发布。

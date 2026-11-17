@@ -13,7 +13,9 @@
 - Go Workspace：Go 1.26，`go.work` 共 15 个 Module
 - Web：`web/` 下 React/Vite/TypeScript
 - 数据库：PostgreSQL 16 + pgvector、SQLite + sqlite-vec
-- 当前 E2E 证据：[`23/23 passed`](../../use-cases/security-autonomy-fixer/e2e/reports/00_summary.md)
+- 历史审计记录：`23/23 passed`，原始证据未提交。
+  [本地报告](../../use-cases/security-autonomy-fixer/reports/00_summary.md) 由最新运行生成，
+  不能用于核实该历史记录。
 
 本次审计开始时 Worktree 干净；本次文档对齐在 Owner Review/Commit 前会作为正常未提交
 修改保留。迁移后先运行 `git status --short` 与 `git diff --check`，不要假定上述 Commit
@@ -29,7 +31,7 @@
 6. [AuthGuard 边界](../architecture/authguard-integration_ZH.md)
 7. [API Server 路由/状态边界](../architecture/engine/apiserver_ZH.md)
 8. [Security Autonomy Fixer](../../use-cases/security-autonomy-fixer/README_ZH.md)
-9. [K8s 人工验收](../../use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md)
+9. [K8s 人工验收](../../use-cases/security-autonomy-fixer/MANUAL_ACCEPTANCE.md)
 
 现行行为以源码和以上文档为准；`docs/development/archive/` 仅为历史背景。
 
@@ -46,10 +48,10 @@ node --version              # CI/Build 当前使用 Node 22
 helm version
 kubectl version --client
 
-python3 -m venv use-cases/security-autonomy-fixer/e2e/.venv
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m pip install \
-  -r use-cases/security-autonomy-fixer/e2e/requirements.txt
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m playwright install chromium
+python3 -m venv use-cases/security-autonomy-fixer/.venv
+use-cases/security-autonomy-fixer/.venv/bin/python -m pip install \
+  -r use-cases/security-autonomy-fixer/requirements.txt
+use-cases/security-autonomy-fixer/.venv/bin/python -m playwright install chromium
 ```
 
 GFW 环境：
@@ -117,7 +119,7 @@ Schema 事实源：
 
 - [`migration/postgres/20260616a/01_init.ddl.sql`](../../migration/postgres/20260616a/01_init.ddl.sql)
 - [`migration/sqlite/20260616a/01_init.ddl.sql`](../../migration/sqlite/20260616a/01_init.ddl.sql)
-- [`migration/SCHEMA_MAPPING.md`](../../migration/SCHEMA_MAPPING.md)
+- [`pkg/storage/pkg/migrate.go`](../../pkg/storage/pkg/migrate.go)
 
 ## 未完成与已知问题
 
@@ -226,12 +228,12 @@ E2E_ARGS='--timeout 1200' make e2e-security-autonomy-fixer-with-helm
 默认保留 Pod/Data。确认目标后才执行 Owned Cleanup：
 
 ```bash
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python \
-  use-cases/security-autonomy-fixer/e2e/runner.py cleanup --deployer k8s
+use-cases/security-autonomy-fixer/.venv/bin/python \
+  use-cases/security-autonomy-fixer/runner.py cleanup --deployer k8s
 ```
 
 CLI/UI 验收见
-[`MANUAL_ACCEPTANCE.md`](../../use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md)。
+[`MANUAL_ACCEPTANCE.md`](../../use-cases/security-autonomy-fixer/MANUAL_ACCEPTANCE.md)。
 按其中命令从 Kubernetes Secret 获取临时验收账号，禁止硬编码进文档。
 
 ## 事实源导航

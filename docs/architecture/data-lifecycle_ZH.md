@@ -5,9 +5,20 @@
 本文档是当前持久数据契约的规范归属。空库初始化 Schema 位于
 [`migration/postgres/20260616a/01_init.ddl.sql`](../../migration/postgres/20260616a/01_init.ddl.sql)
 和
-[`migration/sqlite/20260616a/01_init.ddl.sql`](../../migration/sqlite/20260616a/01_init.ddl.sql)，
-旧模型到当前模型的映射见
-[`migration/SCHEMA_MAPPING.md`](../../migration/SCHEMA_MAPPING.md)。
+[`migration/sqlite/20260616a/01_init.ddl.sql`](../../migration/sqlite/20260616a/01_init.ddl.sql)。
+
+## 启动迁移
+
+[`pkg/storage/pkg/migrate.go`](../../pkg/storage/pkg/migrate.go) 启动时扫描
+`migration/{postgres|sqlite}/{version}/*.sql`，按版本、文件名顺序执行。
+`schema_migrations` 记录已执行的文件。脚本和记录在同一事务提交；失败则回滚并停止
+启动，之前成功的文件保留记录，下次启动跳过。PostgreSQL 使用按 Schema 隔离的
+Advisory Lock；SQLite 在检查记录前取得写锁，避免并发启动重复执行。
+
+后端镜像包含 `/app/migration`。原生构建把 SQL 复制到二进制旁的 `migration/`；
+开发测试也可从仓库目录查找。`FLOWGENT_MIGRATION_DIR` 可指定根目录。目录不存在
+或没有 SQL 均报错。脚本只写 DDL/DML，不自行包裹事务；已执行的脚本不改写，变更
+通过新的版本或文件追加。
 
 ## 领域边界
 
@@ -113,7 +124,6 @@ Flow 总结默认关闭。创建 Run 时会把 Run 显式覆盖或 Flow Revision
 
 ## Schema 演进
 
-当前仓库有意提供干净的空库初始化 Schema，而不保留废弃兼容表；这适用于空库与 E2E。
-下一次不兼容 Schema 变更进入持久生产数据前，项目除更新 bootstrap DDL 外，**MUST**
-定义并验证非破坏性升级路径。
-
+`20260616a` 用于空库初始化，不转换旧的 pre-1.0 表结构。后续 DDL/DML 变更
+**MUST** 追加版本文件，不改写已执行的 Bootstrap 或迁移脚本。涉及已有数据的
+不兼容变更 **MUST** 提供经过验证的非破坏性升级路径。

@@ -34,10 +34,28 @@
 ## Test Code Organization
 
 - Only `*_test.go` files alongside source under `pkg/`
-- All E2E/integration tests under `tests/`; unit-test mocks/fixtures live
+- Application E2E runners, service assets, and verifiers live directly under
+  `use-cases/<case>/`; shared runtime helpers and their tests live under
+  `tests/e2e_util/`. Unit-test mocks/fixtures live
   next to their package (no shared `tests/testutil/` — Go modules under
   `pkg/` don't share a test-only module dependency)
-- E2E scenario files named `01-xxx` format
+- The first-party `use-cases/<case>/deploy/flowgent/` directory contains only
+  configuration, a Compose override, and links to formal root Docker assets.
+  Use cases load `deploy/helm/flowgent` directly; a case-owned `flowgent/helm`
+  directory or symlink is forbidden.
+  Backend images use the single formal `deploy/docker/Dockerfile`; do not add
+  `Dockerfile.core` or an all-in-one variant. Application manifests live under
+  `deploy/flowgent/config/`. Formal middleware belongs to `deploy/helm/flowgent/`
+  and `deploy/docker/docker-compose.yaml`, with default-on deployment switches.
+  Use-case mocks live only in their case's `deploy/mock-xxx-service/` directories;
+  never add `deploy/helm/e2e-*` charts or case-owned middleware copies.
+  Case initialization and verification belong to the infrastructure verifier;
+  AuthGuard uses the formal chart dependency, matching AgentVault integration.
+- Workload images use linux/amd64. macOS Solana uses its prescribed arm64 image;
+  SonarQube uses the same official version natively on arm64 engines.
+  Registry and build arguments come from E2EImagesDefinitions.
+- E2E scenario files use `verifier/<scenario>/sNN_description.py`, with class
+  `E2ESNNDescriptionVerifier` and `deploy/init/verifier` lifecycle methods.
 
 ## Documentation Indexing
 
@@ -59,8 +77,8 @@ historical context and are not authoritative for the current implementation.
 |-----|---------|
 | [docs/index.md#applications](../docs/index.md#applications) | Application catalog and use-case README ownership rules |
 | [use-cases/security-autonomy-fixer/README.md](../use-cases/security-autonomy-fixer/README.md) | Security Autonomy Fixer application design, nodes, edges, resources, limits, and verification entry points |
-| [use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md](../use-cases/security-autonomy-fixer/e2e/MANUAL_ACCEPTANCE.md) | Current K8s E2E topology and reproducible manual acceptance checklist |
-| [use-cases/security-autonomy-fixer/e2e/config/mcps/sonarqube.yaml](../use-cases/security-autonomy-fixer/e2e/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer flow |
+| [use-cases/security-autonomy-fixer/MANUAL_ACCEPTANCE.md](../use-cases/security-autonomy-fixer/MANUAL_ACCEPTANCE.md) | Current K8s E2E topology and reproducible manual acceptance checklist |
+| [use-cases/security-autonomy-fixer/deploy/flowgent/config/mcps/sonarqube.yaml](../use-cases/security-autonomy-fixer/deploy/flowgent/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer flow |
 | [use-cases/autotest-generator/README.md](../use-cases/autotest-generator/README.md) | AutoTest Generator draft, owned resources, current execution gaps, and expected behavior |
 
 ### Active Development and History

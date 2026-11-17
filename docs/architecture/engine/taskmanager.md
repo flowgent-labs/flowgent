@@ -2,6 +2,11 @@
 
 [System overview](../overview.md) · [AgentFlow application layer](../agent-flow.md) · [Sandbox](sandbox.md)
 
+**Sandbox target (2026-11-14):** TM dispatches using the Run-bound
+`sandbox_id` and correlates results by NodeRun attempt. It does not choose
+pool policies or create workers. The [fixed-pool contract](sandbox.md) is
+approved; cluster-routed Sandbox behavior is still the current implementation.
+
 TaskManager is the execution worker. MQTT shared subscriptions distribute plans
 across pods and slots; each slot routes one plan to the matching executor,
 persists task state through the API Server, and returns routing/status data to

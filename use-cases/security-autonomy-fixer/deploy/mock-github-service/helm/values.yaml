@@ -1,0 +1,17 @@
+name: mock-github
+image: ''
+imagePullPolicy: IfNotPresent
+replicas: 1
+port: 8080
+command: []
+args: []
+env: []
+volumes: []
+volumeMounts: []
+resources:
+  requests:
+    cpu: 10m
+    memory: 24Mi
+  limits:
+    cpu: 150m
+    memory: 96Mi

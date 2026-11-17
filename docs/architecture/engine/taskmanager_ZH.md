@@ -2,6 +2,10 @@
 
 [系统总览](../overview_ZH.md) · [AgentFlow 应用层](../agent-flow_ZH.md) · [Sandbox](sandbox_ZH.md)
 
+**Sandbox 目标（2026-11-14）：** TM 按 Run 绑定的 `sandbox_id` 分发，按
+NodeRun Attempt 关联结果，不选择池策略或创建 Worker。[固定池契约](sandbox_ZH.md)
+已确认；当前 Sandbox 代码仍按 Runtime Cluster 路由。
+
 TaskManager 是执行 Worker。MQTT 共享订阅在 Pod 与 Slot 之间分配 Plan；每个
 Slot 将一个 Plan 路由到对应 Executor，通过 API Server 持久化 Task 状态，并
 把路由/状态结果返回 JobManager。TaskManager 不直接访问数据库。

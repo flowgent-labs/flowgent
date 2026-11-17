@@ -1,0 +1,26 @@
+services:
+  sonarqube-postgres:
+    image: ${E2E_IMAGE_POSTGRES18}
+    platform: ${E2E_PLATFORM_POSTGRES18}
+    environment:
+      POSTGRES_USER: sonarqube
+      POSTGRES_PASSWORD: sonarqube
+      POSTGRES_DB: sonarqube
+      PGDATA: /bitnami/postgresql/data
+    ports:
+    - 35432:5432
+    networks:
+    - sonarqube-net
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U sonarqube -d sonarqube
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+    - sonarqube_postgres_data:/bitnami/postgresql
+networks:
+  sonarqube-net: {}
+volumes:
+  sonarqube_postgres_data: {}

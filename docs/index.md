@@ -12,13 +12,14 @@ that owns the subject.
 |---|---|---|
 | Security | [AuthGuard integration](architecture/authguard-integration.md) | Gateway trust boundary, adapters SDK, and repository SQL scope |
 | L1 Engine | [Engine overview](architecture/overview.md) | Cross-component calls, state and messaging contracts, deployment, and shared modules |
+| L1 Views | [Physical calls](architecture/assets/flowgent—physical-architecture.svg) · [Logical calls](architecture/assets/flowgent-logical-architecture.svg) | Ownership, protocols and execution lifecycle; pending boundaries marked † |
 | Data | [Durable data lifecycle](architecture/data-lifecycle.md) | Stable identities, immutable revisions, snapshots, knowledge/vector retrieval, execution memory, and approvals |
 | L1 Engine | [API Server](architecture/engine/apiserver.md) | External business-state gateway and canonical REST API |
-| L1 Engine | [Controller](architecture/engine/controller.md) | Active-run JobManager reconciliation |
+| L1 Engine | [Controller](architecture/engine/controller.md) | Active-run JobManager reconciliation; target Sandbox pool ownership |
 | L1 Engine | [Runtime Clusters](architecture/engine/runtime-clusters.md) | Flink-style application/session runtime isolation |
 | L1 Engine | [JobManager](architecture/engine/jobmanager.md) | DAG scheduling and runtime ownership |
 | L1 Engine | [TaskManager](architecture/engine/taskmanager.md) | Slot execution and executor routing |
-| L1 Engine | [Sandbox](architecture/engine/sandbox.md) | Isolated script execution |
+| L1 Engine | [Sandbox](architecture/engine/sandbox.md) | Controller-owned fixed pools (approved design; migration pending) |
 | L1 Engine | [Notifier](architecture/engine/notifier.md) | Delivery and UI event boundary |
 | L1 Engine | [AgentVault / x402](architecture/engine/wallet.md) | External custody boundary and the remaining legacy client integration gap |
 | L2 AgentFlow | [AgentFlow application architecture](architecture/agent-flow.md) | Generic DAG model, capabilities, limits, and authoring practices |
@@ -32,8 +33,8 @@ Shared DAG semantics belong to the
 
 | Application | Scope | Entries |
 |---|---|---|
-| Security Autonomy Fixer | SonarQube-to-GitHub remediation and post-change verification; 29-node/33-edge DAG | [Design and E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
-| AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/e2e/config/flows/autotest-generation-v1.yaml) |
+| Security Autonomy Fixer | SonarQube-to-GitHub remediation and post-change verification; 29-node/33-edge DAG | [Design and E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/deploy/flowgent/config/flows/security-autonomy-fixer.yaml) |
+| AutoTest Generation | Confluence-driven test generation for Spring Boot, Flask, and React; 18-node/22-edge draft | [Design](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/deploy/flowgent/config/flows/autotest-generation-v1.yaml) |
 
 ## Development and History
 
@@ -67,7 +68,7 @@ Current active development documents:
   `use-cases/{use-case}/README.md`.
 - Every real application MUST provide `README.md` and `README_ZH.md`. Its flows,
   agents, and MCP definitions MUST remain self-contained under
-  `use-cases/{use-case}/config/`; runtime credentials MUST remain outside manifests.
+  `use-cases/{use-case}/deploy/flowgent/config/`; runtime credentials MUST remain outside manifests.
 - Each design concept MUST have one canonical location; other documents MUST
   link to it instead of duplicating it.
 - Design documents MUST distinguish implemented behavior, reserved design, and
@@ -84,3 +85,6 @@ Current active development documents:
 - Links and headings MUST be validated before a documentation change is
   considered complete. Language pairs MUST also be validated for current and
   active documents.
+
+Use-case E2E scope and runtime blockers: [review](development/use-cases-review.md),
+[compact gap list](development/e2e-runtime-gaps.md).

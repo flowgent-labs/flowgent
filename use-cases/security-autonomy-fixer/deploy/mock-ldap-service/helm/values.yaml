@@ -1,0 +1,17 @@
+name: ldap
+image: ''
+imagePullPolicy: IfNotPresent
+replicas: 1
+port: 389
+command: []
+args: []
+env: []
+volumes: []
+volumeMounts: []
+resources:
+  requests:
+    cpu: 10m
+    memory: 24Mi
+  limits:
+    cpu: 150m
+    memory: 96Mi

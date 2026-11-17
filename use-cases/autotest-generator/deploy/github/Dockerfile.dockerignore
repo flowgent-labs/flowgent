@@ -1,0 +1,8 @@
+*
+!Makefile
+!use-cases/
+!use-cases/autotest-generator/
+!use-cases/autotest-generator/deploy/
+!use-cases/autotest-generator/deploy/github/
+!use-cases/autotest-generator/deploy/github/source/
+!use-cases/autotest-generator/deploy/github/source/**

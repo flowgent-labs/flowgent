@@ -6,7 +6,6 @@ require (
 	github.com/asg017/sqlite-vec-go-bindings v0.1.7-alpha.2
 	authguard/adapters/golang v0.0.0
 	github.com/flowgent-labs/flowgent/common v0.0.0
-	github.com/flowgent-labs/flowgent/migration v0.0.0
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
@@ -39,6 +38,5 @@ require (
 replace (
 	authguard/adapters/golang => github.com/wl4g/authguard/src/adapters/golang v0.0.0-20260919033855-d0022086809a
 	github.com/flowgent-labs/flowgent/common => ../common
-	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
 )

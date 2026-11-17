@@ -19,7 +19,7 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 该命令统一完成构建、K8s Helm 部署、配置导入与真实用例验证，并验证
 `GitHub OAuth → AuthGuard AuthN → Envoy JWT → AuthGuard AuthZ → Flowgent` 以及
 LDAP 联邦 Principal 搜索/物化。成功后不会卸载 Helm；执行
-`python3 e2e/runner.py --deployer k8s --access` 可保持人工体验所需的本地隧道。
+`python3 runner.py --deployer k8s --access` 可保持人工体验所需的本地隧道。
 
 部署固定使用 `e2e-flowgent-system`、`e2e-flowgent-workload-*` 等 namespace
 作为环境隔离边界；namespace 内资源保持正式命名，不再重复 `e2e-` 前缀，并使用独立
@@ -37,8 +37,8 @@ AuthGuard Application 默认直接使用该真实域名；仅在其他指定环�
 打印密码）；该密码验收账号特意关闭 TOTP。
 
 可复制执行的人工验收步骤见
-[`e2e/MANUAL_ACCEPTANCE.md`](e2e/MANUAL_ACCEPTANCE.md)。验收完成后执行
-`python3 e2e/runner.py --deployer k8s --cleanup`：命令先走正常 Helm/Namespace
+[`MANUAL_ACCEPTANCE.md`](MANUAL_ACCEPTANCE.md)。验收完成后执行
+`python3 runner.py --deployer k8s --cleanup`：命令先走正常 Helm/Namespace
 删除，仅在有界超时后对本 E2E 拥有的对象移除 finalizer，并最终确认 release、
 namespace、Pod、PV 和集群级 E2E 资源均已消失。
 
@@ -78,47 +78,38 @@ LDAP 预置组分别为 `global-platform-security`、`security-automation-owners
 
 ```text
 security-autonomy-fixer/
-├── README.md / README_ZH.md       # 应用设计与评审入口
-└── e2e/
-│   ├── runner.py                  # 唯一命令入口
-│   ├── config/
-│   │   ├── flows/                 # 主流程和可选子流程
-│   │   ├── agents/                # 应用专属 Agent Roles
-│   │   ├── mcps/                  # GitHub 与 SonarQube Integrations
-│   │   ├── llmproviders/          # Model/Provider 定义
-│   │   ├── notifiers/             # 投递 Channel 定义
-│   │   └── envoy/                 # Envoy 边缘代理声明配置
-│   ├── common/
-│   │   ├── agentflow.py            # 共享 Flow fixture 与 MQTT 证据操作
-│   │   ├── mqtt.py                 # 可复用的生命周期与 InterMessage 探针
-│   │   └── project.py              # Flowgent API、数据库、状态与 verifier 编排
-│   ├── deploy/
-│   │   ├── __init__.py             # BaseDeployer 与后端工厂
-│   │   ├── base/                   # Kubernetes 与 Docker Compose 后端实现
-│   │   ├── authguard/              # LDAP、GitHub OAuth、AuthGuard 与 Envoy 配置
-│   │   ├── flowgent/               # 隔离 Helm release 生命周期
-│   │   ├── mock-github-service/    # OAuth provider mock 实现
-│   │   ├── mock-llm-service/       # 确定性的 OpenAI-compatible E2E fixture
-│   │   ├── mock-notification-service/ # 认证 webhook receiver mock 实现
-│   │   ├── postgres/               # Kubernetes pgvector 生命周期
-│   │   ├── sonarqube/              # Kubernetes 或 Compose SonarQube 生命周期
-│   │   └── docker/                 # Compose 拓扑
-│   ├── verifier/
-│   │   ├── __init__.py             # BaseVerifier、有序 Step 与证据契约
-│   │   ├── infra/                  # InfrastructureVerifier 场景
-│   │   ├── core/                   # CoreVerifier 场景
-│   │   └── agentflow/              # AgentFlowVerifier 场景
-│   └── reports/                    # 忽略提交的轮次报告与证据
+├── runner.py
+├── deploy/                       # horizontal service/component ownership
+│   ├── flowgent/                 # official Docker links + config/ + docker-compose.yaml
+│   └── <mock-xxx-service-or-case-dependency>/
+│       ├── source/
+│       ├── Dockerfile
+│       ├── docker-compose.yaml
+│       └── helm/
+├── util/                         # generic helper entry points only
+├── verifier/
+│   ├── context.py                # shared context, lifecycle and application API
+│   ├── infra/sNN_*.py
+│   ├── core/sNN_*.py
+│   ├── agentflow/sNN_*.py
+│   ├── otel/sNN_*.py
+│   └── web/sNN_*.py
+└── reports/                      # ignored evidence and rolling archives
 ```
+
+正式中间件统一定义在 [`deploy/helm/flowgent`](../../deploy/helm/flowgent/) 和 [`deploy/docker/docker-compose.yaml`](../../deploy/docker/docker-compose.yaml)。本用例只继承配置，不另建 PostgreSQL、Redis、EMQX、Jaeger、Prometheus、Envoy 或 AuthGuard 部署目录。AuthGuard 与 AgentVault 一样通过正式 Helm Chart 依赖集成；身份 mock 与验收逻辑归用例所有。
+
+通用运行时实现集中在 `tests/e2e_util/`，各 case 的 `util/` 提供规定名称的入口。镜像由 `E2EImagesDefinitions` 根据 `IN_GFW=true/false`（兼容 `IN_CN_GFW`）选择上游或阿里云地址。三个无第三方依赖的 Python mock 默认共用官方 Python 镜像；Dockerfile 仅用于按需打包，E2E 不额外构建中间镜像。已确认范围见 [review 清单](../../docs/development/use-cases-review_ZH.md)。UI 与主流程的遥测均关联持久化执行证据；已知运行时缺口明确失败。
+
 
 | 资源   | 规范文件                                                                    | 作用                                                    |
 | ------ | --------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 主流程 | [`security-autonomy-fixer.yaml`](e2e/config/flows/security-autonomy-fixer.yaml) | 29 Nodes、33 Edges 的修复 DAG                           |
-| 子流程 | [`sub-fix.yaml`](e2e/config/flows/sub-fix.yaml)                                 | 三节点 analyze → patch → validate；当前为独立可复用定义 |
-| Agents | [`e2e/config/agents/`](e2e/config/agents/)                                      | Supervisor、Detector、Fixer、三个 Reviewer 与 Git Role  |
-| MCPs   | [`e2e/config/mcps/`](e2e/config/mcps/)                                          | GitHub 交付与 SonarQube Issue/Scan 访问                 |
-| Envoy  | [`e2e/config/envoy/envoy.yaml`](e2e/config/envoy/envoy.yaml)                    | 声明式边缘代理配置，与部署代码分离                       |
-| E2E    | [`e2e/runner.py`](e2e/runner.py)                                                  | 部署、验证、人工访问与可选清理的唯一入口               |
+| 主流程 | [`security-autonomy-fixer.yaml`](deploy/flowgent/config/flows/security-autonomy-fixer.yaml) | 29 Nodes、33 Edges 的修复 DAG                           |
+| 子流程 | [`sub-fix.yaml`](deploy/flowgent/config/flows/sub-fix.yaml)                                 | 三节点 analyze → patch → validate；当前为独立可复用定义 |
+| Agents | [`deploy/flowgent/config/agents/`](deploy/flowgent/config/agents/)                                      | Supervisor、Detector、Fixer、三个 Reviewer 与 Git Role  |
+| MCPs   | [`deploy/flowgent/config/mcps/`](deploy/flowgent/config/mcps/)                                          | GitHub 交付与 SonarQube Issue/Scan 访问                 |
+| Envoy  | [`deploy/flowgent/config/envoy/envoy.yaml`](deploy/flowgent/config/envoy/envoy.yaml)                    | 声明式边缘代理配置，与部署代码分离                       |
+| E2E    | [`runner.py`](runner.py)                                                  | 部署、验证、人工访问与可选清理的唯一入口               |
 
 YAML Manifest 是可执行事实来源。本文解释其意图和当前行为；发生差异时，以
 Manifest 与实际 E2E 证据为准。
@@ -140,9 +131,9 @@ Flowgent 前校验其 `api_key_env` 指定的环境变量。
 
 | Node Type    | 数量 | 应用用途                                       |
 | ------------ | ---: | ---------------------------------------------- |
-| `tool`       |   10 | GitHub 与 SonarQube MCP 操作                   |
+| `tool`       |   11 | GitHub、SonarQube 与 Scanner MCP 操作                   |
 | `agent`      |    7 | Finding 规范化、Patch 生成、Review、比较与报告 |
-| `sandbox`    |    3 | 仓库 Clone、有界源码读取与等待 Scan            |
+| `sandbox`    |    2 | 仓库 Clone 与有界源码读取            |
 | `condition`  |    3 | Review 批准、PR 路由与完成路由                 |
 | `committee`  |    1 | 确定性多数投票                                 |
 | `supervisor` |    1 | 受 Quota 约束的编排决策                        |
@@ -182,9 +173,9 @@ flowchart TD
     N17 --> N18[create-pr]
     N15 -->|true| N19[commit-to-existing]
 
-    N18 --> N20[trigger-rescan<br/>tool: SonarQube]
+    N18 --> N20[trigger-rescan<br/>tool: StartAnalysis]
     N19 --> N20
-    N20 --> N21[wait-rescan<br/>sandbox + retry]
+    N20 --> N21[wait-rescan<br/>tool: WaitAnalysis]
     N21 --> N22[check-resolved<br/>tool: SonarQube]
     N22 --> N23[compare-results<br/>agent]
     N23 --> N24{fix-complete}
@@ -212,7 +203,7 @@ Subflow 或 Run 边界。
 |     7. 确定性控制 | `committee`, `supervisor-check`, `is-approved`                                                       | 多数投票保持确定性；Supervisor 受 Retry、Node、Injection 与 Action Quota 约束。            |
 |       8. 人工门禁 | `human-approval`                                                                                     | 在任何 Git 修改前持久化 24 小时 Approve/Reject Gate。                                      |
 |   9. 幂等交付路由 | `check-existing-pr`, `pr-exists`, `create-branch`, `commit-fixes`, `create-pr`, `commit-to-existing` | 选择新 PR 或已有 PR 路径，再推送完整文件内容。                                             |
-|          10. 验证 | `trigger-rescan`, `wait-rescan`, `check-resolved`, `compare-results`, `fix-complete`                 | 请求 SonarQube Findings Export、有界轮询、比较前后 Findings 并判断完成。                   |
+|          10. 验证 | `trigger-rescan`, `wait-rescan`, `check-resolved`, `compare-results`, `fix-complete`                 | 按交付提交发起真实分析，等待对应 CE 任务，比较前后 Findings 并判断完成。                   |
 |          11. 报告 | `summary-report`, `notify-pr`, `end`                                                                 | 生成结构化摘要，通过 GitHub Issue/PR Comment 发布并终止。                                  |
 
 ## Nodes 与 Edges
@@ -235,8 +226,8 @@ Subflow 或 Run 边界。
 |    14 | `check-existing-pr`                                                | `tool`       | GitHub `list_pull_requests`                         |
 |    15 | `pr-exists`                                                        | `condition`  | 当前 Manifest Expression 为 Literal `true`          |
 | 16–19 | `create-branch`, `commit-fixes`, `create-pr`, `commit-to-existing` | `tool`       | 交付到 `fix/flowgent_sec_auto_fix`                  |
-|    20 | `trigger-rescan`                                                   | `tool`       | SonarQube `GetProjectsExportFindings`               |
-|    21 | `wait-rescan`                                                      | `sandbox`    | 12 次、固定 10 秒 Delay 的 CE Activity Polling      |
+|    20 | `trigger-rescan`                                                   | `tool`       | Scanner `StartAnalysis`，绑定交付提交               |
+|    21 | `wait-rescan`                                                      | `tool`       | Scanner `WaitAnalysis`，绑定任务，限时 1,200 秒 |
 |    22 | `check-resolved`                                                   | `tool`       | 修改后 SonarQube `GetIssuesSearch`                  |
 |    23 | `compare-results`                                                  | `agent`      | 分类 complete/partial/none/max-iterations           |
 |    24 | `fix-complete`                                                     | `condition`  | Complete 或 Max-iterations Decision                 |
@@ -261,11 +252,11 @@ Subflow 或 Run 边界。
 
 | 资源              | 文件                                                      | 作用                                                                |
 | ----------------- | --------------------------------------------------------- | ------------------------------------------------------------------- |
-| Agent Definitions | `e2e/config/agents/01-supervisor.yaml` 至 `07-git-agent.yaml` | Model、Instruction、Schema 与 Role 配置                             |
-| LLM Provider      | `e2e/config/llmproviders/deepseek.yaml`                       | Agents 使用的 Model/Provider Connection                             |
-| GitHub MCP        | `e2e/config/mcps/github.yaml`                                 | Commit/PR 查询、Branch 创建、文件推送、PR 创建与 Comment            |
-| SonarQube MCP     | `e2e/config/mcps/sonarqube.yaml`                              | Finding 发现、Export/Recheck 与修改后比较输入                       |
-| Notifiers         | `e2e/config/notifiers/email.yaml`, `webhook.yaml`             | 可导入的通知 Channel；29 节点主 DAG 当前以 GitHub Comment Tool 终止 |
+| Agent Definitions | `deploy/flowgent/config/agents/01-supervisor.yaml` 至 `07-git-agent.yaml` | Model、Instruction、Schema 与 Role 配置                             |
+| LLM Provider      | `deploy/flowgent/config/llmproviders/deepseek.yaml`                       | Agents 使用的 Model/Provider Connection                             |
+| GitHub MCP        | `deploy/flowgent/config/mcps/github.yaml`                                 | Commit/PR 查询、Branch 创建、文件推送、PR 创建与 Comment            |
+| SonarQube MCP     | `deploy/flowgent/config/mcps/sonarqube.yaml`                              | Finding 发现、Export/Recheck 与修改后比较输入                       |
+| Notifiers         | `deploy/flowgent/config/notifiers/email.yaml`, `webhook.yaml`             | 可导入的通知 Channel；29 节点主 DAG 当前以 GitHub Comment Tool 终止 |
 
 运行时凭据 **MUST** 通过部署 Secret 或环境契约注入，**MUST NOT** 嵌入 Flow、
 Agent、MCP 或 README。
@@ -280,8 +271,8 @@ Agent、MCP 或 README。
    不会实现重复执行。
 4. Review Siblings 逻辑独立，但 JobManager 对每个 `Schedule()` 阻塞，因此当前
    仍顺序分派。
-5. `trigger-rescan` 调用 `GetProjectsExportFindings`，`wait-rescan` 观察 CE Activity；
-   实际外部 Scan Trigger 行为仍由部署的 SonarQube Integration 与项目 CI 定义。
+5. 复扫使用 E2E Scanner CI 适配器，必须关联实际交付 SHA、新的成功 CE 任务和同 SHA
+   的分析版本；使用其他部署方式时，需要提供等价的 CI 适配器契约。
 6. 主 Manifest 没有 Node 引用 `sub-fix`；它是独立可复用 Flow，不属于 29 节点路径。
 
 重复节点 Reset 语义实现前，可执行的多轮设计 **MUST** 使用有界 Node Retry 或
@@ -296,16 +287,16 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 ```
 
 统一 runner 会构建 Flowgent 镜像，通过根 Helm Chart 或功能等价的 Compose
-拓扑部署 AuthGuard/Envoy，导入 `e2e/config`，并验证基础设施、LDAP Principal 发现、
+拓扑部署 AuthGuard/Envoy，导入 `config`，并验证基础设施、LDAP Principal 发现、
 GitHub OAuth、边缘 allow/deny 策略、Telemetry、API Server、Notifier、Controller、
 MQTT、A2A、修复、PR 交付、Knowledge、共享 Workspace，以及通过已发布 Web UI
 完成 sandbox Flow 的真实 Chromium 创建、执行、更新与删除。CI 外执行浏览器场景前，
 请安装 E2E 依赖和 Chromium：
 
 ```bash
-python3 -m venv use-cases/security-autonomy-fixer/e2e/.venv
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m pip install -r use-cases/security-autonomy-fixer/e2e/requirements.txt
-use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m playwright install chromium
+python3 -m venv use-cases/security-autonomy-fixer/.venv
+use-cases/security-autonomy-fixer/.venv/bin/python -m pip install -r use-cases/security-autonomy-fixer/requirements.txt
+use-cases/security-autonomy-fixer/.venv/bin/python -m playwright install chromium
 ```
 
 常用模式：
@@ -313,17 +304,17 @@ use-cases/security-autonomy-fixer/e2e/.venv/bin/python -m playwright install chr
 ```bash
 E2E_ARGS="--scenario 14 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
 E2E_ARGS="--scenario 41 --skip-sonarqube --skip-build --skip-import --skip-deploy" make e2e-security-autonomy-fixer-with-helm
-python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --access
+python3 use-cases/security-autonomy-fixer/runner.py --deployer k8s --access
 E2E_ARGS="--clean-after-run" make e2e-security-autonomy-fixer-with-helm
 make e2e-security-autonomy-fixer-with-docker
-python3 use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker cleanup
+python3 use-cases/security-autonomy-fixer/runner.py --deployer docker cleanup
 ```
 
 清理为显式选择：`--clean-after-run` 默认 false。普通成功运行会保留所选后端
 供人工体验；启用该参数时只删除 `e2e-flowgent-*` Helm 资源与专用
 Namespace，或 `e2e-flowgent-docker` Compose Project 及其命名 Volume。
 
-生成内容统一组织为 `e2e/reports/round-XX/`：轮次根目录保存 verifier Markdown，
+生成内容统一组织为 `reports/round-XX/`：轮次根目录保存 verifier Markdown，
 机器证据与截图放在 `evidence/<scenario>/`，跨 verifier 的瞬态状态隐藏在
 `reports/.state/`。这些产物是执行证据，不是设计来源，**MUST NOT** 替代对
 Manifest、REST State、MQTT Routing、PostgreSQL、Kubernetes Resource 或外部系统
@@ -345,3 +336,9 @@ Manifest、REST State、MQTT Routing、PostgreSQL、Kubernetes Resource 或外�
    **则 MUST** 到达人工门禁或最终报告，且不得尝试重跑已完成 Node。
 7. **给定**应用评审或 E2E 验证，**当**观察行为与本文冲突时，**则 MUST** 以
    可执行 Manifest 和实际 Runtime 证据为准。
+
+真实分析组件位于 `deploy/sonar-scanner-service/`，直接复用固定版本的官方 SonarScanner
+镜像，按 GitHub 提交 SHA 获取源码并执行分析。s31 记录初始 CE 任务、分析版本和
+实际 finding；复扫必须对应交付提交与新的成功 CE 任务，并逐项查询选中的 finding。
+
+当前 Java 源码分析没有编译依赖字节码，因此不能据此声称完整的字节码/类型解析覆盖。

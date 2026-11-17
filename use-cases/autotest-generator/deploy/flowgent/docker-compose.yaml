@@ -1,0 +1,21 @@
+services:
+  flowgent:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: flowgent
+    container_name: ${COMPOSE_PROJECT_NAME}-flowgent
+    image: ${E2E_IMAGE_FLOWGENT}
+    platform: ${E2E_PLATFORM_FLOWGENT}
+    build:
+      context: ${FLOWGENT_REPO_DIR}
+      dockerfile: ${FLOWGENT_E2E_CASE_DIR}/deploy/flowgent/Dockerfile
+      args:
+        GO_IMAGE: ${E2E_IMAGE_GOLANG}
+        RUNTIME_IMAGE: ${E2E_IMAGE_ALPINE}
+    command:
+    - all-in-one
+    - start
+    - -c
+    - /app/etc/flowgent.yaml
+volumes:
+  flowgent-data: {}

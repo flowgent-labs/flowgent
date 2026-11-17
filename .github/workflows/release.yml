@@ -120,7 +120,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/Dockerfile.core
+          file: deploy/docker/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: BUILD_TAGS=x402

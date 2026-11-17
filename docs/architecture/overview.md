@@ -2,13 +2,59 @@
 
 **Date:** 2026-06-08
 
-**Status:** Implemented — Flink-style application/session runtime clusters with `runtime_cluster_id` isolation
+**Status:** application/session runtime clusters implemented; Sandbox fixed-pool
+design approved on 2026-11-14, runtime migration pending.
+
+**Sandbox boundary update:** Controller will own pools by `sandbox_id`, Flows
+will reference those pools, and JM retains TM ownership. Sandbox management,
+cluster topics and per-script seccomp below describe the current legacy
+implementation, not the new target. The [Sandbox pool contract](engine/sandbox.md)
+owns the pending migration.
 
 Flowgent is a distributed, multi-namespace AgentFlow engine. This overview is the
 cross-component contract: it explains how the physical services call one
 another, where durable state lives, how work crosses MQTT, and how a flow moves
 from trigger to completion. Component internals and L2 DAG semantics live in
 their owning documents.
+
+## Architecture Views
+
+Both views use four responsibility zones: Browser/Application UI, AuthGuard,
+Flowgent core services, and AgentVault payment integration. Infrastructure and
+external providers remain outside those control zones. Abbreviations are
+expanded at the bottom of each diagram.
+
+### Physical Calls
+
+![Flowgent physical call architecture](assets/flowgent—physical-architecture.svg)
+
+Envoy Gateway routes all protected resource, A2A, generated MCP, and AgentVault
+APIs. AuthGuard makes access decisions. The UI manages AgentFlows, FlowRuns,
+Agents, MCPs, Skills and Notifications. Flowgent workers use REST for business
+state and MQTT for dispatch; Controller owns JM lifecycle and JM owns TM capacity.
+
+The payment zone shows SDK attachment points, not a shared deployment: Payee SDKs
+intercept collection at Flowgent's A2A Server and the independent MCP server
+that mcpfather generates from Flowgent's OpenAPI/Swagger specification. The Payer
+SDK intercepts outbound A2A/MCP payment requests from Flowgent clients. Protected
+SDK backend calls also use Envoy routes; payment dependency arrows omit that
+repeated gateway hop. AgentVault owns payment policy, private keys and settlement.
+
+### Logical Calls
+
+![Flowgent logical call architecture](assets/flowgent-logical-architecture.svg)
+
+Definitions become Runs, JM schedules nodes, and TM executes them. Results are
+persisted through API before returning to JM; approvals and retries feed back
+into scheduling. Target inbound collection and outbound payment paths remain
+separate from AuthGuard access checks and Flowgent orchestration.
+
+† marks pending Payee/Payer SDK integration, the generated MCP endpoint, and
+Sandbox fixed-pool migration. A2A already exists without Payee SDK integration;
+current payment code still uses the legacy signer and Sandbox ownership is still
+JM/cluster based. Snapshot enforcement and automatic checkpoint reload remain
+incomplete. The [payment boundary](engine/wallet.md#sdk-placement-target) owns the
+SDK contract.
 
 ## Architecture Map
 

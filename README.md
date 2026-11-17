@@ -140,7 +140,7 @@ the deployment secret or runtime environment, never in manifests.
 
 ```bash
 ./bin/flowgent-core console -c etc/flowgent.yaml -- import \
-  use-cases/security-autonomy-fixer/e2e/config
+  use-cases/security-autonomy-fixer/deploy/flowgent/config
 ```
 
 ### Test
@@ -194,16 +194,51 @@ helm upgrade --install flowgent \
   --version "$FLOWGENT_VERSION" \
   --namespace "$FLOWGENT_NAMESPACE" --create-namespace \
   --set runtime.resourceOwner=flowgent-production \
+  --set postgresql.enabled=false \
+  --set emqx.enabled=false \
   --set storage.type=POSTGRE \
   --set storage.postgres.dsn='postgres://flowgent:change-me@postgres:5432/flowgent?sslmode=require' \
   --set messaging.mqtt.broker='tcp://emqx:1883'
 ```
 
-For development, all-in-one mode uses SQLite and an in-memory queue. For a
+Standalone all-in-one mode can use SQLite and an in-memory queue. For a
 distributed deployment, use PostgreSQL and MQTT, configure the namespace and
 runtime resource limits, and supply provider, MCP, notifier, and artifact
 credentials through the runtime secret contract. Do not place secrets in Helm
 values, AgentFlow YAML, or the web application.
+
+### Docker Compose and managed middleware
+
+The canonical local stack is [`deploy/docker/docker-compose.yaml`](deploy/docker/docker-compose.yaml).
+It uses the same backend image for all-in-one and distributed commands, built
+from [`deploy/docker/Dockerfile`](deploy/docker/Dockerfile).
+
+```bash
+make build:image
+# Starts Flowgent/Web and the default managed middleware.
+docker compose -f deploy/docker/docker-compose.yaml up -d --no-build
+```
+
+PostgreSQL, Redis, EMQX, Jaeger, Prometheus and Envoy are enabled by default.
+In Helm, set the corresponding `postgresql.enabled`, `redis.enabled`,
+`emqx.enabled`, `jaeger.enabled`, `prometheus.enabled` or `envoy.enabled` to
+`false` for externally managed services. Supply `storage.postgres.dsn` (or
+`postgresql.externalSecret`), `messaging.mqtt.broker` (or `emqx.externalSecret`)
+and `jaeger.collectorEndpoint`/`jaeger.queryEndpoint` as applicable. To use Redis,
+set `cache.provider=Redis`; external Redis uses `cache.redis.nodes` and
+`redis.externalSecret` (key `password`).
+
+In Compose, use `POSTGRES_ENABLED=0`, `REDIS_ENABLED=0`, `EMQX_ENABLED=0`,
+`JAEGER_ENABLED=0`, `PROMETHEUS_ENABLED=0` and `ENVOY_ENABLED=0` to disable
+individual managed services. External connections use `POSTGRES_DSN`,
+`MQTT_BROKER`, `OTLP_ENDPOINT` and `JAEGER_QUERY_ENDPOINT`; custom collector and
+proxy files use `PROMETHEUS_CONFIG` and `ENVOY_CONFIG`. AuthGuard remains opt-in
+(`AUTHGUARD_ENABLED=1` with `AUTHGUARD_CONFIG` in Compose).
+
+Use-case mocks belong under `use-cases/<case>/deploy/mock-xxx-service/`.
+Application manifests belong under `deploy/flowgent/config/` inside each case.
+Use cases inherit the formal middleware definitions rather than maintaining
+separate deployment charts or images for them.
 
 ### AuthGuard topology
 
@@ -244,7 +279,7 @@ OpenTelemetry, and use the API or human gates to drive run lifecycle.
 ```bash
 # Import a directory of reviewed resources.
 ./bin/flowgent-core console -c etc/flowgent.yaml -- import \
-  use-cases/security-autonomy-fixer/e2e/config/agents/
+  use-cases/security-autonomy-fixer/deploy/flowgent/config/agents/
 
 # Export a backup from the configured environment.
 ./bin/flowgent-core console -c etc/flowgent.yaml -- export --output flowgent-export.yaml

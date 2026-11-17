@@ -2,6 +2,11 @@
 
 [System overview](../overview.md) · [TaskManager](taskmanager.md) · [Sandbox](sandbox.md)
 
+**Sandbox target (2026-11-14):** JobManager retains TaskManager ownership;
+Controller owns independent Sandbox pools. JM MUST NOT scale or delete a
+referenced pool when a Run ends. Sandbox management below describes the
+current implementation, superseded by the pending [fixed-pool design](sandbox.md).
+
 JobManager is the per-run DAG orchestrator. It reads flow/run state through the
 API Server, turns runnable DAG nodes into `ExecutionPlan` messages, consumes
 state-only execution results, and owns TaskManager and Sandbox capacity through

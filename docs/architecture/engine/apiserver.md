@@ -2,6 +2,11 @@
 
 [System overview](../overview.md) · [AgentFlow application layer](../agent-flow.md)
 
+**Sandbox target (2026-11-14):** API Server will own the namespaced Sandbox
+catalog, UI CRUD, Flow binding validation and observed pool status. Proposed
+resources in the [fixed-pool design](sandbox.md) are not implemented routes
+in the current API catalog below.
+
 The API Server is Flowgent's control-plane gateway and canonical owner of
 durable business-state access. External clients enter through REST or A2A;
 Controller, JM, TM, Sandbox, and Notifier read and write business state through

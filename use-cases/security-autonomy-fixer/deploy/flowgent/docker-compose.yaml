@@ -1,0 +1,247 @@
+services:
+  flowgent:
+    image: ${E2E_IMAGE_FLOWGENT}
+    command:
+    - all-in-one
+    - start
+    - -c
+    - /etc/flowgent/e2e.yaml
+    environment:
+      AUTHGUARD__AUTHZ__SCOPE_DELIVERY__DIRECT_CONTEXT_HMAC_KEY: ${AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY}
+      FLOWGENT_NOTIFICATION_KEY_V1: ${FLOWGENT_NOTIFICATION_KEY_V1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY_FLOWGENT:-}
+      DEEPSEEK_API_KEY_FLOWGENT: ${DEEPSEEK_API_KEY_FLOWGENT:-}
+      FLOWGENT_E2E_LLM_API_KEY: e2e-fixture-only
+      SONARQUBE_TOKEN: ${SONARQUBE_TOKEN:-}
+      SONAR_SCANNER_API_TOKEN: ${SONAR_SCANNER_API_TOKEN}
+      SONAR_SCANNER_MCP_URL: http://sonar-scanner:8080/mcp
+      SONARQUBE_MCP_URL: ${SONARQUBE_MCP_URL:-http://host.docker.internal:18080/mcp}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      HTTPS_PROXY: ${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY:-http://host.docker.internal:8800}
+      NO_PROXY: localhost,127.0.0.1,postgres,emqx,jaeger,authguard-authn,authguard-authz,ldap,mock-github,notification-receiver,sonar-scanner,mock-llm,mock-llm.e2e-flowgent-mock-llm.svc.cluster.local
+      FLOWGENT__STORAGE__POSTGRES__DSN: postgres://test:test@postgres:5432/flowgent?sslmode=disable&options=-csearch_path%3De2e_flowgent
+    extra_hosts:
+    - host.docker.internal:host-gateway
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/reports/.state/docker/flowgent.yaml:/etc/flowgent/e2e.yaml:ro
+    - ${FLOWGENT_E2E_CASE_DIR}/deploy/flowgent/config:/e2e/config:ro
+    - e2e-workspace:/var/flowgent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+      notification-receiver:
+        condition: service_started
+      mock-llm:
+        condition: service_started
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_API_PORT:-29999}:9990
+    - 127.0.0.1:29998:9999
+    - 127.0.0.1:${FLOWGENT_E2E_A2A_PORT:-19992}:9992
+    platform: ${E2E_PLATFORM_FLOWGENT}
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: flowgent
+  web:
+    image: ${E2E_IMAGE_FLOWGENT_WEB}
+    environment:
+      FLOWGENT_API_UPSTREAM: http://flowgent:9999
+      FLOWGENT_DEFAULT_NAMESPACE: security-fixer
+    depends_on:
+      flowgent:
+        condition: service_started
+    ports:
+    - 127.0.0.1:21080:8080
+    platform: ${E2E_PLATFORM_FLOWGENT_WEB}
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: web
+  postgres:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: postgres
+    image: ${E2E_IMAGE_PGVECTOR}
+    platform: ${E2E_PLATFORM_PGVECTOR}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_PG_PORT:-25432}:5432
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: flowgent
+    volumes:
+    - postgres-data:/var/lib/postgresql/data
+    - ${FLOWGENT_E2E_CASE_DIR}/reports/.state/docker/init.sql:/docker-entrypoint-initdb.d/01-e2e-flowgent.sql:ro
+  authguard-redis-0:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: redis-0
+    image: ${E2E_IMAGE_REDIS}
+    platform: ${E2E_PLATFORM_REDIS}
+    environment:
+      ALLOW_EMPTY_PASSWORD: 'no'
+      REDIS_PASSWORD: ${AUTHGUARD_REDIS_PASSWORD}
+      REDISCLI_AUTH: ${AUTHGUARD_REDIS_PASSWORD}
+      REDIS_NODES: authguard-redis-0 authguard-redis-1 authguard-redis-2
+      REDIS_CLUSTER_REPLICAS: '0'
+      REDIS_CLUSTER_DYNAMIC_IPS: 'yes'
+      REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: '1'
+      REDIS_CLUSTER_CREATOR: 'yes'
+    volumes:
+    - authguard-redis-0-data:/bitnami/redis/data
+    depends_on:
+      authguard-redis-1:
+        condition: service_started
+      authguard-redis-2:
+        condition: service_started
+  authguard-redis-1:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: redis-1
+    image: ${E2E_IMAGE_REDIS}
+    platform: ${E2E_PLATFORM_REDIS}
+    environment:
+      ALLOW_EMPTY_PASSWORD: 'no'
+      REDIS_PASSWORD: ${AUTHGUARD_REDIS_PASSWORD}
+      REDISCLI_AUTH: ${AUTHGUARD_REDIS_PASSWORD}
+      REDIS_NODES: authguard-redis-0 authguard-redis-1 authguard-redis-2
+      REDIS_CLUSTER_REPLICAS: '0'
+      REDIS_CLUSTER_DYNAMIC_IPS: 'yes'
+      REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: '1'
+    volumes:
+    - authguard-redis-1-data:/bitnami/redis/data
+  authguard-redis-2:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: redis-2
+    image: ${E2E_IMAGE_REDIS}
+    platform: ${E2E_PLATFORM_REDIS}
+    environment:
+      ALLOW_EMPTY_PASSWORD: 'no'
+      REDIS_PASSWORD: ${AUTHGUARD_REDIS_PASSWORD}
+      REDISCLI_AUTH: ${AUTHGUARD_REDIS_PASSWORD}
+      REDIS_NODES: authguard-redis-0 authguard-redis-1 authguard-redis-2
+      REDIS_CLUSTER_REPLICAS: '0'
+      REDIS_CLUSTER_DYNAMIC_IPS: 'yes'
+      REDIS_CLUSTER_SLEEP_BEFORE_DNS_LOOKUP: '1'
+    volumes:
+    - authguard-redis-2-data:/bitnami/redis/data
+  emqx:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: emqx
+    image: ${E2E_IMAGE_EMQX}
+    platform: ${E2E_PLATFORM_EMQX}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_MQTT_PORT:-11883}:1883
+    - 127.0.0.1:${FLOWGENT_E2E_EMQX_DASHBOARD_PORT:-18084}:18083
+    environment:
+      ERL_AFLAGS: ${E2E_EMQX_ERL_AFLAGS:-}
+      EMQX_NODE__NAME: emqx@127.0.0.1
+      EMQX_NODE__COOKIE: flowgent-emqx-cookie
+      EMQX_MQTT__MAX_PACKET_SIZE: 8MB
+  jaeger:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: jaeger
+    image: ${E2E_IMAGE_JAEGER}
+    platform: ${E2E_PLATFORM_JAEGER}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_JAEGER_PORT:-16688}:16686
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+  prometheus:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: prometheus
+    image: ${E2E_IMAGE_PROMETHEUS}
+    platform: ${E2E_PLATFORM_PROMETHEUS}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_PROMETHEUS_PORT:-19092}:9090
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/reports/.state/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+  envoy:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: envoy
+    image: ${E2E_IMAGE_ENVOY}
+    platform: ${E2E_PLATFORM_ENVOY}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_GATEWAY_PORT:-18089}:8080
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/deploy/flowgent/config/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      authguard-authn:
+        condition: service_started
+      authguard-authz:
+        condition: service_started
+      authguard-web:
+        condition: service_started
+      flowgent:
+        condition: service_started
+  authguard-authn:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: authguard-authn
+    image: ${E2E_IMAGE_AUTHGUARD_LOCAL}
+    platform: ${E2E_PLATFORM_AUTHGUARD_LOCAL}
+    deploy:
+      replicas: ${AUTHGUARD_ENABLED:-1}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_AUTHN_PORT:-18082}:8082
+    - 127.0.0.1:${FLOWGENT_E2E_AUTHN_MGMT_PORT:-18083}:9091
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/reports/.state/docker/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      authguard-redis-0:
+        condition: service_healthy
+      ldap:
+        condition: service_started
+  authguard-authz:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: authguard-authz
+    image: ${E2E_IMAGE_AUTHGUARD_LOCAL}
+    platform: ${E2E_PLATFORM_AUTHGUARD_LOCAL}
+    deploy:
+      replicas: ${AUTHGUARD_ENABLED:-1}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_AUTHZ_API_PORT:-19090}:9090
+    - 127.0.0.1:${FLOWGENT_E2E_AUTHZ_MGMT_PORT:-19091}:9091
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/reports/.state/docker/authguard.yaml:/etc/authguard/authguard.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      authguard-redis-0:
+        condition: service_healthy
+      ldap:
+        condition: service_started
+  authguard-web:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/docker-compose.yaml
+      service: authguard-web
+    image: ${E2E_IMAGE_AUTHGUARD_WEB_LOCAL}
+    platform: ${E2E_PLATFORM_AUTHGUARD_WEB_LOCAL}
+    deploy:
+      replicas: ${AUTHGUARD_ENABLED:-1}
+    volumes:
+    - ${FLOWGENT_REPO_DIR}/deploy/helm/flowgent/files/authguard-theme:/usr/share/nginx/html/assets/themes/custom:ro
+    depends_on:
+      authguard-authn:
+        condition: service_started
+      authguard-authz:
+        condition: service_started
+volumes:
+  e2e-workspace: {}
+  postgres-data: {}
+  prometheus-data: {}
+  flowgent-data: {}
+  authguard-redis-0-data: {}
+  authguard-redis-1-data: {}
+  authguard-redis-2-data: {}

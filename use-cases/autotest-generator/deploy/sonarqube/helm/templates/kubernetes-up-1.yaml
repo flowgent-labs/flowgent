@@ -1,0 +1,8 @@
+{{- if .Values.runtime }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.runtime.namespace | toJson }}
+  labels:
+    flowgent.io/e2e-owner: {{ .Values.runtime.resource_prefix | toJson }}
+{{- end }}

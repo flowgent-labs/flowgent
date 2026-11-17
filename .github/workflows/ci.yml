@@ -73,7 +73,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/Dockerfile.core
+          file: deploy/docker/Dockerfile
           push: true
           build-args: BUILD_TAGS=x402
           labels: |
@@ -123,6 +123,9 @@ jobs:
         uses: azure/setup-helm@v4
         with:
           version: v3.17.0
+
+      - name: Install Python verification dependencies
+        run: python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
 
       - name: Build and run unit tests
         run: |
@@ -237,7 +240,7 @@ jobs:
 
       - name: Install E2E Python dependencies
         run: |
-          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/e2e/requirements.txt
+          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
           python -m playwright install --with-deps chromium
 
       - name: Start isolated PostgreSQL
@@ -272,13 +275,13 @@ jobs:
         run: make build:core
 
       - name: Run complete Kubernetes E2E against dirty images
-        run: python -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --skip-build --clean-after-run
+        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer k8s --skip-build --clean-after-run
 
       - name: Capture Kubernetes E2E summary
         id: summary
         if: always()
         run: |
-          summary=use-cases/security-autonomy-fixer/e2e/reports/00_summary.md
+          summary=use-cases/security-autonomy-fixer/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -288,7 +291,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: security-autonomy-fixer-kubernetes-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/security-autonomy-fixer/e2e/reports/
+          path: use-cases/security-autonomy-fixer/reports/
           if-no-files-found: warn
           retention-days: 14
 
@@ -347,7 +350,7 @@ jobs:
 
       - name: Install E2E Python dependencies
         run: |
-          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/e2e/requirements.txt
+          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
           python -m playwright install --with-deps chromium
 
       - name: Pull dirty images for Docker Compose
@@ -366,13 +369,13 @@ jobs:
         run: make build:core
 
       - name: Run complete Docker Compose E2E against dirty images
-        run: python -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker --skip-build --clean-after-run
+        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer docker --skip-build --clean-after-run
 
       - name: Capture Docker Compose E2E summary
         id: summary
         if: always()
         run: |
-          summary=use-cases/security-autonomy-fixer/e2e/reports/00_summary.md
+          summary=use-cases/security-autonomy-fixer/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -382,7 +385,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: security-autonomy-fixer-docker-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/security-autonomy-fixer/e2e/reports/
+          path: use-cases/security-autonomy-fixer/reports/
           if-no-files-found: warn
           retention-days: 14
 

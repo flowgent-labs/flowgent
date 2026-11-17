@@ -1,0 +1,24 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}
+  labels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: stdio
+      image: {{ required "supply the image from E2EImagesDefinitions" .Values.image | quote }}
+      stdin: true
+      env:
+        - name: SONARQUBE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ required "an existing credentials Secret is required" .Values.existingSecret }}
+              key: SONARQUBE_TOKEN
+        - name: SONARQUBE_URL
+          value: {{ required "SonarQube upstreamURL is required" .Values.upstreamURL | quote }}
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 200m, memory: 128Mi}
+{{- end }}

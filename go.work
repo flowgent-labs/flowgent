@@ -1,7 +1,6 @@
 go 1.26.0
 
 use (
-	./migration
 	./pkg/a2a
 	./pkg/api
 	./pkg/cache

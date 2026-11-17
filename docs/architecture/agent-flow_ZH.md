@@ -2,6 +2,11 @@
 
 [English](agent-flow.md) · [系统总览](overview_ZH.md) · [JobManager](engine/jobmanager_ZH.md) · [TaskManager](engine/taskmanager_ZH.md) · [应用索引](../index_ZH.md#应用)
 
+**Sandbox 目标（2026-11-14）：** 每个 AgentFlow 将显式引用 `sandbox_id`，
+Sandbox 资源/网络规则归 Controller 管理的固定池。[固定池设计](engine/sandbox_ZH.md)
+替代下文内联 Sandbox Policy/Resource 归属。下文示例仍对应当前解码器，
+代码迁移前不接受 `sandbox_id` 字段。
+
 **层级：** L1 引擎组件之上的 L2 应用编排
 
 **运行时绑定：** 每个 Flow 必须声明一个 `runtime_mode`（`application` 或 `session`）

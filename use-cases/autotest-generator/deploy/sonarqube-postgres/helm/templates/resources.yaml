@@ -1,0 +1,69 @@
+{{- if .Values.runtime }}
+{{- $r := .Values.runtime }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $r.name }}
+  namespace: {{ $r.namespace }}
+  labels: {{ toYaml $r.labels | nindent 4 }}
+stringData:
+  database-username: sonarqube
+  database-password: sonarqube
+  database-name: sonarqube
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $r.postgresName }}
+  namespace: {{ $r.namespace }}
+  labels: {{ toYaml $r.postgresLabels | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/component: postgresql
+    app.kubernetes.io/instance: {{ $r.name }}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $r.postgresName }}
+  namespace: {{ $r.namespace }}
+  labels: {{ toYaml $r.postgresLabels | nindent 4 }}
+spec:
+  serviceName: {{ $r.postgresName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: postgresql
+      app.kubernetes.io/instance: {{ $r.name }}
+  template:
+    metadata:
+      labels: {{ toYaml $r.postgresLabels | nindent 8 }}
+    spec:
+      containers:
+        - name: postgresql
+          image: {{ $r.postgresImage | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: PGDATA, value: /bitnami/postgresql/data}
+            {{- range $env, $key := dict "POSTGRES_USER" "database-username" "POSTGRES_PASSWORD" "database-password" "POSTGRES_DB" "database-name" }}
+            - name: {{ $env }}
+              valueFrom:
+                secretKeyRef: {name: {{ $r.name }}, key: {{ $key }}}
+            {{- end }}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [sh, -c, 'pg_isready -U $POSTGRES_USER -d $POSTGRES_DB']}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {cpu: 750m, memory: 1Gi}
+          volumeMounts: [{name: data, mountPath: /bitnami/postgresql}]
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels: {{ toYaml $r.postgresLabels | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 4Gi}}
+{{- end }}

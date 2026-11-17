@@ -5,9 +5,23 @@
 This document owns the current durable-data contract. The bootstrap schemas are
 [`migration/postgres/20260616a/01_init.ddl.sql`](../../migration/postgres/20260616a/01_init.ddl.sql)
 and
-[`migration/sqlite/20260616a/01_init.ddl.sql`](../../migration/sqlite/20260616a/01_init.ddl.sql);
-the legacy-to-current mapping is recorded in
-[`migration/SCHEMA_MAPPING.md`](../../migration/SCHEMA_MAPPING.md).
+[`migration/sqlite/20260616a/01_init.ddl.sql`](../../migration/sqlite/20260616a/01_init.ddl.sql).
+
+## Startup Migrations
+
+[`pkg/storage/pkg/migrate.go`](../../pkg/storage/pkg/migrate.go) scans
+`migration/{postgres|sqlite}/{version}/*.sql` at startup, ordered by version and
+filename. `schema_migrations` records each applied file. A script and its ledger
+entry commit in one transaction; failed files roll back and stop startup.
+Successful earlier files remain recorded and are skipped on the next start.
+PostgreSQL uses a schema-scoped advisory lock; SQLite obtains a writer lock
+before checking the ledger, so concurrent startups cannot apply a file twice.
+
+The backend image includes `/app/migration`. Native builds copy SQL beside the
+binary under `migration/`; development tests can also find the repository tree.
+`FLOWGENT_MIGRATION_DIR` overrides that root. A missing or empty SQL directory is
+an error. Migration files contain DDL/DML without outer transaction commands;
+add a new version/file instead of editing an applied script.
 
 ## Domain Boundaries
 
@@ -137,9 +151,7 @@ Instruction and does not reopen the completed Run.
 
 ## Schema Evolution
 
-The current repository intentionally exposes clean bootstrap schemas instead of
-retaining obsolete compatibility tables. This is correct for empty-database
-initialization and the E2E environments. Before the next incompatible schema
-change reaches persistent production data, the project MUST define and test a
-non-destructive upgrade path in addition to updating the bootstrap DDL.
-
+Version `20260616a` initializes an empty database; it does not convert the old
+pre-1.0 layout. Further DDL/DML changes MUST append versioned files rather than
+rewrite an applied bootstrap or migration. Incompatible changes affecting
+persisted data MUST include a tested, non-destructive upgrade path.

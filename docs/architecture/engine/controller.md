@@ -2,6 +2,12 @@
 
 [System overview](../overview.md) · [JobManager](jobmanager.md)
 
+**Sandbox target (2026-11-14):** Controller also reconciles registered Sandbox
+pools by namespace + `sandbox_id`, independently of active FlowRuns. The
+Sandbox ownership/GC statements below describe the current runtime-cluster
+implementation. The [fixed-pool contract](sandbox.md) supersedes those
+statements for the pending migration.
+
 The Controller owns distributed runtime reconciliation. It discovers Flows,
 active application-mode runs through the API Server, shards ownership across
 controller replicas, creates/removes per-FlowRun application JobManagers, and

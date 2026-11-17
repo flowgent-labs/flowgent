@@ -1,0 +1,72 @@
+{{- if .Values.runtime }}
+apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: {{ .Values.runtime.parameter_1 | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  data:
+    server.py: {{ .Values.runtime.parameter_4 | toJson }}
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: {{ .Values.runtime.mock_llm_name | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app.kubernetes.io/instance: {{ .Values.runtime.mock_llm_name | toJson }}
+    template:
+      metadata:
+        labels: {{ .Values.runtime.labels | toJson }}
+      spec:
+        volumes:
+        - name: script
+          configMap:
+            name: {{ .Values.runtime.parameter_1 | toJson }}
+        containers:
+        - name: {{ .Values.runtime.mock_llm_name | toJson }}
+          image: {{ .Values.runtime.mock_llm_image | toJson }}
+          imagePullPolicy: IfNotPresent
+          command:
+          - python3
+          - /opt/e2e/server.py
+          ports:
+          - name: http
+            containerPort: 8080
+          volumeMounts:
+          - name: script
+            mountPath: /opt/e2e/server.py
+            subPath: server.py
+            readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: {{ .Values.runtime.mock_llm_name | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  spec:
+    selector:
+      app.kubernetes.io/instance: {{ .Values.runtime.mock_llm_name | toJson }}
+    ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

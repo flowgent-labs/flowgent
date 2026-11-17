@@ -4,12 +4,15 @@ BIN_DIR  ?= bin
 GO       ?= go
 CORE_IMAGE ?= flowgent:latest
 CORE_LOCAL_IMAGE ?= localhost/flowgent:latest
+CORE_GO_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/golang:1.26-alpine
+CORE_RUNTIME_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/alpine:3.21
+CORE_BUILD_TARGET ?= runtime
 WEB_IMAGE ?= flowgent-web:latest
 WEB_LOCAL_IMAGE ?= localhost/flowgent-web:latest
 WEB_BUILD_TARGET ?= runtime-dist
 WEB_NODE_IMAGE ?= docker.io/library/node:22-alpine
 WEB_NGINX_IMAGE ?= registry.cn-shenzhen.aliyuncs.com/wl4g/nginx:1.27-alpine
-E2E_VENV_PYTHON := use-cases/security-autonomy-fixer/e2e/.venv/bin/python
+E2E_VENV_PYTHON := use-cases/security-autonomy-fixer/.venv/bin/python
 E2E_PYTHON ?= $(if $(wildcard $(E2E_VENV_PYTHON)),$(E2E_VENV_PYTHON),python3)
 LDFLAGS  := -s -w -X main.Version=dev -X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # IN_CN_GFW controls whether to route Go module downloads through a proxy/CDN.
@@ -58,10 +61,9 @@ help:
 # "downloading myself" network calls). All go.sum / go.work.sum are
 # committed in git — a clean clone builds deterministically with
 # zero network resolution of local modules.
-_GO_MODULES = migration \
-	pkg/a2a pkg/api pkg/cache pkg/cmd pkg/common pkg/config \
+_GO_MODULES = pkg/a2a pkg/api pkg/cache pkg/cmd pkg/common pkg/config \
 	pkg/console pkg/controller pkg/core pkg/messager pkg/model \
-	pkg/notifier pkg/sandbox pkg/storage tests
+	pkg/notifier pkg/sandbox pkg/storage
 
 bootstrap-go:
 	@if [ ! -f go.work ]; then \
@@ -74,15 +76,23 @@ bootstrap-go:
 
 build-image: build-image-core build-image-web
 
+ifeq ($(CORE_BUILD_TARGET),runtime-prebuilt)
+build-image-core: build-core-linux
+endif
+
+.PHONY: build-core-linux
+build-core-linux:
+	GOOS=linux GOARCH=amd64 $(MAKE) build-core BIN_DIR=bin/linux-amd64
+
 build-image-core:
 ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
-	DOCKER_BUILDKIT=1 docker build --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --target="$(CORE_BUILD_TARGET)" --platform="$${DOCKER_DEFAULT_PLATFORM:-linux/amd64}" --build-arg="GO_IMAGE=$(CORE_GO_IMAGE)" --build-arg="RUNTIME_IMAGE=$(CORE_RUNTIME_IMAGE)" --network=host --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg GOPROXY="" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile .
 else
-	DOCKER_BUILDKIT=1 docker build --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --target="$(CORE_BUILD_TARGET)" --platform="$${DOCKER_DEFAULT_PLATFORM:-linux/amd64}" --build-arg="GO_IMAGE=$(CORE_GO_IMAGE)" --build-arg="RUNTIME_IMAGE=$(CORE_RUNTIME_IMAGE)" --build-arg GOPROXY="https://goproxy.cn,direct" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile .
 endif
 else
-	DOCKER_BUILDKIT=1 docker build --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile.core .
+	DOCKER_BUILDKIT=1 docker build --target="$(CORE_BUILD_TARGET)" --platform="$${DOCKER_DEFAULT_PLATFORM:-linux/amd64}" --build-arg="GO_IMAGE=$(CORE_GO_IMAGE)" --build-arg="RUNTIME_IMAGE=$(CORE_RUNTIME_IMAGE)" --build-arg GOFLAGS="$(GOFLAGS)" --build-arg GOMAXPROCS="$(GOMAXPROCS)" --build-arg BUILD_TAGS="$(TAGS_X402)" --build-arg BUILD_TS="$$(date -u +%Y%m%d%H%M%S)" -t $(CORE_IMAGE) -t $(CORE_LOCAL_IMAGE) -f deploy/docker/Dockerfile .
 endif
 
 build-image-web:
@@ -94,20 +104,28 @@ ifeq ($(WEB_BUILD_TARGET),runtime-dist)
 endif
 ifeq ($(IN_CN_GFW),true)
 ifdef HTTPS_PROXY
-	DOCKER_BUILDKIT=1 docker build --network=host --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg="NO_PROXY=$(NO_PROXY)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
+	DOCKER_BUILDKIT=1 docker build --platform="$${DOCKER_DEFAULT_PLATFORM:-linux/amd64}" --network=host --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" --build-arg="HTTPS_PROXY=$(HTTPS_PROXY)" --build-arg="HTTP_PROXY=$(HTTPS_PROXY)" --build-arg="NO_PROXY=$(NO_PROXY)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
 else
-	DOCKER_BUILDKIT=1 docker build --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
+	DOCKER_BUILDKIT=1 docker build --platform="$${DOCKER_DEFAULT_PLATFORM:-linux/amd64}" --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
 endif
 else
-	DOCKER_BUILDKIT=1 docker build --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
+	DOCKER_BUILDKIT=1 docker build --platform="$${DOCKER_DEFAULT_PLATFORM:-linux/amd64}" --target="$(WEB_BUILD_TARGET)" --build-arg="NODE_IMAGE=$(WEB_NODE_IMAGE)" --build-arg="NGINX_IMAGE=$(WEB_NGINX_IMAGE)" -t $(WEB_IMAGE) -t $(WEB_LOCAL_IMAGE) -f deploy/docker/Dockerfile.web web
 endif
+
+# Build a use-case component through the same approved repository entrypoint.
+.PHONY: build-e2e-component
+build-e2e-component:
+	@test -n "$(E2E_COMPONENT_SOURCE)" && test -n "$(E2E_COMPONENT_OUTPUT)"
+	@mkdir -p "$(dir $(abspath $(E2E_COMPONENT_OUTPUT)))"
+	cd "$(E2E_COMPONENT_SOURCE)" && CGO_ENABLED=0 GOWORK=off $(GO) build -trimpath -ldflags="-s -w" -o "$(abspath $(E2E_COMPONENT_OUTPUT))" .
 
 # ── Binary builds ─────────────────────────────────────────────────
 
 build: build-core
 
 build-core: bootstrap-go
-	@mkdir -p $(BIN_DIR)
+	@mkdir -p $(BIN_DIR)/migration
+	cp -R migration/postgres migration/sqlite $(BIN_DIR)/migration/
 	cd pkg/cmd && CGO_ENABLED=0 $(GOENV) $(GO) build -v -trimpath -tags "$(TAGS_X402)" -ldflags="$(LDFLAGS)" -o ../../$(BIN_DIR)/flowgent-core ./pkg/
 
 # ── Utils ─────────────────────────────────────────────────────────
@@ -128,7 +146,7 @@ test-ut:
 	cd pkg/controller && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/notifier  && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/api       && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
-	cd pkg/storage   && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
+	$(MAKE) test-storage
 	cd pkg/sandbox   && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/core      && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/cmd       && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
@@ -147,6 +165,10 @@ test-x402:
 test-authguard-adapter:
 	cd pkg/api && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/authz
 
+.PHONY: test-storage
+test-storage:
+	cd pkg/storage && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s $(TEST_ARGS) ./...
+
 test-sql-scope:
 	cd pkg/storage && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 
@@ -155,9 +177,12 @@ test-runtime-isolation:
 	cd pkg/core && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/engine/resourcemanager
 
 test-e2e-runner:
-	$(E2E_PYTHON) -m compileall -q use-cases/security-autonomy-fixer/e2e
-	$(E2E_PYTHON) use-cases/security-autonomy-fixer/e2e/runner.py --help >/dev/null
-	$(E2E_PYTHON) use-cases/security-autonomy-fixer/e2e/runner.py --list
+	$(E2E_PYTHON) -m unittest discover -s tests -p 'test_e2e*.py'
+	$(E2E_PYTHON) -m compileall -q use-cases tests/e2e_util -x "/(.venv|reports)/"
+	$(E2E_PYTHON) use-cases/security-autonomy-fixer/runner.py --help >/dev/null
+	$(E2E_PYTHON) use-cases/security-autonomy-fixer/runner.py --list
+	$(E2E_PYTHON) use-cases/autotest-generator/runner.py --help >/dev/null
+	$(E2E_PYTHON) use-cases/autotest-generator/runner.py --list
 	helm lint deploy/helm/flowgent
 	@_rendered="$$(mktemp)"; \
 	trap 'rm -f "$$_rendered"' EXIT; \
@@ -179,10 +204,10 @@ test-e2e-runner:
 	grep -A1 '^[[:space:]]*- name: e2e-flowgent-apiserver$$' "$$_rendered" | grep -q 'port: 9999'
 
 e2e-security-autonomy-fixer-with-helm:
-	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" $(E2E_PYTHON) -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s $(E2E_ARGS)
+	$(E2E_PYTHON) -u use-cases/security-autonomy-fixer/runner.py --deployer k8s $(E2E_ARGS)
 
 e2e-security-autonomy-fixer-with-docker:
-	HTTPS_PROXY="$${HTTPS_PROXY:-http://127.0.0.1:8800}" $(E2E_PYTHON) -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker $(E2E_ARGS)
+	$(E2E_PYTHON) -u use-cases/security-autonomy-fixer/runner.py --deployer docker $(E2E_ARGS)
 
 fmt:
 	gofmt -w $$(rg --files pkg tests -g '*.go')

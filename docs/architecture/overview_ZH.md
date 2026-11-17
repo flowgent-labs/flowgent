@@ -2,11 +2,49 @@
 
 **日期：** 2026-06-08
 
-**状态：** 已实现——Flink 风格 application/session runtime cluster，并以 `runtime_cluster_id` 隔离
+**状态：** 已实现 application/session Runtime Cluster；2026-11-14 确认的 Sandbox 固定池尚待代码迁移
 
 [English](overview.md)
 
+**Sandbox 边界更新：** 目标由 Controller 按 `sandbox_id` 管理固定池，Flow 显式引用，
+JM 继续管理 TM。下文 JM 管理 Sandbox、Cluster Topic 与逐脚本 seccomp 的段落
+记录当前旧实现，不是新的目标边界；待迁移契约统一见
+[Sandbox 固定池](engine/sandbox_ZH.md)。
+
 Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义跨组件契约：物理服务如何调用、持久状态位于何处、工作如何经 MQTT 流转，以及一次流程如何从触发走到完成。组件内部设计与 L2 DAG 语义由各自文档负责。
+
+## 架构视图
+
+两张图使用相同的四个职责区：Browser/Application UI、AuthGuard、Flowgent 核心服务
+及 AgentVault 支付集成。基础设施与外部服务位于控制区之外。图中文字全部为英文，
+缩略语在图底部解释。
+
+### 物理调用
+
+![Flowgent 物理调用架构](assets/flowgent—physical-architecture.svg)
+
+Envoy Gateway 统一路由受保护的资源、A2A、生成的 MCP 和 AgentVault API；AuthGuard
+负责访问决策。UI 管理 AgentFlows、FlowRuns、Agents、MCPs、Skills 和 Notifications。
+Flowgent Worker 用 REST 维护业务状态，用 MQTT 分发任务；Controller 管 JM 生命周期，
+JM 管 TM 容量。
+
+支付区表示 SDK 接入位置，不表示同一个部署进程：Payee SDK 在 Flowgent A2A Server
+及 mcpfather 根据 Flowgent OpenAPI/Swagger 生成的独立 MCP Server 上拦截收款请求；
+Payer SDK 在 Flowgent 客户端调用外部 A2A/MCP 时拦截付款请求。受保护的 SDK 后端
+调用也经过 Envoy；支付依赖线省略这一重复的网关跳转。AgentVault 拥有支付策略、私钥
+及结算。
+
+### 逻辑调用
+
+![Flowgent 逻辑调用架构](assets/flowgent-logical-architecture.svg)
+
+定义生成 Run，JM 调度节点，TM 执行。结果先经 API 落库，再返回 JM；审批和重试
+回到调度器。目标收款、付款路径与 AuthGuard 访问检查、Flowgent 编排职责分开。
+
+† 表示 Payee/Payer SDK、生成的 MCP 端点和 Sandbox 固定池尚待接入或迁移。A2A
+Server 已存在，但尚未集成 Payee SDK；当前支付代码仍使用旧 Signer，Sandbox 仍由
+JM 按 Cluster 管理。版本快照约束与自动 Checkpoint 恢复也未完整实现。
+SDK 契约归属[支付边界](engine/wallet_ZH.md#sdk-接入位置目标)。
 
 ## 架构地图
 

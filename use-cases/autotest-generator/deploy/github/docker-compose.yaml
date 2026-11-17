@@ -1,0 +1,16 @@
+services:
+  github:
+    image: ${E2E_IMAGE_AUTOTEST_GITHUB}
+    platform: ${E2E_PLATFORM_AUTOTEST_GITHUB}
+    build:
+      context: ${FLOWGENT_REPO_DIR}
+      dockerfile: ${FLOWGENT_E2E_CASE_DIR}/deploy/github/Dockerfile
+      args:
+        GO_IMAGE: ${E2E_IMAGE_GOLANG}
+        RUNTIME_IMAGE: ${E2E_IMAGE_ALPINE}
+    profiles:
+    - manual-stdio
+    stdin_open: true
+    tty: false
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}

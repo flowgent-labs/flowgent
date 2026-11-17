@@ -15,3 +15,9 @@ web
 **/coverage
 **/screenshots
 **/*.log
+
+!bin/
+bin/*
+!bin/linux-amd64/
+bin/linux-amd64/*
+!bin/linux-amd64/flowgent-core

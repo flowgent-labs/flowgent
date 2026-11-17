@@ -2,6 +2,12 @@
 
 [System overview](overview.md) · [JobManager](engine/jobmanager.md) · [TaskManager](engine/taskmanager.md) · [Application index](../index.md#applications)
 
+**Sandbox target (2026-11-14):** every AgentFlow will explicitly reference
+`sandbox_id`; Sandbox resources/network rules move to the Controller-managed
+pool. The [fixed-pool design](engine/sandbox.md) supersedes inline Sandbox
+policy/resource ownership below. Examples below still describe the current
+decoder, which does not accept `sandbox_id` until implementation migrates.
+
 **Layer:** L2 application orchestration above the L1 engine components
 
 **Runtime placement:** one required `runtime_mode` (`application` or `session`)
