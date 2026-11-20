@@ -19,6 +19,9 @@ const (
 type FlowRunInfo struct {
 	BaseEntity
 
+	GraphRevision     int64          `json:"graph_revision,omitempty" yaml:"graph_revision,omitempty" db:"-"`
+	StateVersion      int64          `json:"state_version,omitempty" yaml:"state_version,omitempty" db:"-"`
+	LastEventSeq      int64          `json:"last_event_seq,omitempty" yaml:"last_event_seq,omitempty" db:"-"`
 	FlowID            string         `json:"flow_id" yaml:"flow_id" db:"flow_id"`
 	FlowName          string         `json:"flow_name" yaml:"flow_name" db:"-"`
 	AgentFlowID       string         `json:"-" yaml:"-" db:"-"` // deprecated runtime alias

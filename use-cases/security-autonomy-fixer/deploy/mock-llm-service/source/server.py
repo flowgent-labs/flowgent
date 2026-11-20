@@ -107,6 +107,17 @@ class OpenAIHandler(BaseHTTPRequestHandler):
         lower = user_prompt.lower()
         plan_input = OpenAIHandler._plan_input(user_prompt)
 
+        if "flowgent vnext deterministic subflow planning fixture" in system_prompt.lower():
+            inputs = next((obj for obj in OpenAIHandler._objects(user_prompt)
+                           if "graph_revision" in obj), {})
+            revision = inputs.get("graph_revision")
+            if revision == 1:
+                return "adaptive_subflow", {"operations": [
+                    {"kind": "append", "node": {"id": "review", "kind": "noop"}},
+                    {"kind": "update_pending_edges", "from": "seed", "to": "review"},
+                ]}
+            return "adaptive_subflow", {"operations": [{"kind": "seal"}]}
+
         if "parse the sonarqube scan results" in lower:
             return "aggregate", {
                 "issues": [

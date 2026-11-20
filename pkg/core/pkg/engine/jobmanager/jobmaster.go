@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -21,6 +22,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
+
+var ErrRecoveryBlocked = errors.New("recovery requires reconciliation")
 
 // RunStateStore is the narrow state interface JobMaster needs for persistence.
 // Implementations call the apiserver REST API (never direct DB).
@@ -44,14 +47,19 @@ type EdgeCondition struct {
 // from an FlowInfo and dispatches plans via resourcemanager.ResourceManager.Schedule().
 // Each agentflow run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
-	state     RunStateStore
-	rm        resourcemanager.ResourceManager
-	logger    *utils.Logger
-	tracer    trace.Tracer
-	timeout   time.Duration
-	nodeLimit int
-	maxNodes  int
-	clusterID string
+	state          RunStateStore
+	rm             resourcemanager.ResourceManager
+	logger         *utils.Logger
+	tracer         trace.Tracer
+	timeout        time.Duration
+	nodeLimit      int
+	maxNodes       int
+	clusterID      string
+	maxParallelism int
+	graphRevision  int64
+	instancePrefix string
+	child          bool
+	slots          chan struct{}
 
 	knowledgeWriter KnowledgePostWriter
 
@@ -84,7 +92,11 @@ func NewJobMaster(state RunStateStore, rm resourcemanager.ResourceManager, logge
 		timeout = 30 * time.Minute
 	}
 
-	return &JobMaster{
+	parallelism := cfg.MaxConcurrentNodes
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	return &JobMaster{maxParallelism: parallelism,
 		state: state, rm: rm, logger: logger,
 		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
 		clusterID:   cfg.RuntimeClusterID,
@@ -283,6 +295,21 @@ func (jm *JobMaster) dependencyStateLocked(n string) (resolved, active bool) {
 	if len(jm.deps[n]) == 0 {
 		return true, true
 	}
+	if plan := jm.planMap[n]; plan != nil && plan.NodeSpec.JoinMode == "or" {
+		allResolved := true
+		for _, dep := range jm.deps[n] {
+			if jm.completed[dep] {
+				if expected := jm.edgeConditions[dep+"->"+n]; expected == nil || jm.conditions[dep] == *expected {
+					return true, true
+				}
+			}
+			if !jm.completed[dep] && !jm.skipped[dep] {
+				allResolved = false
+			}
+		}
+		return allResolved, false
+	}
+
 	anyActive := false
 	hasDormantConditional := false
 	for _, d := range jm.deps[n] {
@@ -371,21 +398,27 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
+		flowNodeID := n.FlowNodeID
+		if flowNodeID == "" {
+			flowNodeID = n.ID
+		}
 		nodeSpec := entities.NodeSpecFromNode(n)
 		taskType, err := NodeToTaskType(nodeSpec.Kind)
 		if err != nil {
 			return err
 		}
 		jm.planMap[n.ID] = &entities.ExecutionPlan{
-			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
+			PlanID:                executionPlanID(runID, jm.instancePrefix+n.ID),
 			AgentFlowRunID:        runID,
 			AgentFlowDefinitionID: spec.ResourceName(),
 			Namespace:             spec.Namespace,
 			RuntimeMode:           spec.RuntimeMode,
 			RuntimeClusterID:      jm.clusterID,
-			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
-			TaskType:              taskType, NodeID: n.ID,
+			TaskID:                fmt.Sprintf("task-%s-%s", runID, jm.instancePrefix+n.ID),
+			TaskType:              taskType, NodeID: jm.instancePrefix + n.ID,
+			NodeInstanceID: jm.instancePrefix + n.ID, DispatchEpoch: 1,
 			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
+			GraphRevision: jm.graphRevision, SubflowInstanceID: strings.TrimSuffix(jm.instancePrefix, "/"), FlowNodeID: flowNodeID,
 			NodeSpec: nodeSpec, CreatedAt: time.Now(),
 		}
 	}
@@ -394,11 +427,35 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 
 // ─── Execute ─────────────────────────────────────────────
 
-func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
+func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) (executeErr error) {
+	defer func() {
+		if !jm.child && errors.Is(executeErr, ErrRecoveryBlocked) {
+			run.Status = entities.RunPaused
+			run.Error = executeErr.Error()
+			if err := jm.state.UpdateRun(ctx, run); err != nil {
+				executeErr = fmt.Errorf("%w; persist pause: %v", executeErr, err)
+			}
+		}
+	}()
 	if jm.tracer == nil {
 		jm.tracer = tracing.Tracer("flowgent/jobmaster")
 	}
 
+	if jm.slots == nil {
+		capacity := jm.maxParallelism
+		for _, node := range spec.Nodes {
+			if node.Subflow != nil {
+				limit := node.Subflow.Limits.MaxParallelism
+				if limit == 0 && node.Subflow.Adaptive() {
+					limit = 4
+				}
+				if limit > capacity {
+					capacity = limit
+				}
+			}
+		}
+		jm.slots = make(chan struct{}, capacity)
+	}
 	if err := jm.buildExecutionGraph(spec, run.ID); err != nil {
 		return fmt.Errorf("build execution graph: %w", err)
 	}
@@ -428,7 +485,11 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 	run.Status = entities.RunRunning
 	now := time.Now()
 	run.StartedAt = &now
-	_ = jm.state.UpdateRun(ctx, run)
+	if !jm.child {
+		if err := jm.state.UpdateRun(ctx, run); err != nil {
+			return err
+		}
+	}
 
 	if jm.timeout > 0 {
 		var cancel context.CancelFunc
@@ -436,113 +497,162 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		defer cancel()
 	}
 
-	for iteration := 1; ; iteration++ {
-		select {
-		case <-ctx.Done():
-			slog.Debug("jobmaster execute context done", "err", ctx.Err())
-			return ctx.Err()
-		default:
+	if reader, ok := jm.state.(interface {
+		ListTasks(context.Context, string) ([]*entities.TaskRunInfo, error)
+	}); ok {
+		tasks, err := reader.ListTasks(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("restore node attempts: %w", err)
 		}
-		if jm.HasFailed() {
-			slog.Debug("jobmaster execute has failed", "error", jm.collectFirstError())
-			run.Status = entities.RunFailed
-			run.Error = jm.collectFirstError()
-			run.FinishedAt = TimePtr()
-			span.SetStatus(codes.Error, "failed")
-			if err := jm.state.UpdateRun(ctx, run); err != nil {
-				return err
+		latest := map[string]*entities.TaskRunInfo{}
+		for _, t := range tasks {
+			t.NormalizeAliases()
+			if old := latest[t.NodeKey]; old == nil || t.Attempt > old.Attempt {
+				latest[t.NodeKey] = t
 			}
-			jm.postHandle(run, spec)
-			return nil
 		}
-		if jm.IsComplete() {
-			slog.Debug("jobmaster execute is complete")
-			run.Status = entities.RunCompleted
-			run.FinishedAt = TimePtr()
-			span.SetStatus(codes.Ok, "done")
-			if err := jm.state.UpdateRun(ctx, run); err != nil {
-				return err
-			}
-			jm.postHandle(run, spec)
-			return nil
-		}
-
-		ready := jm.Ready()
-		slog.Debug("jobmaster execute iteration", "iteration", iteration, "ready", ready,
-			"completed", len(jm.completed), "total", len(jm.nodes), "deps", jm.dumpGraphState())
-		if len(ready) == 0 {
-			// Ready may have propagated the final inactive branch to skipped.
-			// Re-enter the loop so the normal completion path persists the run.
-			if jm.IsComplete() {
-				continue
-			}
-			slog.Debug("jobmaster execute no ready nodes, breaking", "completed", len(jm.completed),
-				"failed", len(jm.failed), "skipped", len(jm.skipped), "pending", len(jm.pending))
-			break
-		}
-
-		for _, nodeID := range ready {
-			plan, ok := jm.planMap[nodeID]
-			if !ok {
-				slog.Debug("jobmaster execute plan not found", "node", nodeID)
-				continue
-			}
-
-			nodeCtx, nodeSpan := jm.tracer.Start(ctx, "jobmaster.node",
-				trace.WithAttributes(
-					attribute.String("agentflow.id", spec.ResourceName()),
-					attribute.String("run.id", run.ID),
-					attribute.String("flowgent.node_id", nodeID),
-					attribute.String("flowgent.task_type", string(plan.TaskType)),
-					attribute.String("flowgent.plan_id", plan.PlanID),
-					attribute.String("flowgent.task_id", plan.TaskID),
-				),
-			)
-
-			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.Args)
-
-			slog.Debug("jobmaster execute scheduling node", "node", nodeID, "type", plan.TaskType, "planID", plan.PlanID)
-			result, err := jm.scheduleNodeWithRetry(nodeCtx, plan)
-			if err != nil {
-				slog.Warn("jobmaster execute node failed", "node", nodeID, "err", err)
-				jm.logger.Error("node failed", "node", nodeID, "err", err)
-				jm.nodeErrors[nodeID] = err.Error()
-				nodeSpan.RecordError(err)
-				nodeSpan.SetStatus(codes.Error, "node attempts exhausted")
-				nodeSpan.End()
-				jm.Fail(nodeID)
-				continue
-			}
-
-			slog.Debug("jobmaster execute node done", "node", nodeID, "hasOutput", result.Output != nil)
-			if result.Output != nil {
-				jm.nodeOutputs[nodeID] = result.Output
-				nodeSpan.SetAttributes(attribute.Bool("flowgent.has_output", true))
-			}
-			jm.Done(nodeID)
-			nodeSpan.SetStatus(codes.Ok, "done")
-			nodeSpan.End()
-
-			if plan.TaskType == entities.TaskCondition {
-				if r, ok := result.Output["result"].(bool); ok {
-					jm.SetConditionResult(nodeID, r)
+		for id, plan := range jm.planMap {
+			if t := latest[plan.NodeID]; t != nil {
+				switch t.Status {
+				case entities.Success:
+					jm.nodeOutputs[id] = t.Output
+					jm.Done(id)
+					if plan.TaskType == entities.TaskCondition {
+						if v, ok := t.Output["result"].(bool); ok {
+							jm.SetConditionResult(id, v)
+						}
+					}
+				case entities.TaskWaiting:
+					if plan.TaskType != entities.TaskSubflow {
+						return fmt.Errorf("%w: unresolved waiting task %s", ErrRecoveryBlocked, plan.NodeID)
+					}
+					plan.RetryCount = t.Attempt - 1
+					plan.StartedAt = t.StartedAt
+				case entities.TaskPending:
+					plan.RetryCount = t.Attempt - 1
+				case entities.Running:
+					return fmt.Errorf("%w: node %s has an unresolved running attempt", ErrRecoveryBlocked, plan.NodeID)
+				case entities.Skipped:
+					jm.Skip(id)
+				case entities.Failed:
+					plan.RetryCount = t.Attempt
+					plan.ParentTaskRunID = t.ID
 				}
 			}
 		}
 	}
-	slog.Debug("jobmaster execute loop exited, returning nil")
-	return nil
+	type completion struct {
+		id     string
+		result *entities.TaskResult
+		err    error
+	}
+	events := make(chan completion, jm.maxParallelism)
+	inflight := map[string]bool{}
+	workCtx, cancelWork := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() { cancelWork(); workers.Wait() }()
+	for {
+		if err := ctx.Err(); err != nil {
+			cancelWork()
+			return err
+		}
+		if jm.HasFailed() && len(inflight) == 0 {
+			run.Status = entities.RunFailed
+			run.Error = jm.collectFirstError()
+			run.FinishedAt = TimePtr()
+			span.SetStatus(codes.Error, "failed")
+			if !jm.child {
+				if err := jm.state.UpdateRun(ctx, run); err != nil {
+					return err
+				}
+				jm.postHandle(run, spec)
+			}
+			return nil
+		}
+		if jm.IsComplete() && len(inflight) == 0 {
+			run.Status = entities.RunCompleted
+			run.FinishedAt = TimePtr()
+			span.SetStatus(codes.Ok, "done")
+			if !jm.child {
+				if err := jm.state.UpdateRun(ctx, run); err != nil {
+					return err
+				}
+				jm.postHandle(run, spec)
+			}
+			return nil
+		}
+		ready := jm.Ready()
+		for _, id := range ready {
+			if inflight[id] || len(inflight) >= jm.maxParallelism || jm.HasFailed() {
+				continue
+			}
+			plan := jm.planMap[id]
+			if plan == nil {
+				return fmt.Errorf("missing execution plan %s", id)
+			}
+			plan.Input = jm.resolveInput(id, plan.NodeSpec.Args)
+			inflight[id] = true
+			workers.Add(1)
+			go func(id string, plan *entities.ExecutionPlan) {
+				defer workers.Done()
+				nodeCtx, nodeSpan := jm.tracer.Start(workCtx, "jobmaster.node", trace.WithAttributes(attribute.String("flowgent.node_id", id), attribute.String("run.id", run.ID)))
+				defer nodeSpan.End()
+				var result *entities.TaskResult
+				var err error
+				if plan.TaskType == entities.TaskSubflow {
+					result, err = jm.executeSubflow(nodeCtx, run, plan)
+				} else {
+					result, err = jm.scheduleNodeWithRetry(nodeCtx, plan)
+				}
+				events <- completion{id, result, err}
+			}(id, plan)
+		}
+		if len(inflight) == 0 {
+			if jm.IsComplete() {
+				continue
+			}
+			return fmt.Errorf("execution stalled with unresolved dependencies: %s", jm.dumpGraphState())
+		}
+		select {
+		case <-ctx.Done():
+			cancelWork()
+			return ctx.Err()
+		case event := <-events:
+			delete(inflight, event.id)
+			if errors.Is(event.err, ErrRecoveryBlocked) {
+				return event.err
+			}
+			if event.err != nil {
+				jm.nodeErrors[event.id] = event.err.Error()
+				jm.Fail(event.id)
+				continue
+			}
+			if event.result == nil {
+				jm.nodeErrors[event.id] = "missing task result"
+				jm.Fail(event.id)
+				continue
+			}
+			jm.nodeOutputs[event.id] = event.result.Output
+			jm.Done(event.id)
+			if jm.planMap[event.id].TaskType == entities.TaskCondition {
+				if v, ok := event.result.Output["result"].(bool); ok {
+					jm.SetConditionResult(event.id, v)
+				}
+			}
+		}
+	}
 }
 
 func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
 	policy := jm.nodeRetryPolicy(plan.NodeSpec.Retry)
 	plan.MaxRetries = policy.Max
 	baseTaskID := plan.TaskID
-	previousTaskID := ""
+	firstAttempt := plan.RetryCount
+	previousTaskID := plan.ParentTaskRunID
 	delay := policy.Initial
-	var lastErr error
+	var lastErr error = fmt.Errorf("persisted retry budget exhausted")
 
-	for attempt := 0; attempt <= policy.Max; attempt++ {
+	for attempt := 0; firstAttempt+attempt <= policy.Max; attempt++ {
 		if attempt > 0 {
 			if err := waitForRetry(ctx, delay); err != nil {
 				return nil, err
@@ -550,9 +660,10 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 			delay = nextRetryDelay(delay, policy)
 		}
 
-		plan.TaskID = taskAttemptID(baseTaskID, attempt)
+		plan.TaskID = taskAttemptID(baseTaskID, firstAttempt+attempt)
 		plan.ParentTaskRunID = previousTaskID
-		plan.RetryCount = attempt
+		plan.RetryCount = firstAttempt + attempt
+		plan.FencingToken = plan.DispatchEpoch
 		plan.State = entities.TaskPending
 		plan.Result = nil
 		plan.FinishedAt = nil
@@ -576,10 +687,37 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 			attemptSpan.RecordError(err)
 			attemptSpan.SetStatus(codes.Error, "persist attempt failed")
 			attemptSpan.End()
+			if plan.SubflowInstanceID != "" {
+				return nil, fmt.Errorf("%w: persist task attempt: %v", ErrRecoveryBlocked, err)
+			}
 			return nil, fmt.Errorf("persist task attempt: %w", err)
 		}
 
-		result, scheduleErr := jm.rm.Schedule(attemptCtx, plan)
+		var result *entities.TaskResult
+		var scheduleErr error
+		if jm.slots != nil {
+			select {
+			case jm.slots <- struct{}{}:
+			case <-attemptCtx.Done():
+				attemptSpan.End()
+				return nil, attemptCtx.Err()
+			}
+		}
+		result, scheduleErr = jm.rm.Schedule(attemptCtx, plan)
+		if jm.slots != nil {
+			<-jm.slots
+		}
+		if scheduleErr == nil && result != nil && result.State == entities.TaskWaiting {
+			attemptSpan.End()
+			return nil, fmt.Errorf("%w: task yielded waiting", ErrRecoveryBlocked)
+		}
+		// A transport failure does not prove a remote tool stopped. Preserve the
+		// committed Attempt and require reconciliation rather than issue it again.
+		if plan.DispatchEpoch > 0 && scheduleErr != nil {
+			attemptSpan.RecordError(scheduleErr)
+			attemptSpan.End()
+			return nil, fmt.Errorf("%w: %v", ErrRecoveryBlocked, scheduleErr)
+		}
 		lastErr = scheduleErr
 		if lastErr == nil && result == nil {
 			lastErr = fmt.Errorf("task execution returned no result")
@@ -613,7 +751,10 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 		plan.Result = &entities.TaskResult{Error: lastErr.Error()}
 		task.Status = entities.Failed
 		task.Error = lastErr.Error()
-		_ = jm.state.SaveTask(attemptCtx, task)
+		if err := jm.state.SaveTask(attemptCtx, task); err != nil {
+			attemptSpan.End()
+			return nil, fmt.Errorf("persist failed attempt: %w", err)
+		}
 		attemptSpan.RecordError(lastErr)
 		attemptSpan.SetStatus(codes.Error, "attempt failed")
 		attemptSpan.End()
@@ -851,8 +992,13 @@ func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 // taskRunFromPlan converts an ExecutionPlan to a minimal TaskRunInfo for persistence.
 func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 	return &entities.TaskRunInfo{
-		BaseEntity:      entities.BaseEntity{ID: plan.TaskID},
-		RunID:           plan.AgentFlowRunID,
+		BaseEntity:    entities.BaseEntity{ID: plan.TaskID, Metadata: map[string]any{"node_spec": plan.NodeSpec}},
+		RunID:         plan.AgentFlowRunID,
+		GraphRevision: plan.GraphRevision, SubflowInstanceID: plan.SubflowInstanceID,
+		FlowNodeID:      plan.FlowNodeID,
+		NodeInstanceID:  plan.NodeInstanceID,
+		DispatchEpoch:   plan.DispatchEpoch,
+		FencingToken:    plan.FencingToken,
 		NodeKey:         plan.NodeID,
 		Attempt:         plan.RetryCount + 1,
 		Status:          plan.State,
@@ -1051,4 +1197,13 @@ func (m *JobManagerMetrics) RecordFailover(ctx context.Context, tmID string) {
 
 func (m *JobManagerMetrics) RecordDAGBuild(ctx context.Context, agentFlowID string, dur time.Duration) {
 	m.DAGBuildDuration.Record(ctx, float64(dur.Milliseconds()), metric.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
+}
+
+func executionPlanID(runID, instance string) string {
+	id := fmt.Sprintf("plan-%s-%s", runID, instance)
+	if len(id) <= 96 {
+		return id
+	}
+	sum := sha256.Sum256([]byte(runID + "\x00" + instance))
+	return fmt.Sprintf("plan-%x", sum[:24])
 }

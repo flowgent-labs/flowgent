@@ -594,3 +594,87 @@ config + model + store
    runtime evaluates the graph, **then** the node MUST NOT be represented as a
    newly executed iteration. Authors may use node retry today; nested subflow
    execution is a target capability and is not yet implemented.
+
+## Subflow vNext implementation boundary
+
+The existing `kind: agentflow` node accepts `subflow: {ref, mode}` alongside the
+legacy `agentflow: <name>` reference. An omitted mode is `static`. JobMaster
+executes children with the same ResourceManager and FlowRun; a parent waiting
+for children MUST NOT occupy a TM slot. Independent child Runs are explicitly
+rejected by this implementation.
+
+Adaptive children use the same scheduler, with bounded parallel dispatch and
+opt-in `join_mode: and|or` (default dependency semantics remain unchanged).
+`flow_node_id` identifies the definition/template, `node_instance_id` identifies
+a scoped logical instance, and the existing NodeRun `id` identifies one Attempt.
+Retries retain the logical instance and generate a new Attempt ID. Existing
+`node_key` and ExecutionPlan DTO fields remain compatible.
+
+An Adaptive Subflow pins its referenced graph on initialization. Supervisor
+results are saved as NodeRuns before their operations are submitted. An
+accepted decision ID is content-bound and idempotent. `GraphPatch` applies only
+to the addressed Subflow instance, using `expected_revision` and an API-owned
+transaction. Supported operations are `append`, `replace_pending`,
+`cancel_pending`, `update_pending_edges`, and `seal`, subject to the configured
+allowlist. Strict acyclicity applies to Adaptive graphs; legacy Static
+conditional feedback semantics are preserved.
+
+A persisted PENDING NodeRun is already dispatched work and MUST NOT be patched.
+Live changes are conservatively deferred with HTTP 409. This is **not yet a
+cooperative safepoint handshake**: timeout configuration does not authorize
+cancelling or replacing an active worker. Required completion nodes and their
+incoming dependencies are protected. Seal requires all registered child nodes
+to have SUCCESS/SKIPPED outcomes, with SUCCESS for every required node.
+Dynamic nodes cannot acquire capabilities outside the initial child templates.
+Named policy/Schema references currently fail closed because a resolver has
+not been installed; the referenced Flow's inline schemas are checked.
+
+Persistence reuses existing tables without a DDL migration:
+
+| Existing model | Extension |
+|---|---|
+| `orh_run.metadata` | Current Subflow graphs, revisions, decision receipts, run graph/event progress |
+| `orh_event` | Immutable accepted graph snapshots and event sequence |
+| `orh_node_run.metadata` | Definition/instance identity, dispatch epoch, immutable admitted node specification |
+| `orh_dispatch` | Committed internal ExecutionPlan and durable claim |
+| `orh_outbox` | Transactional dispatch/result/graph notifications; topic in metadata |
+
+Additional REST actions are `/runs/{run_id}/definition`,
+`/runs/{run_id}/subflows/initialize`, `/runs/{run_id}/graph-patches`, and
+`/runs/{run_id}/node-runs/{node_run_id}/{dispatch|claim}` under the existing
+namespace prefix and AuthGuard middleware. Existing routes and execution MQTT
+topics are unchanged. Notifications add `message_id`, `node_instance_id`,
+`node_run_id`, and `dispatch_epoch`. Graph commits use the additive scoped topic
+`flowgent/v1/{namespace}/runs/{run_id}/graph/committed`.
+
+API transactions commit graph or result state together with Outbox records.
+The API-hosted publisher claims a bounded lease, retries failed QoS 1
+publication, and recovers unclaimed dispatches. Consumers claim an Attempt
+before tools run. Duplicate completion is idempotent; conflicting terminal
+results and results from superseded Attempts are rejected. Kubernetes RM
+matches Attempt/epoch and queries committed results through the API, including
+artifact hydration, so a lost notification cannot lose a committed result.
+This extends the existing execution transport rather than adding another bus.
+
+Recovery uses committed graph state and latest NodeRun Attempts. Completed
+nodes are restored without execution. Pending dispatches retain their identity.
+An unresolved RUNNING Attempt pauses recovery for reconciliation instead of
+blindly invoking tools again. This safe stop **does not implement automatic
+lease/effect reconciliation**. Parent and nested resource caps are bounded in
+process, but inherited cumulative cost/time budgets remain incomplete.
+
+Validation is available through `make test-vnext`, `make test-ut`,
+`make test-e2e-runner`, and the security fixer scenarios 61/62. Scenarios 61/62
+have also been exercised against an isolated PostgreSQL schema with the actual
+API/JM/TM process and deterministic LLM fixture. That run used the Standalone
+ResourceManager; it does not establish Kubernetes/EMQX crash recovery.
+
+The following requested acceptance boundaries remain open and MUST NOT be
+represented as delivered: cooperative live safepoints, mid-flight graph reload, coordinator fencing, durable WAITING and
+approval continuation, a consistent RunCheckpoint plus verified Workspace
+Snapshot recovery, automatic recovery from simultaneous JM/TM/EMQX failure,
+ExternalEffect UNKNOWN/reconciliation and PR deduplication, failure-aware
+Supervisor replanning, pinned nested dependency/agent revisions, SourceEvent
+intake/WorkItem routing/Watchdog governance, Outbox retention/backlog metrics,
+and policy/Schema reference resolution. Existing Checkpoint, Sandbox, Artifact,
+AuthGuard and `orh_effect_execution` models remain the integration points.

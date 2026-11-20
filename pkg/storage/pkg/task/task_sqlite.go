@@ -89,6 +89,13 @@ func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, item *entities.Task
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	duplicate, err := prepareExecution(ctx, storage.WrapSQLTransaction(tx), item)
+	if err != nil {
+		return err
+	}
+	if duplicate {
+		return nil
+	}
 	var namespace string
 	if err = tx.QueryRowContext(ctx, `SELECT namespace_id FROM orh_run WHERE id=?`, item.RunID).Scan(&namespace); err != nil {
 		return fmt.Errorf("resolve run namespace: %w", err)
@@ -101,6 +108,11 @@ func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, item *entities.Task
 	for key, value := range item.Metadata {
 		metadata[key] = value
 	}
+	metadata["graph_revision"] = item.GraphRevision
+	metadata["subflow_instance_id"] = item.SubflowInstanceID
+	metadata["flow_node_id"] = item.FlowNodeID
+	metadata["node_instance_id"] = item.NodeInstanceID
+	metadata["dispatch_epoch"] = item.DispatchEpoch
 	metadata["max_retries"] = item.MaxRetries
 	metadata["sequence"] = item.Sequence
 	workspace := item.WorkspaceVersion
@@ -112,7 +124,7 @@ func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, item *entities.Task
 		return err
 	}
 	if n, _ := result.RowsAffected(); n != 1 {
-		return fmt.Errorf("stale node-run fencing token")
+		return executionConflict("stale node-run fencing token")
 	}
 	if item.Checkpoint != nil {
 		if err = appendCheckpointSQLite(ctx, tx, item, workspace); err != nil {
@@ -129,6 +141,9 @@ func (s *TaskSQLiteStore) UpdateTaskRun(ctx context.Context, item *entities.Task
 		if visible != 1 {
 			return storage.ErrFlowgentSqlScopeDenied
 		}
+	}
+	if err = appendResultEvent(ctx, storage.WrapSQLTransaction(tx), item); err != nil {
+		return err
 	}
 	if err = tx.Commit(); err != nil {
 		return err

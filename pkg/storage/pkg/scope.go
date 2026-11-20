@@ -88,6 +88,8 @@ var resourcePathsByTable = map[string][]FlowgentResourcePath{
 		),
 	},
 	"orh_run": {
+		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`), LiteralResource("subflows"), LiteralResource("initialize")),
+		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`), LiteralResource("graph-patches")),
 		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`)),
 		ResourcePath(
 			LiteralResource("flows"),

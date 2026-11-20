@@ -342,3 +342,8 @@ Manifest、REST State、MQTT Routing、PostgreSQL、Kubernetes Resource 或外�
 实际 finding；复扫必须对应交付提交与新的成功 CE 任务，并逐项查询选中的 finding。
 
 当前 Java 源码分析没有编译依赖字节码，因此不能据此声称完整的字节码/类型解析覆盖。
+
+新增 vNext 场景：`61` 验证旧 Static 子流、Adaptive Supervisor 扩图、Seal、图 CAS
+和决策重放；`62` 验证 10 个持久领取、重复完成、结果事务 Outbox 与旧 Attempt
+拒绝。使用确定性 LLM 测试服务执行。这些是协议与编排验证；尚未实现的恢复边界见
+[AgentFlow 实现边界](../../docs/architecture/agent-flow_ZH.md#subflow-vnext-实现边界)。

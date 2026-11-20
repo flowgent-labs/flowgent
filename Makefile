@@ -292,3 +292,11 @@ deploy-secret-%:
 	  *:*) $(MAKE) $(subst :,-,$@) ;; \
 	  *)   echo "Unknown target: $@. Run 'make help' for usage."; exit 1 ;; \
 	esac
+
+# Focused vNext protocol validation, through the same approved build entrypoint.
+.PHONY: test-vnext
+test-vnext:
+	cd pkg/model && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
+	cd pkg/storage && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
+	cd pkg/api && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
+	cd pkg/core && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/engine/jobmanager ./pkg/engine/taskmanager ./pkg/engine/resourcemanager ./pkg/client

@@ -39,6 +39,15 @@ type runRecord struct {
 
 func (r *runRecord) entity() *entities.FlowRunInfo {
 	item := &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: r.ID, Description: r.Description, Namespace: r.Namespace, Status: string(r.Status), CreatedAt: r.CreatedAt, CreatedBy: r.CreatedBy, UpdatedAt: r.UpdatedAt, UpdatedBy: r.UpdatedBy, RowVersion: r.RowVersion, Metadata: r.Metadata}, FlowID: r.FlowID, FlowName: r.FlowName, AgentFlowID: r.FlowName, FlowRevisionID: r.FlowRevisionID, Status: r.Status, Input: r.Input, Vars: r.Input, Output: r.Output, RunInstruction: r.RunInstruction, SummarizeEnabled: r.SummarizeEnabled, ContextSnapshot: r.ContextSnapshot, TriggerType: r.TriggerType, TriggerSource: r.TriggerSource, TriggerPayload: r.TriggerPayload, RuntimeMode: r.RuntimeMode, RuntimeClusterID: r.RuntimeClusterID, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt}
+	item.StateVersion = r.RowVersion
+	if progress, ok := r.Metadata["execution_progress"].(map[string]any); ok {
+		if v, ok := progress["graph_revision"].(float64); ok {
+			item.GraphRevision = int64(v)
+		}
+		if v, ok := progress["last_event_seq"].(float64); ok {
+			item.LastEventSeq = int64(v)
+		}
+	}
 	if message, ok := r.Error["message"].(string); ok {
 		item.Error = message
 	}

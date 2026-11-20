@@ -51,7 +51,11 @@ func (s *FlowRunPostgresStore) List(ctx context.Context, filter ListFilter) (*en
 			clauses = append(clauses, fmt.Sprintf("%s=$%d", column, len(args)))
 		}
 	}
-	add("status", filter.Status)
+	if filter.Status == "PENDING,RUNNING" {
+		clauses = append(clauses, "status IN ('PENDING','RUNNING')")
+	} else {
+		add("status", filter.Status)
+	}
 	add("runtime_mode", filter.RuntimeMode)
 	add("runtime_cluster_id", filter.K8sNamespace)
 	if filter.FlowID != "" {

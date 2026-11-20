@@ -367,3 +367,10 @@ successful CE task; selected finding IDs are checked directly after analysis.
 
 The Java source analysis currently runs without compiling dependency bytecode;
 its results do not establish complete bytecode/type-resolution coverage.
+
+The additional vNext scenarios are `61` (legacy Static child execution,
+Adaptive Supervisor expansion, Seal, graph CAS and decision replay) and `62`
+(10 persistent claims, duplicate completion, transactional result Outbox and
+late Attempt rejection). Run with the deterministic LLM fixture. These are
+protocol/orchestration checks; the unimplemented recovery boundaries are listed
+in [the AgentFlow implementation boundary](../../docs/architecture/agent-flow.md#subflow-vnext-implementation-boundary).

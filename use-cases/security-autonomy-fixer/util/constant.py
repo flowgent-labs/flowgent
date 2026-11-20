@@ -26,6 +26,8 @@ class E2EOtherDefinitions:
     LOCAL_SCANNER_PORT = int(os.getenv("FLOWGENT_E2E_SCANNER_PORT", "39093"))
 
     SCENARIOS = {
+        "61": ("Subflow — Static, Adaptive, CAS and Seal", "verifier.agentflow.s61_dynamic_subflow"),
+        "62": ("Durable execution — Claims, immutable results and Outbox", "verifier.agentflow.s62_durable_delivery"),
         "01": (
             "E2E Structure — Layered Deployment and Verifier Contracts",
             "verifier.infra.s01_structure",

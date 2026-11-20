@@ -424,3 +424,67 @@ config + model + storage
 5. **Given** commit、PR 或 notification 等副作用，**when** 流程到达该操作，**then** 它 MUST 在所有已配置确定性与人工门禁之后，由显式 tool/sandbox 节点执行。
 6. **目标契约（非当前运行时行为）：Given** supervisor 节点，**when** 它提出控制变更，**then** 只能应用配置允许且未超出 retry/node/injection 配额的 action。当前只校验 Action，JobManager 不应用图变更。
 7. **Given** 指向 completed 节点的 back-edge，**when** 当前运行时计算图，**then** MUST NOT 把它表示为新一轮执行。当前可用 Node Retry；嵌套 Subflow 执行仍是未实现的目标能力。
+
+## Subflow vNext 实现边界
+
+现有 `kind: agentflow` 节点兼容旧 `agentflow: <name>` 引用，并扩展
+`subflow: {ref, mode}`；省略 mode 时按 `static` 执行。JobMaster 通过相同
+ResourceManager 和 FlowRun 执行子节点，父节点等待时 MUST NOT 占用 TM Slot。
+当前实现明确拒绝独立子 Run。
+
+Adaptive 子流复用同一个调度器，支持有界并发以及显式
+`join_mode: and|or`；默认依赖语义保持兼容。`flow_node_id` 标识定义或模板，
+`node_instance_id` 标识有作用域的逻辑实例，已有 NodeRun `id` 标识一次 Attempt。
+重试保留逻辑实例、生成新 Attempt ID；保留 `node_key` 和 ExecutionPlan DTO。
+
+Adaptive 初始化时固定引用图。Supervisor 输出先保存为 NodeRun，再提交操作。
+已接受决策的 ID 与内容绑定，重放幂等。GraphPatch 只能修改指定 Subflow 实例，
+通过 `expected_revision` 和 API 事务提交。按 allowlist 支持 `append`、
+`replace_pending`、`cancel_pending`、`update_pending_edges`、`seal`。
+Adaptive 图执行严格无环校验；旧 Static 条件反馈边语义保持兼容。
+
+已持久化的 PENDING NodeRun 也算已派发，MUST NOT 被 Patch 改写。涉及活跃执行
+时保守返回 HTTP 409，**尚未实现协作式安全点握手**；超时配置不代表可取消或替换
+Worker。必须完成的节点及其入边受到保护。Seal 要求已登记子节点全部为
+SUCCESS/SKIPPED，且 required_nodes 全部 SUCCESS。动态节点不能扩大初始模板
+能力。命名 Policy/Schema 引用尚无解析器，因此明确拒绝；校验引用 Flow 的内联 Schema。
+
+持久化复用已有表，无 DDL 迁移：
+
+| 已有模型 | 扩展内容 |
+|---|---|
+| `orh_run.metadata` | 当前子图、版本、决策回执、Run 图版本及事件进度 |
+| `orh_event` | 不可变的已接受图快照及事件序号 |
+| `orh_node_run.metadata` | 定义/实例身份、派发代次、已准入的节点定义 |
+| `orh_dispatch` | 内部 ExecutionPlan 的持久化与领取 |
+| `orh_outbox` | 派发、结果、图变更通知；metadata 保存 topic |
+
+新增 REST action：`/runs/{run_id}/definition`、
+`/runs/{run_id}/subflows/initialize`、`/runs/{run_id}/graph-patches` 和
+`/runs/{run_id}/node-runs/{node_run_id}/{dispatch|claim}`，沿用命名空间前缀及
+AuthGuard 中间件。已有路由和执行 MQTT Topic 保持不变；消息增加 message_id、
+node_instance_id、node_run_id、dispatch_epoch。图提交新增作用域 Topic：
+`flowgent/v1/{namespace}/runs/{run_id}/graph/committed`。
+
+API 事务同时提交图或结果状态与 Outbox。API 内 Publisher 领取有时限的发布租约，
+重试 QoS 1 发布并恢复未被领取的派发。Consumer 在调用工具前领取 Attempt。
+重复完成幂等，冲突终态及已被后继 Attempt 替代的旧结果会被拒绝。Kubernetes RM
+匹配 Attempt/epoch，并通过 API 查询已提交结果和还原工件数据；通知丢失不丢失
+执行结果。本实现扩展现有传输链路，没有新增消息总线。
+
+恢复读取已提交图和最新 NodeRun：Completed 不重跑，Pending 保留派发身份；
+无法确定的 RUNNING Attempt 会暂停等待核对，避免盲目重复工具动作。该安全停驻
+**尚未实现自动租约与副作用对账**。嵌套执行在进程内共享并发上限，但父子累计
+费用和时间预算继承尚不完整。
+
+验证入口为 `make test-vnext`、`make test-ut`、`make test-e2e-runner` 和安全修复
+场景 61/62。61/62 已在隔离 PostgreSQL Schema、实际 API/JM/TM 进程和确定性
+LLM 测试服务上验证；该运行使用 Standalone ResourceManager，不能作为
+Kubernetes/EMQX 故障恢复已通过的证明。
+
+仍未完成且 MUST NOT 宣称已交付的验收边界：协作式活跃安全点、在途图重新装载、协调器 fencing、持久 WAITING 与
+审批继续、一致 RunCheckpoint 与可校验 Workspace Snapshot 恢复、JM/TM/EMQX
+同时故障自动恢复、ExternalEffect UNKNOWN/对账及 PR 去重、区分失败类型的
+Supervisor 重规划、嵌套依赖及 Agent Revision 固定、SourceEvent/WorkItem/
+Watchdog、Outbox 清理及积压指标、Policy/Schema 引用解析。继续复用现有
+Checkpoint、Sandbox、Artifact、AuthGuard 与 `orh_effect_execution` 集成边界。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -15,14 +16,16 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/storage/pkg/task"
+	taskstore "github.com/flowgent-labs/flowgent/storage/pkg/task"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type FlowRunHandler struct {
+	db        any
+	subflows  *flowrun.SubflowStore
 	runStore  flowrun.IFlowRunStore
-	taskStore task.ITaskStore
+	taskStore taskstore.ITaskStore
 	payloads  taskpayload.ITaskPayloadProvider
 	mqtt      MQTTPublisher
 	logger    *utils.Logger
@@ -30,19 +33,19 @@ type FlowRunHandler struct {
 
 func NewFlowRunHandler(s storage.IStorage, payloads taskpayload.ITaskPayloadProvider, mqtt MQTTPublisher, logger *utils.Logger) *FlowRunHandler {
 	var runStore flowrun.IFlowRunStore
-	var taskStore task.ITaskStore
+	var taskStore taskstore.ITaskStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
 		runStore = flowrun.NewFlowRunPostgresStore(db)
-		taskStore = task.NewTaskPostgresStore(db)
+		taskStore = taskstore.NewTaskPostgresStore(db)
 	case *sql.DB:
 		runStore = flowrun.NewFlowRunSQLiteStore(db)
-		taskStore = task.NewTaskSQLiteStore(db)
+		taskStore = taskstore.NewTaskSQLiteStore(db)
 	}
 	if payloads == nil {
 		payloads = taskpayload.NewDefaultTaskPayloadProvider(0)
 	}
-	return &FlowRunHandler{runStore: runStore, taskStore: taskStore, payloads: payloads, mqtt: mqtt, logger: logger}
+	return &FlowRunHandler{db: s.DB(), subflows: flowrun.NewSubflowStore(s.DB()), runStore: runStore, taskStore: taskStore, payloads: payloads, mqtt: mqtt, logger: logger}
 }
 
 // Create inserts a new FlowRunInfo.
@@ -356,6 +359,10 @@ func (h *FlowRunHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.taskStore.UpdateTaskRun(r.Context(), &task); err != nil {
 		h.cleanupReplacedPayloads(r.Context(), existing, &task)
+		if errors.Is(err, taskstore.ErrExecutionConflict) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		h.logger.Error("save task", "error", err)
 		http.Error(w, "internal", 500)
 		return

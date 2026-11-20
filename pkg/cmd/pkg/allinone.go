@@ -247,6 +247,9 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 			state.cfg.Messager.MQTT.Password)
 	}
 
+	if mqttPub != nil {
+		go storage.RunOutboxPublisher(context.Background(), state.store.DB(), mqttPub.Publish)
+	}
 	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, "default", mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	skillHandler := handler.NewSkillHandler(state.store)

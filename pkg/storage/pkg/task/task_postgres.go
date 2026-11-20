@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -75,6 +77,24 @@ func (s *TaskPostgresStore) CreateTaskRun(ctx context.Context, item *entities.Ta
 	return s.UpdateTaskRun(ctx, item)
 }
 func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, item *entities.TaskRunInfo) error {
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		err = s.updateTaskRunOnce(ctx, item)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || (pgErr.Code != "40001" && pgErr.Code != "40P01") {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return err
+}
+func (s *TaskPostgresStore) updateTaskRunOnce(ctx context.Context, item *entities.TaskRunInfo) error {
 	item.NormalizeAliases()
 	if item.ID == "" {
 		item.ID = uuid.NewString()
@@ -94,6 +114,13 @@ func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, item *entities.Ta
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	duplicate, err := prepareExecution(ctx, storage.WrapSQLTransaction(tx), item)
+	if err != nil {
+		return err
+	}
+	if duplicate {
+		return nil
+	}
 	var namespace string
 	if err = tx.QueryRow(ctx, `SELECT namespace_id FROM orh_run WHERE id=$1`, item.RunID).Scan(&namespace); err != nil {
 		return fmt.Errorf("resolve run namespace: %w", err)
@@ -106,6 +133,11 @@ func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, item *entities.Ta
 	for key, value := range item.Metadata {
 		metadata[key] = value
 	}
+	metadata["graph_revision"] = item.GraphRevision
+	metadata["subflow_instance_id"] = item.SubflowInstanceID
+	metadata["flow_node_id"] = item.FlowNodeID
+	metadata["node_instance_id"] = item.NodeInstanceID
+	metadata["dispatch_epoch"] = item.DispatchEpoch
 	metadata["max_retries"] = item.MaxRetries
 	metadata["sequence"] = item.Sequence
 	workspace := item.WorkspaceVersion
@@ -117,7 +149,7 @@ func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, item *entities.Ta
 		return err
 	}
 	if result.RowsAffected() != 1 {
-		return fmt.Errorf("stale node-run fencing token")
+		return executionConflict("stale node-run fencing token")
 	}
 	if item.Checkpoint != nil {
 		if err = appendCheckpointPG(ctx, tx, item, workspace); err != nil {
@@ -134,6 +166,9 @@ func (s *TaskPostgresStore) UpdateTaskRun(ctx context.Context, item *entities.Ta
 		if visible != 1 {
 			return storage.ErrFlowgentSqlScopeDenied
 		}
+	}
+	if err = appendResultEvent(ctx, storage.WrapSQLTransaction(tx), item); err != nil {
+		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return err

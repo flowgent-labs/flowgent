@@ -20,6 +20,7 @@ const runLockTTL = 2 * time.Minute
 type JobManagerConfig struct {
 	FlowExecutionTimeout time.Duration
 	MaxNodeRetries       int
+	MaxConcurrentNodes   int
 	MaxConcurrentFlows   int
 	RuntimeClusterID     string
 }
@@ -32,6 +33,7 @@ type JobManager struct {
 	cfg             *JobManagerConfig
 	knowledgeClient *client.FlowgentClient
 	runLock         lock.DistributedLock
+	activeRuns      sync.Map
 }
 
 // NewJobManager creates the shared JobManager singleton.
@@ -121,23 +123,30 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 			// deliberately absent from the durable Run schema. Runtime mode plus
 			// Flow/Run identity selects the work; the owning JM then injects its
 			// configured namespace before dispatch.
-			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), string(cfg.RuntimeMode), "", cfg.AgentFlowID, 1, 50)
+			page, err := api.ListRuns(ctx, namespace, "PENDING,RUNNING", string(cfg.RuntimeMode), "", cfg.AgentFlowID, 1, 50)
 			if err != nil {
 				slog.Warn("poller ListRuns failed", "err", err)
 				continue
 			}
 			for _, run := range page.Items {
-				if !preparePolledRun(run, cfg) {
+				candidate := *run
+				if candidate.Status == entities.RunRunning {
+					candidate.Status = entities.RunPending
+				}
+				if !preparePolledRun(&candidate, cfg) {
 					continue
 				}
 				// Resolve the durable definition for every new run. The initial map is
 				// only a startup fallback; keeping it authoritative would make local
 				// all-in-one execution ignore Flow edits made through the API/UI.
 				spec := flows[run.AgentFlowID]
-				if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
+				if apiSpec, err := api.GetRunDefinition(ctx, namespace, run.ID); err == nil && apiSpec != nil {
 					spec = apiSpec
 					slog.Debug("poller loaded current flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
-				} else if spec == nil {
+				} else {
+					if run.FlowRevisionID != "" {
+						spec = nil
+					}
 					slog.Warn("poller flow spec unavailable", "agentFlowID", run.AgentFlowID, "err", err)
 				}
 				if spec == nil {
@@ -153,8 +162,13 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 					slog.Debug("poller skip run already claimed", "run", run.ID, "flow", run.AgentFlowID)
 					continue
 				}
+				if _, loaded := jm.activeRuns.LoadOrStore(run.ID, true); loaded {
+					release()
+					continue
+				}
 				go func(r *entities.FlowRunInfo, sp *entities.FlowInfo, runCtx context.Context, release func()) {
 					defer release()
+					defer jm.activeRuns.Delete(r.ID)
 					_ = jm.Submit(runCtx, r, sp)
 				}(run, spec, runCtx, release)
 			}

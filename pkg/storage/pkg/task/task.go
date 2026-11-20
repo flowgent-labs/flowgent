@@ -25,8 +25,12 @@ func PlanToTaskRun(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 		createdAt = now
 	}
 	return &entities.TaskRunInfo{
-		BaseEntity:       entities.BaseEntity{ID: plan.TaskID, CreatedAt: createdAt, UpdatedAt: now},
-		RunID:            plan.AgentFlowRunID,
+		BaseEntity:    entities.BaseEntity{ID: plan.TaskID, CreatedAt: createdAt, UpdatedAt: now},
+		RunID:         plan.AgentFlowRunID,
+		GraphRevision: plan.GraphRevision, SubflowInstanceID: plan.SubflowInstanceID,
+		FlowNodeID:       plan.FlowNodeID,
+		NodeInstanceID:   plan.NodeInstanceID,
+		DispatchEpoch:    plan.DispatchEpoch,
 		AgentFlowRunID:   plan.AgentFlowRunID,
 		NodeKey:          plan.NodeID,
 		NodeID:           plan.NodeID,
@@ -92,6 +96,18 @@ func (r *nodeRecord) entity() *entities.TaskRunInfo {
 	item := &entities.TaskRunInfo{BaseEntity: entities.BaseEntity{ID: r.ID, Description: taskStringValue(r.Description), Namespace: r.Namespace, Status: string(r.Status), CreatedAt: r.CreatedAt, CreatedBy: taskStringValue(r.CreatedBy), UpdatedAt: r.UpdatedAt, UpdatedBy: taskStringValue(r.UpdatedBy), RowVersion: r.RowVersion, Metadata: r.Metadata}, RunID: r.RunID, AgentFlowRunID: r.RunID, NodeKey: r.NodeKey, NodeID: r.NodeKey, Attempt: r.Attempt, RetryCount: r.Attempt - 1, AgentRevisionID: taskStringValue(r.AgentRevisionID), Status: r.Status, Input: r.Input, Output: r.Output, ExecutionMemory: r.ExecutionMemory, Checkpoint: r.Checkpoint, WorkspaceVersion: taskStringValue(r.WorkspaceVersion), ParentNodeRunID: taskStringValue(r.ParentNodeRunID), ParentTaskRunID: taskStringValue(r.ParentNodeRunID), ExecutionID: r.ExecutionID, ExecID: r.ExecutionID, LeaseOwner: taskStringValue(r.LeaseOwner), LeaseExpiresAt: r.LeaseExpiresAt, FencingToken: r.FencingToken, LastHeartbeatAt: r.LastHeartbeatAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt}
 	if value, ok := r.Error["message"].(string); ok {
 		item.Error = value
+	}
+	if revision, ok := r.Metadata["graph_revision"].(float64); ok {
+		item.GraphRevision = int64(revision)
+	}
+	item.SubflowInstanceID, _ = r.Metadata["subflow_instance_id"].(string)
+	item.FlowNodeID, _ = r.Metadata["flow_node_id"].(string)
+	item.NodeInstanceID, _ = r.Metadata["node_instance_id"].(string)
+	if epoch, ok := r.Metadata["dispatch_epoch"].(float64); ok {
+		item.DispatchEpoch = int64(epoch)
+	}
+	if item.NodeInstanceID == "" {
+		item.NodeInstanceID = item.NodeKey
 	}
 	if value, ok := r.Metadata["max_retries"].(float64); ok {
 		item.MaxRetries = int(value)

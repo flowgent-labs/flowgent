@@ -24,6 +24,15 @@ func ValidateNode(node *Node) error {
 	if _, ok := nodeTypes[node.Kind]; !ok {
 		return fmt.Errorf("node %q has unsupported kind %q", node.ID, node.Kind)
 	}
+	if err := node.Subflow.Validate(); err != nil {
+		return err
+	}
+	if node.Subflow != nil && node.Kind != AgentFlowNode {
+		return fmt.Errorf("subflow config requires agentflow kind")
+	}
+	if node.JoinMode != "" && node.JoinMode != "and" && node.JoinMode != "or" {
+		return fmt.Errorf("invalid join_mode")
+	}
 	if node.Node != nil {
 		return ValidateNode(node.Node)
 	}
@@ -51,6 +60,7 @@ const (
 // Node represents a single node in the agentflow DAG. The manifest contract is
 // one flat object whose discriminator is kind.
 type Node struct {
+	FlowNodeID       string                  `json:"flow_node_id,omitempty" yaml:"flow_node_id,omitempty"`
 	ID               string                  `json:"id" yaml:"id"`
 	Kind             NodeType                `json:"kind" yaml:"kind"`
 	Solution         string                  `json:"solution,omitempty" yaml:"solution,omitempty"`
@@ -66,6 +76,8 @@ type Node struct {
 	Concurrency      int                     `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
 	Approval         *HumanApprovalConfig    `json:"approval,omitempty" yaml:"approval,omitempty"`
 	SupervisorConfig *SupervisorConfig       `json:"supervisor_config,omitempty" yaml:"supervisor_config,omitempty"`
+	Subflow          *SubflowConfig          `json:"subflow,omitempty" yaml:"subflow,omitempty"`
+	JoinMode         string                  `json:"join_mode,omitempty" yaml:"join_mode,omitempty"`
 	AgentFlowID      string                  `json:"agentflow,omitempty" yaml:"agentflow,omitempty"`
 	OutputSchema     map[string]any          `json:"output_schema,omitempty" yaml:"output_schema,omitempty"`
 	Runtime          string                  `json:"runtime,omitempty" yaml:"runtime,omitempty"`

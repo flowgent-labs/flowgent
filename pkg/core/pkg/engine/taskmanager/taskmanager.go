@@ -213,6 +213,13 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 	}
 	task.RunID = plan.AgentFlowRunID
 	task.NodeKey = plan.NodeID
+	task.GraphRevision = plan.GraphRevision
+	task.SubflowInstanceID = plan.SubflowInstanceID
+	task.FlowNodeID = plan.FlowNodeID
+	task.NodeInstanceID = plan.NodeInstanceID
+	task.DispatchEpoch = plan.DispatchEpoch
+	task.FencingToken = plan.FencingToken
+	task.Metadata = map[string]any{"node_spec": plan.NodeSpec}
 	task.Input = plan.Input
 	task.Attempt = plan.RetryCount + 1
 	task.MaxRetries = plan.MaxRetries
@@ -235,7 +242,9 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 		task.FinishedAt = &now
 		plan.FinishedAt = &now
 		if tm.state != nil {
-			_ = tm.state.SaveTask(ctx, task)
+			if saveErr := tm.state.SaveTask(ctx, task); saveErr != nil {
+				return nil, fmt.Errorf("persist task result: %w", saveErr)
+			}
 		}
 		return nil, err
 	}
@@ -244,6 +253,17 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 	}
 	task.Output = result.Output
 	task.Error = result.Error
+	if result.State == entities.TaskWaiting {
+		task.Status = entities.TaskWaiting
+		task.FinishedAt = nil
+		plan.FinishedAt = nil
+		if tm.state != nil {
+			if err := tm.state.SaveTask(ctx, task); err != nil {
+				return nil, err
+			}
+		}
+		return result, nil
+	}
 	if result.Error != "" {
 		task.Status = entities.Failed
 	} else {
@@ -253,7 +273,9 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 	task.FinishedAt = &now
 	plan.FinishedAt = &now
 	if tm.state != nil {
-		_ = tm.state.SaveTask(ctx, task)
+		if saveErr := tm.state.SaveTask(ctx, task); saveErr != nil {
+			return nil, fmt.Errorf("persist task result: %w", saveErr)
+		}
 	}
 	return result, nil
 }

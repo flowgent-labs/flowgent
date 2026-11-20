@@ -24,6 +24,7 @@ import (
 // Each SlotWorker subscribes to TopicExec and executes ExecutionPlans via a
 // TaskExecutorRouter, then publishes downstream-ready plans back to the queue.
 type SlotWorker struct {
+	busy      chan struct{}
 	id        string
 	tmID      string
 	namespace string
@@ -37,6 +38,7 @@ type SlotWorker struct {
 func NewSlotWorker(id, tmID, namespace, clusterID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:        id,
+		busy:      make(chan struct{}, 1),
 		tmID:      tmID,
 		namespace: namespace,
 		clusterID: clusterID,
@@ -65,6 +67,12 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 		return fmt.Errorf("slot worker requires namespace and runtime cluster scope")
 	}
 	return sw.q.Subscribe(ctx, messager.SharedExecPlans(sw.namespace, sw.clusterID), func(topic string, payload []byte) {
+		select {
+		case sw.busy <- struct{}{}:
+			defer func() { <-sw.busy }()
+		case <-ctx.Done():
+			return
+		}
 		slog.Debug("slot worker received execution plan", "slot", sw.id, "len", len(payload))
 		var plan entities.ExecutionPlan
 		if err := json.Unmarshal(payload, &plan); err != nil {
@@ -76,6 +84,16 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 				"plan_namespace", plan.Namespace, "plan_cluster", plan.RuntimeClusterID,
 				"worker_namespace", sw.namespace, "worker_cluster", sw.clusterID)
 			return
+		}
+
+		if claimer, ok := sw.state.(interface {
+			ClaimTask(context.Context, *entities.ExecutionPlan, string) (bool, error)
+		}); ok && plan.DispatchEpoch > 0 {
+			claimed, err := claimer.ClaimTask(ctx, &plan, sw.tmID+"/"+sw.id)
+			if err != nil || !claimed {
+				slog.Warn("task claim rejected or already consumed", "task", plan.TaskID, "error", err)
+				return
+			}
 		}
 		slog.Debug("slot worker executing plan", "slot", sw.id, "plan", plan.PlanID, "node", plan.NodeID, "type", string(plan.TaskType))
 		execCtx := otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(plan.TraceContext))
@@ -126,6 +144,12 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 			plan.State = entities.Failed
 			plan.Result = result
 			span.SetStatus(codes.Error, result.Error)
+		} else if result != nil && result.State == entities.TaskWaiting {
+			plan.State = entities.TaskWaiting
+			plan.Result = result
+		} else if result == nil {
+			plan.State = entities.Failed
+			plan.Result = &entities.TaskResult{Error: "executor returned no result"}
 		} else {
 			slog.Info("slot worker task succeeded", "slot_id", sw.id, "plan_id", plan.PlanID, "node_id", plan.NodeID)
 			plan.State = entities.Success
@@ -133,7 +157,9 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 			span.SetAttributes(tracing.PayloadAttributes("output", result.Output)...)
 			span.SetStatus(codes.Ok, "done")
 		}
-		plan.FinishedAt = timePtr()
+		if plan.State != entities.TaskWaiting {
+			plan.FinishedAt = timePtr()
+		}
 
 		if sw.metrics != nil {
 			sw.metrics.TaskDuration.Record(ctx, float64(execDur.Milliseconds()))
@@ -142,7 +168,12 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 		}
 
 		if sw.state != nil {
-			_ = sw.state.SaveTask(execCtx, taskRunFromPlan(&plan))
+			if err := sw.state.SaveTask(execCtx, taskRunFromPlan(&plan)); err != nil {
+				slog.Error("task result persistence failed", "task", plan.TaskID, "error", err)
+				span.RecordError(err)
+				span.End()
+				return
+			}
 		}
 
 		span.End()
@@ -152,8 +183,13 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 
 func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
 	return &entities.TaskRunInfo{
-		BaseEntity:      entities.BaseEntity{ID: plan.TaskID},
-		RunID:           plan.AgentFlowRunID,
+		BaseEntity:    entities.BaseEntity{ID: plan.TaskID, Metadata: map[string]any{"node_spec": plan.NodeSpec}},
+		RunID:         plan.AgentFlowRunID,
+		GraphRevision: plan.GraphRevision, SubflowInstanceID: plan.SubflowInstanceID,
+		FlowNodeID:      plan.FlowNodeID,
+		NodeInstanceID:  plan.NodeInstanceID,
+		DispatchEpoch:   plan.DispatchEpoch,
+		FencingToken:    plan.FencingToken,
 		NodeKey:         plan.NodeID,
 		Attempt:         plan.RetryCount + 1,
 		Status:          plan.State,
@@ -187,7 +223,8 @@ func planResultError(r *entities.TaskResult) string {
 // dependencies and publish the next wave of plans.
 func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.ExecutionPlan) {
 	b, _ := json.Marshal(map[string]any{
-		"plan_id":          plan.PlanID,
+		"plan_id":     plan.PlanID,
+		"node_run_id": plan.TaskID, "node_instance_id": plan.NodeInstanceID, "dispatch_epoch": plan.DispatchEpoch,
 		"agentflow_run_id": plan.AgentFlowRunID,
 		"node_id":          plan.NodeID,
 		"state":            string(plan.State),
@@ -196,7 +233,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.Executi
 	})
 	topic := messager.ExecResultsTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
 	msg := &messager.InterMessage{
-		ID:      fmt.Sprintf("status-%s-%s", plan.AgentFlowRunID, plan.NodeID),
+		ID:      fmt.Sprintf("status-%s-%d", plan.TaskID, plan.DispatchEpoch),
 		Headers: map[string]string{"task_run_id": plan.AgentFlowRunID, "node_id": plan.NodeID},
 		Payload: b,
 	}

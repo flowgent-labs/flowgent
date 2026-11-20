@@ -14,6 +14,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cache/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
@@ -55,6 +56,9 @@ type RMState struct {
 // the current TM/sandbox replica counts and slot allocation without querying K8s.
 // execResult is the TM→JM result published to exec/results.
 type execResult struct {
+	NodeRunID      string         `json:"node_run_id"`
+	NodeInstanceID string         `json:"node_instance_id"`
+	DispatchEpoch  int64          `json:"dispatch_epoch"`
 	PlanID         string         `json:"plan_id"`
 	AgentFlowRunID string         `json:"agentflow_run_id"`
 	NodeID         string         `json:"node_id"`
@@ -417,9 +421,15 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 					return
 				}
 				s.runResultsMu.Lock()
-				ch, ok := s.runResults[runID][er.NodeID]
+				key := er.NodeRunID
+				if key != "" {
+					key = fmt.Sprintf("%s:%d", key, er.DispatchEpoch)
+				} else {
+					key = er.NodeID
+				}
+				ch, ok := s.runResults[runID][key]
 				if ok {
-					delete(s.runResults[runID], er.NodeID)
+					delete(s.runResults[runID], key)
 				}
 				s.runResultsMu.Unlock()
 				if ok {
@@ -430,35 +440,76 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 				}
 			})
 	}
-	s.runResults[runID][plan.NodeID] = resultCh
+	resultKey := plan.NodeID
+	if plan.DispatchEpoch > 0 {
+		resultKey = fmt.Sprintf("%s:%d", plan.TaskID, plan.DispatchEpoch)
+	}
+	s.runResults[runID][resultKey] = resultCh
 	s.runResultsMu.Unlock()
 
 	plan.TraceContext = make(map[string]string)
 	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(plan.TraceContext))
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
-		ID: plan.PlanID,
-		Headers: map[string]string{
-			"task_run_id": plan.AgentFlowRunID,
-			"node_id":     plan.NodeID,
-		},
-		Payload: payload,
-	}); err != nil {
-		s.runResultsMu.Lock()
-		delete(s.runResults[runID], plan.NodeID)
-		s.runResultsMu.Unlock()
-		return nil, fmt.Errorf("kubernetes rm publish: %w", err)
+	var publishErr error
+	if plan.DispatchEpoch > 0 {
+		if s.apiServerURL == "" {
+			return nil, fmt.Errorf("durable dispatch requires API Server")
+		}
+		publishErr = client.NewFlowgentClient(s.apiServerURL).DispatchPlan(ctx, plan.Namespace, plan)
+		if publishErr != nil {
+			s.runResultsMu.Lock()
+			delete(s.runResults[runID], resultKey)
+			s.runResultsMu.Unlock()
+			return nil, publishErr
+		}
+	} else {
+		publishErr = s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
+			ID: plan.PlanID,
+			Headers: map[string]string{
+				"task_run_id": plan.AgentFlowRunID,
+				"node_id":     plan.NodeID,
+			},
+			Payload: payload,
+		})
+		if publishErr != nil {
+			s.runResultsMu.Lock()
+			delete(s.runResults[runID], resultKey)
+			s.runResultsMu.Unlock()
+			return nil, fmt.Errorf("kubernetes rm publish: %w", publishErr)
+		}
+
 	}
 
-	// Wait for the actual execution result from the TM.
-	select {
-	case <-ctx.Done():
-		s.runResultsMu.Lock()
-		delete(s.runResults[runID], plan.NodeID)
-		s.runResultsMu.Unlock()
-		return nil, fmt.Errorf("kubernetes rm: plan %s timed out waiting for TM result", plan.PlanID)
-	case er := <-resultCh:
-		return &entities.TaskResult{Output: er.Output, Error: er.Error}, nil
+	readCommitted := func() (*entities.TaskResult, bool) {
+		if s.apiServerURL == "" || plan.DispatchEpoch == 0 {
+			return nil, false
+		}
+		task, err := client.NewFlowgentClient(s.apiServerURL).GetTaskRun(ctx, plan.Namespace, runID, plan.TaskID)
+		if err == nil && task.NodeInstanceID == plan.NodeInstanceID && task.DispatchEpoch == plan.DispatchEpoch && (task.Status == entities.Success || task.Status == entities.Failed) {
+			return &entities.TaskResult{Output: task.Output, Error: task.Error}, true
+		}
+		return nil, false
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	defer func() { s.runResultsMu.Lock(); delete(s.runResults[runID], resultKey); s.runResultsMu.Unlock() }()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("kubernetes rm: plan %s timed out waiting for TM result", plan.PlanID)
+		case er := <-resultCh:
+			if plan.DispatchEpoch > 0 {
+				if result, ok := readCommitted(); ok {
+					return result, nil
+				}
+				continue
+			}
+			return &entities.TaskResult{Output: er.Output, Error: er.Error}, nil
+		case <-ticker.C:
+			if result, ok := readCommitted(); ok {
+				return result, nil
+			}
+		}
 	}
 }
 

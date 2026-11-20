@@ -789,3 +789,85 @@ type McpProviderClient struct {
 func (a *McpProviderClient) ListMCPs(ctx context.Context) ([]*entities.McpInfo, error) {
 	return a.Client.ListMCPs(ctx, a.Namespace)
 }
+
+// InitializeSubflow returns the committed graph, pinning the referenced child
+// definition on first use. It never replaces an existing runtime graph.
+func (c *FlowgentClient) InitializeSubflow(ctx context.Context, namespace, runID, instance string) (*entities.SubflowState, error) {
+	return c.subflowRequest(ctx, namespace, runID, "subflows/initialize", map[string]string{"instance_id": instance})
+}
+func (c *FlowgentClient) ApplyGraphPatch(ctx context.Context, namespace string, patch entities.GraphPatch) (*entities.SubflowState, error) {
+	return c.subflowRequest(ctx, namespace, patch.FlowRunID, "graph-patches", patch)
+}
+func (c *FlowgentClient) subflowRequest(ctx context.Context, namespace, runID, path string, body any) (*entities.SubflowState, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/%s/runs/%s/%s", url.PathEscape(namespace), url.PathEscape(runID), path), bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var state entities.SubflowState
+	if err = readJSON(resp, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+func (a *RunStateClient) InitializeSubflow(ctx context.Context, runID, instance string) (*entities.SubflowState, error) {
+	return a.Client.InitializeSubflow(ctx, a.Namespace, runID, instance)
+}
+func (a *RunStateClient) ApplyGraphPatch(ctx context.Context, p entities.GraphPatch) (*entities.SubflowState, error) {
+	return a.Client.ApplyGraphPatch(ctx, a.Namespace, p)
+}
+func (a *RunStateClient) ListTasks(ctx context.Context, runID string) ([]*entities.TaskRunInfo, error) {
+	return a.Client.ListTaskRuns(ctx, a.Namespace, runID)
+}
+
+func (a *TaskStateClient) ClaimTask(ctx context.Context, plan *entities.ExecutionPlan, owner string) (bool, error) {
+	data, err := json.Marshal(map[string]any{"node_instance_id": plan.NodeInstanceID, "dispatch_epoch": plan.DispatchEpoch, "owner": owner})
+	if err != nil {
+		return false, err
+	}
+	path := fmt.Sprintf("/api/v1/%s/runs/%s/node-runs/%s/claim", url.PathEscape(a.Namespace), url.PathEscape(plan.AgentFlowRunID), url.PathEscape(plan.TaskID))
+	resp, err := a.Client.do(ctx, http.MethodPost, path, bytes.NewReader(data))
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Claimed bool `json:"claimed"`
+	}
+	err = readJSON(resp, &result)
+	return result.Claimed, err
+}
+
+func (c *FlowgentClient) DispatchPlan(ctx context.Context, namespace string, plan *entities.ExecutionPlan) error {
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/v1/%s/runs/%s/node-runs/%s/dispatch", url.PathEscape(namespace), url.PathEscape(plan.AgentFlowRunID), url.PathEscape(plan.TaskID))
+	resp, err := c.do(ctx, http.MethodPost, path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("dispatch %d: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+func (c *FlowgentClient) GetRunDefinition(ctx context.Context, namespace, runID string) (*entities.FlowInfo, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/%s/runs/%s/definition", url.PathEscape(namespace), url.PathEscape(runID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var spec entities.FlowInfo
+	if err = readJSON(resp, &spec); err != nil {
+		return nil, err
+	}
+	return &spec, nil
+}

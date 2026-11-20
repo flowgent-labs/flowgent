@@ -46,7 +46,11 @@ func (s *FlowRunSQLiteStore) List(ctx context.Context, filter ListFilter) (*enti
 			args = append(args, value)
 		}
 	}
-	add("status", filter.Status)
+	if filter.Status == "PENDING,RUNNING" {
+		clauses = append(clauses, "status IN ('PENDING','RUNNING')")
+	} else {
+		add("status", filter.Status)
+	}
 	add("runtime_mode", filter.RuntimeMode)
 	add("runtime_cluster_id", filter.K8sNamespace)
 	if filter.FlowID != "" {

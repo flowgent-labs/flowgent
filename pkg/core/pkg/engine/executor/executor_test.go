@@ -203,6 +203,9 @@ func TestSubflowExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.State != entities.TaskWaiting {
+		t.Fatal("subflow handoff must not report terminal success")
+	}
 	if result.Output["status"] != "dispatched" {
 		t.Error("subflow should return dispatched")
 	}

@@ -30,8 +30,9 @@ import (
 // FlowgentApiServer is the sole DB client and REST API server. It serves
 // CRUD endpoints for agents, flows, runs, tasks, and notifications.
 type FlowgentApiServer struct {
-	cfg   *config.FlowgentConfig
-	store storage.IStorage
+	cfg             *config.FlowgentConfig
+	store           storage.IStorage
+	outboxPublisher handler.MQTTPublisher
 
 	restServer     *http.Server
 	internalServer *http.Server
@@ -189,6 +190,7 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 	srv := &FlowgentApiServer{
 		cfg:              cfg,
 		store:            storeImpl,
+		outboxPublisher:  mqttPub,
 		restServer:       restSrv,
 		internalServer:   internalSrv,
 		otelProvider:     otelProvider,
@@ -217,6 +219,9 @@ func NewFlowgentApiServer(cfg *config.FlowgentConfig) (*FlowgentApiServer, error
 // Start begins listening on the REST and pprof ports, then blocks until a
 // shutdown signal is received. It handles graceful shutdown internally.
 func (s *FlowgentApiServer) Start(ctx context.Context) error {
+	if s.outboxPublisher != nil {
+		go storage.RunOutboxPublisher(ctx, s.store.DB(), s.outboxPublisher.Publish)
+	}
 	go func() {
 		slog.Info("REST API server", "addr", s.restServer.Addr)
 		if err := s.restServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -310,6 +315,7 @@ func newMQTTPublisher(broker, clientID, username, password string) handler.MQTTP
 		SetKeepAlive(30 * time.Second).
 		SetPingTimeout(10 * time.Second).
 		SetConnectTimeout(10 * time.Second).
+		SetConnectRetry(true).
 		SetAutoReconnect(true).
 		SetMaxReconnectInterval(30 * time.Second)
 	if username != "" {
@@ -320,8 +326,8 @@ func newMQTTPublisher(broker, clientID, username, password string) handler.MQTTP
 	}
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); !token.WaitTimeout(15 * time.Second) {
-		slog.Warn("mqtt broker connect timeout, lifecycle events disabled")
-		return nil
+		slog.Warn("mqtt broker connect pending; durable outbox will retry")
+		return &rawMQTTPublisher{client: client}
 	} else if token.Error() != nil {
 		slog.Warn("mqtt broker not available, lifecycle events disabled", "error", token.Error())
 		return nil
