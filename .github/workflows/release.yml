@@ -34,7 +34,7 @@ jobs:
           FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FLOWGENT_COMMENT_KIND: release
           FLOWGENT_COMMENT_PHASE: started
-          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/graph-runs/${{ github.graph_run_id }}
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           node .github/scripts/upsert-pr-status-comment.mjs || \
             echo "::warning title=Flowgent Release comment::Could not publish the release status comment."
@@ -221,7 +221,7 @@ jobs:
           FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FLOWGENT_COMMENT_KIND: release
           FLOWGENT_COMMENT_PHASE: final
-          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/graph-runs/${{ github.graph_run_id }}
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           FLOWGENT_PREPARE_RESULT: ${{ needs.prepare.result }}
           FLOWGENT_RELEASE_RESULT: ${{ needs.publish.result }}
           FLOWGENT_SHOULD_RELEASE: ${{ needs.prepare.outputs.should_release }}

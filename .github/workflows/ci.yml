@@ -44,7 +44,7 @@ jobs:
           FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FLOWGENT_COMMENT_KIND: ci
           FLOWGENT_COMMENT_PHASE: started
-          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/graph-runs/${{ github.graph_run_id }}
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           node .github/scripts/upsert-pr-status-comment.mjs || \
             echo "::warning title=Flowgent PR CI comment::Could not publish the CI status comment."
@@ -174,7 +174,7 @@ jobs:
           FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FLOWGENT_COMMENT_KIND: ci
           FLOWGENT_COMMENT_PHASE: build
-          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/graph-runs/${{ github.graph_run_id }}
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           FLOWGENT_BUILD_RESULT: ${{ needs.build-and-test.result }}
           FLOWGENT_DIRTY_TAG: ${{ needs.build-and-test.outputs.dirty_tag }}
           FLOWGENT_DIRTY_CHART_VERSION: ${{ needs.build-and-test.outputs.dirty_chart_version }}
@@ -408,7 +408,7 @@ jobs:
           FLOWGENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FLOWGENT_COMMENT_KIND: ci
           FLOWGENT_COMMENT_PHASE: final
-          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/graph-runs/${{ github.graph_run_id }}
+          FLOWGENT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           FLOWGENT_BUILD_RESULT: ${{ needs.build-and-test.result }}
           FLOWGENT_E2E_KUBERNETES_RESULT: ${{ needs.e2e-kubernetes.result }}
           FLOWGENT_E2E_KUBERNETES_SUMMARY_BASE64: ${{ needs.e2e-kubernetes.outputs.summary_base64 }}

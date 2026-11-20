@@ -22,6 +22,29 @@ ROOT = Path(__file__).resolve().parents[2]
 CASE = ROOT / "use-cases/security-autonomy-fixer"
 
 
+class GitHubWorkflowContractTests(unittest.TestCase):
+    def test_status_links_use_github_actions_run_identity(self):
+        import yaml
+
+        expected = (
+            "${{ github.server_url }}/${{ github.repository }}"
+            "/actions/runs/${{ github.run_id }}"
+        )
+        for name in ("ci.yml", "release.yml"):
+            workflow = yaml.safe_load(
+                (ROOT / ".github/workflows" / name).read_text()
+            )
+            links = []
+            for job_id, job in workflow["jobs"].items():
+                for step in job.get("steps", []):
+                    url = step.get("env", {}).get("FLOWGENT_RUN_URL")
+                    if url is not None:
+                        links.append(url)
+                        with self.subTest(workflow=name, job=job_id):
+                            self.assertEqual(url, expected)
+            self.assertTrue(links, f"{name} has no status-comment run links")
+
+
 class RuntimeDetectionTests(unittest.TestCase):
     def test_sonarqube_uses_the_approved_native_arm_exception(self):
         for engine, expected in (
