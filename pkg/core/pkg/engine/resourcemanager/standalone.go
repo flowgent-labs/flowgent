@@ -23,12 +23,23 @@ func NewStandaloneResourceManager(cfg *ResourceManagerConfig) (*StandaloneResour
 	if poolSize <= 0 {
 		poolSize = 10
 	}
+	runtimeClusterID := cfg.RuntimeClusterID
+	if runtimeClusterID == "" {
+		runtimeClusterID = "local"
+	}
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
-		ID: "tm-local", SlotCount: poolSize,
-		Messager: cfg.Messager, State: cfg.TaskState, ApprovalInfo: cfg.ApprovalInfo,
-		APIServerURL: cfg.APIServerURL, Namespace: cfg.Namespace, Logger: cfg.Logger,
-		SandboxMessager:             cfg.Messager,
+		ID:           "tm-local",
+		SlotCount:    poolSize,
+		Messager:     cfg.Messager,
+		State:        cfg.TaskState,
+		ApprovalInfo: cfg.ApprovalInfo,
+		APIServerURL: cfg.APIServerURL,
+		Namespace:    cfg.Namespace,
+		Logger:       cfg.Logger,
+
+		RuntimeClusterID:         runtimeClusterID,
+		SandboxMessager:          cfg.Messager,
 		SandboxPolicy:            cfg.SandboxPolicy,
 		SandboxWorkspace:         cfg.SandboxWorkspace,
 		SandboxDeploymentEnabled: false,
@@ -51,7 +62,7 @@ func (s *StandaloneResourceManager) Validate(ctx context.Context) error {
 }
 
 // Schedule acquires a slot (non-blocking), executes the plan via the local TM.
-// Returns INSUFFICIENT_RESOURCES if all slots are occupied (session mode capacity).
+// Returns INSUFFICIENT_RESOURCES if all local slots are occupied.
 func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
 	select {
 	case s.sem <- struct{}{}:
@@ -63,13 +74,14 @@ func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities
 	slog.Debug("local rm schedule", "plan", plan.PlanID, "node", plan.NodeID)
 
 	task := &entities.TaskRunInfo{
-		AgentFlowRunID: plan.AgentFlowRunID, NodeID: plan.NodeID,
-		Status: entities.TaskPending, ExecID: plan.PlanID,
+		RunID: plan.AgentFlowRunID, NodeKey: plan.NodeID, Attempt: plan.RetryCount + 1,
+		Status: entities.TaskPending, ExecutionID: plan.PlanID,
 	}
-	if _, err := s.tm.ExecutePlan(ctx, plan, task); err != nil {
+	result, err := s.tm.ExecutePlan(ctx, plan, task)
+	if err != nil {
 		return &entities.TaskResult{Error: err.Error()}, nil
 	}
-	return &entities.TaskResult{Output: task.Output}, nil
+	return result, nil
 }
 
 func (s *StandaloneResourceManager) Shutdown(ctx context.Context) error { return nil }

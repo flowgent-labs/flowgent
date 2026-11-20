@@ -1,0 +1,17 @@
+.git
+.agents
+.claude
+.cursor
+.github
+.specify
+bin
+docs
+use-cases
+web
+
+**/.venv
+**/node_modules
+**/dist
+**/coverage
+**/screenshots
+**/*.log

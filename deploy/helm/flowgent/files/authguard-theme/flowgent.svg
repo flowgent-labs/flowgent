@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Flowgent">
+  <defs>
+    <linearGradient id="flowgent-a" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8fffd8"/>
+      <stop offset="1" stop-color="#20bd8d"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="17" fill="#071b16" stroke="#58e7b8" stroke-width="2"/>
+  <path d="M19 22.5 32 15l13 7.5v15L32 45l-13-7.5z" fill="none" stroke="url(#flowgent-a)" stroke-width="3"/>
+  <circle cx="19" cy="22.5" r="4" fill="#8fffd8"/>
+  <circle cx="45" cy="22.5" r="4" fill="#58e7b8"/>
+  <circle cx="32" cy="45" r="4" fill="#20bd8d"/>
+  <circle cx="32" cy="30" r="5" fill="#d9fff2"/>
+  <path d="m22.5 24.5 5.5 3.2m8 0 5.5-3.2M32 35v6" stroke="#d9fff2" stroke-width="2" stroke-linecap="round"/>
+</svg>

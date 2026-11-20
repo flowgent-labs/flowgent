@@ -33,7 +33,7 @@ type FlowgentSandboxManager struct {
 	distributed bool
 	slots       int
 	namespaceID string
-	flowID      string
+	clusterID   string
 
 	stopCh chan struct{}
 }
@@ -98,9 +98,9 @@ func (w *FlowgentSandboxManager) SetSlots(slots int) {
 	w.slots = slots
 }
 
-func (w *FlowgentSandboxManager) SetScope(namespaceID, flowID string) {
+func (w *FlowgentSandboxManager) SetScope(namespaceID, clusterID string) {
 	w.namespaceID = namespaceID
-	w.flowID = flowID
+	w.clusterID = clusterID
 }
 
 // Start subscribes to sandbox triggers and blocks until ctx is done.
@@ -112,7 +112,7 @@ func (w *FlowgentSandboxManager) Start(ctx context.Context) error {
 	}
 	slog.Info("sandbox manager subscribing",
 		"id", w.ID, "topic", subTopic, "distributed", w.distributed,
-		"slots", slotCount, "namespace", w.namespaceID, "flow", w.flowID)
+		"slots", slotCount, "namespace", w.namespaceID, "runtime_cluster_id", w.clusterID)
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -134,6 +134,7 @@ func (w *FlowgentSandboxManager) Start(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	w.startRuntimeReady(ctx)
 
 	select {
 	case <-ctx.Done():
@@ -143,13 +144,41 @@ func (w *FlowgentSandboxManager) Start(ctx context.Context) error {
 	}
 }
 
-func (w *FlowgentSandboxManager) subscriptionTopic() string {
-	filter := messager.TopicPrefix + "/+/flows/+/runs/+/sandbox/trigger"
-	group := "sandbox-pool"
-	if w.namespaceID != "" && w.flowID != "" {
-		filter = fmt.Sprintf("%s/%s/flows/%s/runs/+/sandbox/trigger", messager.TopicPrefix, w.namespaceID, w.flowID)
-		group = "sandbox-pool-" + sanitizeShareGroup(w.namespaceID) + "-" + sanitizeShareGroup(w.flowID)
+func (w *FlowgentSandboxManager) startRuntimeReady(ctx context.Context) {
+	if w.namespaceID == "" || w.clusterID == "" {
+		return
 	}
+	publish := func() {
+		ready := &messager.RuntimeReady{
+			WorkerID: w.ID, Role: "sandbox", Namespace: w.namespaceID,
+			ClusterID: w.clusterID, Timestamp: time.Now(),
+		}
+		payload, _ := json.Marshal(ready)
+		_ = w.queue.Publish(ctx, messager.RuntimeReadyTopic(w.namespaceID, w.clusterID, ready.Role, w.ID), &messager.InterMessage{
+			ID: fmt.Sprintf("ready-%s-%d", w.ID, time.Now().UnixNano()), Payload: payload,
+		})
+	}
+	publish()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				publish()
+			}
+		}
+	}()
+}
+
+func (w *FlowgentSandboxManager) subscriptionTopic() string {
+	if w.namespaceID == "" || w.clusterID == "" {
+		return ""
+	}
+	filter := fmt.Sprintf("%s/%s/clusters/%s/flows/+/runs/+/sandbox/trigger", messager.TopicPrefix, w.namespaceID, w.clusterID)
+	group := "sandbox-cluster-" + sanitizeShareGroup(w.namespaceID) + "-" + sanitizeShareGroup(w.clusterID)
 	if !w.distributed {
 		return filter
 	}
@@ -177,6 +206,12 @@ func (w *FlowgentSandboxManager) handleTrigger(ctx context.Context, workerID, to
 	var trigger model.SandboxTrigger
 	if err := json.Unmarshal(payload, &trigger); err != nil {
 		slog.Error("invalid sandbox trigger", "worker", workerID, "error", err)
+		return
+	}
+	if trigger.Namespace != w.namespaceID || trigger.RuntimeClusterID != w.clusterID {
+		slog.Error("sandbox rejected out-of-cluster trigger", "worker", workerID,
+			"trigger_namespace", trigger.Namespace, "trigger_cluster", trigger.RuntimeClusterID,
+			"worker_namespace", w.namespaceID, "worker_cluster", w.clusterID)
 		return
 	}
 	slog.Info("sandbox trigger received", "worker", workerID, "topic", topic, "plan_id", trigger.PlanID, "runtime", trigger.Runtime)

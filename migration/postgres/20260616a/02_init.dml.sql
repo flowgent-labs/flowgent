@@ -1,2 +1,0 @@
--- Flowgent PostgreSQL — Initial Seed Data
--- No seed data required for initial release.

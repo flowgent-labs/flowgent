@@ -89,6 +89,10 @@ func TestEnvOverrideBinding(t *testing.T) {
 		"storage:\n" +
 		"  postgres:\n" +
 		"    dsn: from-yaml\n" +
+		"  artifacts:\n" +
+		"    provider: default\n" +
+		"    s3:\n" +
+		"      bucket: from-yaml\n" +
 		"messager:\n" +
 		"  mqtt:\n" +
 		"    client_id: from-yaml\n"
@@ -97,6 +101,8 @@ func TestEnvOverrideBinding(t *testing.T) {
 	}
 
 	t.Setenv("FLOWGENT__STORAGE__POSTGRES__DSN", "from-env")
+	t.Setenv("FLOWGENT__STORAGE__ARTIFACTS__PROVIDER", "from-env")
+	t.Setenv("FLOWGENT__STORAGE__ARTIFACTS__S3__BUCKET", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__SYSTEM_NAMESPACE", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__K8S_NAMESPACE", "from-env")
 	t.Setenv("FLOWGENT__MESSAGER__MQTT__CLIENT_ID", "from-env")
@@ -110,13 +116,15 @@ func TestEnvOverrideBinding(t *testing.T) {
 	}
 
 	checks := map[string]string{
-		"storage.postgres.dsn":     cfg.Storage.Postgres.Dsn,
-		"runtime.system_namespace": cfg.Runtime.SystemNamespace,
-		"runtime.k8s_namespace":    cfg.Runtime.K8sNamespace,
-		"messager.mqtt.client_id":  cfg.Messager.MQTT.ClientID,
-		"runtime.agent_flow_id":    cfg.Runtime.AgentFlowID,
-		"runtime.jm_image":         cfg.Runtime.JMImage,
-		"runtime.controller_label": cfg.Runtime.ControllerLabel,
+		"storage.postgres.dsn":        cfg.Storage.Postgres.Dsn,
+		"storage.artifacts.provider":  cfg.Storage.Artifacts.Provider,
+		"storage.artifacts.s3.bucket": cfg.Storage.Artifacts.S3.Bucket,
+		"runtime.system_namespace":    cfg.Runtime.SystemNamespace,
+		"runtime.k8s_namespace":       cfg.Runtime.K8sNamespace,
+		"messager.mqtt.client_id":     cfg.Messager.MQTT.ClientID,
+		"runtime.agent_flow_id":       cfg.Runtime.AgentFlowID,
+		"runtime.jm_image":            cfg.Runtime.JMImage,
+		"runtime.controller_label":    cfg.Runtime.ControllerLabel,
 	}
 	for key, got := range checks {
 		if got != "from-env" {
@@ -138,13 +146,13 @@ func TestEnvOverrideAlphanumericSegments(t *testing.T) {
 		"wallet:\n" +
 		"  enabled: false\n" +
 		"  x402:\n" +
-		"    default_facilitator: from-yaml\n"
+		"    timeout: from-yaml\n"
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("FLOWGENT__A2A__HOST", "from-env")
-	t.Setenv("FLOWGENT__WALLET__X402__DEFAULT_FACILITATOR", "from-env")
+	t.Setenv("FLOWGENT__WALLET__X402__TIMEOUT", "from-env")
 
 	cfg, err := Load(cfgPath)
 	if err != nil {
@@ -153,8 +161,8 @@ func TestEnvOverrideAlphanumericSegments(t *testing.T) {
 	if cfg.A2A.Host != "from-env" {
 		t.Errorf("FLOWGENT__A2A__HOST override lost: got %q", cfg.A2A.Host)
 	}
-	if cfg.Wallet == nil || cfg.Wallet.X402.DefaultFacilitator != "from-env" {
-		t.Errorf("FLOWGENT__WALLET__X402__DEFAULT_FACILITATOR override lost: got %+v", cfg.Wallet)
+	if cfg.Wallet == nil || cfg.Wallet.X402.Timeout != "from-env" {
+		t.Errorf("FLOWGENT__WALLET__X402__TIMEOUT override lost: got %+v", cfg.Wallet)
 	}
 }
 

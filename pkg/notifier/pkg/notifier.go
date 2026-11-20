@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
-	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
 // MQTTClient is the interface for publishing notification messages to MQTT.
@@ -35,7 +36,8 @@ type MQTTClient interface {
 type FlowgentNotifierManager struct {
 	client          *client.NotifierClient
 	mqtt            MQTTClient
-	senders         map[string]Sender
+	senderFactories map[string]func() Sender
+	secretCipher    secretbox.ISecretCipher
 	podID           string
 	wsClients       map[string]*wsConn
 	httpClient      model.IFlowgentAPIClient
@@ -70,14 +72,15 @@ func (c *wsConn) Done() <-chan struct{} { return c.done }
 func (c *wsConn) Close() { close(c.done) }
 
 // NewFlowgentNotifierManager creates a notification service with the given client and optional MQTT client.
-func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentAPIClient, notifierCfg *config.NotifierConfig) *FlowgentNotifierManager {
+func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpClient model.IFlowgentAPIClient, notifierCfg *config.NotifierConfig, secretCipher secretbox.ISecretCipher) *FlowgentNotifierManager {
 	hostname, _ := os.Hostname()
 	podID := fmt.Sprintf("%s-%s", hostname, uuid.New().String()[:8])
 
 	svc := &FlowgentNotifierManager{
 		client:          c,
 		mqtt:            mqtt,
-		senders:         make(map[string]Sender),
+		senderFactories: make(map[string]func() Sender),
+		secretCipher:    secretCipher,
 		podID:           podID,
 		wsClients:       make(map[string]*wsConn),
 		httpClient:      httpClient,
@@ -89,20 +92,11 @@ func NewFlowgentNotifierManager(c *client.NotifierClient, mqtt MQTTClient, httpC
 	}
 
 	// Register built-in senders with global defaults applied.
-	svc.senders["telegram"] = &TelegramSender{BaseURL: notifierCfg.Telegram.BaseURL}
-	svc.senders["dingtalk"] = &DingTalkSender{}
-	svc.senders["slack"] = &SlackSender{}
-	svc.senders["email"] = &EmailSender{SMTPPort: notifierCfg.Email.SMTPPort}
-	svc.senders["webhook"] = &WebhookSender{}
-
-	// Inject HTTP client into senders that support it.
-	if httpClient != nil {
-		for _, sender := range svc.senders {
-			if s, ok := sender.(interface{ SetHTTPClient(model.IFlowgentAPIClient) }); ok {
-				s.SetHTTPClient(httpClient)
-			}
-		}
-	}
+	svc.senderFactories["telegram"] = func() Sender { return &TelegramSender{BaseURL: notifierCfg.Telegram.BaseURL} }
+	svc.senderFactories["dingtalk"] = func() Sender { return &DingTalkSender{} }
+	svc.senderFactories["slack"] = func() Sender { return &SlackSender{} }
+	svc.senderFactories["email"] = func() Sender { return &EmailSender{SMTPPort: notifierCfg.Email.SMTPPort} }
+	svc.senderFactories["webhook"] = func() Sender { return &WebhookSender{} }
 
 	return svc
 }
@@ -148,14 +142,20 @@ func (s *FlowgentNotifierManager) Start(ctx context.Context) error {
 
 // RegisterSender adds or overrides a named sender implementation.
 func (s *FlowgentNotifierManager) RegisterSender(name string, sender Sender) {
-	s.senders[name] = sender
+	s.senderFactories[name] = func() Sender { return sender }
+}
+
+// RegisterSenderFactory is safe for concurrent delivery because each dispatch
+// gets an isolated mutable sender instance.
+func (s *FlowgentNotifierManager) RegisterSenderFactory(name string, factory func() Sender) {
+	s.senderFactories[name] = factory
 }
 
 func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 	s.logger.Debug("queue message received", "topic", topic)
 
-	var namespaceID, flowID string
-	if n, _ := fmt.Sscanf(topic, messager.TopicPrefix+"/%s/flows/%s/runs/", &namespaceID, &flowID); n < 2 {
+	namespaceID, flowID, runID, ok := parseNotifyEventTopic(topic)
+	if !ok {
 		s.logger.Warn("invalid queue topic format", "topic", topic)
 		return
 	}
@@ -165,13 +165,44 @@ func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 		s.logger.Warn("queue message unmarshal", "error", err)
 		return
 	}
+	if msg.Namespace == "" {
+		msg.Namespace = namespaceID
+	}
+	if msg.AgentFlowID == "" {
+		msg.AgentFlowID = flowID
+	}
+	if msg.DeliveryID == "" {
+		msg.DeliveryID = runID
+	}
 
 	s.logger.Info("processing queue notification",
 		"namespace", namespaceID,
 		"flow", flowID,
 		"title", msg.Title)
 
-	s.notifyChannels(context.Background(), "", msg.Title, msg.Body)
+	results := s.notifyChannels(context.Background(), msg.Namespace, msg.ChannelID, msg.Recipient, msg.Title, msg.Body, msg.DeliveryID)
+	for _, result := range results {
+		if s.mqtt == nil {
+			continue
+		}
+		encoded, _ := json.Marshal(result)
+		resultTopic := messager.NotifyResultTopic(msg.Namespace, msg.AgentFlowID, msg.DeliveryID)
+		if err := s.mqtt.Publish(context.Background(), resultTopic, encoded); err != nil {
+			s.logger.Error("publish notification result", "topic", resultTopic, "error", err)
+		}
+	}
+}
+
+func parseNotifyEventTopic(topic string) (namespaceID, flowID, runID string, ok bool) {
+	parts := strings.Split(topic, "/")
+	if len(parts) != 9 || parts[0] != "flowgent" || parts[1] != "v1" ||
+		parts[3] != "flows" || parts[5] != "runs" || parts[7] != "notify" || parts[8] != "event" {
+		return "", "", "", false
+	}
+	if parts[2] == "" || parts[4] == "" || parts[6] == "" {
+		return "", "", "", false
+	}
+	return parts[2], parts[4], parts[6], true
 }
 
 // PublishNotification enqueues a notification to the MQTT queue.
@@ -180,10 +211,12 @@ func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, names
 		return fmt.Errorf("notification: mqtt not configured")
 	}
 
+	deliveryID := uuid.NewString()
 	msg := model.NotifierMessage{
+		DeliveryID:  deliveryID,
 		Title:       title,
 		Body:        body,
-		Namespace:    namespaceID,
+		Namespace:   namespaceID,
 		AgentFlowID: agentflowID,
 		Timestamp:   time.Now(),
 	}
@@ -193,7 +226,7 @@ func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, names
 		return fmt.Errorf("marshal notification: %w", err)
 	}
 
-	topic := messager.NotifyEventTopic(namespaceID, agentflowID, "")
+	topic := messager.NotifyEventTopic(namespaceID, agentflowID, deliveryID)
 	return s.mqtt.Publish(ctx, topic, payload)
 }
 
@@ -294,8 +327,8 @@ func (s *FlowgentNotifierManager) scanHumanApprovals(ctx context.Context) {
 					s.pushToSubscribers(ctx, afRunID, &msg)
 				}
 
-				s.notifyChannels(ctx, a.Token, "Human Approval Required",
-					fmt.Sprintf("A human approval is pending for task %s. Token: %s", a.TaskRunID, a.Token))
+				s.notifyChannels(ctx, a.Namespace, "", a.Token, "Human Approval Required",
+					fmt.Sprintf("A human approval is pending for task %s. Token: %s", a.TaskRunID, a.Token), uuid.NewString())
 			}
 		case <-ctx.Done():
 			return
@@ -319,36 +352,64 @@ func (s *FlowgentNotifierManager) pushToSubscribers(ctx context.Context, agentFl
 	}
 }
 
-func (s *FlowgentNotifierManager) notifyChannels(ctx context.Context, recipient, title, body string) {
-	channels, err := s.client.ListChannels(ctx, "")
+func (s *FlowgentNotifierManager) notifyChannels(ctx context.Context, namespaceID, channelID, recipient, title, body, deliveryID string) []model.NotifierDeliveryResult {
+	channels, err := s.client.ListChannels(ctx, namespaceID)
 	if err != nil {
 		s.logger.Error("list notification channels", "error", err)
-		return
+		return []model.NotifierDeliveryResult{{DeliveryID: deliveryID, ChannelID: channelID, Status: "FAILED", Error: err.Error(), Timestamp: time.Now().UTC()}}
 	}
 
+	results := make([]model.NotifierDeliveryResult, 0, len(channels))
 	for _, ch := range channels {
-		if !ch.Enabled {
+		if !ch.Enabled || (channelID != "" && ch.ID != channelID) {
 			continue
 		}
-		sender, ok := s.senders[string(ch.ChannelType)]
+		result := model.NotifierDeliveryResult{DeliveryID: deliveryID, ChannelID: ch.ID, Status: "FAILED", Timestamp: time.Now().UTC()}
+		resolved, resolveErr := ch.ResolveSecrets(ctx, s.secretCipher)
+		if resolveErr != nil {
+			result.Error = resolveErr.Error()
+			results = append(results, result)
+			continue
+		}
+		factory, ok := s.senderFactories[string(ch.ChannelType)]
 		if !ok {
-			s.logger.Warn("unknown channel type", "type", ch.ChannelType)
+			result.Error = "unknown channel type"
+			results = append(results, result)
 			continue
 		}
-
+		sender := factory()
+		if configurable, ok := sender.(interface {
+			SetHTTPClient(model.IFlowgentAPIClient)
+		}); ok && s.httpClient != nil {
+			configurable.SetHTTPClient(s.httpClient)
+		}
 		s.applyDefaults(sender)
-
-		if err := configureSender(sender, ch.Config); err != nil {
-			s.logger.Warn("configure sender", "channel", ch.Name, "error", err)
+		if err := configureSender(sender, resolved.Config); err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
 			continue
 		}
-
-		go func(ch entities.NotifyChannelInfo, sender Sender) {
-			if err := sender.Send(ctx, recipient, title, body); err != nil {
-				s.logger.Error("send notification", "channel", ch.Name, "error", err)
-			}
-		}(ch, sender)
+		if err := sender.Validate(); err != nil {
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+		if err := sender.Send(ctx, recipient, title, body); err != nil {
+			result.Error = err.Error()
+			s.logger.Error("send notification", "channel", ch.Name, "error", err)
+		} else {
+			result.Status = "DELIVERED"
+		}
+		result.Timestamp = time.Now().UTC()
+		results = append(results, result)
 	}
+	if len(results) == 0 && channelID != "" {
+		results = append(results, model.NotifierDeliveryResult{
+			DeliveryID: deliveryID, ChannelID: channelID, Status: "FAILED",
+			Error: "enabled notification channel not found", Timestamp: time.Now().UTC(),
+		})
+	}
+	return results
 }
 
 func (s *FlowgentNotifierManager) applyDefaults(sender Sender) {
@@ -390,6 +451,9 @@ func (s *FlowgentNotifierManager) Shutdown() {
 	for id, conn := range s.wsClients {
 		conn.Close()
 		delete(s.wsClients, id)
+	}
+	if closer, ok := s.mqtt.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 	s.logger.Info("notification service shut down")
 }

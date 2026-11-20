@@ -8,6 +8,7 @@ ARG GOMAXPROCS
 ARG BUILD_TS=0
 ARG BUILD_TAGS=
 RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=bind,source=.,target=/build \
     set -e; \
     if [ -n "${GOFLAGS}" ]; then export GOFLAGS; fi; \

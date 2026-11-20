@@ -47,12 +47,12 @@ func collectFields(v reflect.Value, cols *[]string, args *[]any, seen map[string
 			}
 			*args = append(*args, b)
 		} else if fv.Type() == timeType {
-			*args = append(*args, fv.Interface().(time.Time).Format("2006-01-02 15:04:05"))
+			*args = append(*args, fv.Interface().(time.Time).UTC())
 		} else if fv.Type().Kind() == reflect.Ptr && fv.Type().Elem() == timeType {
 			if fv.IsNil() {
 				*args = append(*args, nil)
 			} else {
-				*args = append(*args, fv.Elem().Interface().(time.Time).Format("2006-01-02 15:04:05"))
+				*args = append(*args, fv.Elem().Interface().(time.Time).UTC())
 			}
 		} else {
 			*args = append(*args, fv.Interface())
@@ -261,6 +261,7 @@ func (s *timeFieldScanner) set(tm time.Time, zeroOrNil bool) {
 func ParseTime(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02 15:04:05",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
 		"2006-01-02T15:04:05Z",
 		"2006-01-02T15:04:05-07:00",
 		time.RFC3339,

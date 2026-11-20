@@ -13,6 +13,7 @@ func RegisterRESTRoutes(
 	health *handler.HealthHandler,
 	flowDef *handler.FlowDefHandler,
 	agentDef *handler.AgentDefHandler,
+	skillDef *handler.SkillHandler,
 	flowRun *handler.FlowRunHandler,
 	human *handler.HumanHandler,
 	notif *handler.NotifierHandler,
@@ -21,13 +22,17 @@ func RegisterRESTRoutes(
 	mcpH *handler.McpHandler,
 	webhook *handler.WebhookHandler,
 	knowledgeHandler *handler.KnowledgeHandler,
+	traceHandler *handler.TraceHandler,
+	flowRelease *handler.FlowReleaseHandler,
+	runtimeConfig *handler.RuntimeConfigHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// ── Health & Spec ──────────────────────────────────────
 	mux.HandleFunc("GET /_/healthz", health.Healthz)
-	mux.HandleFunc("GET /_/openapi.yaml", swagger.OpenAPIHandler)
-	mux.HandleFunc("GET /_/swagger-ui", swagger.SwaggerUIHandler)
+	swaggerConfig := swagger.DefaultSwaggerConfig()
+	mux.HandleFunc("GET /_/openapi.yaml", swagger.NewOpenAPIHandler(swaggerConfig))
+	mux.HandleFunc("GET /_/swagger-ui", swagger.NewSwaggerUIHandler(swaggerConfig))
 
 	// ── Agents (namespace-scoped) ─────────────────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/agents", agentDef.List)
@@ -36,6 +41,15 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("PUT /api/v1/{namespace}/agents/{name}", agentDef.Update)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/agents/{name}", agentDef.Delete)
 
+	// ── Reusable Skill Definitions (namespace-scoped) ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/skill-definitions", skillDef.List)
+	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions", skillDef.Create)
+	mux.HandleFunc("GET /api/v1/{namespace}/skill-definitions/{name}", skillDef.Get)
+	mux.HandleFunc("PUT /api/v1/{namespace}/skill-definitions/{name}", skillDef.Update)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/skill-definitions/{name}", skillDef.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions/{name}/assets", skillDef.UploadAsset)
+	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions/{name}/scripts", skillDef.UploadScript)
+
 	// ── AgentFlows (namespace-scoped) ─────────────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/flows", flowDef.List)
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/watch", flowDef.Watch)
@@ -43,26 +57,59 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/flows/{id}", flowDef.Get)
 	mux.HandleFunc("PUT /api/v1/{namespace}/flows/{id}", flowDef.Update)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{id}", flowDef.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/trigger", flowDef.Trigger)
 	mux.HandleFunc("POST /api/v1/{namespace}/flows/{id}/trigger", flowDef.TriggerByID)
+
+	// Flow-scoped run aliases make exact-Flow grants cover its complete run,
+	// task, approval, and trace surface without trusting query parameters.
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs", flowRun.List)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Get)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/cancel", flowRun.Cancel)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/node-runs", flowRun.ListTasks)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/node-runs/{node_run_id}", flowRun.GetTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.ListRunApprovals)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
+	if traceHandler != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/trace", traceHandler.GetRunTrace)
+	}
+	if runtimeConfig != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/runtime-config", runtimeConfig.GetNamespace)
+		mux.HandleFunc("PUT /api/v1/{namespace}/runtime-config/environment", runtimeConfig.UpdateNamespaceEnvironment)
+		mux.HandleFunc("PUT /api/v1/{namespace}/runtime-config/secrets", runtimeConfig.UpdateNamespaceSecrets)
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config", runtimeConfig.GetFlow)
+		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/environment", runtimeConfig.UpdateFlowEnvironment)
+		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/secrets", runtimeConfig.UpdateFlowSecrets)
+		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config/resolved", runtimeConfig.ResolveFlow)
+	}
+	// ── Runtime Skills (kind=skill Flow definitions) ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/skills", flowDef.ListSkills)
+	mux.HandleFunc("POST /api/v1/{namespace}/skills", flowDef.CreateSkill)
+	mux.HandleFunc("GET /api/v1/{namespace}/skills/{id}", flowDef.GetSkill)
+	mux.HandleFunc("PUT /api/v1/{namespace}/skills/{id}", flowDef.UpdateSkill)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/skills/{id}", flowDef.DeleteSkill)
 
 	// ── Runs (namespace-scoped) ───────────────────────────────
 	mux.HandleFunc("POST /api/v1/{namespace}/runs", flowRun.Create)
 	mux.HandleFunc("GET /api/v1/{namespace}/runs", flowRun.List)
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}", flowRun.Update)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}", flowRun.Get)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/runs/{id}", flowRun.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/cancel", flowRun.Cancel)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{id}/tasks", flowRun.CreateTask)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks", flowRun.ListTasks)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.GetTask)
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{id}/tasks/{task_id}", flowRun.UpdateTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/metrics", flowRun.Metrics)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}", flowRun.Update)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}", flowRun.Get)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/runs/{run_id}", flowRun.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/cancel", flowRun.Cancel)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/node-runs", flowRun.CreateTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs", flowRun.ListTasks)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", flowRun.GetTask)
+	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", flowRun.UpdateTask)
+	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/approvals", human.ListRunApprovals)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/approvals", human.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
+	if traceHandler != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", traceHandler.GetRunTrace)
+	}
 
-	// ── Human Approvals ────────────────────────────────────
-	mux.HandleFunc("POST /api/v1/human/approvals", human.CreateApproval)
-	mux.HandleFunc("GET /api/v1/human/approvals", human.ListPendingApprovals)
-	mux.HandleFunc("POST /api/v1/human/{token}/approve", human.Approve)
-	mux.HandleFunc("POST /api/v1/human/{token}/reject", human.Reject)
+	// ── Namespace approval feed for the notifier ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/approvals", human.ListNamespaceApprovals)
 
 	// ── Notification Channels (namespace-scoped) ──────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/notifications/channels", notif.ListChannels)
@@ -71,6 +118,7 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("PUT /api/v1/{namespace}/notifications/channels/{id}", notif.UpdateChannel)
 	mux.HandleFunc("DELETE /api/v1/{namespace}/notifications/channels/{id}", notif.DeleteChannel)
 	mux.HandleFunc("POST /api/v1/{namespace}/notifications/test", notif.TestChannel)
+	mux.HandleFunc("GET /api/v1/{namespace}/notifications/runtime/channels", notif.ListRuntimeChannels)
 
 	// ── LLM Providers (namespace-scoped) ──────────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/llm/providers", llmProvider.List)
@@ -88,12 +136,23 @@ func RegisterRESTRoutes(
 
 	// ── Knowledge Entries (namespace-scoped) ─────────────────
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge/tags", knowledgeHandler.ListTags)
+	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/candidates", knowledgeHandler.CreateCandidate)
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge", knowledgeHandler.List)
-	mux.HandleFunc("POST /api/v1/{namespace}/knowledge", knowledgeHandler.Create)
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Get)
-	mux.HandleFunc("PUT /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Update)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Delete)
 	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/search", knowledgeHandler.Search)
+
+	// ── Immutable Flow releases and consumer installations ───
+	if flowRelease != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases", flowRelease.List)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases", flowRelease.Publish)
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases/{id}", flowRelease.Get)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/revoke", flowRelease.Revoke)
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases/{id}/grants", flowRelease.ListGrants)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/grants", flowRelease.CreateGrant)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/flow-releases/{id}/grants/{grant_id}", flowRelease.DeleteGrant)
+		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/install", flowRelease.Install)
+		mux.HandleFunc("GET /api/v1/{namespace}/flow-installations", flowRelease.ListInstallations)
+	}
 	// ── WebSocket (namespace-scoped) ──────────────────────────
 	if ws != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/ws/human-approvals", ws.HandleHumanApprovals)

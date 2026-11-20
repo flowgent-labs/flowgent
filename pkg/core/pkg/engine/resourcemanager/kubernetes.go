@@ -7,15 +7,19 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/cache/pkg"
+	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -26,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 // RMState is the persisted state of TM and sandbox scaling for JM failover.
@@ -39,10 +44,6 @@ type RMState struct {
 	SandboxReplicas        int32     `json:"sandbox_replicas,omitempty"`
 	SandboxPendingTriggers int64     `json:"sandbox_pending_triggers,omitempty"`
 }
-
-// RMTMState is the legacy alias kept for backward compatibility.
-// Deprecated: use RMState.
-type RMTMState = RMState
 
 // KubernetesResourceManager dispatches plans to TM pods via MQTT with elastic
 // scaling. The JM auto-scales TMs based on pending plan load.
@@ -59,6 +60,7 @@ type execResult struct {
 	NodeID         string         `json:"node_id"`
 	State          string         `json:"state"`
 	Output         map[string]any `json:"output,omitempty"`
+	Error          string         `json:"error,omitempty"`
 }
 
 type KubernetesResourceManager struct {
@@ -74,9 +76,13 @@ type KubernetesResourceManager struct {
 	idleTimeout time.Duration
 	planTimeout time.Duration
 
-	mu           sync.Mutex
-	pendingPlans int64
-	lastActivity time.Time
+	mu                     sync.Mutex
+	pendingPlans           int64
+	lastActivity           time.Time
+	runtimeReadyMu         sync.Mutex
+	runtimeReadySubscribed map[string]bool
+	runtimeReadyAt         map[string]time.Time
+	runtimeReadySignal     map[string]chan struct{}
 
 	// Per-run result routing: Schedule subscribes once per run to
 	// exec/results and routes messages to the waiting plan's channel.
@@ -94,16 +100,26 @@ type KubernetesResourceManager struct {
 	sandboxWorkspace       string
 	sandboxHostWorkspace   string
 	sandboxPolicy          *model.SandboxPolicy
+	sandboxResources       *model.SandboxResources
 	sandboxPendingTriggers int64
 
 	mqttBroker               string
 	postgresDSN              string
 	apiServerURL             string
+	configMapName            string
 	tmImage                  string
+	tmResources              *model.SandboxResources
+	priorityClassName        string
+	nodeSelector             map[string]string
 	ownerNamespaceID         string
+	runtimeClusterID         string
 	ownerFlowID              string
+	ownerRunID               string
+	runtimeMode              entities.RuntimeMode
 	ownerJobManagerName      string
 	ownerJobManagerNamespace string
+	managedByLabelValue      string
+	deleteOnShutdown         bool
 	credentialEnvSecret      string
 
 	ctx    context.Context
@@ -111,16 +127,28 @@ type KubernetesResourceManager struct {
 }
 
 const (
-	LabelMode                      = "flowgent.io/mode"
 	LabelNamespaceID               = "flowgent.io/namespace"
+	LabelRuntimeClusterID          = "flowgent.io/runtime-cluster"
 	LabelFlowID                    = "flowgent.io/flow"
+	LabelRunID                     = "flowgent.io/run"
+	LabelRuntimeMode               = "flowgent.io/runtime-mode"
 	LabelManagedBy                 = "flowgent.io/managed-by"
 	LabelParentJobManager          = "flowgent.io/parent-jobmanager"
 	LabelParentJobManagerNamespace = "flowgent.io/parent-jobmanager-namespace"
 
-	LabelValueApplication = "application"
-	LabelValueJobManager  = "jobmanager"
+	LabelValueRuntimeCluster = "runtime-cluster"
+	runtimeReadyLease        = 15 * time.Second
 )
+
+// ManagedByLabelValue returns the installation-scoped runtime owner label.
+// The historical default remains stable, while named installations avoid
+// cross-controller garbage collection on shared clusters.
+func ManagedByLabelValue(resourceOwner string) string {
+	if resourceOwner == "" || resourceOwner == "flowgent" {
+		return LabelValueRuntimeCluster
+	}
+	return resourceid.KubernetesName(resourceOwner, LabelValueRuntimeCluster)
+}
 
 func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResourceManager, error) {
 	if cfg.SlotsPerTM <= 0 {
@@ -147,6 +175,9 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 	if cfg.SandboxDeploymentName == "" {
 		cfg.SandboxDeploymentName = "flowgent-sandbox"
 	}
+	if cfg.ConfigMapName == "" {
+		cfg.ConfigMapName = "flowgent-config"
+	}
 	if cfg.SandboxMinReplicas < 0 {
 		cfg.SandboxMinReplicas = 0
 	}
@@ -171,18 +202,21 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 
 	ctx, cancel := context.WithCancel(context.Background())
 	rm := &KubernetesResourceManager{
-		q:           nil, // set via SetQueue
-		cache:       cfg.Cache,
-		runResults:  make(map[string]map[string]chan execResult),
-		namespace:   cfg.K8sNamespace,
-		deployName:  cfg.K8sDeploymentName,
-		kubeClient:  clientset,
-		slotsPerTM:  cfg.SlotsPerTM,
-		minTMs:      cfg.MinTMs,
-		maxTMs:      cfg.MaxTMs,
-		currentTMs:  int32(cfg.MinTMs),
-		idleTimeout: cfg.IdleTimeout,
-		planTimeout: cfg.PlanTimeout,
+		q:                      nil, // set via SetQueue
+		cache:                  cfg.Cache,
+		runResults:             make(map[string]map[string]chan execResult),
+		runtimeReadySubscribed: make(map[string]bool),
+		runtimeReadyAt:         make(map[string]time.Time),
+		runtimeReadySignal:     make(map[string]chan struct{}),
+		namespace:              cfg.K8sNamespace,
+		deployName:             cfg.K8sDeploymentName,
+		kubeClient:             clientset,
+		slotsPerTM:             cfg.SlotsPerTM,
+		minTMs:                 cfg.MinTMs,
+		maxTMs:                 cfg.MaxTMs,
+		currentTMs:             int32(cfg.MinTMs),
+		idleTimeout:            cfg.IdleTimeout,
+		planTimeout:            cfg.PlanTimeout,
 
 		sandboxEnabled:           cfg.SandboxEnabled,
 		sandboxDeployName:        cfg.SandboxDeploymentName,
@@ -194,14 +228,24 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		sandboxWorkspace:         cfg.SandboxWorkspace,
 		sandboxHostWorkspace:     defaultHostPath(cfg.SandboxHostWorkspace, cfg.SandboxWorkspace),
 		sandboxPolicy:            cfg.SandboxPolicy,
+		sandboxResources:         cfg.SandboxResources,
 		mqttBroker:               cfg.MQTTBroker,
 		postgresDSN:              cfg.PostgresDSN,
 		apiServerURL:             cfg.APIServerURL,
+		configMapName:            cfg.ConfigMapName,
 		tmImage:                  cfg.TMImage,
+		tmResources:              cfg.TMResources,
+		priorityClassName:        cfg.PriorityClassName,
+		nodeSelector:             cfg.NodeSelector,
 		ownerNamespaceID:         cfg.OwnerNamespaceID,
+		runtimeClusterID:         cfg.RuntimeClusterID,
 		ownerFlowID:              cfg.OwnerFlowID,
+		ownerRunID:               cfg.OwnerRunID,
+		runtimeMode:              cfg.RuntimeMode,
 		ownerJobManagerName:      cfg.OwnerJobManagerName,
 		ownerJobManagerNamespace: cfg.OwnerJobManagerNamespace,
+		managedByLabelValue:      ManagedByLabelValue(cfg.ResourceOwner),
+		deleteOnShutdown:         cfg.DeleteOnShutdown,
 		credentialEnvSecret:      cfg.CredentialEnvSecret,
 
 		ctx:    ctx,
@@ -244,6 +288,70 @@ func (s *KubernetesResourceManager) Provider() engine.Provider {
 	return engine.ProviderKubernetes
 }
 
+func (s *KubernetesResourceManager) ensureRuntimeReadySubscription(ctx context.Context, role string) error {
+	if s.runtimeClusterID == "" {
+		return nil
+	}
+	s.runtimeReadyMu.Lock()
+	defer s.runtimeReadyMu.Unlock()
+	if s.runtimeReadySubscribed == nil {
+		s.runtimeReadySubscribed = make(map[string]bool)
+		s.runtimeReadyAt = make(map[string]time.Time)
+		s.runtimeReadySignal = make(map[string]chan struct{})
+	}
+	if s.runtimeReadySubscribed[role] {
+		return nil
+	}
+	if s.runtimeReadySignal[role] == nil {
+		s.runtimeReadySignal[role] = make(chan struct{}, 1)
+	}
+	namespaceID := defaultIfEmpty(s.ownerNamespaceID, "default")
+	topic := messager.RuntimeReadyWildcard(namespaceID, s.runtimeClusterID, role)
+	if err := s.q.Subscribe(ctx, topic, func(_ string, payload []byte) {
+		var ready messager.RuntimeReady
+		if err := json.Unmarshal(payload, &ready); err != nil || ready.Role != role ||
+			ready.Namespace != namespaceID || ready.ClusterID != s.runtimeClusterID {
+			return
+		}
+		s.runtimeReadyMu.Lock()
+		s.runtimeReadyAt[role] = time.Now()
+		signal := s.runtimeReadySignal[role]
+		s.runtimeReadyMu.Unlock()
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
+	}); err != nil {
+		return err
+	}
+	s.runtimeReadySubscribed[role] = true
+	return nil
+}
+
+func (s *KubernetesResourceManager) waitForRuntimeReady(ctx context.Context, role string) error {
+	if s.runtimeClusterID == "" {
+		return nil
+	}
+	deadline := time.NewTimer(2 * time.Minute)
+	defer deadline.Stop()
+	for {
+		s.runtimeReadyMu.Lock()
+		readyAt := s.runtimeReadyAt[role]
+		signal := s.runtimeReadySignal[role]
+		s.runtimeReadyMu.Unlock()
+		if !readyAt.IsZero() && time.Since(readyAt) <= runtimeReadyLease {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("%s worker subscription not ready for %s/%s", role, defaultIfEmpty(s.ownerNamespaceID, "default"), s.ownerFlowID)
+		case <-signal:
+		}
+	}
+}
+
 func (s *KubernetesResourceManager) Validate(ctx context.Context) error {
 	if s.namespace == "" {
 		return fmt.Errorf("kubernetes rm: K8s namespace is required")
@@ -271,14 +379,26 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	ctx, cancel := context.WithTimeout(ctx, s.planTimeout)
 	defer cancel()
 
+	if err := s.ensureRuntimeReadySubscription(ctx, "taskmanager"); err != nil {
+		return nil, fmt.Errorf("kubernetes rm taskmanager readiness: %w", err)
+	}
 	if err := s.ensureTaskManagerCapacity(ctx); err != nil {
 		return nil, fmt.Errorf("kubernetes rm capacity: %w", err)
+	}
+	if err := s.waitForRuntimeReady(ctx, "taskmanager"); err != nil {
+		return nil, fmt.Errorf("kubernetes rm taskmanager readiness: %w", err)
 	}
 	if plan.TaskType == entities.TaskSandbox && s.sandboxEnabled {
 		atomic.AddInt64(&s.sandboxPendingTriggers, 1)
 		defer atomic.AddInt64(&s.sandboxPendingTriggers, -1)
+		if err := s.ensureRuntimeReadySubscription(ctx, "sandbox"); err != nil {
+			return nil, fmt.Errorf("kubernetes rm sandbox readiness: %w", err)
+		}
 		if err := s.ensureSandboxCapacity(ctx); err != nil {
 			return nil, fmt.Errorf("kubernetes rm sandbox capacity: %w", err)
+		}
+		if err := s.waitForRuntimeReady(ctx, "sandbox"); err != nil {
+			return nil, fmt.Errorf("kubernetes rm sandbox readiness: %w", err)
 		}
 	}
 
@@ -313,8 +433,10 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	s.runResults[runID][plan.NodeID] = resultCh
 	s.runResultsMu.Unlock()
 
+	plan.TraceContext = make(map[string]string)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(plan.TraceContext))
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
+	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
 		ID: plan.PlanID,
 		Headers: map[string]string{
 			"task_run_id": plan.AgentFlowRunID,
@@ -336,10 +458,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 		s.runResultsMu.Unlock()
 		return nil, fmt.Errorf("kubernetes rm: plan %s timed out waiting for TM result", plan.PlanID)
 	case er := <-resultCh:
-		if er.State == "FAILED" {
-			return nil, fmt.Errorf("plan %s failed", plan.PlanID)
-		}
-		return &entities.TaskResult{Output: er.Output}, nil
+		return &entities.TaskResult{Output: er.Output, Error: er.Error}, nil
 	}
 }
 
@@ -682,18 +801,27 @@ func (s *KubernetesResourceManager) CompleteSandboxTrigger() {
 }
 
 func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error {
-	_, err := s.kubeClient.AppsV1().Deployments(s.namespace).
+	desired := s.desiredTMDeployment()
+	existing, err := s.kubeClient.AppsV1().Deployments(s.namespace).
 		Get(ctx, s.deployName, metav1.GetOptions{})
 	if err == nil {
-		return nil
+		return s.reconcileDeployment(ctx, existing, desired)
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
+	_, err = s.kubeClient.AppsV1().Deployments(s.namespace).Create(ctx, desired, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create tm deployment: %w", err)
+	}
+	slog.Info("kubernetes rm: created tm deployment", "name", s.deployName, "replicas", s.minTMs)
+	return nil
+}
 
+func (s *KubernetesResourceManager) desiredTMDeployment() *appsv1.Deployment {
 	replicas := int32(s.minTMs)
 	labels := s.tmLabels()
-	deploy := &appsv1.Deployment{
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: s.deployName, Namespace: s.namespace,
 			Labels: labels,
 		},
@@ -703,6 +831,8 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					PriorityClassName: s.priorityClassName,
+					NodeSelector:      s.nodeSelector,
 					Containers: []corev1.Container{{
 						Name:            "taskmanager",
 						Image:           s.tmImage,
@@ -712,8 +842,13 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__STORAGE__POSTGRES__DSN", Value: s.postgresDSN},
 							{Name: "FLOWGENT__RUNTIME__API_SERVER_URL", Value: s.apiServerURL},
+							{Name: "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE", Value: defaultIfEmpty(s.ownerNamespaceID, "default")},
+							{Name: "FLOWGENT__RUNTIME__MODE", Value: string(s.runtimeMode)},
+							{Name: "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID", Value: s.runtimeClusterID},
+							{Name: "FLOWGENT__RUNTIME__TM_SLOTS", Value: fmt.Sprintf("%d", s.slotsPerTM)},
 						},
-						Command: []string{"/app/flowgent", "taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"},
+						Command:   []string{"/app/flowgent", "taskmanager", "start", "-c", "/etc/flowgent/flowgent.yaml"},
+						Resources: resourceRequirements(s.tmResources, "200m", "256Mi", "2000m", "2Gi"),
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "config", MountPath: "/etc/flowgent"},
 							{Name: "workspace", MountPath: s.sandboxWorkspace},
@@ -722,7 +857,7 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 					Volumes: []corev1.Volume{
 						{Name: "config", VolumeSource: corev1.VolumeSource{
 							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "flowgent-config"},
+								LocalObjectReference: corev1.LocalObjectReference{Name: s.configMapName},
 							},
 						}},
 						{Name: "workspace", VolumeSource: corev1.VolumeSource{
@@ -736,25 +871,53 @@ func (s *KubernetesResourceManager) ensureDeployment(ctx context.Context) error 
 			},
 		},
 	}
-	_, err = s.kubeClient.AppsV1().Deployments(s.namespace).Create(ctx, deploy, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("create tm deployment: %w", err)
-	}
-	slog.Info("kubernetes rm: created tm deployment", "name", s.deployName, "replicas", replicas)
-	return nil
 }
 
 func (s *KubernetesResourceManager) credentialEnvFrom() []corev1.EnvFromSource {
-	if s.credentialEnvSecret == "" {
-		return nil
-	}
 	optional := true
-	return []corev1.EnvFromSource{{
-		SecretRef: &corev1.SecretEnvSource{
+	sources := make([]corev1.EnvFromSource, 0, 3)
+	if s.credentialEnvSecret != "" {
+		sources = append(sources, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{
 			LocalObjectReference: corev1.LocalObjectReference{Name: s.credentialEnvSecret},
 			Optional:             &optional,
-		},
-	}}
+		}})
+	}
+	return sources
+}
+
+func (s *KubernetesResourceManager) reconcileDeployment(ctx context.Context, existing, desired *appsv1.Deployment) error {
+	if existing == nil || desired == nil {
+		return fmt.Errorf("deployment reconciliation requires existing and desired state")
+	}
+	if reflect.DeepEqual(existing.Labels, desired.Labels) &&
+		reflect.DeepEqual(existing.Spec.Template, desired.Spec.Template) {
+		return nil
+	}
+	deploymentName := existing.Name
+	deploymentNamespace := existing.Namespace
+	if deploymentNamespace == "" {
+		deploymentNamespace = s.namespace
+	}
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		latest, getErr := s.kubeClient.AppsV1().Deployments(deploymentNamespace).
+			Get(ctx, deploymentName, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		if reflect.DeepEqual(latest.Labels, desired.Labels) &&
+			reflect.DeepEqual(latest.Spec.Template, desired.Spec.Template) {
+			return nil
+		}
+		latest.Labels = desired.Labels
+		latest.Spec.Template = desired.Spec.Template
+		_, updateErr := s.kubeClient.AppsV1().Deployments(deploymentNamespace).
+			Update(ctx, latest, metav1.UpdateOptions{})
+		return updateErr
+	})
+	if err != nil {
+		return fmt.Errorf("reconcile deployment %s/%s: %w", deploymentNamespace, deploymentName, err)
+	}
+	return nil
 }
 
 func (s *KubernetesResourceManager) tmLabels() map[string]string {
@@ -762,23 +925,25 @@ func (s *KubernetesResourceManager) tmLabels() map[string]string {
 		"app.kubernetes.io/component": "taskmanager",
 		"flowgent/role":               "worker",
 	}
-	if s.ownerFlowID == "" {
+	if s.runtimeClusterID == "" {
 		return labels
 	}
 	namespaceID := s.ownerNamespaceID
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
-	labels[LabelMode] = LabelValueApplication
 	labels[LabelNamespaceID] = namespaceID
-	labels[LabelFlowID] = s.ownerFlowID
-	labels[LabelManagedBy] = LabelValueJobManager
-	if s.ownerJobManagerName != "" {
-		labels[LabelParentJobManager] = s.ownerJobManagerName
+	labels[LabelRuntimeClusterID] = s.runtimeClusterID
+	if s.runtimeMode != "" {
+		labels[LabelRuntimeMode] = string(s.runtimeMode)
 	}
-	if s.ownerJobManagerNamespace != "" {
-		labels[LabelParentJobManagerNamespace] = s.ownerJobManagerNamespace
+	if s.ownerFlowID != "" {
+		labels[LabelFlowID] = s.ownerFlowID
 	}
+	if s.ownerRunID != "" {
+		labels[LabelRunID] = s.ownerRunID
+	}
+	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels
 }
 
@@ -787,39 +952,50 @@ func (s *KubernetesResourceManager) sandboxLabels() map[string]string {
 		"app.kubernetes.io/component": "sandbox",
 		"flowgent/role":               "sandbox-worker",
 	}
-	if s.ownerFlowID == "" {
+	if s.runtimeClusterID == "" {
 		return labels
 	}
 	namespaceID := s.ownerNamespaceID
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
-	labels[LabelMode] = LabelValueApplication
 	labels[LabelNamespaceID] = namespaceID
-	labels[LabelFlowID] = s.ownerFlowID
-	labels[LabelManagedBy] = LabelValueJobManager
-	if s.ownerJobManagerName != "" {
-		labels[LabelParentJobManager] = s.ownerJobManagerName
+	labels[LabelRuntimeClusterID] = s.runtimeClusterID
+	if s.runtimeMode != "" {
+		labels[LabelRuntimeMode] = string(s.runtimeMode)
 	}
-	if s.ownerJobManagerNamespace != "" {
-		labels[LabelParentJobManagerNamespace] = s.ownerJobManagerNamespace
+	if s.ownerFlowID != "" {
+		labels[LabelFlowID] = s.ownerFlowID
 	}
+	if s.ownerRunID != "" {
+		labels[LabelRunID] = s.ownerRunID
+	}
+	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels
 }
 
 func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context) error {
-	_, err := s.kubeClient.AppsV1().Deployments(s.namespace).
+	desired := s.desiredSandboxDeployment()
+	existing, err := s.kubeClient.AppsV1().Deployments(s.namespace).
 		Get(ctx, s.sandboxDeployName, metav1.GetOptions{})
 	if err == nil {
-		return nil
+		return s.reconcileDeployment(ctx, existing, desired)
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
+	_, err = s.kubeClient.AppsV1().Deployments(s.namespace).Create(ctx, desired, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create sandbox deployment: %w", err)
+	}
+	slog.Info("kubernetes rm: created sandbox deployment", "name", s.sandboxDeployName, "replicas", s.sandboxMinReplicas)
+	return nil
+}
 
+func (s *KubernetesResourceManager) desiredSandboxDeployment() *appsv1.Deployment {
 	replicas := int32(s.sandboxMinReplicas)
 	labels := s.sandboxLabels()
-	deploy := &appsv1.Deployment{
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: s.sandboxDeployName, Namespace: s.namespace,
 			Labels: labels,
 		},
@@ -829,6 +1005,8 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					PriorityClassName: s.priorityClassName,
+					NodeSelector:      s.nodeSelector,
 					SecurityContext: &corev1.PodSecurityContext{
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
@@ -844,8 +1022,9 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 							{Name: "FLOWGENT__MESSAGER__MQTT__BROKER", Value: s.mqttBroker},
 							{Name: "FLOWGENT__SANDBOX__WORKSPACE", Value: s.sandboxWorkspace},
 							{Name: "FLOWGENT__SANDBOX__DEPLOYMENT__SLOTS_PER_POD", Value: fmt.Sprintf("%d", s.sandboxSlotsPerPod)},
-							{Name: "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE", Value: s.ownerNamespaceID},
-							{Name: "FLOWGENT__RUNTIME__AGENT_FLOW_ID", Value: s.ownerFlowID},
+							{Name: "FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE", Value: defaultIfEmpty(s.ownerNamespaceID, "default")},
+							{Name: "FLOWGENT__RUNTIME__MODE", Value: string(s.runtimeMode)},
+							{Name: "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID", Value: s.runtimeClusterID},
 							{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
 						},
 						Command: []string{"/app/flowgent", "sandbox", "start"},
@@ -858,7 +1037,7 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 					Volumes: []corev1.Volume{
 						{Name: "config", VolumeSource: corev1.VolumeSource{
 							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: "flowgent-config"},
+								LocalObjectReference: corev1.LocalObjectReference{Name: s.configMapName},
 							},
 						}},
 						{Name: "sandbox-workspace", VolumeSource: corev1.VolumeSource{
@@ -872,25 +1051,22 @@ func (s *KubernetesResourceManager) ensureSandboxDeployment(ctx context.Context)
 			},
 		},
 	}
-	_, err = s.kubeClient.AppsV1().Deployments(s.namespace).Create(ctx, deploy, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("create sandbox deployment: %w", err)
-	}
-	slog.Info("kubernetes rm: created sandbox deployment", "name", s.sandboxDeployName, "replicas", replicas)
-	return nil
 }
 
 func (s *KubernetesResourceManager) buildSandboxResourceRequirements() corev1.ResourceRequirements {
+	if s.sandboxResources != nil {
+		return resourceRequirements(s.sandboxResources, "200m", "256Mi", "2000m", "2Gi")
+	}
 	reqs := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{},
 		Limits:   corev1.ResourceList{},
 	}
 	if s.sandboxPolicy != nil && s.sandboxPolicy.DefaultResources != nil {
 		if cpu := s.sandboxPolicy.DefaultResources.CPU; cpu != "" {
-			reqs.Limits[corev1.ResourceCPU] = resource.MustParse(cpu)
+			reqs.Limits[corev1.ResourceCPU] = quantityOrDefault(cpu, "2000m")
 		}
 		if mem := s.sandboxPolicy.DefaultResources.Memory; mem != "" {
-			reqs.Limits[corev1.ResourceMemory] = resource.MustParse(mem)
+			reqs.Limits[corev1.ResourceMemory] = quantityOrDefault(mem, "2Gi")
 		}
 	}
 	if len(reqs.Limits) == 0 {
@@ -900,6 +1076,40 @@ func (s *KubernetesResourceManager) buildSandboxResourceRequirements() corev1.Re
 		reqs.Requests[corev1.ResourceMemory] = resource.MustParse("256Mi")
 	}
 	return reqs
+}
+
+func resourceRequirements(configured *model.SandboxResources, requestCPU, requestMemory, limitCPU, limitMemory string) corev1.ResourceRequirements {
+	requirements := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse(requestCPU), corev1.ResourceMemory: resource.MustParse(requestMemory),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse(limitCPU), corev1.ResourceMemory: resource.MustParse(limitMemory),
+		},
+	}
+	if configured == nil {
+		return requirements
+	}
+	if configured.CPU != "" {
+		quantity := quantityOrDefault(configured.CPU, requestCPU)
+		requirements.Requests[corev1.ResourceCPU] = quantity
+		requirements.Limits[corev1.ResourceCPU] = quantity
+	}
+	if configured.Memory != "" {
+		quantity := quantityOrDefault(configured.Memory, requestMemory)
+		requirements.Requests[corev1.ResourceMemory] = quantity
+		requirements.Limits[corev1.ResourceMemory] = quantity
+	}
+	return requirements
+}
+
+func quantityOrDefault(value, fallback string) resource.Quantity {
+	quantity, err := resource.ParseQuantity(value)
+	if err == nil && !quantity.IsZero() && quantity.Sign() > 0 {
+		return quantity
+	}
+	slog.Error("invalid Kubernetes resource quantity; using safe default", "value", value, "default", fallback, "error", err)
+	return resource.MustParse(fallback)
 }
 
 // ─── K8s Config ─────────────────────────────────────────
@@ -923,9 +1133,25 @@ func buildRESTConfig(kubeconfigPath string) (*rest.Config, error) {
 }
 
 func (s *KubernetesResourceManager) Shutdown(ctx context.Context) error {
-	slog.Info("kubernetes rm shutdown, scaling to min",
-		"tm_replicas", s.minTMs, "sandbox_replicas", s.sandboxMinReplicas)
+	slog.Info("kubernetes rm shutdown",
+		"runtime_mode", s.runtimeMode,
+		"runtime_cluster_id", s.runtimeClusterID,
+		"delete_on_shutdown", s.deleteOnShutdown,
+		"tm_replicas", s.minTMs,
+		"sandbox_replicas", s.sandboxMinReplicas,
+	)
 	s.cancel()
+	if s.deleteOnShutdown {
+		if err := s.kubeClient.AppsV1().Deployments(s.namespace).Delete(ctx, s.deployName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			slog.Warn("kubernetes rm tm shutdown delete failed", "deployment", s.deployName, "namespace", s.namespace, "err", err)
+		}
+		if s.sandboxEnabled {
+			if err := s.kubeClient.AppsV1().Deployments(s.namespace).Delete(ctx, s.sandboxDeployName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				slog.Warn("kubernetes rm sandbox shutdown delete failed", "deployment", s.sandboxDeployName, "namespace", s.namespace, "err", err)
+			}
+		}
+		return nil
+	}
 	if err := s.scaleDeployment(ctx, int32(s.minTMs)); err != nil {
 		slog.Warn("kubernetes rm tm shutdown scale failed", "err", err)
 	}

@@ -3,30 +3,32 @@ package console
 import (
 	"context"
 	"database/sql"
-	"log/slog"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
-	"github.com/flowgent-labs/flowgent/store/pkg"
-	"github.com/flowgent-labs/flowgent/store/pkg/agent"
-	"github.com/flowgent-labs/flowgent/store/pkg/flow"
-	"github.com/flowgent-labs/flowgent/store/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/store/pkg/llmprovider"
-	"github.com/flowgent-labs/flowgent/store/pkg/mcp"
-	"github.com/flowgent-labs/flowgent/store/pkg/notifier"
-	payments "github.com/flowgent-labs/flowgent/wallet/pkg"
-	walletproviders "github.com/flowgent-labs/flowgent/wallet/pkg/providers"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/flowgent-labs/flowgent/storage/pkg/agent"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/llmprovider"
+	"github.com/flowgent-labs/flowgent/storage/pkg/mcp"
+	"github.com/flowgent-labs/flowgent/storage/pkg/notifier"
 )
 
 // FlowgentConsole is the unified resource management class for import/export
 // and CRUD of all Flowgent resource kinds (agents, flows, MCPs, LLM providers,
-// channels, skills, runs, wallets).
+// channels, skills, and runs). Wallet keys are owned by the external Wallet
+// service and are managed with walletd, outside the Flowgent process.
 type FlowgentConsole struct {
-	store       store.IStore
-	secretStore payments.SecretStoreProvider
-	namespace      string
-	ctx         context.Context
+	store           storage.IStorage
+	namespace       string
+	ctx             context.Context
+	secretCipher    secretbox.ISecretCipher
+	secretCipherErr error
 }
 
 // lazyStores holds lazily-initialized per-entity stores.
@@ -41,39 +43,38 @@ type lazyStores struct {
 
 // NewFlowgentConsole creates a FlowgentConsole from the given config.
 func NewFlowgentConsole(cfg *config.FlowgentConfig) (*FlowgentConsole, error) {
-	storeImpl := store.InitStore(cfg)
+	storeImpl := storage.InitStorage(cfg)
 
 	fc := &FlowgentConsole{
 		store: storeImpl,
 		ctx:   context.Background(),
+	}
+	if encryption := cfg.Notifier.SecretEncryption; encryption.Provider != "" {
+		if encryption.Provider != "aesgcm" {
+			fc.secretCipherErr = fmt.Errorf("notification secret encryption provider must be aesgcm")
+		} else {
+			fc.secretCipher, fc.secretCipherErr = secretbox.NewAESGCMSecretCipher(
+				encryption.ActiveKeyID,
+				encryption.Keys,
+			)
+		}
 	}
 
 	if cfg.Runtime.Namespace.DefaultNamespace != "" {
 		fc.namespace = cfg.Runtime.Namespace.DefaultNamespace
 	}
 
-	fc.initSecretStore(cfg)
 	return fc, nil
 }
 
-func (fc *FlowgentConsole) initSecretStore(cfg *config.FlowgentConfig) {
-	if cfg.Wallet == nil {
-		return
+func (fc *FlowgentConsole) protectChannelSecrets(ch *entities.NotifyChannelInfo) error {
+	if fc.secretCipherErr != nil {
+		return fmt.Errorf("notification secret encryption is unavailable: %w", fc.secretCipherErr)
 	}
-	mkf := cfg.Wallet.SecretStore.MasterKeyFile
-	if mkf == "" {
-		return
+	if fc.secretCipher == nil {
+		return fmt.Errorf("notification secret encryption is not configured")
 	}
-	db, ok := fc.store.DB().(*sql.DB)
-	if !ok {
-		return
-	}
-	ss, err := walletproviders.NewDefaultSecretStoreProvider(db, mkf)
-	if err != nil {
-		slog.Warn("secret store init failed (wallet commands unavailable)", "err", err)
-		return
-	}
-	fc.secretStore = ss
+	return ch.ProtectSecrets(fc.ctx, fc.secretCipher)
 }
 
 // SetNamespace sets the active namespace.

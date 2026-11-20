@@ -1,3 +1,8 @@
+{{- if .Values.application.enabled }}
+{{- $flowgentConfig := index .Values.runtime "flowgent-config" | default "" -}}
+{{- if not $flowgentConfig -}}
+{{- fail "runtime.flowgent-config must contain the full flowgent.yaml content" -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,106 +11,5 @@ metadata:
     {{- include "flowgent.labels" . | nindent 4 }}
 data:
   flowgent.yaml: |
-    service_name: {{ include "flowgent.name" . }}
-    server:
-      host: "0.0.0.0"
-      port: {{ .Values.apiserver.service.restPort }}
-      shutdown_timeout: "15s"
-    a2a:
-      enabled: {{ .Values.a2a.enabled }}
-      host: "0.0.0.0"
-      port: {{ .Values.a2a.service.port }}
-    mgmt:
-      enabled: true
-      host: "0.0.0.0"
-      port: {{ .Values.apiserver.service.mgmtPort }}
-      pprof: { enabled: true, server_bind: "0.0.0.0:6669" }
-      otel:
-        enabled: true
-        endpoint: "{{ include "flowgent.fullname" . }}-jaeger:{{ .Values.jaeger.service.otlpHttp }}"
-        protocol: "http"
-        sample_rate: 1.0
-      metrics: { enabled: false }
-    logging:
-      mode: JSON
-      level: DEBUG
-    auth:
-      jwt_validity_ak: {{ .Values.apiserver.config.jwtValidityAk }}
-      jwt_validity_rk: {{ .Values.apiserver.config.jwtValidityRk }}
-      jwt_algorithm: {{ .Values.apiserver.config.jwtAlgorithm }}
-      anonymous_paths:
-        {{- range .Values.apiserver.config.anonymousPaths }}
-        - {{ . | quote }}
-        {{- end }}
-    cache:
-      provider: Memory
-      memory:
-        initial_capacity: 32
-        max_capacity: 65535
-        ttl: 3600000
-        eviction_policy: LRU
-    storage:
-      type: {{ .Values.storage.type | default "SQLITE" | quote }}
-      {{- if eq (.Values.storage.type | default "SQLITE") "SQLITE" }}
-      sqlite:
-        dir: .flowgent/sqlite
-      {{- end }}
-      {{- if .Values.storage.postgres.dsn }}
-      postgres:
-        dsn: {{ .Values.storage.postgres.dsn | quote }}
-      {{- else if .Values.postgresql.enabled }}
-      postgres:
-        host: "{{ include "flowgent.fullname" . }}-postgresql"
-        port: 5432
-        database: flowgent
-        username: flowgent
-        password: flowgent
-        min_connections: 2
-        max_connections: 20
-      {{- end }}
-    orchestration:
-      max_concurrent_flows: {{ .Values.orchestration.maxConcurrentFlows | default 10 }}
-      flow_execution_timeout: {{ .Values.orchestration.flowExecutionTimeout | default "30m" | quote }}
-      max_node_retries: {{ .Values.orchestration.maxNodeRetries | default 3 }}
-    messager:
-      type: {{ .Values.messaging.type | quote }}
-      mqtt:
-        broker: "tcp://{{ include "flowgent.fullname" . }}-emqx:1883"
-        client_id: "flowgent"
-    lock:
-      provider: {{ .Values.lock.provider | default (ternary "postgres" "memory" (eq (.Values.storage.type | default "SQLITE") "POSTGRE")) | quote }}
-    notifier:
-      enabled: {{ .Values.notifier.enabled }}
-    runtime:
-      system_namespace: {{ .Values.runtime.systemNamespace | default "flowgen-system" | quote }}
-      k8s_namespace: {{ .Values.runtime.systemNamespace | default .Release.Namespace | quote }}
-      tm_orphan_timeout: {{ .Values.runtime.tmOrphanTimeout | default "3m" | quote }}
-      credential_env_secret: {{ .Values.runtime.credentialEnvSecret | default "" | quote }}
-      namespace:
-        default_namespace: {{ .Values.runtime.namespace.defaultNamespace | default "default" | quote }}
-        namespace_prefix: {{ .Values.runtime.namespace.namespacePrefix | default "flowgent-" | quote }}
-      credential_paths:
-        base_path: {{ .Values.runtime.credentialPaths.basePath | default "/var/flowgent" | quote }}
-    wallet:
-      enabled: {{ .Values.wallet.enabled | default false }}
-      secret_store:
-        provider: default
-        master_key_file: {{ .Values.wallet.keyFile | default "/var/secrets/flowgent/master.key" | quote }}
-    sandbox:
-      workspace: {{ .Values.sandbox.workspace | default "/var/flowgent" | quote }}
-      host_workspace: {{ .Values.sandbox.hostWorkspace | default "/mnt/disk1/flowgent/e2e" | quote }}
-      policy:
-        network:
-          mode: {{ .Values.sandbox.policy.network.mode | default "none" | quote }}
-        allowed_runtimes: {{ .Values.sandbox.policy.allowedRuntimes | toJson }}
-        banned_commands: {{ .Values.sandbox.policy.bannedCommands | toJson }}
-        default_timeout: {{ .Values.sandbox.policy.defaultTimeout | default "120s" | quote }}
-        max_timeout: {{ .Values.sandbox.policy.maxTimeout | default "600s" | quote }}
-      deployment:
-        enabled: true
-        min_replicas: {{ .Values.sandbox.minReplicas | default 0 }}
-        max_replicas: {{ .Values.sandbox.maxReplicas | default 10 }}
-        resources:
-          cpu: {{ .Values.sandbox.resources.limits.cpu | default "2" | quote }}
-          memory: {{ .Values.sandbox.resources.limits.memory | default "2Gi" | quote }}
-        slots_per_pod: {{ .Values.sandbox.slots | default 4 }}
+{{ tpl $flowgentConfig . | nindent 4 }}
+{{- end }}

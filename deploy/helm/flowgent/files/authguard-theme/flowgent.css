@@ -1,0 +1,51 @@
+:root[data-application-theme='flowgent'] {
+  --authguard-application-theme: flowgent;
+  --bg: #f2f8f5;
+  --panel: #ffffff;
+  --panel-2: #eaf4ef;
+  --text: #0b2019;
+  --muted: #5a746a;
+  --line: #d1e4dc;
+  --accent: #149d72;
+  --accent-2: #38dba4;
+  --danger: #dc5263;
+  --shadow: 0 26px 80px rgba(13, 58, 44, 0.16);
+}
+
+:root[data-theme='dark'][data-application-theme='flowgent'] {
+  --bg: #030a08;
+  --panel: #081611;
+  --panel-2: #0c2119;
+  --text: #e7fff6;
+  --muted: #7fa497;
+  --line: #183d30;
+  --accent: #2cdaa1;
+  --accent-2: #89f8d2;
+  --danger: #ff7180;
+  --shadow: 0 28px 90px rgba(0, 0, 0, 0.52);
+}
+
+:root[data-application-theme='flowgent'] .login-visual {
+  background:
+    radial-gradient(circle at 72% 24%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 31%),
+    radial-gradient(circle at 20% 82%, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 30%),
+    linear-gradient(145deg, #071f19, #03100d 72%);
+}
+
+:root[data-application-theme='flowgent'] .login-card,
+:root[data-application-theme='flowgent'] .security-card {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+:root[data-application-theme='flowgent'] .primary {
+  color: #04130e;
+  background: linear-gradient(115deg, var(--accent), var(--accent-2));
+}
+
+@media (max-width: 900px) {
+  :root[data-application-theme='flowgent'] .login-card {
+    padding: clamp(22px, 6vw, 34px);
+  }
+}

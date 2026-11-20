@@ -12,3 +12,9 @@ keywords:
   - llm
 maintainers:
   - name: Flowgent Team
+dependencies:
+  - name: authguard
+    alias: authguard-middleware
+    version: 1.0.1
+    repository: oci://ghcr.io/wl4g/charts
+    condition: authguard-middleware.enabled

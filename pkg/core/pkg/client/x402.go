@@ -3,96 +3,95 @@
 package client
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/shopspring/decimal"
+	"github.com/x402-foundation/x402/go/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/types"
 )
 
 const (
-	HeaderX402Auth = "X402-Authorization"
+	HeaderPaymentRequired  = "PAYMENT-REQUIRED"
+	maxPaymentRequiredSize = 64 << 10
 )
 
-// Parse extracts a V2 PaymentRequired from an HTTP 402 response body.
-// Falls back to V1 header parsing if the body isn't valid V2 JSON.
+// Parse extracts and validates a V2 PaymentRequired response from the standard
+// base64-encoded PAYMENT-REQUIRED header.
 func Parse(resp *http.Response) (*types.PaymentRequired, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("x402: response is required")
+	}
 	if resp.StatusCode != http.StatusPaymentRequired {
 		return nil, fmt.Errorf("x402: expected 402 status, got %d", resp.StatusCode)
 	}
 
-	// Try V2 body parsing first
-	if resp.Body != nil {
-		var pr types.PaymentRequired
-		if err := json.NewDecoder(resp.Body).Decode(&pr); err == nil && pr.X402Version >= 2 {
-			if len(pr.Accepts) == 0 {
-				return nil, fmt.Errorf("x402: PaymentRequired has empty accepts array")
-			}
-			return &pr, nil
-		}
+	raw, err := paymentRequiredBytes(resp)
+	if err != nil {
+		return nil, err
 	}
 
-	// V1 fallback: parse X402-Payment header
-	return parseV1Header(resp)
+	var required types.PaymentRequired
+	if err := json.Unmarshal(raw, &required); err != nil {
+		return nil, fmt.Errorf("x402: decode payment requirements: %w", err)
+	}
+	if required.X402Version != 2 {
+		return nil, fmt.Errorf("x402: unsupported protocol version %d", required.X402Version)
+	}
+	if len(required.Accepts) == 0 {
+		return nil, fmt.Errorf("x402: PaymentRequired has empty accepts array")
+	}
+	return &required, nil
 }
 
-// parseV1Header parses a V1-style X402-Payment header into a PaymentRequired.
-func parseV1Header(resp *http.Response) (*types.PaymentRequired, error) {
-	const headerX402Payment = "X402-Payment"
-	headerVal := resp.Header.Get(headerX402Payment)
-	if headerVal == "" {
-		return nil, fmt.Errorf("x402: missing %s header and body is not valid V2", headerX402Payment)
+func paymentRequiredBytes(resp *http.Response) ([]byte, error) {
+	encoded := strings.TrimSpace(resp.Header.Get(HeaderPaymentRequired))
+	if encoded == "" {
+		return nil, fmt.Errorf("x402: missing %s header", HeaderPaymentRequired)
 	}
-
-	var v1 struct {
-		Asset       string `json:"asset"`
-		Amount      string `json:"amount"`
-		Chain       string `json:"chain"`
-		Recipient   string `json:"recipient"`
-		Settlement  string `json:"settlement"`
-		Facilitator string `json:"facilitator"`
+	if base64.StdEncoding.DecodedLen(len(encoded)) > maxPaymentRequiredSize {
+		return nil, fmt.Errorf("x402: %s header exceeds %d bytes", HeaderPaymentRequired, maxPaymentRequiredSize)
 	}
-	if err := json.Unmarshal([]byte(headerVal), &v1); err != nil {
-		return nil, fmt.Errorf("x402: invalid %s header: %w", headerX402Payment, err)
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("x402: decode %s header: %w", HeaderPaymentRequired, err)
 	}
-
-	if v1.Asset == "" || v1.Amount == "" || v1.Recipient == "" {
-		return nil, fmt.Errorf("x402: V1 header missing required fields")
-	}
-
-	return &types.PaymentRequired{
-		X402Version: 1,
-		Accepts: []types.PaymentRequirements{{
-			Scheme:  v1.Settlement,
-			Network: v1.Chain,
-			Asset:   v1.Asset,
-			Amount:  v1.Amount,
-			PayTo:   v1.Recipient,
-		}},
-	}, nil
+	return raw, nil
 }
 
-// SetAuthorizationHeader adds the x402 authorization token to an HTTP request.
-func SetAuthorizationHeader(req *http.Request, token string) {
-	req.Header.Set(HeaderX402Auth, token)
-}
-
-// IsX402Response checks if an HTTP response is an x402 payment request (402 status).
+// IsX402Response reports whether a response requests x402 payment.
 func IsX402Response(resp *http.Response) bool {
-	return resp.StatusCode == http.StatusPaymentRequired
+	return resp != nil && resp.StatusCode == http.StatusPaymentRequired
 }
 
-// FirstAccept returns the first accepted payment requirement, or nil if empty.
-func FirstAccept(pr *types.PaymentRequired) *types.PaymentRequirements {
-	if pr == nil || len(pr.Accepts) == 0 {
-		return nil
+// ParsePaymentAmountUSD converts an EVM requirement's atomic-unit amount to a
+// decimal USD value. Flowgent intentionally supports only the network's known
+// default stablecoin so an unknown token cannot bypass USD-denominated policy.
+func ParsePaymentAmountUSD(requirement types.PaymentRequirements) (decimal.Decimal, error) {
+	network, err := evm.GetNetworkConfig(requirement.Network)
+	if err != nil || network.DefaultAsset.Address == "" {
+		return decimal.Zero, fmt.Errorf("network %q has no known default stablecoin", requirement.Network)
 	}
-	return &pr.Accepts[0]
-}
+	if !strings.EqualFold(requirement.Asset, network.DefaultAsset.Address) {
+		return decimal.Zero, fmt.Errorf(
+			"asset %q is not the known default stablecoin for %s",
+			requirement.Asset,
+			requirement.Network,
+		)
+	}
+	if network.DefaultAsset.Decimals < 0 || network.DefaultAsset.Decimals > 36 {
+		return decimal.Zero, fmt.Errorf("asset decimal precision is unsupported")
+	}
 
-// ParseAssetAmount parses a decimal amount from a string.
-func ParseAssetAmount(s string) (decimal.Decimal, error) {
-	return decimal.NewFromString(strings.TrimSpace(s))
+	amount, err := decimal.NewFromString(strings.TrimSpace(requirement.Amount))
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("invalid payment amount %q: %w", requirement.Amount, err)
+	}
+	if !amount.IsPositive() || amount.Exponent() < 0 {
+		return decimal.Zero, fmt.Errorf("payment amount must be a positive atomic-unit integer")
+	}
+	return amount.Shift(-int32(network.DefaultAsset.Decimals)), nil
 }

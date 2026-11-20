@@ -11,7 +11,8 @@ require (
 	github.com/flowgent-labs/flowgent/model v0.0.0
 	// github.com/flowgent-labs/flowgent/notifier v0.0.0 // UNUSED
 	github.com/flowgent-labs/flowgent/sandbox v0.0.0
-	// github.com/flowgent-labs/flowgent/wallet v0.0.0   // UNUSED
+	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/ethereum/go-ethereum v1.16.7
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/redis/go-redis/v9 v9.17.0
@@ -43,7 +44,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/eclipse/paho.mqtt.golang v1.5.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
@@ -127,6 +127,5 @@ replace (
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../sandbox
-	github.com/flowgent-labs/flowgent/store => ../store
-	github.com/flowgent-labs/flowgent/wallet => ../wallet
+	github.com/flowgent-labs/flowgent/storage => ../storage
 )

@@ -1,3 +1,4 @@
+{{- if .Values.application.enabled }}
 {{- if .Values.redis.enabled }}
 {{- $fullname := include "flowgent.fullname" . }}
 {{- $password := randAlphaNum 16 }}
@@ -87,5 +88,6 @@ spec:
               name: redis
             - containerPort: {{ add 16379 $i }}
               name: bus
+{{- end }}
 {{- end }}
 {{- end }}

@@ -9,7 +9,7 @@ import (
 
 type SkillExecutor struct{}
 
-func NewSkillExecutor() *SkillExecutor            { return &SkillExecutor{} }
+func NewSkillExecutor() *SkillExecutor               { return &SkillExecutor{} }
 func (e *SkillExecutor) TaskType() entities.TaskType { return entities.TaskSkill }
 func (e *SkillExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
 	log.Printf("WARNING: SkillExecutor is a stub — skill node %q will not execute sub-flows", plan.NodeSpec.Skill)
