@@ -13,7 +13,7 @@ import (
 )
 
 func TestJobManager_BasicTopology(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
 
 	ready := jm.Ready()
@@ -40,23 +40,23 @@ func TestJobManager_BasicTopology(t *testing.T) {
 }
 
 func TestBuildExecutionGraphUsesCanonicalNodeKind(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: time.Minute})
-	flow := &entities.FlowInfo{
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: time.Minute})
+	graph := &entities.AgentGraph{Name: "canonical-node-kind",
 		BaseEntity: entities.BaseEntity{ID: "canonical-node-kind", Namespace: "test"},
-		Nodes:      []entities.Node{{ID: "condition", Kind: entities.ConditionNode}},
+		Nodes:      []entities.GraphNode{{ID: "condition", Kind: entities.ConditionNode}},
 	}
 
-	if err := jm.buildExecutionGraph(flow, "run-1"); err != nil {
+	if err := jm.buildExecutionGraph(graph, "run-1"); err != nil {
 		t.Fatal(err)
 	}
 	plan := jm.planMap["condition"]
-	if plan == nil || plan.TaskType != entities.TaskCondition || plan.NodeSpec.Kind != entities.ConditionNode {
+	if plan == nil || plan.NodeKind != entities.ConditionNode || plan.Node.Kind != entities.ConditionNode {
 		t.Fatalf("canonical node kind was not preserved: %#v", plan)
 	}
 }
 
 func TestJobManager_ParallelReady(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"A", "C"}})
 
 	ready := jm.Ready()
@@ -72,7 +72,7 @@ func TestJobManager_ParallelReady(t *testing.T) {
 }
 
 func TestJobManager_Skip(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}})
 	jm.Skip("B")
 
@@ -89,7 +89,7 @@ func TestJobManager_Skip(t *testing.T) {
 }
 
 func TestJobManager_ConditionalBranchSkipsDescendantsButKeepsMerge(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes(
 		[]string{"cond", "selected", "not-selected", "not-selected-child", "merge"},
 		[][2]string{
@@ -125,7 +125,7 @@ func TestJobManager_ConditionalBranchSkipsDescendantsButKeepsMerge(t *testing.T)
 }
 
 func TestJobManager_DormantConditionalFeedbackDoesNotBlockInitialPath(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes(
 		[]string{"start", "work", "feedback-condition"},
 		[][2]string{{"start", "work"}, {"work", "feedback-condition"}, {"feedback-condition", "work"}},
@@ -143,7 +143,7 @@ func TestJobManager_DormantConditionalFeedbackDoesNotBlockInitialPath(t *testing
 }
 
 func TestJobManager_Fail(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B"}, [][2]string{{"A", "B"}})
 	jm.Fail("A")
 
@@ -158,7 +158,7 @@ func TestJobManager_Fail(t *testing.T) {
 }
 
 func TestJobManager_Inject(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "B"}, [][2]string{{"A", "B"}})
 	jm.Done("A")
 
@@ -175,7 +175,7 @@ func TestJobManager_Inject(t *testing.T) {
 }
 
 func TestJobManager_EdgeCondition(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "cond", "B", "C"},
 		[][2]string{{"A", "cond"}, {"cond", "B"}, {"cond", "C"}})
 
@@ -200,7 +200,7 @@ func TestJobManager_EdgeCondition(t *testing.T) {
 }
 
 func TestJobManager_ConditionResult(t *testing.T) {
-	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{FlowExecutionTimeout: 30 * time.Minute})
+	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})
 	jm.BuildGraphNodes([]string{"A", "cond", "B"}, [][2]string{{"A", "cond"}, {"cond", "B"}})
 	jm.SetConditionResult("cond", true)
 
@@ -280,16 +280,16 @@ func TestModelRetry_Nil(t *testing.T) {
 }
 
 type retryRecordingState struct {
-	tasks map[string]entities.TaskRunInfo
+	tasks map[string]entities.NodeRun
 }
 
-func (s *retryRecordingState) UpdateRun(context.Context, *entities.FlowRunInfo) error { return nil }
+func (s *retryRecordingState) UpdateGraphRun(context.Context, *entities.GraphRun) error { return nil }
 
-func (s *retryRecordingState) SaveTask(_ context.Context, task *entities.TaskRunInfo) error {
+func (s *retryRecordingState) SaveNodeRun(_ context.Context, noderun *entities.NodeRun) error {
 	if s.tasks == nil {
-		s.tasks = make(map[string]entities.TaskRunInfo)
+		s.tasks = make(map[string]entities.NodeRun)
 	}
-	s.tasks[task.ID] = *task
+	s.tasks[noderun.ID] = *noderun
 	return nil
 }
 
@@ -301,12 +301,12 @@ type retryResourceManager struct {
 func (r *retryResourceManager) Provider() engine.Provider      { return engine.ProviderStandalone }
 func (r *retryResourceManager) Validate(context.Context) error { return nil }
 func (r *retryResourceManager) Shutdown(context.Context) error { return nil }
-func (r *retryResourceManager) Schedule(_ context.Context, _ *entities.ExecutionPlan) (*entities.TaskResult, error) {
+func (r *retryResourceManager) Schedule(_ context.Context, _ *entities.ExecutionPlan) (*entities.NodeResult, error) {
 	r.calls++
 	if r.calls <= r.failures {
-		return &entities.TaskResult{Error: "transient failure"}, nil
+		return &entities.NodeResult{Error: "transient failure"}, nil
 	}
-	return &entities.TaskResult{Output: map[string]any{"ok": true}}, nil
+	return &entities.NodeResult{Output: map[string]any{"ok": true}}, nil
 }
 
 func TestScheduleNodeWithRetryPersistsEachAttempt(t *testing.T) {
@@ -315,9 +315,9 @@ func TestScheduleNodeWithRetryPersistsEachAttempt(t *testing.T) {
 	jm := NewJobMaster(state, rm, utils.NewLogger("TEXT", "ERROR"), &JobManagerConfig{MaxNodeRetries: 3})
 	jm.tracer = tracing.Tracer("test/jobmaster")
 	plan := &entities.ExecutionPlan{
-		PlanID: "plan-1", TaskID: "task-base", AgentFlowRunID: "run-1",
-		AgentFlowDefinitionID: "flow-1", NodeID: "review", TaskType: entities.TaskAgent,
-		NodeSpec: &entities.NodeSpec{Retry: &entities.RetryPolicy{
+		PlanID: "plan-1", NodeRunID: "noderun-base", GraphRunID: "run-1",
+		AgentGraphName: "graph-1", NodeInstanceID: "review", NodeKind: entities.AgentNode,
+		Node: &entities.GraphNode{Retry: &entities.RetryPolicy{
 			Max: 2, Initial: utils.UnitDuration{Duration: time.Millisecond},
 			MaxDelay: utils.UnitDuration{Duration: time.Millisecond}, Factor: 1,
 		}},
@@ -333,23 +333,23 @@ func TestScheduleNodeWithRetryPersistsEachAttempt(t *testing.T) {
 	if len(state.tasks) != 3 {
 		t.Fatalf("persisted attempts = %d", len(state.tasks))
 	}
-	var attempts [3]entities.TaskRunInfo
-	for _, task := range state.tasks {
-		attempts[task.Attempt-1] = task
+	var attempts [3]entities.NodeRun
+	for _, noderun := range state.tasks {
+		attempts[noderun.Attempt-1] = noderun
 	}
-	for index, task := range attempts {
-		if task.Sequence != index+1 || task.MaxRetries != 2 || task.StartedAt == nil || task.FinishedAt == nil {
-			t.Fatalf("attempt %d = %+v", index+1, task)
+	for index, noderun := range attempts {
+		if noderun.Sequence != index+1 || noderun.MaxRetries != 2 || noderun.StartedAt == nil || noderun.FinishedAt == nil {
+			t.Fatalf("attempt %d = %+v", index+1, noderun)
 		}
-		expectedStatus := entities.Failed
+		expectedStatus := entities.NodeRunFailed
 		if index == 2 {
-			expectedStatus = entities.Success
+			expectedStatus = entities.NodeRunSucceeded
 		}
-		if task.Status != expectedStatus {
-			t.Fatalf("attempt %d status = %s", index+1, task.Status)
+		if noderun.Status != expectedStatus {
+			t.Fatalf("attempt %d status = %s", index+1, noderun.Status)
 		}
-		if index > 0 && task.ParentNodeRunID != attempts[index-1].ID {
-			t.Fatalf("attempt %d parent = %q", index+1, task.ParentNodeRunID)
+		if index > 0 && noderun.ParentNodeRunID != attempts[index-1].ID {
+			t.Fatalf("attempt %d parent = %q", index+1, noderun.ParentNodeRunID)
 		}
 	}
 }
@@ -360,9 +360,9 @@ func TestScheduleNodeWithoutRetryRunsOnce(t *testing.T) {
 	jm := NewJobMaster(state, rm, utils.NewLogger("TEXT", "ERROR"), &JobManagerConfig{MaxNodeRetries: 3})
 	jm.tracer = tracing.Tracer("test/jobmaster")
 	plan := &entities.ExecutionPlan{
-		PlanID: "plan-1", TaskID: "task-base", AgentFlowRunID: "run-1",
-		AgentFlowDefinitionID: "flow-1", NodeID: "review", TaskType: entities.TaskAgent,
-		NodeSpec: &entities.NodeSpec{},
+		PlanID: "plan-1", NodeRunID: "noderun-base", GraphRunID: "run-1",
+		AgentGraphName: "graph-1", NodeInstanceID: "review", NodeKind: entities.AgentNode,
+		Node: &entities.GraphNode{},
 	}
 
 	if _, err := jm.scheduleNodeWithRetry(context.Background(), plan); err == nil {

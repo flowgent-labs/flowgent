@@ -1,6 +1,6 @@
 # Sandbox Pools
 
-[System overview](../overview.md) · [Controller](controller.md) · [TaskManager](taskmanager.md) · [AgentFlow](../agent-flow.md)
+[System overview](../overview.md) · [Controller](controller.md) · [TaskManager](taskmanager.md) · [AgentGraph](../agent-graph.md)
 
 **Status: fixed-pool architecture confirmed on 2026-11-14; runtime migration is not implemented.**
 The definitions, fields and topics below are target contracts, not currently
@@ -11,7 +11,7 @@ cluster-routed triggers are described under implementation differences below.
 
 - UI manages named Sandbox records, including CPU/memory and ingress/egress rules.
 - Controller reconciles each enabled Sandbox into a persistent service worker pool.
-- Every AgentFlow explicitly references a `sandbox_id`; multiple authorized Flows
+- Every AgentGraph explicitly references a `sandbox_id`; multiple authorized AgentGraphs
   may reference the same pool. Application/session mode continues to select the
   JM/TM topology and does not select or own the Sandbox pool.
 - TM dispatches a script only to that Sandbox's topic. Workers subscribe only to
@@ -22,7 +22,7 @@ cluster-routed triggers are described under implementation differences below.
 
 ## Resource and Persistence Contract
 
-A Sandbox is a first-class namespaced resource, not a Flow's inline deployment
+A Sandbox is a first-class namespaced resource, not a AgentGraph's inline deployment
 configuration. The proposed table name is `orh_sandbox`, following the existing
 `orh_*` engine tables. PostgreSQL and SQLite stores MUST expose the same contract.
 Only API Server accesses the table; Controller and workers use workload REST APIs.
@@ -45,10 +45,10 @@ Pool identity, namespace ownership and policy boundary are the confirmed design.
 The proposed management resource is `/api/v1/{namespace}/sandboxes`: list/create,
 then get/update/delete by stable ID. UI shows configured and ready replicas,
 active/available slots, policy readiness and reconciliation errors. Management
-and Flow binding MUST use AuthGuard actions and namespace/resource SQL scope.
+and AgentGraph binding MUST use AuthGuard actions and namespace/resource SQL scope.
 Controller reports observed status; a UI status edit cannot make a pool Ready.
 
-Proposed Flow payload fragment (not accepted by the current strict decoder):
+Proposed AgentGraph payload fragment (not accepted by the current strict decoder):
 
 ```yaml
 sandbox_id: 9b91d028-7f3e-4a38-89e4-0b1aa42764ee
@@ -58,18 +58,18 @@ resources:
   taskmanager: {cpu: "1", memory: "1Gi"}
 ```
 
-API validates the reference and authorization when saving and starting a Flow.
+API validates the reference and authorization when saving and starting a AgentGraph.
 The selected Sandbox ID MUST be carried through the Run/ExecutionPlan to TM;
-workers MUST validate it against the authoritative Run binding. A later Flow
+workers MUST validate it against the authoritative Run binding. A later AgentGraph
 edit MUST NOT silently redirect an already-created Run. This identity binding
 does not define checkpoint/barrier/safepoint or recovery semantics.
 
-## Control and Execution Flow
+## Control and Execution AgentGraph
 
 ```mermaid
 flowchart LR
-    UI[UI: Sandbox and Flow binding] --> API[API Server]
-    API --> DB[(Sandbox record / Flow binding)]
+    UI[UI: Sandbox and AgentGraph binding] --> API[API Server]
+    API --> DB[(Sandbox record / AgentGraph binding)]
     API -->|resource events + REST reconciliation| C[Controller]
     C -->|replicas, CPU/memory, network rules| P[Sandbox service worker pool]
     JM[JobManager] -->|ExecutionPlan + sandbox_id| TM[TaskManager]
@@ -83,11 +83,11 @@ flowchart LR
     TM -->|execution result| JM
 ```
 
-1. UI writes the Sandbox and Flow reference through API Server. Durable resource
+1. UI writes the Sandbox and AgentGraph reference through API Server. Durable resource
    events prompt Controller reconciliation; periodic listing repairs missed events.
 2. Controller owns the pool Deployment and its runtime configuration, network
    enforcement and workspace attachments. Reconcile ownership is keyed by
-   `(namespace_id, sandbox_id)`, independently of Flow/Run and JM lifecycle.
+   `(namespace_id, sandbox_id)`, independently of AgentGraph/Run and JM lifecycle.
 3. Controller establishes the network boundary before admitting scripts. Ready
    requires ready workers, effective policy/capability probes and an active MQTT
    subscription. Deployment Ready alone is insufficient.
@@ -124,18 +124,18 @@ flowgent/v1/{namespace_id}/sandbox/trigger/{sandbox_id}
 $share/sandbox-{namespace_id}-{sandbox_id}/flowgent/v1/{namespace_id}/sandbox/trigger/{sandbox_id}
 
 # Worker publishes; originating TM subscribes to its exact attempt:
-flowgent/v1/{namespace_id}/sandbox/result/{sandbox_id}/{run_id}/{node_run_id}
+flowgent/v1/{namespace_id}/sandbox/result/{sandbox_id}/{graph_run_id}/{node_run_id}
 ```
 
 The trigger and result envelopes MUST carry `sandbox_id`, `namespace_id`,
-`flow_id`, `run_id`, `node_id`, `node_run_id`, `plan_id`, `attempt`, correlation ID,
+`agent_graph_id`, `graph_run_id`, `node_instance_id`, `node_run_id`, `plan_id`, `attempt`, correlation ID,
 TraceContext and deadline. NodeRun identifies an attempt; retries MUST NOT reuse
 its result path. The trigger references script/input artifacts; the result
 references output artifacts and includes exit/error diagnostics.
 
 `runtime_cluster_id` MAY remain origin/trace metadata; it is no longer the
 Sandbox consumption boundary. Pool workers MUST NOT subscribe to all Sandbox
-IDs. Their shared group is per pool, not per replica or per Flow: separate
+IDs. Their shared group is per pool, not per replica or per AgentGraph: separate
 subscriber groups would each receive the work. Broker ACLs and worker-side
 binding checks MUST enforce the boundary; a topic name alone is not authorization.
 
@@ -173,7 +173,7 @@ Script environments MUST NOT inherit worker control-plane/broker credentials.
 Capacity exhaustion queues work within a bounded deadline or fails explicitly;
 it MUST NOT route to a different pool or a weaker execution backend. Disabling or
 scaling down a pool stops new admission and drains admitted attempts. Deletion
-MUST be blocked while referenced or while executions are admitted. Flow/Run GC
+MUST be blocked while referenced or while executions are admitted. AgentGraph/Run GC
 MUST NOT remove a shared Sandbox pool.
 
 Changing network/resource configuration MUST NOT leave workers with different
@@ -187,10 +187,10 @@ This design does not add autoscaling or finalized checkpoint semantics.
 
 | Area | Current code | Fixed-pool target |
 | --- | --- | --- |
-| Persistence/UI | Global config and inline Flow/Node sandbox policy; no pool catalog | Namespaced Sandbox resource and Flow selector |
+| Persistence/UI | Global config and inline AgentGraph/Node sandbox policy; no pool catalog | Namespaced Sandbox resource and AgentGraph selector |
 | Ownership | JM's ResourceManager creates/scales Sandbox by runtime cluster | Controller reconciles Sandbox independently; JM retains TM ownership |
-| Trigger | Namespace + runtime-cluster + Flow/Run topic | Namespace + Sandbox-ID topic |
-| Result | Per-run topic; callback accepts an unscoped TaskResult | Exact NodeRun attempt routing and validated envelope |
+| Trigger | Namespace + runtime-cluster + AgentGraph/Run topic | Namespace + Sandbox-ID topic |
+| Result | Per-run topic; callback accepts an unscoped NodeResult | Exact NodeRun attempt routing and validated envelope |
 | Network | Child re-exec + seccomp notifier | Pool-wide standard platform networking |
 | Local mode | Process-local/embedded behavior | Explicit configured container pool; no silent unrestricted fallback |
 
@@ -198,7 +198,7 @@ Existing source anchors: [model](../../../pkg/model/pkg/sandbox.go),
 [TM executor](../../../pkg/core/pkg/engine/executor/sandbox.go),
 [worker](../../../pkg/sandbox/pkg/sandboxmanager.go),
 [topics](../../../pkg/messager/pkg/messager.go), and
-[Flow model](../../../pkg/model/pkg/entities/flow.go).
+[AgentGraph model](../../../pkg/model/pkg/entities/graph.go).
 
 Implementation must migrate the model/store/API/UI, Controller reconciliation,
 Run/plan binding, topic helpers, worker admission/results and both deployment

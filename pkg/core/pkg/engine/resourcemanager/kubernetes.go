@@ -60,8 +60,7 @@ type execResult struct {
 	NodeInstanceID string         `json:"node_instance_id"`
 	DispatchEpoch  int64          `json:"dispatch_epoch"`
 	PlanID         string         `json:"plan_id"`
-	AgentFlowRunID string         `json:"agentflow_run_id"`
-	NodeID         string         `json:"node_id"`
+	GraphRunID     string         `json:"graph_run_id"`
 	State          string         `json:"state"`
 	Output         map[string]any `json:"output,omitempty"`
 	Error          string         `json:"error,omitempty"`
@@ -117,8 +116,8 @@ type KubernetesResourceManager struct {
 	nodeSelector             map[string]string
 	ownerNamespaceID         string
 	runtimeClusterID         string
-	ownerFlowID              string
-	ownerRunID               string
+	ownerAgentGraphID        string
+	ownerGraphRunID          string
 	runtimeMode              entities.RuntimeMode
 	ownerJobManagerName      string
 	ownerJobManagerNamespace string
@@ -133,8 +132,8 @@ type KubernetesResourceManager struct {
 const (
 	LabelNamespaceID               = "flowgent.io/namespace"
 	LabelRuntimeClusterID          = "flowgent.io/runtime-cluster"
-	LabelFlowID                    = "flowgent.io/flow"
-	LabelRunID                     = "flowgent.io/run"
+	LabelAgentGraphID              = "flowgent.io/graph"
+	LabelGraphRunID                = "flowgent.io/run"
 	LabelRuntimeMode               = "flowgent.io/runtime-mode"
 	LabelManagedBy                 = "flowgent.io/managed-by"
 	LabelParentJobManager          = "flowgent.io/parent-jobmanager"
@@ -243,8 +242,8 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		nodeSelector:             cfg.NodeSelector,
 		ownerNamespaceID:         cfg.OwnerNamespaceID,
 		runtimeClusterID:         cfg.RuntimeClusterID,
-		ownerFlowID:              cfg.OwnerFlowID,
-		ownerRunID:               cfg.OwnerRunID,
+		ownerAgentGraphID:        cfg.OwnerAgentGraphID,
+		ownerGraphRunID:          cfg.OwnerGraphRunID,
 		runtimeMode:              cfg.RuntimeMode,
 		ownerJobManagerName:      cfg.OwnerJobManagerName,
 		ownerJobManagerNamespace: cfg.OwnerJobManagerNamespace,
@@ -350,7 +349,7 @@ func (s *KubernetesResourceManager) waitForRuntimeReady(ctx context.Context, rol
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("%s worker subscription not ready for %s/%s", role, defaultIfEmpty(s.ownerNamespaceID, "default"), s.ownerFlowID)
+			return fmt.Errorf("%s worker subscription not ready for %s/%s", role, defaultIfEmpty(s.ownerNamespaceID, "default"), s.ownerAgentGraphID)
 		case <-signal:
 		}
 	}
@@ -370,7 +369,7 @@ func (s *KubernetesResourceManager) Start(ctx context.Context) {
 		"slots_per_tm", s.slotsPerTM, "idle_timeout", s.idleTimeout)
 }
 
-func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
+func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.NodeResult, error) {
 	if s.q == nil {
 		return nil, fmt.Errorf("kubernetes rm: queue not set")
 	}
@@ -392,7 +391,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	if err := s.waitForRuntimeReady(ctx, "taskmanager"); err != nil {
 		return nil, fmt.Errorf("kubernetes rm taskmanager readiness: %w", err)
 	}
-	if plan.TaskType == entities.TaskSandbox && s.sandboxEnabled {
+	if plan.NodeKind == entities.SandboxNode && s.sandboxEnabled {
 		atomic.AddInt64(&s.sandboxPendingTriggers, 1)
 		defer atomic.AddInt64(&s.sandboxPendingTriggers, -1)
 		if err := s.ensureRuntimeReadySubscription(ctx, "sandbox"); err != nil {
@@ -406,7 +405,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 		}
 	}
 
-	runID := plan.AgentFlowRunID
+	runID := plan.GraphRunID
 	resultCh := make(chan execResult, 1)
 
 	// Subscribe to exec/results for this run (once) and register the plan's
@@ -414,7 +413,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	s.runResultsMu.Lock()
 	if s.runResults[runID] == nil {
 		s.runResults[runID] = make(map[string]chan execResult)
-		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.Namespace, plan.AgentFlowDefinitionID, runID),
+		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.Namespace, plan.AgentGraphID, runID),
 			func(topic string, payload []byte) {
 				var er execResult
 				if err := json.Unmarshal(payload, &er); err != nil {
@@ -425,7 +424,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 				if key != "" {
 					key = fmt.Sprintf("%s:%d", key, er.DispatchEpoch)
 				} else {
-					key = er.NodeID
+					key = er.NodeInstanceID
 				}
 				ch, ok := s.runResults[runID][key]
 				if ok {
@@ -440,9 +439,9 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 				}
 			})
 	}
-	resultKey := plan.NodeID
+	resultKey := plan.NodeInstanceID
 	if plan.DispatchEpoch > 0 {
-		resultKey = fmt.Sprintf("%s:%d", plan.TaskID, plan.DispatchEpoch)
+		resultKey = fmt.Sprintf("%s:%d", plan.NodeRunID, plan.DispatchEpoch)
 	}
 	s.runResults[runID][resultKey] = resultCh
 	s.runResultsMu.Unlock()
@@ -463,11 +462,11 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 			return nil, publishErr
 		}
 	} else {
-		publishErr = s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
+		publishErr = s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentGraphID, runID), &messager.InterMessage{
 			ID: plan.PlanID,
 			Headers: map[string]string{
-				"task_run_id": plan.AgentFlowRunID,
-				"node_id":     plan.NodeID,
+				"node_run_id":      plan.GraphRunID,
+				"node_instance_id": plan.NodeInstanceID,
 			},
 			Payload: payload,
 		})
@@ -480,13 +479,13 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 
 	}
 
-	readCommitted := func() (*entities.TaskResult, bool) {
+	readCommitted := func() (*entities.NodeResult, bool) {
 		if s.apiServerURL == "" || plan.DispatchEpoch == 0 {
 			return nil, false
 		}
-		task, err := client.NewFlowgentClient(s.apiServerURL).GetTaskRun(ctx, plan.Namespace, runID, plan.TaskID)
-		if err == nil && task.NodeInstanceID == plan.NodeInstanceID && task.DispatchEpoch == plan.DispatchEpoch && (task.Status == entities.Success || task.Status == entities.Failed) {
-			return &entities.TaskResult{Output: task.Output, Error: task.Error}, true
+		noderun, err := client.NewFlowgentClient(s.apiServerURL).GetNodeRun(ctx, plan.Namespace, runID, plan.NodeRunID)
+		if err == nil && noderun.NodeInstanceID == plan.NodeInstanceID && noderun.DispatchEpoch == plan.DispatchEpoch && (noderun.Status == entities.NodeRunSucceeded || noderun.Status == entities.NodeRunFailed) {
+			return noderun.Result(), true
 		}
 		return nil, false
 	}
@@ -504,7 +503,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 				}
 				continue
 			}
-			return &entities.TaskResult{Output: er.Output, Error: er.Error}, nil
+			return &entities.NodeResult{Output: er.Output, Error: er.Error}, nil
 		case <-ticker.C:
 			if result, ok := readCommitted(); ok {
 				return result, nil
@@ -988,11 +987,11 @@ func (s *KubernetesResourceManager) tmLabels() map[string]string {
 	if s.runtimeMode != "" {
 		labels[LabelRuntimeMode] = string(s.runtimeMode)
 	}
-	if s.ownerFlowID != "" {
-		labels[LabelFlowID] = s.ownerFlowID
+	if s.ownerAgentGraphID != "" {
+		labels[LabelAgentGraphID] = s.ownerAgentGraphID
 	}
-	if s.ownerRunID != "" {
-		labels[LabelRunID] = s.ownerRunID
+	if s.ownerGraphRunID != "" {
+		labels[LabelGraphRunID] = s.ownerGraphRunID
 	}
 	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels
@@ -1015,11 +1014,11 @@ func (s *KubernetesResourceManager) sandboxLabels() map[string]string {
 	if s.runtimeMode != "" {
 		labels[LabelRuntimeMode] = string(s.runtimeMode)
 	}
-	if s.ownerFlowID != "" {
-		labels[LabelFlowID] = s.ownerFlowID
+	if s.ownerAgentGraphID != "" {
+		labels[LabelAgentGraphID] = s.ownerAgentGraphID
 	}
-	if s.ownerRunID != "" {
-		labels[LabelRunID] = s.ownerRunID
+	if s.ownerGraphRunID != "" {
+		labels[LabelGraphRunID] = s.ownerGraphRunID
 	}
 	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels

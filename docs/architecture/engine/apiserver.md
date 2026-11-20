@@ -1,16 +1,16 @@
 # API Server
 
-[System overview](../overview.md) · [AgentFlow application layer](../agent-flow.md)
+[System overview](../overview.md) · [AgentGraph application layer](../agent-graph.md)
 
 **Sandbox target (2026-11-14):** API Server will own the namespaced Sandbox
-catalog, UI CRUD, Flow binding validation and observed pool status. Proposed
+catalog, UI CRUD, AgentGraph binding validation and observed pool status. Proposed
 resources in the [fixed-pool design](sandbox.md) are not implemented routes
 in the current API catalog below.
 
 The API Server is Flowgent's control-plane gateway and canonical owner of
 durable business-state access. External clients enter through REST or A2A;
 Controller, JM, TM, Sandbox, and Notifier read and write business state through
-`FlowgentClient` REST calls. Flow lifecycle changes are published to MQTT.
+`FlowgentClient` REST calls. AgentGraph lifecycle changes are published to MQTT.
 
 The standalone A2A server is a narrow exception: it owns only its protocol task
 table (`orh_a2a_task`). JobManager may also use PostgreSQL or Redis as a
@@ -36,8 +36,8 @@ scheduling. The A2A task-store and coordination-lock exceptions above have
 separate, bounded ownership.
 
 1. **Canonical business DB gateway** — PostgreSQL/SQLite through the storage interfaces
-2. **Flow definition cache** — in-memory map, invalidated on CRUD, pushed to Controller via watch
-3. **MQTT lifecycle events** — publishes flow/run lifecycle events for real-time consumption by Controller, JM, and other components
+2. **AgentGraph definition cache** — in-memory map, invalidated on CRUD, pushed to Controller via watch
+3. **MQTT lifecycle events** — publishes graph/run lifecycle events for real-time consumption by Controller, JM, and other components
 4. **State write endpoint** — JM/TM/sandbox update run/task status via REST (FlowgentClient), notifier reads channels via API
 5. **Multi-tenancy** — AuthGuard gateway policy + repository SQL scope + namespace routing
 6. **Scale independence** — stateless, 2+ replicas (JM is stateful, leader-elected)
@@ -56,26 +56,26 @@ published through the business Gateway.
 | `/_/healthz` | GET | Health check |
 | `/api/v1/webhook/{provider}` | POST | SCM webhook trigger (GitHub/GitLab/Gitea) — per-provider body adapter |
 | `/api/v1/{namespace}/agents` | GET/POST | List / Create agent definitions |
-| `/api/v1/{namespace}/flows` | GET/POST | List / Create flows |
-| `/api/v1/{namespace}/flows/{id}` | GET/PUT/DELETE | Flow CRUD |
-| `/api/v1/{namespace}/flows/{id}/trigger` | POST | Create a `PENDING` Run from one stable Flow identity |
-| `/api/v1/{namespace}/flows/{flow_id}/runs[...]` | GET/POST/DELETE | Flow-scoped Run/NodeRun/approval/trace surface for exact-Flow grants |
+| `/api/v1/{namespace}/agent-graphs` | GET/POST | List / Create graphs |
+| `/api/v1/{namespace}/agent-graphs/{id}` | GET/PUT/DELETE | AgentGraph CRUD |
+| `/api/v1/{namespace}/agent-graphs/{id}/trigger` | POST | Create a `PENDING` Run from one stable AgentGraph identity |
+| `/api/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs[...]` | GET/POST/DELETE | AgentGraph-scoped Run/NodeRun/approval/trace surface for exact-AgentGraph grants |
 | `/api/v1/{namespace}/runtime-config[/environment\|/secrets]` | GET/PUT | Namespace environment defaults and write-only secrets |
-| `/api/v1/{namespace}/flows/{id}/runtime-config[/environment\|/secrets]` | GET/PUT | Flow-local overrides plus redacted effective inheritance |
-| `/api/v1/{namespace}/flows/{id}/runtime-config/resolved` | GET | Controller-only effective runtime values for K8s materialization |
+| `/api/v1/{namespace}/agent-graphs/{id}/runtime-config[/environment\|/secrets]` | GET/PUT | AgentGraph-local overrides plus redacted effective inheritance |
+| `/api/v1/{namespace}/agent-graphs/{id}/runtime-config/resolved` | GET | Controller-only effective runtime values for K8s materialization |
 | `/api/v1/{namespace}/skills` | GET/POST | List / Create runtime `kind=skill` DAG definitions |
 | `/api/v1/{namespace}/skills/{id}` | GET/PUT/DELETE | Runtime Skill CRUD |
 | `/api/v1/{namespace}/skill-definitions` | GET/POST | List / Create portable Skill definitions |
 | `/api/v1/{namespace}/skill-definitions/{name}` | GET/PUT/DELETE | Portable Skill revision lifecycle |
 | `/api/v1/{namespace}/skill-definitions/{name}/{assets\|scripts}` | POST | Add an allowlisted file and create a new Skill revision |
-| `/api/v1/{namespace}/runs` | GET/POST | List runs (JM polls this) / Create run |
-| `/api/v1/{namespace}/runs/{run_id}` | GET/PUT/DELETE | Run status, update, and deletion |
-| `/api/v1/{namespace}/runs/{run_id}/node-runs` | GET/POST | NodeRun list + create (JM/TM write) |
-| `/api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` | GET/PUT | Read/update one attempt |
-| `/api/v1/{namespace}/runs/{run_id}/trace` | GET | Query normalized OTel trace data for one owned Run |
-| `/api/v1/{namespace}/runs/{run_id}/cancel` | POST | Cancel a running Flow |
-| `/api/v1/{namespace}/runs/{run_id}/approvals` | GET/POST | List / Create approvals for one owned Run |
-| `/api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}` | POST | Resolve with `approve` or `reject` |
+| `/api/v1/{namespace}/graph-runs` | GET/POST | List runs (JM polls this) / Create run |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}` | GET/PUT/DELETE | Run status, update, and deletion |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs` | GET/POST | NodeRun list + create (JM/TM write) |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}` | GET/PUT | Read/update one attempt |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}/trace` | GET | Query normalized OTel trace data for one owned Run |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}/cancel` | POST | Cancel a running AgentGraph |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}/approvals` | GET/POST | List / Create approvals for one owned Run |
+| `/api/v1/{namespace}/graph-runs/{graph_run_id}/approvals/{approval_id}/{decision}` | POST | Resolve with `approve` or `reject` |
 | `/api/v1/{namespace}/approvals` | GET | Namespace approval feed for Notifier |
 | `/api/v1/{namespace}/notifications/channels` | GET/POST | List / Create notification channels |
 | `/api/v1/{namespace}/notifications/channels/{id}` | GET/PUT/DELETE | Notification channel CRUD |
@@ -84,8 +84,8 @@ published through the business Gateway.
 | `/api/v1/{namespace}/knowledge` | GET | List published, immutable Knowledge |
 | `/api/v1/{namespace}/knowledge/search` | POST | Scoped full-text/vector retrieval |
 | `/api/v1/{namespace}/knowledge/candidates` | POST | Create an approval-bound publication candidate |
-| `/api/v1/{namespace}/flow-releases` | GET/POST | Immutable shared Flow release catalog |
-| `/api/v1/{namespace}/flow-releases/{id}/{grants,install}` | GET/POST/DELETE | Producer grants and consumer-owned installation copies |
+| `/api/v1/{namespace}/graph-releases` | GET/POST | Immutable shared AgentGraph release catalog |
+| `/api/v1/{namespace}/graph-releases/{id}/{grants,install}` | GET/POST/DELETE | Producer grants and consumer-owned installation copies |
 
 ### Run Trace Query
 
@@ -99,7 +99,7 @@ responses are `private, no-store`.
 Jaeger is an observability source, not a recovery database. Exact per-attempt
 input/output/error remains in NodeRun rows. Span correlation currently uses the
 wire-compatible
-`flowgent.task_id`, with `flowgent.node_id` and `flowgent.attempt` available for
+`flowgent.node_run_id`, with `flowgent.node_instance_id` and `flowgent.attempt` available for
 diagnostics. The Query API is bounded by timeout, lookback, trace count, and a
 16 MiB response limit configured under `mgmt.otel.query_*`.
 
@@ -112,7 +112,7 @@ NodeRun ID already attached to another Run.
 
 Complete per-attempt input/output is business audit data, not telemetry. The API
 Server owns an `ITaskPayloadProvider` and transparently persists/resolves both
-fields. The public/persistence term is NodeRun; `TaskRunInfo` remains a temporary
+fields. The public/persistence term is NodeRun; `NodeRun` remains a temporary
 internal Go type name and MUST NOT define a new external contract.
 
 Configuration belongs under `storage.artifacts`, not `mgmt.otel`:
@@ -124,7 +124,7 @@ storage:
     inline_max_bytes: 262144     # S3/GCS hybrid inline threshold
     max_payload_bytes: 67108864
     compression: gzip            # none | gzip
-    prefix: flowgent/task-runs
+    prefix: flowgent/node-runs
     put_timeout: 30s
     get_timeout: 30s
     verify_checksum: true
@@ -157,7 +157,7 @@ AES-256-GCM before their channel row is committed. Reads return only
 versioned master-key ring through `notifier.secret_encryption`; master keys are
 never stored in the application database.
 
-Runtime `/skills` routes manage `kind=skill` Flow definitions. Portable
+Runtime `/skills` routes manage `kind=skill` AgentGraph definitions. Portable
 `/skill-definitions` are a separate implemented lifecycle with immutable
 revisions and allowlisted `assets/` and `scripts/` uploads.
 
@@ -186,10 +186,10 @@ scope is a no-op. The API Service is private by default, and public requests
 must traverse the AuthGuard-managed Envoy Gateway. See
 [AuthGuard integration](../authguard-integration.md).
 
-Cross-team reuse publishes an immutable producer-owned `FlowRelease`. A
+Cross-team reuse publishes an immutable producer-owned `AgentGraphRelease`. A
 consumer with an explicit grant installs a copy into its own namespace and then
 owns its resource bindings, secrets, runs, traces, and results. Consumers never
-execute against the producer's mutable Flow or secret scope.
+execute against the producer's mutable AgentGraph or secret scope.
 
 ### Submit Path (API → Store → JM)
 
@@ -199,11 +199,11 @@ There are two ways runs enter the system:
 **Path A: API Trigger (sync write, async execution)**
 
 ```
-POST /api/v1/{namespace}/flows/{flow_id}/trigger
-  → flow handler resolves the stable Flow ID/name and current revision
-  → run := { FlowID, FlowRevisionID, Input, Status:PENDING, ContextSnapshot }
+POST /api/v1/{namespace}/agent-graphs/{agent_graph_id}/trigger
+  → graph handler resolves the stable AgentGraph ID/name and current revision
+  → run := { AgentGraphID, AgentGraphRevisionID, Input, Status:PENDING, ContextSnapshot }
   → persist via apiserver store       // ← sync ends here
-  → returns run_id to caller
+  → returns graph_run_id to caller
   ... (later, asynchronously) ...
   → JM's runPoller (2s tick) finds PENDING run via FlowgentClient.ListRuns
   → jm.Submit(run, spec) → JobMaster.Execute()
@@ -212,12 +212,12 @@ POST /api/v1/{namespace}/flows/{flow_id}/trigger
 **Path B: Controller Dispatch (fully async)**
 
 ```
-Controller polls apiserver ListFlows every 10s:
-  → Hash-mod shard: only processes owned flows
-  → trigger sources create PENDING FlowRun with namespace + runtime_mode snapshot
+Controller polls apiserver ListAgentGraphs every 10s:
+  → Hash-mod shard: only processes owned graphs
+  → trigger sources create PENDING GraphRun with namespace + runtime_mode snapshot
   → active-run reconciliation creates the dedicated K8s JM Deployment
   ... (later, asynchronously) ...
-  → Dedicated JM picks up only its Flow's namespace runs
+  → Dedicated JM picks up only its AgentGraph's namespace runs
   → jm.Submit(run, spec) → JobMaster.Execute()
 ```
 
@@ -230,7 +230,7 @@ Controller polls apiserver ListFlows every 10s:
    process that commits it to PostgreSQL or SQLite.
 2. **Given** a valid REST, A2A, or webhook trigger, **when** it is accepted,
    **then** API Server MUST persist one `PENDING` run before returning its ID.
-3. **Given** a flow create, update, or delete, **when** persistence succeeds,
+3. **Given** a graph create, update, or delete, **when** persistence succeeds,
    **then** the corresponding MQTT lifecycle event MUST be published for
    Controller reconciliation.
 4. **Given** an unauthorized namespace request, **when** authentication or RBAC

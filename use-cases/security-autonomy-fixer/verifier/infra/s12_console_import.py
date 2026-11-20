@@ -2,7 +2,7 @@
 Scenario 12 — Console Import: Binary, Import Command, DB Verification.
 
 Validates the FlowgentConsole CLI management tool's ability to import all
-resource types (agents, flows, MCPs, LLM providers, notifiers, skills) from
+resource types (agents, graphs, MCPs, LLM providers, notifiers, skills) from
 config/**/*.yaml into the PostgreSQL database.
 
 Steps with Expected I/O:
@@ -26,7 +26,7 @@ Steps with Expected I/O:
     Step 2.2 Import summary
       Action:  Count OK lines from console stdout
       Input:   Import completed
-      Output:  ≥10 resources imported (7 agents + 1 flow + 1 llm + 2 mcps + 2 notifiers + 2 skills = 15 YAMLs)
+      Output:  ≥10 resources imported (7 agents + 1 graph + 1 llm + 2 mcps + 2 notifiers + 2 skills = 15 YAMLs)
 
   L3 — Database Verification
     Step 3.1 Agents in llm_agent
@@ -34,10 +34,10 @@ Steps with Expected I/O:
       Input:   Import succeeded
       Output:  ≥5 agent records (supervisor, issue-detector, fixer-agent, security-reviewer, quality-reviewer, arch-reviewer, git-agent)
 
-    Step 3.2 Flows in orh_flow + orh_flow_revision
-      Action:  psql flow count scoped to the configured tenant namespace
-      Input:   Flow YAMLs imported
-      Output:  ≥1 flow record
+    Step 3.2 AgentGraphs in orh_agent_graph + orh_agent_graph_revision
+      Action:  psql graph count scoped to the configured tenant namespace
+      Input:   AgentGraph YAMLs imported
+      Output:  ≥1 graph record
 
     Step 3.3 MCPs in llm_mcp
       Action:  psql MCP count scoped to the configured tenant namespace
@@ -54,14 +54,14 @@ Steps with Expected I/O:
       Input:   Notifier YAMLs imported
       Output:  ≥2 channel records
 
-    Step 3.6 Runtime Skills in orh_flow + orh_flow_revision
+    Step 3.6 Runtime Skills in orh_agent_graph + orh_agent_graph_revision
       Action:  psql skill count scoped to the configured tenant namespace
       Input:   Skill YAMLs imported
       Output:  ≥2 skill records
 
     Step 3.8 No idle application runtime
       Action:  kubectl get deployments/pods -A for application runtime labels
-      Input:   Config import completed, no FlowRun triggered yet
+      Input:   Config import completed, no GraphRun triggered yet
       Output:  No application JobManager or per-run runtime worker resources exist
 """
 
@@ -185,7 +185,7 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
                     "-n",
                     config.K8S_WORKLOAD_NAMESPACE,
                     "-l",
-                    "flowgent.io/runtime-boundary=flow-jobmanager",
+                    "flowgent.io/runtime-boundary=graph-jobmanager",
                 ],
             ),
             (
@@ -196,7 +196,7 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
                     "-n",
                     config.K8S_WORKLOAD_NAMESPACE,
                     "-l",
-                    "flowgent.io/runtime-boundary=flow-jobmanager",
+                    "flowgent.io/runtime-boundary=graph-jobmanager",
                 ],
             ),
             (
@@ -239,10 +239,10 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
                 print(f"  [3.8] {label}: none after metadata import")
 
     @staticmethod
-    def _verify_security_flow_network_policy(failures):
+    def _verify_security_graph_network_policy(failures):
         result = E2ES12ConsoleImportVerifier._pg_query(
-            "SELECT r.definition::text FROM orh_flow f "
-            "JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+            "SELECT r.definition::text FROM orh_agent_graph f "
+            "JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id "
             f"WHERE f.namespace_id='{NAMESPACE}' AND f.name='security-autonomy-fixer' "
             "AND f.status<>'DELETED' LIMIT 1;"
         )
@@ -440,34 +440,34 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
             print(f"  [3.1] WARN: Could not query llm_agent: {stderr_short}")
             failures.append(f"could not query llm_agent: {stderr_short}")
 
-        # ── L3.2: Flows ──────────────────────────────────────────
+        # ── L3.2: AgentGraphs ──────────────────────────────────────────
         result = E2ES12ConsoleImportVerifier._pg_query(
-            "SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+            "SELECT COUNT(*) FROM orh_agent_graph f JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id "
             f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
-            "AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'flow')='flow';"
+            "AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'graph')='graph';"
         )
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(
-                f"  [3.2] orh_flow (flows): {count} records (min expected: {MIN_FLOWS})"
+                f"  [3.2] orh_agent_graph (graphs): {count} records (min expected: {MIN_FLOWS})"
             )
             if count >= MIN_FLOWS:
-                print("  [3.2] Flows OK")
+                print("  [3.2] AgentGraphs OK")
             else:
-                print(f"  [3.2] WARN: Expected ≥{MIN_FLOWS} flows, found {count}")
-                failures.append(f"expected >={MIN_FLOWS} flows, found {count}")
+                print(f"  [3.2] WARN: Expected ≥{MIN_FLOWS} graphs, found {count}")
+                failures.append(f"expected >={MIN_FLOWS} graphs, found {count}")
                 result2 = E2ES12ConsoleImportVerifier._pg_query(
-                    "SELECT f.name FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+                    "SELECT f.name FROM orh_agent_graph f JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id "
                     f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
-                    "AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'flow')='flow' ORDER BY f.name;"
+                    "AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'graph')='graph' ORDER BY f.name;"
                 )
                 if result2.returncode == 0 and result2.stdout.strip():
                     for line in result2.stdout.strip().splitlines():
-                        print(f"        Flow: {line.strip()}")
+                        print(f"        AgentGraph: {line.strip()}")
         else:
             stderr_short = result.stderr[:200].strip()
-            print(f"  [3.2] WARN: Could not query orh_flow: {stderr_short}")
-            failures.append(f"could not query orh_flow: {stderr_short}")
+            print(f"  [3.2] WARN: Could not query orh_agent_graph: {stderr_short}")
+            failures.append(f"could not query orh_agent_graph: {stderr_short}")
 
         # ── L3.3: MCPs ───────────────────────────────────────────
         result = E2ES12ConsoleImportVerifier._pg_query(
@@ -546,14 +546,14 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
 
         # ── L3.6: Skills ─────────────────────────────────────────
         result = E2ES12ConsoleImportVerifier._pg_query(
-            "SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+            "SELECT COUNT(*) FROM orh_agent_graph f JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id "
             f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
             "AND lower(r.definition->>'kind')='skill';"
         )
         if result.returncode == 0:
             count = int(result.stdout.strip() or "0")
             print(
-                f"  [3.6] orh_flow (runtime skills): {count} records (min expected: {MIN_SKILLS})"
+                f"  [3.6] orh_agent_graph (runtime skills): {count} records (min expected: {MIN_SKILLS})"
             )
             if count >= MIN_SKILLS:
                 print("  [3.6] Skills OK")
@@ -561,7 +561,7 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
                 print(f"  [3.6] WARN: Expected ≥{MIN_SKILLS} skills, found {count}")
                 failures.append(f"expected >={MIN_SKILLS} skills, found {count}")
                 result2 = E2ES12ConsoleImportVerifier._pg_query(
-                    "SELECT f.name FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id "
+                    "SELECT f.name FROM orh_agent_graph f JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id "
                     f"WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' "
                     "AND lower(r.definition->>'kind')='skill' ORDER BY f.name;"
                 )
@@ -570,11 +570,11 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
                         print(f"        Skill: {line.strip()}")
         else:
             stderr_short = result.stderr[:200].strip()
-            print(f"  [3.6] WARN: Could not query orh_flow for skills: {stderr_short}")
-            failures.append(f"could not query orh_flow for skills: {stderr_short}")
+            print(f"  [3.6] WARN: Could not query orh_agent_graph for skills: {stderr_short}")
+            failures.append(f"could not query orh_agent_graph for skills: {stderr_short}")
 
-        # ── L3.7: Flow spec network policy ───────────────────────
-        E2ES12ConsoleImportVerifier._verify_security_flow_network_policy(failures)
+        # ── L3.7: AgentGraph spec network policy ───────────────────────
+        E2ES12ConsoleImportVerifier._verify_security_graph_network_policy(failures)
 
         # ── L3.8: Metadata import must not allocate runtime pods ──
         E2ES12ConsoleImportVerifier._verify_no_idle_workload_runtime(failures)
@@ -583,11 +583,11 @@ class E2ES12ConsoleImportVerifier(BaseVerifier):
         print("\n  ── Resource Inventory ──")
         inventory_queries = {
             "Agents": f"SELECT COUNT(*) FROM llm_agent WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
-            "Flows": f"SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'flow')='flow'",
+            "AgentGraphs": f"SELECT COUNT(*) FROM orh_agent_graph f JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' AND COALESCE(NULLIF(lower(r.definition->>'kind'), ''), 'graph')='graph'",
             "MCPs": f"SELECT COUNT(*) FROM llm_mcp WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
             "LLM Providers": f"SELECT COUNT(*) FROM llm_provider WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
             "Channels": f"SELECT COUNT(*) FROM nfy_channel WHERE namespace_id='{NAMESPACE}' AND status<>'DELETED'",
-            "Skills": f"SELECT COUNT(*) FROM orh_flow f JOIN orh_flow_revision r ON r.id=f.current_revision_id WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' AND lower(r.definition->>'kind')='skill'",
+            "Skills": f"SELECT COUNT(*) FROM orh_agent_graph f JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id WHERE f.namespace_id='{NAMESPACE}' AND f.status<>'DELETED' AND lower(r.definition->>'kind')='skill'",
         }
         all_ok = True
         for label, query in inventory_queries.items():

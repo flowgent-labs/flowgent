@@ -26,35 +26,35 @@ func (s *KnowledgeSQLiteStore) CreateCandidate(ctx context.Context, candidate *e
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var sourceFlowID, sourceFlowName, runStatus string
+	var sourceAgentGraphID, sourceAgentGraphName, runStatus string
 	var summarizeEnabled bool
-	if err = tx.QueryRowContext(ctx, `SELECT r.flow_id,f.name,r.status,r.summarize_enabled
-		FROM orh_run r JOIN orh_flow f ON f.id=r.flow_id
-		WHERE r.id=? AND r.namespace_id=?`, candidate.SourceRunID, candidate.Namespace).
-		Scan(&sourceFlowID, &sourceFlowName, &runStatus, &summarizeEnabled); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT r.agent_graph_id,f.name,r.status,r.summarize_enabled
+		FROM orh_graph_run r JOIN orh_agent_graph f ON f.id=r.agent_graph_id
+		WHERE r.id=? AND r.namespace_id=?`, candidate.SourceGraphRunID, candidate.Namespace).
+		Scan(&sourceAgentGraphID, &sourceAgentGraphName, &runStatus, &summarizeEnabled); err != nil {
 		return nil, fmt.Errorf("resolve candidate source run: %w", err)
 	}
-	if !strings.EqualFold(runStatus, string(entities.RunCompleted)) || !summarizeEnabled {
+	if !strings.EqualFold(runStatus, string(entities.GraphRunCompleted)) || !summarizeEnabled {
 		return nil, fmt.Errorf("run must be completed with summarize_enabled=true")
 	}
-	if candidate.TargetScope == "flow" {
-		flowKey := candidate.TargetFlowName
-		if flowKey == "" {
-			flowKey = candidate.TargetFlowID
+	if candidate.TargetScope == "graph" {
+		graphKey := candidate.TargetAgentGraphName
+		if graphKey == "" {
+			graphKey = candidate.TargetAgentGraphID
 		}
-		if flowKey == "" {
-			flowKey = sourceFlowID
+		if graphKey == "" {
+			graphKey = sourceAgentGraphID
 		}
-		if err = tx.QueryRowContext(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=?
-			AND (id=? OR name=?) AND status<>'DELETED'`, candidate.Namespace, flowKey, flowKey).
-			Scan(&candidate.TargetFlowID, &candidate.TargetFlowName); err != nil {
-			return nil, fmt.Errorf("resolve candidate target flow: %w", err)
+		if err = tx.QueryRowContext(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=?
+			AND (id=? OR name=?) AND status<>'DELETED'`, candidate.Namespace, graphKey, graphKey).
+			Scan(&candidate.TargetAgentGraphID, &candidate.TargetAgentGraphName); err != nil {
+			return nil, fmt.Errorf("resolve candidate target graph: %w", err)
 		}
-		if candidate.TargetFlowID != sourceFlowID {
-			return nil, fmt.Errorf("%w: a run may summarize only into its own flow", ErrPublicationDenied)
+		if candidate.TargetAgentGraphID != sourceAgentGraphID {
+			return nil, fmt.Errorf("%w: a run may summarize only into its own graph", ErrPublicationDenied)
 		}
 	} else {
-		candidate.TargetFlowID, candidate.TargetFlowName = "", ""
+		candidate.TargetAgentGraphID, candidate.TargetAgentGraphName = "", ""
 		if origin, _ := candidate.Provenance["origin"].(string); origin == "built_in_summarizer" {
 			return nil, fmt.Errorf("%w: built-in summaries cannot write namespace knowledge", ErrPublicationDenied)
 		}
@@ -92,20 +92,20 @@ func (s *KnowledgeSQLiteStore) CreateCandidate(ctx context.Context, candidate *e
 	requestHash := canonicalHash(request)
 	approvalKey := "publication:" + candidate.IdempotencyKey
 	if _, err = tx.ExecContext(ctx, `INSERT INTO orh_approval
-		(id,namespace_id,run_id,type,subject_type,subject_id,request,request_hash,status,
+		(id,namespace_id,graph_run_id,type,subject_type,subject_id,request,request_hash,status,
 		 idempotency_key,description,created_by,updated_by,metadata)
 		VALUES(?,?,? ,?,'knowledge_candidate',?,?,?,'pending',?,?,?,?,'{}')`,
-		approvalID, candidate.Namespace, candidate.SourceRunID, approvalType, candidate.ID,
+		approvalID, candidate.Namespace, candidate.SourceGraphRunID, approvalType, candidate.ID,
 		string(jsonBytes(request)), requestHash, approvalKey, candidate.Description, principal, principal); err != nil {
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO knw_candidate
-		(id,namespace_id,source_run_id,target_scope,target_flow_id,target_document_id,type,content,
+		(id,namespace_id,source_graph_run_id,target_scope,target_agent_graph_id,target_document_id,type,content,
 		 content_hash,provenance,expected_revision,approval_id,status,idempotency_key,description,
 		 created_by,updated_by,metadata)
 		VALUES(?,?,?,?,NULLIF(?,''),NULLIF(?,''),?,?,?,?,?,?,'unpublished',?,?,?,?,?)`,
-		candidate.ID, candidate.Namespace, candidate.SourceRunID, candidate.TargetScope,
-		candidate.TargetFlowID, candidate.TargetDocumentID, candidate.Type, candidate.Content,
+		candidate.ID, candidate.Namespace, candidate.SourceGraphRunID, candidate.TargetScope,
+		candidate.TargetAgentGraphID, candidate.TargetDocumentID, candidate.Type, candidate.Content,
 		candidate.ContentHash, string(jsonBytes(candidate.Provenance)), candidate.ExpectedRevision,
 		approvalID, candidate.IdempotencyKey, candidate.Description, principal, principal,
 		jsonStringValue(candidate.Metadata)); err != nil {
@@ -118,7 +118,7 @@ func (s *KnowledgeSQLiteStore) CreateCandidate(ctx context.Context, candidate *e
 	candidate.CreatedAt, candidate.UpdatedAt, candidate.RowVersion = now, now, 1
 	return &entities.ApprovalInfo{
 		BaseEntity: entities.BaseEntity{ID: approvalID, Namespace: candidate.Namespace, Status: "pending", CreatedAt: now, UpdatedAt: now, CreatedBy: principal, UpdatedBy: principal, RowVersion: 1},
-		RunID:      candidate.SourceRunID, Type: approvalType, SubjectType: "knowledge_candidate",
+		GraphRunID: candidate.SourceGraphRunID, Type: approvalType, SubjectType: "knowledge_candidate",
 		SubjectID: candidate.ID, Request: request, RequestHash: requestHash, Status: "pending",
 		IdempotencyKey: approvalKey, Token: approvalID,
 	}, nil
@@ -257,44 +257,44 @@ func candidateBaselineSQLite(ctx context.Context, tx *sql.Tx, candidate *entitie
 				LEFT JOIN llm_instruction i ON i.id=n.instruction_id WHERE n.id=?`, candidate.Namespace).Scan(&revision)
 			return revision, err
 		}
-		err := tx.QueryRowContext(ctx, `SELECT COALESCE(i.revision,0) FROM orh_flow f
+		err := tx.QueryRowContext(ctx, `SELECT COALESCE(i.revision,0) FROM orh_agent_graph f
 			LEFT JOIN llm_instruction i ON i.id=f.instruction_id
-			WHERE f.id=? AND f.namespace_id=?`, candidate.TargetFlowID, candidate.Namespace).Scan(&revision)
+			WHERE f.id=? AND f.namespace_id=?`, candidate.TargetAgentGraphID, candidate.Namespace).Scan(&revision)
 		return revision, err
 	}
 	if candidate.TargetDocumentID == "" {
 		return 0, nil
 	}
 	var revision int64
-	var scope, flowID, aclRef string
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(r.revision,0),d.scope,COALESCE(d.flow_id,''),COALESCE(d.acl_ref,'')
+	var scope, graphID, aclRef string
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(r.revision,0),d.scope,COALESCE(d.agent_graph_id,''),COALESCE(d.acl_ref,'')
 		FROM knw_document d LEFT JOIN knw_document_revision r ON r.id=d.current_revision_id
 		WHERE d.id=? AND d.namespace_id=? AND d.status<>'DELETED'`, candidate.TargetDocumentID,
-		candidate.Namespace).Scan(&revision, &scope, &flowID, &aclRef)
+		candidate.Namespace).Scan(&revision, &scope, &graphID, &aclRef)
 	if err != nil {
 		return 0, fmt.Errorf("resolve target document: %w", err)
 	}
-	if aclRef != "" || scope != candidate.TargetScope || flowID != candidate.TargetFlowID {
+	if aclRef != "" || scope != candidate.TargetScope || graphID != candidate.TargetAgentGraphID {
 		return 0, fmt.Errorf("%w: target document scope or ACL does not permit publication", ErrPublicationDenied)
 	}
 	return revision, nil
 }
 
 func candidateByIdempotencySQLite(ctx context.Context, tx *sql.Tx, namespace, key string) (*entities.KnowledgeCandidate, error) {
-	return scanCandidateSQLite(tx.QueryRowContext(ctx, `SELECT c.id,c.namespace_id,c.source_run_id,c.target_scope,
-		COALESCE(c.target_flow_id,''),COALESCE(f.name,''),COALESCE(c.target_document_id,''),c.type,
+	return scanCandidateSQLite(tx.QueryRowContext(ctx, `SELECT c.id,c.namespace_id,c.source_graph_run_id,c.target_scope,
+		COALESCE(c.target_agent_graph_id,''),COALESCE(f.name,''),COALESCE(c.target_document_id,''),c.type,
 		c.content,c.content_hash,c.provenance,c.expected_revision,c.approval_id,c.status,c.idempotency_key,
 		COALESCE(c.description,''),COALESCE(c.metadata,'{}'),c.created_at,COALESCE(c.created_by,''),
 		c.updated_at,COALESCE(c.updated_by,''),c.row_version
-		FROM knw_candidate c LEFT JOIN orh_flow f ON f.id=c.target_flow_id
+		FROM knw_candidate c LEFT JOIN orh_agent_graph f ON f.id=c.target_agent_graph_id
 		WHERE c.namespace_id=? AND c.idempotency_key=?`, namespace, key))
 }
 
 func scanCandidateSQLite(row interface{ Scan(...any) error }) (*entities.KnowledgeCandidate, error) {
 	var item entities.KnowledgeCandidate
 	var provenance, metadata, createdAt, updatedAt string
-	err := row.Scan(&item.ID, &item.Namespace, &item.SourceRunID, &item.TargetScope,
-		&item.TargetFlowID, &item.TargetFlowName, &item.TargetDocumentID, &item.Type, &item.Content,
+	err := row.Scan(&item.ID, &item.Namespace, &item.SourceGraphRunID, &item.TargetScope,
+		&item.TargetAgentGraphID, &item.TargetAgentGraphName, &item.TargetDocumentID, &item.Type, &item.Content,
 		&item.ContentHash, &provenance, &item.ExpectedRevision, &item.ApprovalID, &item.Status,
 		&item.IdempotencyKey, &item.Description, &metadata, &createdAt, &item.CreatedBy, &updatedAt,
 		&item.UpdatedBy, &item.RowVersion)
@@ -314,11 +314,11 @@ func approvalByIDSQLite(ctx context.Context, tx *sql.Tx, id string) (*entities.A
 	var decidedBy sql.NullString
 	var decidedAt, expiresAt, consumedAt sql.NullString
 	var createdAt, updatedAt string
-	err := tx.QueryRowContext(ctx, `SELECT id,namespace_id,COALESCE(run_id,''),COALESCE(node_run_id,''),
+	err := tx.QueryRowContext(ctx, `SELECT id,namespace_id,COALESCE(graph_run_id,''),COALESCE(node_run_id,''),
 		type,subject_type,subject_id,request,request_hash,status,COALESCE(decision,'{}'),decided_by,
 		decided_at,expires_at,consumed_at,idempotency_key,created_at,COALESCE(created_by,''),updated_at,
 		COALESCE(updated_by,''),row_version FROM orh_approval WHERE id=?`, id).Scan(&item.ID,
-		&item.Namespace, &item.RunID, &item.NodeRunID, &item.Type, &item.SubjectType, &item.SubjectID,
+		&item.Namespace, &item.GraphRunID, &item.NodeRunID, &item.Type, &item.SubjectType, &item.SubjectID,
 		&request, &item.RequestHash, &item.Status, &decision, &decidedBy, &decidedAt, &expiresAt,
 		&consumedAt, &item.IdempotencyKey, &createdAt, &item.CreatedBy, &updatedAt, &item.UpdatedBy,
 		&item.RowVersion)
@@ -349,20 +349,20 @@ func sqliteOptionalTime(value sql.NullString) *time.Time {
 }
 
 func lockedCandidateSQLite(ctx context.Context, tx *sql.Tx, approvalID string) (*entities.KnowledgeCandidate, string, string, string, bool, error) {
-	row := tx.QueryRowContext(ctx, `SELECT c.id,c.namespace_id,c.source_run_id,c.target_scope,
-		COALESCE(c.target_flow_id,''),COALESCE(f.name,''),COALESCE(c.target_document_id,''),c.type,
+	row := tx.QueryRowContext(ctx, `SELECT c.id,c.namespace_id,c.source_graph_run_id,c.target_scope,
+		COALESCE(c.target_agent_graph_id,''),COALESCE(f.name,''),COALESCE(c.target_document_id,''),c.type,
 		c.content,c.content_hash,c.provenance,c.expected_revision,c.approval_id,c.status,c.idempotency_key,
 		COALESCE(c.description,''),COALESCE(c.metadata,'{}'),c.created_at,COALESCE(c.created_by,''),
 		c.updated_at,COALESCE(c.updated_by,''),c.row_version,a.status,a.type,a.request_hash,
 		(a.expires_at IS NOT NULL AND datetime(a.expires_at)<=CURRENT_TIMESTAMP)
 		FROM knw_candidate c JOIN orh_approval a ON a.id=c.approval_id AND a.namespace_id=c.namespace_id
-		LEFT JOIN orh_flow f ON f.id=c.target_flow_id WHERE c.approval_id=?`, approvalID)
+		LEFT JOIN orh_agent_graph f ON f.id=c.target_agent_graph_id WHERE c.approval_id=?`, approvalID)
 	var item entities.KnowledgeCandidate
 	var provenance, metadata, createdAt, updatedAt string
 	var approvalStatus, approvalType, requestHash string
 	var expired bool
-	err := row.Scan(&item.ID, &item.Namespace, &item.SourceRunID, &item.TargetScope,
-		&item.TargetFlowID, &item.TargetFlowName, &item.TargetDocumentID, &item.Type, &item.Content,
+	err := row.Scan(&item.ID, &item.Namespace, &item.SourceGraphRunID, &item.TargetScope,
+		&item.TargetAgentGraphID, &item.TargetAgentGraphName, &item.TargetDocumentID, &item.Type, &item.Content,
 		&item.ContentHash, &provenance, &item.ExpectedRevision, &item.ApprovalID, &item.Status,
 		&item.IdempotencyKey, &item.Description, &metadata, &createdAt, &item.CreatedBy, &updatedAt,
 		&item.UpdatedBy, &item.RowVersion, &approvalStatus, &approvalType, &requestHash, &expired)
@@ -399,15 +399,15 @@ func failCandidateApprovalSQLite(ctx context.Context, tx *sql.Tx, candidate *ent
 
 func publishInstructionSQLite(ctx context.Context, tx *sql.Tx, candidate *entities.KnowledgeCandidate, actor string) (string, error) {
 	instructionID := uuid.NewString()
-	var flowID any
-	if candidate.TargetScope == "flow" {
-		flowID = candidate.TargetFlowID
+	var graphID any
+	if candidate.TargetScope == "graph" {
+		graphID = candidate.TargetAgentGraphID
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_instruction
-		(id,namespace_id,scope,flow_id,revision,content,content_hash,status,approval_id,
+		(id,namespace_id,scope,agent_graph_id,revision,content,content_hash,status,approval_id,
 		 description,created_by,updated_by,metadata)
 		VALUES(?,?,?,?,?,?,?,'published',?,?,?,?,?)`, instructionID, candidate.Namespace,
-		candidate.TargetScope, flowID, candidate.ExpectedRevision+1, candidate.Content,
+		candidate.TargetScope, graphID, candidate.ExpectedRevision+1, candidate.Content,
 		candidate.ContentHash, candidate.ApprovalID, candidate.Description, actor, actor,
 		jsonStringValue(candidate.Provenance)); err != nil {
 		return "", err
@@ -419,10 +419,10 @@ func publishInstructionSQLite(ctx context.Context, tx *sql.Tx, candidate *entiti
 			WHERE id=? AND COALESCE((SELECT revision FROM llm_instruction WHERE id=instruction_id),0)=?`,
 			instructionID, actor, candidate.Namespace, candidate.ExpectedRevision)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE orh_flow SET instruction_id=?,updated_by=?
+		result, err = tx.ExecContext(ctx, `UPDATE orh_agent_graph SET instruction_id=?,updated_by=?
 			WHERE id=? AND namespace_id=?
 			AND COALESCE((SELECT revision FROM llm_instruction WHERE id=instruction_id),0)=?`,
-			instructionID, actor, candidate.TargetFlowID, candidate.Namespace, candidate.ExpectedRevision)
+			instructionID, actor, candidate.TargetAgentGraphID, candidate.Namespace, candidate.ExpectedRevision)
 	}
 	if err != nil {
 		return "", err
@@ -451,19 +451,19 @@ func publishKnowledgeSQLite(ctx context.Context, tx *sql.Tx, candidate *entities
 	newDocument := documentID == ""
 	if newDocument {
 		documentID = uuid.NewString()
-		documentKey := "summary/" + candidate.SourceRunID + "/" + candidate.ID
+		documentKey := "summary/" + candidate.SourceGraphRunID + "/" + candidate.ID
 		_, err = tx.ExecContext(ctx, `INSERT INTO knw_document
-			(id,namespace_id,source_id,document_key,scope,flow_id,classification,status,
+			(id,namespace_id,source_id,document_key,scope,agent_graph_id,classification,status,
 			 description,created_by,updated_by,metadata)
 			VALUES(?,?,?,?,?,NULLIF(?,''),'internal','ACTIVE',?,?,?,?)`, documentID,
-			candidate.Namespace, sourceID, documentKey, candidate.TargetScope, candidate.TargetFlowID,
+			candidate.Namespace, sourceID, documentKey, candidate.TargetScope, candidate.TargetAgentGraphID,
 			candidate.Description, actor, actor, jsonStringValue(candidate.Metadata))
 	} else {
-		var scope, flowID, aclRef string
-		err = tx.QueryRowContext(ctx, `SELECT scope,COALESCE(flow_id,''),COALESCE(acl_ref,'')
+		var scope, graphID, aclRef string
+		err = tx.QueryRowContext(ctx, `SELECT scope,COALESCE(agent_graph_id,''),COALESCE(acl_ref,'')
 			FROM knw_document WHERE id=? AND namespace_id=? AND status<>'DELETED'`, documentID,
-			candidate.Namespace).Scan(&scope, &flowID, &aclRef)
-		if err == nil && (scope != candidate.TargetScope || flowID != candidate.TargetFlowID || aclRef != "") {
+			candidate.Namespace).Scan(&scope, &graphID, &aclRef)
+		if err == nil && (scope != candidate.TargetScope || graphID != candidate.TargetAgentGraphID || aclRef != "") {
 			return "", ErrPublicationDenied
 		}
 	}

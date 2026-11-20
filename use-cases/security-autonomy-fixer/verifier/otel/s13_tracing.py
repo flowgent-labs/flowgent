@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from util.report import VerificationResult
-from verifier.agentflow import SecurityAutonomyFixture
+from verifier.agentgraph import SecurityAutonomyFixture
 from verifier.context import BaseVerifier, FlowgentRunEvidence, VerificationContext
 
 
@@ -25,21 +25,21 @@ class E2ES13TracingVerifier(BaseVerifier):
     def _verify_trace(self) -> None:
         evidence = self.execution
         persisted = FlowgentRunEvidence.persisted(
-            evidence["run_id"], evidence["namespace"], evidence["node_id"]
+            evidence["graph_run_id"], evidence["namespace"], evidence["node_instance_id"]
         )
-        for key in ("task_id", "attempt", "flow_revision_id", "plan_id"):
+        for key in ("node_run_id", "attempt", "agent_graph_revision_id", "plan_id"):
             if persisted[key] != evidence[key]:
                 raise AssertionError(f"Persisted execution identity changed: {key}")
-        traces = FlowgentRunEvidence.traces(evidence["run_id"])
+        traces = FlowgentRunEvidence.traces(evidence["graph_run_id"])
         spans = [span for trace in traces for span in trace.get("spans", [])]
         attempts = [
             FlowgentRunEvidence.tags(span)
             for span in spans
-            if FlowgentRunEvidence.tags(span).get("flowgent.task_id")
-            == evidence["task_id"]
+            if FlowgentRunEvidence.tags(span).get("flowgent.node_run_id")
+            == evidence["node_run_id"]
         ]
         if not attempts or not any(
-            tags.get("flowgent.node_id") == evidence["node_id"]
+            tags.get("flowgent.node_instance_id") == evidence["node_instance_id"]
             and int(tags.get("flowgent.attempt", 0)) == evidence["attempt"]
             for tags in attempts
         ):
@@ -56,8 +56,8 @@ class E2ES13TracingVerifier(BaseVerifier):
         artifact.write_text(
             json.dumps(
                 {
-                    "run_id": evidence["run_id"],
-                    "task_id": evidence["task_id"],
+                    "graph_run_id": evidence["graph_run_id"],
+                    "node_run_id": evidence["node_run_id"],
                     "traces": traces,
                 },
                 indent=2,
@@ -67,19 +67,19 @@ class E2ES13TracingVerifier(BaseVerifier):
             "13.trace", "UI → NodeRun → Jaeger", "application/json", artifact
         )
         self.details.append(
-            f"Correlated run={evidence['run_id']} task={evidence['task_id']} attempt={evidence['attempt']}"
+            f"Correlated run={evidence['graph_run_id']} task={evidence['node_run_id']} attempt={evidence['attempt']}"
         )
 
     def _verify_main_trace(self) -> None:
         from verifier.context import RUN_ID_PATH, FlowgentE2EProject
 
-        run_id = RUN_ID_PATH.read_text().strip()
+        graph_run_id = RUN_ID_PATH.read_text().strip()
         tasks = SecurityAutonomyFixture.tasks_by_node(
-            SecurityAutonomyFixture.get_tasks(FlowgentE2EProject.session(), run_id)
+            SecurityAutonomyFixture.get_tasks(FlowgentE2EProject.session(), graph_run_id)
         )
         active = SecurityAutonomyFixture.active_path(tasks)
-        SecurityAutonomyFixture.assert_persisted_attempts(run_id, active)
-        traces = FlowgentRunEvidence.traces(run_id)
+        SecurityAutonomyFixture.assert_persisted_attempts(graph_run_id, active)
+        traces = FlowgentRunEvidence.traces(graph_run_id)
         tagged = [
             FlowgentRunEvidence.tags(span)
             for trace in traces
@@ -88,8 +88,8 @@ class E2ES13TracingVerifier(BaseVerifier):
         for node in active:
             task = tasks[node]
             if not any(
-                tags.get("flowgent.node_id") == node
-                and tags.get("flowgent.task_id") == task["id"]
+                tags.get("flowgent.node_instance_id") == node
+                and tags.get("flowgent.node_run_id") == task["id"]
                 and tags.get("flowgent.attempt") == int(task.get("attempt") or 1)
                 for tags in tagged
             ):
@@ -101,7 +101,7 @@ class E2ES13TracingVerifier(BaseVerifier):
         )
         artifact.write_text(
             json.dumps(
-                {"run_id": run_id, "active_nodes": active, "traces": traces}, indent=2
+                {"graph_run_id": graph_run_id, "active_nodes": active, "traces": traces}, indent=2
             )
         )
         self.record_evidence(

@@ -28,62 +28,62 @@
 <g id="terminal" data-component="terminal" data-kind="core"><rect x="80" y="1030" width="380" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
 <g id="delivery" data-component="delivery" data-kind="data"><rect x="80" y="1225" width="1400" height="65" rx="11" fill="#1c3838" stroke="#9fd7d3" stroke-width="1.6" stroke-dasharray="7 6"/></g>
 <path d="M440 300L560 300" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="ui-gateway" d="M440 300L560 300" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)" marker-start="url(#arrow-call)"/>
+<path data-graph="ui-gateway" d="M440 300L560 300" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)" marker-start="url(#arrow-call)"/>
 <path d="M990 285L1060 285" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="gateway-authguard" d="M990 285L1060 285" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)" marker-start="url(#arrow-call)"/>
+<path data-graph="gateway-authguard" d="M990 285L1060 285" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)" marker-start="url(#arrow-call)"/>
 <path d="M1660 72L1595 72L1595 400L850 400L850 360" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="external-client-ingress" d="M1660 72L1595 72L1595 400L850 400L850 360" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="external-client-ingress" d="M1660 72L1595 72L1595 400L850 400L850 360" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M1830 440L1830 580" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="a2a-collection" d="M1830 440L1830 580" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path data-graph="a2a-collection" d="M1830 440L1830 580" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
 <path d="M2170 440L2170 580" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="mcp-collection" d="M2170 440L2170 580" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path data-graph="mcp-collection" d="M2170 440L2170 580" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
 <path d="M1975 885L1975 720" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="payer-authorization" d="M1975 885L1975 720" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path data-graph="payer-authorization" d="M1975 885L1975 720" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
 <path d="M2000 1005L2000 1160" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="outbound-service-call" d="M2000 1005L2000 1160" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path data-graph="outbound-service-call" d="M2000 1005L2000 1160" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
 <path d="M760 360L760 470L2300 470" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-protected-rail" d="M760 360L760 470L2300 470" fill="none" stroke="#f0f1df" stroke-width="2.2"/>
+<path data-graph="logical-protected-rail" d="M760 360L760 470L2300 470" fill="none" stroke="#f0f1df" stroke-width="2.2"/>
 <path d="M760 470L420 470L420 580" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="resource-api-route" d="M760 470L420 470L420 580" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="resource-api-route" d="M760 470L420 470L420 580" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M1945 470L1945 440" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-a2a-route" d="M1945 470L1945 440" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="logical-a2a-route" d="M1945 470L1945 440" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M2250 470L2250 440" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-mcp-route" d="M2250 470L2250 440" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)"/>
+<path data-graph="logical-mcp-route" d="M2250 470L2250 440" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)"/>
 <path d="M2300 470L2300 650L2260 650" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-agentvault-route" d="M2300 470L2300 650L2260 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="logical-agentvault-route" d="M2300 470L2300 650L2260 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M1680 350L1610 350L1610 760L1015 760L1015 650L980 650" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-a2a-business" d="M1680 350L1610 350L1610 760L1015 760L1015 650L980 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="logical-a2a-business" d="M1680 350L1610 350L1610 760L1015 760L1015 650L980 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M2320 350L2335 350L2335 118L1035 118L1035 390L970 390L970 360" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-mcp-business" d="M2320 350L2335 350L2335 118L1035 118L1035 390L970 390L970 360" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)"/>
+<path data-graph="logical-mcp-business" d="M2320 350L2335 350L2335 118L1035 118L1035 390L970 390L970 360" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)"/>
 <path d="M460 650L580 650" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="definitions-to-run" d="M460 650L580 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="definitions-to-run" d="M460 650L580 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M980 650L1080 650" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="run-to-schedule" d="M980 650L1080 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="run-to-schedule" d="M980 650L1080 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M1280 715L1280 835" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="dispatch" d="M1280 715L1280 835" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="dispatch" d="M1280 715L1280 835" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M480 885L520 885L520 995L1200 995L1200 970" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="context-to-execution" d="M480 885L520 885L520 995L1200 995L1200 970" fill="none" stroke="#9fd7d3" stroke-width="2.2" stroke-dasharray="2 6" marker-end="url(#arrow-state)"/>
+<path data-graph="context-to-execution" d="M480 885L520 885L520 995L1200 995L1200 970" fill="none" stroke="#9fd7d3" stroke-width="2.2" stroke-dasharray="2 6" marker-end="url(#arrow-state)"/>
 <path d="M980 875L1045 875L1045 790L1360 790L1360 715" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="approval-to-scheduler" d="M980 875L1045 875L1045 790L1360 790L1360 715" fill="none" stroke="#b8c4ed" stroke-width="2.2" stroke-dasharray="8 6" marker-end="url(#arrow-control)"/>
+<path data-graph="approval-to-scheduler" d="M980 875L1045 875L1045 790L1360 790L1360 715" fill="none" stroke="#b8c4ed" stroke-width="2.2" stroke-dasharray="8 6" marker-end="url(#arrow-control)"/>
 <path d="M1080 925L1025 925L1025 1100L980 1100" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="execute-result" d="M1080 925L1025 925L1025 1100L980 1100" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="execute-result" d="M1080 925L1025 925L1025 1100L980 1100" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M980 1070L1005 1070L1005 745L1200 745L1200 715" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="next-node" d="M980 1070L1005 1070L1005 745L1200 745L1200 715" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="next-node" d="M980 1070L1005 1070L1005 745L1200 745L1200 715" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M580 1100L460 1100" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="terminal-run" d="M580 1100L460 1100" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="terminal-run" d="M580 1100L460 1100" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M780 1165L780 1225" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="result-events" d="M780 1165L780 1225" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="result-events" d="M780 1165L780 1225" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M270 1165L270 1225" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="terminal-events" d="M270 1165L270 1225" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="terminal-events" d="M270 1165L270 1225" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <path d="M1480 925L1590 925L1590 945L1740 945" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="logical-outbound-payment" d="M1480 925L1590 925L1590 945L1740 945" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path data-graph="logical-outbound-payment" d="M1480 925L1590 925L1590 945L1740 945" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
 <path d="M1480 1255L1550 1255L1550 445L920 445L920 360" fill="none" stroke="#182c24" stroke-width="7"/>
-<path data-flow="ui-event-delivery" d="M1480 1255L1550 1255L1550 445L920 445L920 360" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path data-graph="ui-event-delivery" d="M1480 1255L1550 1255L1550 445L920 445L920 360" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
 <text x="40" y="54" font-size="35" fill="#f0f1df" font-weight="700" text-anchor="start">Flowgent | Logical Call Architecture</text>
 <text x="40" y="96" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Solid: service calls   /   Dashed: resource control   /   Dotted: state or files   /   † Planned integration</text>
 <text x="65" y="187" font-size="25" fill="#b8c4ed" font-weight="650" text-anchor="start">Browser / Application UI</text>
 <text x="88" y="254" font-size="24" fill="#b8c4ed" font-weight="650" text-anchor="start">Flowgent Web Console</text>
-<text x="88" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentFlows / FlowRuns</text>
+<text x="88" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentGraphs / GraphRuns</text>
 <text x="88" y="313" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Agents / MCPs / Skills</text>
 <text x="88" y="341" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Notifications / Sandbox pools†</text>
 <text x="88" y="369" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Resource CRUD / Run control</text>
@@ -128,11 +128,11 @@
 <text x="2000" y="1080" font-size="19" fill="#e9b681" font-weight="400" text-anchor="middle">HTTP 402 / proof / retry†</text>
 <text x="65" y="537" font-size="25" fill="#b6d8aa" font-weight="650" text-anchor="start">Flowgent | Orchestration</text>
 <text x="98" y="614" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">1  Resources / Revisions</text>
-<text x="98" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Flow / Agent / Skill definitions</text>
+<text x="98" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentGraph / Agent / Skill definitions</text>
 <text x="98" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Immutable content / secret references</text>
 <text x="598" y="614" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">2  Admit a Run</text>
 <text x="598" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Validate references / input / namespace</text>
-<text x="598" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Pin Flow revision / runtime / pool†</text>
+<text x="598" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Pin AgentGraph revision / runtime / pool†</text>
 <text x="1098" y="614" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">3  Schedule Nodes</text>
 <text x="1098" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Controller maintains runtimes</text>
 <text x="1098" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">JobManager resolves ready DAG nodes</text>
@@ -147,7 +147,7 @@
 <text x="1098" y="928" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Agent / tool / control / Sandbox†</text>
 <text x="598" y="1064" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">5  Commit the Result</text>
 <text x="598" y="1095" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">API persists NodeRun / Attempt state</text>
-<text x="598" y="1123" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">MQTT returns TaskResult to JM</text>
+<text x="598" y="1123" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">MQTT returns NodeResult to JM</text>
 <text x="98" y="1064" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">6  Finish the Run</text>
 <text x="98" y="1095" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Complete / fail / cancel</text>
 <text x="98" y="1123" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Release application JM / TM</text>

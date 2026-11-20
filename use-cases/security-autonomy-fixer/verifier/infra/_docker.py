@@ -304,9 +304,9 @@ class FlowgentDockerDeployment(BaseDeployer):
             raise RuntimeError(f"Docker Hosted Login route failed: HTTP {status}")
         deadline = time.monotonic() + 20
         while True:
-            status, _, flows = authguard.AuthGuardRuntime._api(
+            status, _, graphs = authguard.AuthGuardRuntime._api(
                 gateway,
-                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
                 token,
                 headers={"Host": authguard.APPLICATION_HOST},
             )
@@ -320,12 +320,12 @@ class FlowgentDockerDeployment(BaseDeployer):
         if status != 200:
             raise RuntimeError(f"Docker gateway authorization failed: HTTP {status}")
         if resource_scope:
-            items = flows if isinstance(flows, list) else flows.get("items", [])
-            if any(item.get("flow_id") == "security-autonomy-fixer" for item in items):
+            items = graphs if isinstance(graphs, list) else graphs.get("items", [])
+            if any(item.get("agent_graph_id") == "security-autonomy-fixer" for item in items):
                 raise RuntimeError("Docker row-level AuthGuard DENY was not applied")
             status, _, _ = authguard.AuthGuardRuntime._api(
                 gateway,
-                f"/api/v1/{config.NAMESPACE_ID}/flows/security-autonomy-fixer",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs/security-autonomy-fixer",
                 token,
                 headers={"Host": authguard.APPLICATION_HOST},
             )
@@ -333,7 +333,7 @@ class FlowgentDockerDeployment(BaseDeployer):
                 raise RuntimeError(f"Docker exact-resource DENY returned HTTP {status}")
         status, _, _ = authguard.AuthGuardRuntime._api(
             DOCKER_EXTERNAL_API_PORT,
-            f"/api/v1/{config.NAMESPACE_ID}/flows",
+            f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
             "",
         )
         if status != 401:

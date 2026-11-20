@@ -11,8 +11,8 @@ or delete. The adapter compiles AuthGuard grants
 for `urn:iam:prod:flowgent:global:<tenant>:namespace/<namespace>/**` into a
 `FlowgentSqlScope` that embeds the official `model.SqlScope`; repositories
 append it to business queries. Each repository declares its concrete resource
-path (for example `flows/{flow_id}` or
-`runs/{run_id}/node-runs/{node_run_id}`). The signed request `resource_urn`
+path (for example `graphs/{agent_graph_id}` or
+`runs/{graph_run_id}/node-runs/{node_run_id}`). The signed request `resource_urn`
 selects the matching mapping before the SDK compiles allow and deny grants, so
 aliases that share a table cannot authorize one another. Reads, updates, and
 deletes include the compiled predicate; creates and upserts validate the

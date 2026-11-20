@@ -159,9 +159,9 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 		planTimeout:              5 * time.Minute,
 		ownerNamespaceID:         "default",
 		runtimeClusterID:         "app-run-1",
-		ownerRunID:               "run-1",
+		ownerGraphRunID:          "run-1",
 		runtimeMode:              "application",
-		ownerFlowID:              "sec-fix",
+		ownerAgentGraphID:        "sec-fix",
 		ownerJobManagerName:      "flowgent-jobmanager-default-sec-fix-run-1",
 		ownerJobManagerNamespace: "flowgent-default",
 		credentialEnvSecret:      "flowgent-runtime-env",
@@ -182,7 +182,7 @@ func TestKubernetesResourceManager_EnsureDeploymentOwnerLabels(t *testing.T) {
 	if got := dep.Spec.Selector.MatchLabels[LabelRuntimeClusterID]; got != "app-run-1" {
 		t.Fatalf("selector runtime cluster label = %q, want app-run-1", got)
 	}
-	if got := dep.Spec.Selector.MatchLabels[LabelRunID]; got != "run-1" {
+	if got := dep.Spec.Selector.MatchLabels[LabelGraphRunID]; got != "run-1" {
 		t.Fatalf("selector run label = %q, want run-1", got)
 	}
 	container := dep.Spec.Template.Spec.Containers[0]

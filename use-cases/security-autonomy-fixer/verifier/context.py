@@ -281,7 +281,7 @@ class BaseVerifier(ABC):
 STATE_DIR = REPORTS_DIR / ".state"
 
 
-RUN_ID_PATH = STATE_DIR / "last_run_id"
+RUN_ID_PATH = STATE_DIR / "last_graph_run_id"
 
 MQTT_AUDIT_PATH = STATE_DIR / "last_mqtt_audit.json"
 
@@ -360,7 +360,7 @@ class FlowgentE2EProject:
         return True
 
     @classmethod
-    def _get_tasks_from_pg(cls, run_id):
+    def _get_tasks_from_pg(cls, graph_run_id):
         """Query canonical NodeRuns when the read API cannot return the task list."""
         try:
             connection = cls.pg_connect()
@@ -368,13 +368,13 @@ class FlowgentE2EProject:
                 return []
             cursor = connection.cursor()
             cursor.execute(
-                "SELECT id, run_id, node_key, status, input, output, "
+                "SELECT id, graph_run_id, node_instance_id, status, input, output, "
                 "COALESCE(error->>'message','') AS error, attempt, "
                 "COALESCE((metadata->>'max_retries')::int,0) AS max_retries, "
                 "execution_id, COALESCE((metadata->>'sequence')::int,attempt) AS sequence, "
                 "started_at, finished_at FROM orh_node_run "
-                "WHERE run_id=%s AND status<>'DELETED' ORDER BY node_key,attempt",
-                (run_id,),
+                "WHERE graph_run_id=%s AND status<>'DELETED' ORDER BY node_instance_id,attempt",
+                (graph_run_id,),
             )
             rows = cursor.fetchall()
             columns = [description[0] for description in cursor.description]
@@ -392,26 +392,26 @@ class FlowgentE2EProject:
             return []
 
     @classmethod
-    def get_tasks(cls, session, api_base, namespace, run_id):
-        """Fetch a flow run's tasks, with a direct database fallback."""
-        response = session.get(f"{api_base}/api/v1/{namespace}/runs/{run_id}/node-runs")
+    def get_tasks(cls, session, api_base, namespace, graph_run_id):
+        """Fetch a graph run's tasks, with a direct database fallback."""
+        response = session.get(f"{api_base}/api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs")
         if response.status_code == 200:
             tasks = response.json()
             if isinstance(tasks, list):
                 return tasks
-        return cls._get_tasks_from_pg(run_id)
+        return cls._get_tasks_from_pg(graph_run_id)
 
     @staticmethod
     def tasks_by_node(tasks):
         return {
-            task.get("node_key"): task
+            task.get("node_instance_id"): task
             for task in sorted(tasks, key=lambda task: int(task.get("attempt") or 1))
-            if task.get("node_key")
+            if task.get("node_instance_id")
         }
 
     @staticmethod
     def parse_output(task):
-        """Normalize a TaskRun output field into its structured representation."""
+        """Normalize a NodeRun output field into its structured representation."""
         output = task.get("output") or {}
         if isinstance(output, str):
             try:
@@ -434,36 +434,36 @@ class FlowgentE2EProject:
         return output
 
     @staticmethod
-    def node_task(tasks_by_node, node_id):
-        return tasks_by_node.get(node_id)
+    def node_task(tasks_by_node, node_instance_id):
+        return tasks_by_node.get(node_instance_id)
 
     @staticmethod
     def try_approve_pending_human(
-        session, api_base, namespace, run_id, connection=None
+        session, api_base, namespace, graph_run_id, connection=None
     ):
         """Approve a pending gate, preferring its canonical approval ID."""
         approval_id = None
         if connection:
             cursor = connection.cursor()
             cursor.execute(
-                "SELECT id FROM orh_approval WHERE run_id=%s AND status='pending' LIMIT 1",
-                (run_id,),
+                "SELECT id FROM orh_approval WHERE graph_run_id=%s AND status='pending' LIMIT 1",
+                (graph_run_id,),
             )
             row = cursor.fetchone()
             if row:
                 approval_id = row[0]
         if not approval_id:
             response = session.get(
-                f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals"
+                f"{api_base}/api/v1/{namespace}/graph-runs/{graph_run_id}/approvals"
             )
             if response.status_code == 200:
                 for item in response.json() or []:
-                    if item.get("run_id") == run_id and item.get("status") == "pending":
+                    if item.get("graph_run_id") == graph_run_id and item.get("status") == "pending":
                         approval_id = item.get("id")
                         break
         if approval_id:
             response = session.post(
-                f"{api_base}/api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/approve",
+                f"{api_base}/api/v1/{namespace}/graph-runs/{graph_run_id}/approvals/{approval_id}/approve",
                 json={"comment": "Approved by e2e verifier"},
             )
             print(
@@ -593,7 +593,7 @@ class FlowgentRunEvidence:
         return evidence
 
     @staticmethod
-    def persisted(run_id: str, namespace: str, node_id: str) -> dict:
+    def persisted(graph_run_id: str, namespace: str, node_instance_id: str) -> dict:
         from util.postgres import E2EPostgresChecker
 
         with contextlib.closing(
@@ -601,19 +601,19 @@ class FlowgentRunEvidence:
         ) as connection:
             rows = E2EPostgresChecker.query(
                 connection,
-                "SELECT r.status,r.flow_revision_id,f.name,n.id,n.status,n.attempt,n.execution_id,n.output,r.runtime_mode,r.runtime_cluster_id "
-                "FROM orh_run r JOIN orh_flow f ON f.id=r.flow_id AND f.namespace_id=r.namespace_id "
-                "JOIN orh_node_run n ON n.run_id=r.id AND n.namespace_id=r.namespace_id "
-                "WHERE r.id=%s AND r.namespace_id=%s AND n.node_key=%s ORDER BY n.attempt DESC LIMIT 1",
-                (run_id, namespace, node_id),
+                "SELECT r.status,r.agent_graph_revision_id,f.name,n.id,n.status,n.attempt,n.execution_id,n.output,r.runtime_mode,r.runtime_cluster_id "
+                "FROM orh_graph_run r JOIN orh_agent_graph f ON f.id=r.agent_graph_id AND f.namespace_id=r.namespace_id "
+                "JOIN orh_node_run n ON n.graph_run_id=r.id AND n.namespace_id=r.namespace_id "
+                "WHERE r.id=%s AND r.namespace_id=%s AND n.node_instance_id=%s ORDER BY n.attempt DESC LIMIT 1",
+                (graph_run_id, namespace, node_instance_id),
             )
         if not rows:
-            raise AssertionError(f"No persisted NodeRun for {run_id}/{node_id}")
+            raise AssertionError(f"No persisted NodeRun for {graph_run_id}/{node_instance_id}")
         (
             status,
             revision,
-            flow_id,
-            task_id,
+            agent_graph_id,
+            node_run_id,
             task_status,
             attempt,
             execution_id,
@@ -630,13 +630,13 @@ class FlowgentRunEvidence:
                 f"Run/attempt is not durably completed: {status}/{task_status}"
             )
         return {
-            "run_id": run_id,
+            "graph_run_id": graph_run_id,
             "namespace": namespace,
-            "flow_id": flow_id,
-            "node_id": node_id,
-            "task_id": task_id,
+            "agent_graph_id": agent_graph_id,
+            "node_instance_id": node_instance_id,
+            "node_run_id": node_run_id,
             "attempt": attempt,
-            "flow_revision_id": revision,
+            "agent_graph_revision_id": revision,
             "plan_id": re.sub(r"-attempt-\d+$", "", execution_id),
             "output": output,
             "runtime_cluster_id": runtime_cluster_id,
@@ -644,7 +644,7 @@ class FlowgentRunEvidence:
         }
 
     @staticmethod
-    def traces(run_id: str, *, timeout: int = 90) -> list[dict]:
+    def traces(graph_run_id: str, *, timeout: int = 90) -> list[dict]:
         import requests
 
         session = requests.Session()
@@ -663,7 +663,7 @@ class FlowgentRunEvidence:
                     config.JAEGER_UI_URL.rstrip("/") + "/api/traces",
                     params={
                         "service": service,
-                        "tags": json.dumps({"run.id": run_id}),
+                        "tags": json.dumps({"run.id": graph_run_id}),
                         "lookback": "24h",
                         "limit": 100,
                     },
@@ -672,14 +672,14 @@ class FlowgentRunEvidence:
                 response.raise_for_status()
                 for trace in response.json().get("data", []):
                     if any(
-                        FlowgentRunEvidence.tags(span).get("run.id") == run_id
+                        FlowgentRunEvidence.tags(span).get("run.id") == graph_run_id
                         for span in trace.get("spans", [])
                     ):
                         matches[trace["traceID"]] = trace
             if matches:
                 return list(matches.values())
             time.sleep(2)
-        raise AssertionError(f"Jaeger has no correlated trace for run {run_id}")
+        raise AssertionError(f"Jaeger has no correlated trace for run {graph_run_id}")
 
     @staticmethod
     def tags(span: dict) -> dict:
@@ -714,8 +714,8 @@ class FlowgentRunEvidence:
             PurePosixPath(
                 "/var/flowgent",
                 evidence["namespace"],
-                evidence["flow_id"],
-                evidence["run_id"],
+                evidence["agent_graph_id"],
+                evidence["graph_run_id"],
                 evidence["plan_id"],
                 path,
             )
@@ -809,7 +809,7 @@ class FlowgentRunEvidence:
                 cluster = (
                     "session"
                     if evidence["runtime_mode"] == "session"
-                    else "app-" + evidence["run_id"]
+                    else "app-" + evidence["graph_run_id"]
                 )
             for namespace in FlowgentRunEvidence.runtime_namespaces(context, evidence):
                 pods = E2EKubernetesDeployer.resource(

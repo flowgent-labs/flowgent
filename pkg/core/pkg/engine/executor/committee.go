@@ -9,10 +9,10 @@ import (
 
 type CommitteeExecutor struct{}
 
-func (e *CommitteeExecutor) TaskType() entities.TaskType { return entities.TaskCommittee }
+func (e *CommitteeExecutor) NodeKind() entities.NodeKind { return entities.CommitteeNode }
 
-func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	strategy := plan.NodeSpec.Strategy
+func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
+	strategy := plan.Node.Strategy
 	decisionType := "majority"
 	if strategy != nil {
 		if t, ok := strategy["type"].(string); ok {
@@ -50,7 +50,7 @@ func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.Executio
 		confidence = float64(approveCount) / float64(totalCount)
 	}
 
-	return &entities.TaskResult{Output: map[string]any{
+	return &entities.NodeResult{Output: map[string]any{
 		"decision":   approved,
 		"confidence": confidence,
 		"approve":    approveCount,

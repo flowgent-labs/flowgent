@@ -103,6 +103,10 @@ func StableEventID(parts ...string) string {
 func RedeliverUnclaimed(ctx context.Context, db any) error {
 	return WithSQLTransaction(ctx, db, func(tx *SQLTransaction) error {
 		_, err := tx.Exec(ctx, `UPDATE orh_outbox SET status='pending',available_at=? WHERE event_type='node_dispatch' AND status='published' AND published_at<? AND aggregate_id IN(SELECT n.id FROM orh_node_run n JOIN orh_dispatch d ON d.node_run_id=n.id WHERE n.status='PENDING' AND d.status='pending')`, time.Now().UTC(), time.Now().UTC().Add(-5*time.Second))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE orh_outbox SET status='pending',available_at=? WHERE event_type='sandbox_dispatch' AND status='published' AND published_at<? AND aggregate_id IN(SELECT id FROM orh_node_run WHERE status='RUNNING' AND checkpoint IS NULL)`, time.Now().UTC(), time.Now().UTC().Add(-5*time.Second))
 		return err
 	})
 }

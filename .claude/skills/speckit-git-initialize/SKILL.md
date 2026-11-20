@@ -35,7 +35,7 @@ Replace the script to add project-specific Git initialization steps:
 - Git LFS setup
 - Git hooks installation
 - Commit signing configuration
-- Git Flow initialization
+- Git AgentGraph initialization
 
 ## Output
 

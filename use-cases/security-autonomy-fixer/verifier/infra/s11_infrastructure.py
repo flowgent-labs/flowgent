@@ -346,7 +346,7 @@ class E2ES11InfrastructureVerifier(BaseVerifier):
         # Application JobManagers and runtime workers are Controller/JM-created and
         # exist only after actual workload demand. Only check components that are
         # actually always-on Helm Deployments here; scenario 23 checks application
-        # runtime pod logs separately once a test flow exists.
+        # runtime pod logs separately once a test graph exists.
         for component in [
             "apiserver",
             "controller",
@@ -383,7 +383,7 @@ class E2ES11InfrastructureVerifier(BaseVerifier):
             for line in error_lines:
                 expected = (
                     component == "apiserver"
-                    and "FlowDefHandler.GetSpec failed id=test-flow-" in line
+                    and "AgentGraphHandler.GetSpec failed id=test-graph-" in line
                     and 'error="not found"' in line
                 ) or (
                     component == "notifier"
@@ -407,9 +407,9 @@ class E2ES11InfrastructureVerifier(BaseVerifier):
                     f"{component} recent logs contain {errors} error/fatal/panic line(s)"
                 )
 
-        # ── L3.10: Dedicated Flow JobManager pods/deployments ───────
-        # Flow imports are metadata only. Flow JobManager resources should
-        # exist only while real runs are active; test-flow-* leftovers are always
+        # ── L3.10: Dedicated AgentGraph JobManager pods/deployments ───────
+        # AgentGraph imports are metadata only. AgentGraph JobManager resources should
+        # exist only while real runs are active; test-graph-* leftovers are always
         # leaks after a full redeploy/import cycle.
         app_pods = E2ES11InfrastructureVerifier.kubectl_json(
             [
@@ -418,23 +418,23 @@ class E2ES11InfrastructureVerifier(BaseVerifier):
                 "-n",
                 config.K8S_WORKLOAD_NAMESPACE,
                 "-l",
-                "flowgent.io/runtime-boundary=flow-jobmanager",
+                "flowgent.io/runtime-boundary=graph-jobmanager",
             ]
         )
         leaked_pods = []
         if app_pods and app_pods.get("items"):
             for pod in app_pods["items"]:
                 labels = pod.get("metadata", {}).get("labels", {})
-                flow_id = labels.get("flowgent.io/flow", "")
-                if flow_id.startswith("test-flow-"):
+                agent_graph_id = labels.get("flowgent.io/graph", "")
+                if agent_graph_id.startswith("test-graph-"):
                     leaked_pods.append(
                         f"{pod['metadata'].get('namespace')}/{pod['metadata'].get('name')}"
                     )
-            print(f"  [3.10] {len(app_pods['items'])} Flow JobManager pod(s) found")
+            print(f"  [3.10] {len(app_pods['items'])} AgentGraph JobManager pod(s) found")
         else:
-            print("  [3.10] No Flow JobManager pods found")
+            print("  [3.10] No AgentGraph JobManager pods found")
         if leaked_pods:
-            failures.append(f"leaked test-flow JobManager pods: {leaked_pods}")
+            failures.append(f"leaked test-graph JobManager pods: {leaked_pods}")
 
         app_deployments = E2ES11InfrastructureVerifier.kubectl_json(
             [
@@ -443,26 +443,26 @@ class E2ES11InfrastructureVerifier(BaseVerifier):
                 "-n",
                 config.K8S_WORKLOAD_NAMESPACE,
                 "-l",
-                "flowgent.io/runtime-boundary=flow-jobmanager",
+                "flowgent.io/runtime-boundary=graph-jobmanager",
             ]
         )
         leaked_deployments = []
         if app_deployments and app_deployments.get("items"):
             for deployment in app_deployments["items"]:
                 labels = deployment.get("metadata", {}).get("labels", {})
-                flow_id = labels.get("flowgent.io/flow", "")
-                if flow_id.startswith("test-flow-"):
+                agent_graph_id = labels.get("flowgent.io/graph", "")
+                if agent_graph_id.startswith("test-graph-"):
                     leaked_deployments.append(
                         f"{deployment['metadata'].get('namespace')}/{deployment['metadata'].get('name')}"
                     )
             print(
-                f"  [3.11] {len(app_deployments['items'])} Flow JobManager deployment(s) found"
+                f"  [3.11] {len(app_deployments['items'])} AgentGraph JobManager deployment(s) found"
             )
         else:
-            print("  [3.11] No Flow JobManager deployments found")
+            print("  [3.11] No AgentGraph JobManager deployments found")
         if leaked_deployments:
             failures.append(
-                f"leaked test-flow JobManager deployments: {leaked_deployments}"
+                f"leaked test-graph JobManager deployments: {leaked_deployments}"
             )
 
         # ── Summary ────────────────────────────────────────────

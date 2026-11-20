@@ -124,7 +124,7 @@ class E2ES22NotifierVerifier(BaseVerifier):
             ) from exc
 
         delivery_id = str(uuid.uuid4())
-        result_topic = f"flowgent/v1/{NAMESPACE}/flows/notification-test/runs/{delivery_id}/notify/result"
+        result_topic = f"flowgent/v1/{NAMESPACE}/agent-graphs/notification-test/graph-runs/{delivery_id}/notify/result"
         received = []
 
         def on_message(_client, _userdata, message):

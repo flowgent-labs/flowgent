@@ -34,8 +34,8 @@ type FlowgentResourcePath []guardmodel.PathMap
 
 type FlowgentSqlScopeResolver func(FlowgentResourcePath) (guardmodel.SqlScope, error)
 
-const flowNameForRunResource = `(SELECT f.name FROM orh_run r JOIN orh_flow f ON f.id = r.flow_id WHERE r.id = "run_id")`
-const currentFlowNameResource = `(SELECT name FROM orh_flow WHERE id = "flow_id")`
+const graphNameForRunResource = `(SELECT f.name FROM orh_graph_run r JOIN orh_agent_graph f ON f.id = r.agent_graph_id WHERE r.id = "graph_run_id")`
+const currentAgentGraphNameResource = `(SELECT name FROM orh_agent_graph WHERE id = "agent_graph_id")`
 
 // resourcePathsByTable is the single storage-owned registry that maps
 // persisted rows to AuthGuard resource paths. Entity repositories identify
@@ -47,60 +47,60 @@ var resourcePathsByTable = map[string][]FlowgentResourcePath{
 	"orh_approval": {
 		ResourcePath(LiteralResource("approvals"), ColumnResource(`"id"`)),
 		ResourcePath(
-			LiteralResource("runs"),
-			ColumnResource(`"run_id"`),
+			LiteralResource("graph-runs"),
+			ColumnResource(`"graph_run_id"`),
 			LiteralResource("approvals"),
 			ColumnResource(`"id"`),
 		),
 		ResourcePath(
-			LiteralResource("flows"),
-			ColumnResource(flowNameForRunResource),
-			LiteralResource("runs"),
-			ColumnResource(`"run_id"`),
+			LiteralResource("agent-graphs"),
+			ColumnResource(graphNameForRunResource),
+			LiteralResource("graph-runs"),
+			ColumnResource(`"graph_run_id"`),
 			LiteralResource("approvals"),
 			ColumnResource(`"id"`),
 		),
 	},
-	"orh_flow": {
-		ResourcePath(LiteralResource("flows"), ColumnResource(`"name"`)),
+	"orh_agent_graph": {
+		ResourcePath(LiteralResource("agent-graphs"), ColumnResource(`"name"`)),
 		ResourcePath(LiteralResource("skills"), ColumnResource(`"name"`)),
-		ResourcePath(LiteralResource("flows"), LiteralResource("watch"), ColumnResource(`"name"`)),
-		ResourcePath(LiteralResource("flows"), LiteralResource("trigger"), ColumnResource(`"name"`)),
-		ResourcePath(LiteralResource("flows"), ColumnResource(`"name"`), LiteralResource("trigger")),
+		ResourcePath(LiteralResource("agent-graphs"), LiteralResource("watch"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("agent-graphs"), LiteralResource("trigger"), ColumnResource(`"name"`)),
+		ResourcePath(LiteralResource("agent-graphs"), ColumnResource(`"name"`), LiteralResource("trigger")),
 	},
-	"orh_flow_release": {
-		ResourcePath(LiteralResource("flow-releases"), ColumnResource(`"id"`)),
+	"orh_agent_graph_release": {
+		ResourcePath(LiteralResource("graph-releases"), ColumnResource(`"id"`)),
 	},
-	"orh_flow_release_grant": {
+	"orh_agent_graph_release_grant": {
 		ResourcePath(
-			LiteralResource("flow-releases"),
+			LiteralResource("graph-releases"),
 			ColumnResource(`"release_id"`),
 			LiteralResource("grants"),
 			ColumnResource(`"id"`),
 		),
 	},
-	"orh_flow_installation": {
-		ResourcePath(LiteralResource("flow-installations"), ColumnResource(`"id"`)),
+	"orh_agent_graph_installation": {
+		ResourcePath(LiteralResource("graph-installations"), ColumnResource(`"id"`)),
 		ResourcePath(
-			LiteralResource("flow-releases"),
+			LiteralResource("graph-releases"),
 			ColumnResource(`"release_id"`),
 			LiteralResource("install"),
 		),
 	},
-	"orh_run": {
-		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`), LiteralResource("subflows"), LiteralResource("initialize")),
-		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`), LiteralResource("graph-patches")),
-		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`)),
+	"orh_graph_run": {
+		ResourcePath(LiteralResource("graph-runs"), ColumnResource(`"id"`), LiteralResource("subgraphs"), LiteralResource("initialize")),
+		ResourcePath(LiteralResource("graph-runs"), ColumnResource(`"id"`), LiteralResource("graph-patches")),
+		ResourcePath(LiteralResource("graph-runs"), ColumnResource(`"id"`)),
 		ResourcePath(
-			LiteralResource("flows"),
-			ColumnResource(currentFlowNameResource),
-			LiteralResource("runs"),
+			LiteralResource("agent-graphs"),
+			ColumnResource(currentAgentGraphNameResource),
+			LiteralResource("graph-runs"),
 			ColumnResource(`"id"`),
 		),
-		ResourcePath(LiteralResource("flows"), ColumnResource(currentFlowNameResource), LiteralResource("trigger")),
-		ResourcePath(LiteralResource("flows"), LiteralResource("trigger"), ColumnResource(currentFlowNameResource)),
-		ResourcePath(LiteralResource("runs"), ColumnResource(`"id"`), LiteralResource("cancel")),
-		ResourcePath(LiteralResource("runs"), LiteralResource("metrics"), ColumnResource(`"id"`)),
+		ResourcePath(LiteralResource("agent-graphs"), ColumnResource(currentAgentGraphNameResource), LiteralResource("trigger")),
+		ResourcePath(LiteralResource("agent-graphs"), LiteralResource("trigger"), ColumnResource(currentAgentGraphNameResource)),
+		ResourcePath(LiteralResource("graph-runs"), ColumnResource(`"id"`), LiteralResource("cancel")),
+		ResourcePath(LiteralResource("graph-runs"), LiteralResource("metrics"), ColumnResource(`"id"`)),
 	},
 	"knw_document": {
 		ResourcePath(LiteralResource("knowledge"), ColumnResource(`"id"`)),
@@ -124,16 +124,16 @@ var resourcePathsByTable = map[string][]FlowgentResourcePath{
 	},
 	"orh_node_run": {
 		ResourcePath(
-			LiteralResource("runs"),
-			ColumnResource(`"run_id"`),
+			LiteralResource("graph-runs"),
+			ColumnResource(`"graph_run_id"`),
 			LiteralResource("node-runs"),
 			ColumnResource(`"id"`),
 		),
 		ResourcePath(
-			LiteralResource("flows"),
-			ColumnResource(flowNameForRunResource),
-			LiteralResource("runs"),
-			ColumnResource(`"run_id"`),
+			LiteralResource("agent-graphs"),
+			ColumnResource(graphNameForRunResource),
+			LiteralResource("graph-runs"),
+			ColumnResource(`"graph_run_id"`),
 			LiteralResource("node-runs"),
 			ColumnResource(`"id"`),
 		),
@@ -148,8 +148,8 @@ func runtimeConfigurationResourcePaths() []FlowgentResourcePath {
 	}
 	for _, suffix := range []string{"", "environment", "secrets", "resolved"} {
 		path := ResourcePath(
-			LiteralResource("flows"),
-			ColumnResource(currentFlowNameResource),
+			LiteralResource("agent-graphs"),
+			ColumnResource(currentAgentGraphNameResource),
 			LiteralResource("runtime-config"),
 		)
 		if suffix != "" {

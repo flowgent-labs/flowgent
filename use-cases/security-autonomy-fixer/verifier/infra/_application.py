@@ -210,7 +210,7 @@ class FlowgentRuntime:
                 "-n",
                 workload_ns,
                 "-l",
-                "flowgent.io/runtime-boundary=flow-jobmanager",
+                "flowgent.io/runtime-boundary=graph-jobmanager",
                 "--ignore-not-found=true",
                 "--force",
                 "--grace-period=0",
@@ -224,7 +224,7 @@ class FlowgentRuntime:
                 "-n",
                 workload_ns,
                 "-l",
-                "flowgent.io/runtime-boundary=flow-jobmanager",
+                "flowgent.io/runtime-boundary=graph-jobmanager",
                 "--ignore-not-found=true",
                 "--force",
                 "--grace-period=0",
@@ -234,13 +234,13 @@ class FlowgentRuntime:
         )
         FlowgentRuntime._wait_labeled_resources_gone(
             "deployments",
-            "flowgent.io/runtime-boundary=flow-jobmanager",
+            "flowgent.io/runtime-boundary=graph-jobmanager",
             workload_ns,
             timeout=60,
         )
         FlowgentRuntime._wait_labeled_resources_gone(
             "pods",
-            "flowgent.io/runtime-boundary=flow-jobmanager",
+            "flowgent.io/runtime-boundary=graph-jobmanager",
             workload_ns,
             timeout=60,
         )
@@ -1164,7 +1164,7 @@ class FlowgentRuntime:
         if not FlowgentRuntime.wait_for_rollouts(namespace, release, DEFAULT_TIMEOUT):
             return False
         try:
-            # The Flow fixture is imported by the next pipeline step.  Establish
+            # The AgentGraph fixture is imported by the next pipeline step.  Establish
             # the real AuthN/edge policy contract here; scenario 14 performs the
             # resource-level SQL scope assertions after import.
             authguard.verify(resource_scope=False)

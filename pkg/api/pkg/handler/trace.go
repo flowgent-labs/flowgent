@@ -7,28 +7,28 @@ import (
 
 	tracequery "github.com/flowgent-labs/flowgent/api/pkg/trace"
 	storage "github.com/flowgent-labs/flowgent/storage/pkg"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TraceHandler serves normalized per-run OpenTelemetry trace data.
 type TraceHandler struct {
-	runs  flowrun.IFlowRunStore
+	runs  graphrun.IGraphRunStore
 	query tracequery.RunTraceQuery
 }
 
 func NewTraceHandler(store storage.IStorage, query tracequery.RunTraceQuery) *TraceHandler {
-	var runs flowrun.IFlowRunStore
+	var runs graphrun.IGraphRunStore
 	switch db := store.DB().(type) {
 	case *pgxpool.Pool:
-		runs = flowrun.NewFlowRunPostgresStore(db)
+		runs = graphrun.NewGraphRunPostgresStore(db)
 	case *sql.DB:
-		runs = flowrun.NewFlowRunSQLiteStore(db)
+		runs = graphrun.NewGraphRunSQLiteStore(db)
 	}
 	return newTraceHandler(runs, query)
 }
 
-func newTraceHandler(runs flowrun.IFlowRunStore, query tracequery.RunTraceQuery) *TraceHandler {
+func newTraceHandler(runs graphrun.IGraphRunStore, query tracequery.RunTraceQuery) *TraceHandler {
 	return &TraceHandler{runs: runs, query: query}
 }
 
@@ -37,12 +37,12 @@ func (h *TraceHandler) GetRunTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "trace query is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	run, err := h.runs.Get(r.Context(), requestRunID(r))
+	run, err := h.runs.Get(r.Context(), requestGraphRunID(r))
 	if err != nil || run == nil || run.Namespace != r.PathValue("namespace") {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if flowID := r.PathValue("flow_id"); flowID != "" && run.FlowName != flowID {
+	if graphID := r.PathValue("agent_graph_id"); graphID != "" && run.AgentGraphName != graphID {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}

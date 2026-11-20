@@ -12,7 +12,7 @@ import (
 )
 
 type approvalRecord struct {
-	RunID          *string        `db:"run_id"`
+	GraphRunID     *string        `db:"graph_run_id"`
 	NodeRunID      *string        `db:"node_run_id"`
 	Type           string         `db:"type"`
 	SubjectType    string         `db:"subject_type"`
@@ -38,7 +38,7 @@ type approvalRecord struct {
 }
 
 func (r *approvalRecord) entity() *entities.ApprovalInfo {
-	item := &entities.ApprovalInfo{BaseEntity: entities.BaseEntity{ID: r.ID, Description: approvalStringValue(r.Description), Namespace: r.Namespace, Status: r.Status, CreatedAt: r.CreatedAt, CreatedBy: approvalStringValue(r.CreatedBy), UpdatedAt: r.UpdatedAt, UpdatedBy: approvalStringValue(r.UpdatedBy), RowVersion: r.RowVersion, Metadata: r.Metadata}, RunID: approvalStringValue(r.RunID), NodeRunID: approvalStringValue(r.NodeRunID), Type: r.Type, SubjectType: r.SubjectType, SubjectID: r.SubjectID, Request: r.Request, RequestHash: r.RequestHash, Status: r.Status, Decision: r.Decision, DecidedBy: approvalStringValue(r.DecidedBy), DecidedAt: r.DecidedAt, ExpiresAt: r.ExpiresAt, ConsumedAt: r.ConsumedAt, IdempotencyKey: r.IdempotencyKey, AgentFlowRunID: approvalStringValue(r.RunID), TaskRunID: approvalStringValue(r.NodeRunID), Token: r.ID, ResolvedAt: r.DecidedAt}
+	item := &entities.ApprovalInfo{BaseEntity: entities.BaseEntity{ID: r.ID, Description: approvalStringValue(r.Description), Namespace: r.Namespace, Status: r.Status, CreatedAt: r.CreatedAt, CreatedBy: approvalStringValue(r.CreatedBy), UpdatedAt: r.UpdatedAt, UpdatedBy: approvalStringValue(r.UpdatedBy), RowVersion: r.RowVersion, Metadata: r.Metadata}, GraphRunID: approvalStringValue(r.GraphRunID), NodeRunID: approvalStringValue(r.NodeRunID), Type: r.Type, SubjectType: r.SubjectType, SubjectID: r.SubjectID, Request: r.Request, RequestHash: r.RequestHash, Status: r.Status, Decision: r.Decision, DecidedBy: approvalStringValue(r.DecidedBy), DecidedAt: r.DecidedAt, ExpiresAt: r.ExpiresAt, ConsumedAt: r.ConsumedAt, IdempotencyKey: r.IdempotencyKey, Token: r.ID, ResolvedAt: r.DecidedAt}
 	if r.Status == "approved" {
 		value := true
 		item.Approved = &value

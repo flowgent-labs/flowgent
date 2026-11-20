@@ -1114,7 +1114,7 @@ class AuthGuardRuntime:
             {
                 "id": "flowgent-security-analyst",
                 "name": "Application Security Analyst",
-                "description": "Investigate findings and operate remediation flows without destructive administration",
+                "description": "Investigate findings and operate remediation graphs without destructive administration",
                 "action_ids": ["flowgent.api.read", "flowgent.api.operate"],
             },
             {
@@ -1141,11 +1141,11 @@ class AuthGuardRuntime:
                 "conditions": {},
             },
             {
-                "id": "github-e2e-denied-flow",
+                "id": "github-e2e-denied-graph",
                 "principal_id": github_principal_id,
                 "role_id": "flowgent-platform-security-admin",
                 "effect": "DENY",
-                "resource_urn": f"urn:iam:prod:flowgent:global:example-corp:namespace/{config.NAMESPACE_ID}/flows/security-autonomy-fixer/**",
+                "resource_urn": f"urn:iam:prod:flowgent:global:example-corp:namespace/{config.NAMESPACE_ID}/agent-graphs/security-autonomy-fixer/**",
                 "conditions": {},
             },
             {
@@ -1369,7 +1369,7 @@ class AuthGuardRuntime:
             ) as internal_api_port:
                 status, _, _ = AuthGuardRuntime._api(
                     internal_api_port,
-                    f"/api/v1/{config.NAMESPACE_ID}/flows/security-autonomy-fixer",
+                    f"/api/v1/{config.NAMESPACE_ID}/agent-graphs/security-autonomy-fixer",
                     "",
                 )
                 if status != 200:
@@ -1424,9 +1424,9 @@ class AuthGuardRuntime:
             )
             if status != 200:
                 raise RuntimeError(f"Hosted Login route failed: HTTP {status}")
-            status, _, flow_page = AuthGuardRuntime._api(
+            status, _, graph_page = AuthGuardRuntime._api(
                 gateway_port,
-                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
                 token,
                 headers={"Host": APPLICATION_HOST},
             )
@@ -1436,7 +1436,7 @@ class AuthGuardRuntime:
                 )
             status, _, _ = AuthGuardRuntime._api(
                 gateway_port,
-                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
                 "",
                 headers={"Host": APPLICATION_HOST},
             )
@@ -1445,21 +1445,21 @@ class AuthGuardRuntime:
                     f"anonymous Gateway API request did not fail closed: HTTP {status}"
                 )
             if verify_resource_scope:
-                flow_items = (
-                    flow_page
-                    if isinstance(flow_page, list)
-                    else flow_page.get("items", [])
+                graph_items = (
+                    graph_page
+                    if isinstance(graph_page, list)
+                    else graph_page.get("items", [])
                 )
-                visible_flow_ids = {
-                    item.get("flow_id") for item in flow_items if isinstance(item, dict)
+                visible_agent_graph_ids = {
+                    item.get("agent_graph_id") for item in graph_items if isinstance(item, dict)
                 }
-                if "security-autonomy-fixer" in visible_flow_ids:
+                if "security-autonomy-fixer" in visible_agent_graph_ids:
                     raise RuntimeError(
-                        "AuthGuard row-level DENY was not appended to the Flow repository query"
+                        "AuthGuard row-level DENY was not appended to the AgentGraph repository query"
                     )
                 status, _, _ = AuthGuardRuntime._api(
                     gateway_port,
-                    f"/api/v1/{config.NAMESPACE_ID}/flows/security-autonomy-fixer",
+                    f"/api/v1/{config.NAMESPACE_ID}/agent-graphs/security-autonomy-fixer",
                     token,
                     headers={"Host": APPLICATION_HOST},
                 )
@@ -1470,7 +1470,7 @@ class AuthGuardRuntime:
                     )
                 status, _, _ = AuthGuardRuntime._api(
                     gateway_port,
-                    f"/api/v1/{config.NAMESPACE_ID}/flows/security-autonomy-fixer",
+                    f"/api/v1/{config.NAMESPACE_ID}/agent-graphs/security-autonomy-fixer",
                     acceptance_token,
                     headers={"Host": APPLICATION_HOST},
                 )
@@ -1481,7 +1481,7 @@ class AuthGuardRuntime:
                     )
             status, _, _ = AuthGuardRuntime._api(
                 gateway_port,
-                f"/api/v1/{config.RESOURCE_PREFIX}-forbidden/flows",
+                f"/api/v1/{config.RESOURCE_PREFIX}-forbidden/agent-graphs",
                 token,
                 headers={"Host": APPLICATION_HOST},
             )
@@ -1492,7 +1492,7 @@ class AuthGuardRuntime:
                 )
             status, _, _ = AuthGuardRuntime._api(
                 gateway_port,
-                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
                 "invalid",
                 headers={"Host": APPLICATION_HOST},
             )
@@ -1503,7 +1503,7 @@ class AuthGuardRuntime:
         ) as external_api_port:
             status, _, _ = AuthGuardRuntime._api(
                 external_api_port,
-                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
                 "",
             )
             if status != 401:
@@ -1516,7 +1516,7 @@ class AuthGuardRuntime:
         ) as web_port:
             status, _, _ = AuthGuardRuntime._api(
                 web_port,
-                f"/api/v1/{config.NAMESPACE_ID}/flows",
+                f"/api/v1/{config.NAMESPACE_ID}/agent-graphs",
                 "",
                 headers={"Host": APPLICATION_HOST},
             )

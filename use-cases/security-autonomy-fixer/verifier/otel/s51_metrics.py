@@ -7,7 +7,7 @@ import time
 
 from verifier.infra._prometheus import PrometheusRuntime
 from util.report import VerificationResult
-from verifier.agentflow import SecurityAutonomyFixture
+from verifier.agentgraph import SecurityAutonomyFixture
 from verifier.context import BaseVerifier, FlowgentRunEvidence, VerificationContext
 
 
@@ -18,11 +18,11 @@ class E2ES51MetricsVerifier(BaseVerifier):
     def deploy(self, context: VerificationContext) -> None:
         self.execution = FlowgentRunEvidence.load_ui()
         persisted = FlowgentRunEvidence.persisted(
-            self.execution["run_id"],
+            self.execution["graph_run_id"],
             self.execution["namespace"],
-            self.execution["node_id"],
+            self.execution["node_instance_id"],
         )
-        if persisted["task_id"] != self.execution["task_id"]:
+        if persisted["node_run_id"] != self.execution["node_run_id"]:
             raise AssertionError(
                 "Metrics expectations refer to a different persisted UI attempt"
             )
@@ -44,12 +44,12 @@ class E2ES51MetricsVerifier(BaseVerifier):
             self.prometheus.stop()
 
     def _verify_metrics(self) -> None:
-        label = json.dumps(self.execution["flow_id"])
+        label = json.dumps(self.execution["agent_graph_id"])
         expected = {
-            f'flowgent_jm_runs_total{{agentflow_id={label},status="RUNNING"}}': 1,
-            f'flowgent_jm_runs_total{{agentflow_id={label},status="COMPLETED"}}': 1,
-            f"flowgent_jm_plans_dispatched_total{{agentflow_id={label}}}": 1,
-            f'flowgent_jm_plans_completed_total{{agentflow_id={label},status="SUCCESS"}}': 1,
+            f'flowgent_jm_runs_total{{agent_graph_name={label},status="RUNNING"}}': 1,
+            f'flowgent_jm_runs_total{{agent_graph_name={label},status="COMPLETED"}}': 1,
+            f"flowgent_jm_plans_dispatched_total{{agent_graph_name={label}}}": 1,
+            f'flowgent_jm_plans_completed_total{{agent_graph_name={label},status="SUCCESS"}}': 1,
         }
         from verifier.context import RUN_ID_PATH, FlowgentE2EProject
 
@@ -60,7 +60,7 @@ class E2ES51MetricsVerifier(BaseVerifier):
         active = SecurityAutonomyFixture.active_path(tasks)
         SecurityAutonomyFixture.assert_persisted_attempts(main_run, active)
         if self.context.deployer == "k8s":
-            main_label = "run_id=" + json.dumps(main_run)
+            main_label = "graph_run_id=" + json.dumps(main_run)
             expected.update(
                 {
                     f'flowgent_jm_runs_total{{{main_label},status="COMPLETED"}}': 1,
@@ -103,7 +103,7 @@ class E2ES51MetricsVerifier(BaseVerifier):
         artifact.write_text(
             json.dumps(
                 {
-                    "run_id": self.execution["run_id"],
+                    "graph_run_id": self.execution["graph_run_id"],
                     "expected": expected,
                     "observed": observed,
                 },

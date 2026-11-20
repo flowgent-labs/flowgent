@@ -6,13 +6,13 @@
 固定池。Run 结束时 JM **MUST NOT** 扩缩或删除被引用池。下文 Sandbox 管理
 描述属于当前实现，待迁移目标以[固定池设计](sandbox_ZH.md)为准。
 
-JobManager 是每个 Run 的 DAG 编排器。它通过 API Server 读取 Flow/Run 状态，
+JobManager 是每个 Run 的 DAG 编排器。它通过 API Server 读取 AgentGraph/Run 状态，
 将可运行 DAG Node 转换为 `ExecutionPlan` 消息，消费仅含状态的执行结果，并
 通过可插拔 ResourceManager 管理 TaskManager 与 Sandbox 容量。它从不直接
 连接数据库。
 
-一个节点 Attempt 的公开 API 与持久层规范名称是 **NodeRun**。`TaskRunInfo`、
-`SaveTask` 和 `task_id` 是 Go/Wire 兼容名称；新的 REST 路由与持久模型
+一个节点 Attempt 的公开 API 与持久层规范名称是 **NodeRun**。`NodeRun`、
+`SaveNodeRun` 和 `node_run_id` 是 Go/Wire 兼容名称；新的 REST 路由与持久模型
 **MUST** 使用 NodeRun 术语。
 
 ```text
@@ -25,10 +25,10 @@ API Server REST ──► JobManager / JobMaster
 
 ## DAG 编排
 
-JM 是一个活跃 Flow 的单一控制面。它通过 API Server REST
+JM 是一个活跃 AgentGraph 的单一控制面。它通过 API Server REST
 （`FlowgentClient.ListRuns`）按 Namespace 过滤并轮询 `PENDING` Run，解析
-`AgentFlowSpec` JSON，为每个 Run 创建一个 **JobMaster**。每个 JobMaster
-根据 `AgentFlowSpec.Nodes` 与 `Edges` 构建 DAG，通过 API Server REST
+`AgentGraphSpec` JSON，为每个 Run 创建一个 **JobMaster**。每个 JobMaster
+根据 `AgentGraphSpec.Nodes` 与 `Edges` 构建 DAG，通过 API Server REST
 持久化执行状态，并经 ResourceManager 按拓扑顺序执行 Node。
 
 ### JobMaster——每 Run 一个 DAG 编排器
@@ -38,7 +38,7 @@ Node 输出与 Condition。每次 `Submit()` 创建一个实例，不同 Run 不
 
 ```text
 Execute(run, spec):
-  // 第 1 步：从 AgentFlowSpec JSON 构建 DAG
+  // 第 1 步：从 AgentGraphSpec JSON 构建 DAG
   buildExecutionGraph(spec, runID)
     → 对每个 Node：在内存 planMap 中创建 ExecutionPlan
     → 每个 DAG Node 对应一个 ExecutionPlan
@@ -83,19 +83,19 @@ API 会拒绝 `finished_at` 早于 `started_at` 的更新。
 ### JobManager 范围
 
 Session 部署以 `jobmanager start` 启动并只轮询 session Run。Application 部署以
-`jobmanager start --flow-id <id> --run-id <runId>` 启动并只轮询该 FlowRun。
-调度时使用 FlowRun 中不可变的 runtime mode 与 `runtime_cluster_id`；之后修改
-Flow 不会迁移活跃 Run。
+`jobmanager start --agent-graph-name <id> --graph-run-id <runId>` 启动并只轮询该 GraphRun。
+调度时使用 GraphRun 中不可变的 runtime mode 与 `runtime_cluster_id`；之后修改
+AgentGraph 不会迁移活跃 Run。
 
 ### DAG 依赖协调——Iteration Loop + 阻塞 Schedule
 
-JM 是 Flow Run **唯一的依赖控制器**。它不会盲目发送 ExecutionPlan，而是通过
+JM 是 AgentGraph Run **唯一的依赖控制器**。它不会盲目发送 ExecutionPlan，而是通过
 两层循环主动保证 DAG 拓扑约束：外层 Iteration Loop 反复发现新 Ready Node；
 内层逐 Node 调用阻塞 `Schedule()`，等待 TM 完成当前 Node 后才分发下一个。
 
 这里的 **Iteration** 是一次调度就绪扫描，不会重置 Node 状态。Node 一旦完成
 或跳过，回边无法让它在同一 Run 内再次执行。见
-[AgentFlow 循环限制](../agent-flow_ZH.md)。
+[AgentGraph 循环限制](../agent-graph_ZH.md)。
 
 #### 执行循环（伪代码）
 
@@ -114,10 +114,10 @@ Execute(run, spec):
     for each nodeID in ready:
       plan := buildPlan(nodeID, resolvedInputs)
       result := scheduleNodeWithRetry(plan)
-        state.SaveTask(attempt)      // 每次 attempt 一条持久记录
+        state.SaveNodeRun(attempt)      // 每次 attempt 一条持久记录
         rm.Schedule(plan)            // ← 阻塞等待 TM 结果
       if result.Error != "":
-        Fail(nodeID)                 // 子 Node 保持阻塞，Flow 失败
+        Fail(nodeID)                 // 子 Node 保持阻塞，AgentGraph 失败
         continue
 
       nodeOutputs[nodeID] = result.Output
@@ -142,7 +142,7 @@ Node 级重试由 JobManager 负责，因为只有 DAG 编排器能决定失败 
 `retry.max + 1` 次，并使用可由 Context 取消的指数退避。
 
 每次 attempt 使用独立且长度有界的 Task ID、从 1 开始的 `sequence`、从 0
-开始的 `retry_count`，并以 `parent_task_run_id` 指向上一失败 attempt。每次
+开始的 `retry_count`，并以 `parent_node_run_id` 指向上一失败 attempt。每次
 解析后的输入、精确输出/错误及时间戳都通过 API Server REST 持久化。
 ExecutionPlan 还携带上一 attempt ID，使 JobManager 在 Worker 写结果后故障时，
 TaskManager 仍不会破坏重试链。
@@ -175,7 +175,7 @@ depsDone(node):
 `SKIPPED`，直到固定点。Merge Node 只要存在一个 active 入边仍可运行；未选择分支及
 其单路径后继都会被跳过。Dormant 条件反馈边不阻塞已经 active 的初始路径，但自身
 不能令 Node Ready。这只是调度兼容：已完成 DAG Node 不会再次执行，所以条件回边
-不代表循环语义；迭代工作流仍需要未来明确的 loop/subflow 契约。
+不代表循环语义；迭代工作流仍需要未来明确的 loop/subgraph 契约。
 
 #### K8s 模式：先订阅后发布 + 每 Node Channel 路由
 
@@ -188,11 +188,11 @@ K8sRM.Schedule(plan):
 
   2. SUBSCRIBE to exec/results (once per run):
      if s.runResults[runID] == nil:
-       q.Subscribe("exec/results/{namespace}/{flow}/{run}", callback)
-     s.runResults[runID][plan.NodeID] = resultCh
+       q.Subscribe("exec/results/{namespace}/{graph}/{run}", callback)
+     s.runResults[runID][plan.NodeInstanceID] = resultCh
      // ^^ 发布前注册 Channel，不存在竞态
 
-  3. PUBLISH plan to exec/plans/{namespace}/{cluster}/{flow}/{run}
+  3. PUBLISH plan to exec/plans/{namespace}/{cluster}/{graph}/{run}
      → TM Pod 通过 $share/tm-{namespace}-{cluster} 消费
 
   4. BLOCK on resultCh (with planTimeout):
@@ -200,11 +200,11 @@ K8sRM.Schedule(plan):
        case <-ctx.Done():  → timeout, return error
        case er := <-resultCh:
          if er.State == "FAILED" → return error
-         return TaskResult{Output: {plan_id, node_id, state}}
+         return NodeResult{Output: {plan_id, node_instance_id, state}}
      }
 ```
 
-Callback 用 `er.NodeID` 匹配已注册 Channel，将 `exec/results` 路由到正确 Node，
+Callback 用 `er.NodeInstanceID` 匹配已注册 Channel，将 `exec/results` 路由到正确 Node，
 然后删除该 Channel。`runResults` Map 以 `(runID,nodeID)` 为 Key，每个 Node
 有专属 Channel。因此即使当前顺序分发，如果 JM 循环改为并发分发/收集，底层
 路由也能够支持。
@@ -221,7 +221,7 @@ Ready() → [A]
   │                   Publish exec/plans ────►  ──────────────►  Dequeue ($share)
   │                                                                Router 执行
   │                   ◄── Publish exec/results ──  ◄────────────  REST 保存 Task
-  │                   Route er.NodeID → chan[A]                    回报状态
+  │                   Route er.NodeInstanceID → chan[A]                    回报状态
   │                   delete chan[A]
   ◄── result ────────
   Done(A)
@@ -237,9 +237,9 @@ Ready() → [B]          // B 先前被 A 阻塞，现在 Ready
 | **Root Node（无依赖）** | `Ready()` 在第一次 Iteration 立即返回 |
 | **并行意图 Sibling** | 共享 Parent `Done()` 后，同一 Iteration 全部 Ready；当前顺序分发，每个独立阻塞 |
 | **Condition → 非匹配分支** | `Ready()` 以固定点把 inactive Edge 传播为 `SKIPPED`；若 Merge Node 还有 active 入边则仍会运行 |
-| **Node 失败** | `Fail(node)`；Child 永不 Ready，`HasFailed()` 终止 Flow |
+| **Node 失败** | `Fail(node)`；Child 永不 Ready，`HasFailed()` 终止 AgentGraph |
 | **死锁**（Ready=∅、未完成、未失败） | 存在永久未满足依赖；循环退出并返回 nil，Node 留在 `PENDING` |
-| **TM 超时** | `planTimeout` 默认 5 分钟；`Schedule()` 返回错误、Node 标记失败、Flow 终止 |
+| **TM 超时** | `planTimeout` 默认 5 分钟；`Schedule()` 返回错误、Node 标记失败、AgentGraph 终止 |
 | **TM 执行中崩溃** | JM 心跳监控 30 秒后判定死亡并重新分发孤儿 Plan |
 
 ---
@@ -254,7 +254,7 @@ JM 对每个 Ready Node 调用一次 `Schedule(ctx, plan)`。RM 根据 Pending P
 type ResourceManager interface {
     Provider() engine.Provider
     Validate(ctx) error
-    Schedule(ctx, plan) (*TaskResult, error)
+    Schedule(ctx, plan) (*NodeResult, error)
     Shutdown(ctx) error
 }
 ```
@@ -275,7 +275,7 @@ Goroutine Pool。`Schedule()` 以非阻塞 Select 获取 Slot；全部忙时立�
 Plan，再阻塞等待 TM 结果。先订阅后发布可以避免 TM 在 JM 开始监听前返回结果。
 
 每 Run 的路由 Map（`runResults map[string]map[string]chan execResult`）根据
-`er.NodeID` 把结果路由到对应 Channel，收到后删除条目。每次 `Schedule()`
+`er.NodeInstanceID` 把结果路由到对应 Channel，收到后删除条目。每次 `Schedule()`
 创建并等待独立 Channel，因此当前 Sibling 是顺序分发，而非并发。完整规则见
 [DAG 依赖协调](#dag-依赖协调iteration-loop-阻塞-schedule)。
 
@@ -287,13 +287,13 @@ ExecutionPlan。
 Pod 运行 configured slots，并只共享订阅对应 namespace/cluster topic。
 
 `scalingLoop` 协调观测副本与 Ready 状态。`runtime_cluster_id` 是硬隔离边界，
-FlowRun 不能静默借用其他 cluster 的 Worker。
+GraphRun 不能静默借用其他 cluster 的 Worker。
 
 ---
 
 ## 预期行为
 
-1. **给定**一个 Flow Run，**当** JobMaster 构建 Graph 时，**则**该 Run 的每个配置 Node **MUST** 映射到一个稳定的 ExecutionPlan 标识。
+1. **给定**一个 AgentGraph Run，**当** JobMaster 构建 Graph 时，**则**该 Run 的每个配置 Node **MUST** 映射到一个稳定的 ExecutionPlan 标识。
 2. **给定**未满足依赖，**当**评估 Ready 状态时，**则**依赖 Node **MUST** 保持 Pending；只有 Root 和依赖完全满足的 Node 才能 Ready。
 3. **给定**条件 Edge，**当** Source 解析完成时，**则**只有匹配分支可以执行，另一直接 Child **MUST** 被跳过。
 4. **给定**已分发 Plan，**当**结果延迟或路由错误时，**则** JobManager **MUST** 等待匹配的 `(runID,nodeID)` 结果，并在配置超时后失败，**MUST NOT** 提前推进 DAG。

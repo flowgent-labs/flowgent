@@ -8,50 +8,50 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 )
 
 type traceRunStore struct {
-	run *entities.FlowRunInfo
+	run *entities.GraphRun
 }
 
-func (s *traceRunStore) Get(context.Context, string) (*entities.FlowRunInfo, error) {
+func (s *traceRunStore) Get(context.Context, string) (*entities.GraphRun, error) {
 	return s.run, nil
 }
-func (s *traceRunStore) List(context.Context, flowrun.ListFilter) (*entities.Page[entities.FlowRunInfo], error) {
+func (s *traceRunStore) List(context.Context, graphrun.ListFilter) (*entities.Page[entities.GraphRun], error) {
 	return nil, nil
 }
-func (s *traceRunStore) Metrics(context.Context, flowrun.MetricRequest) (*entities.RunMetrics, error) {
+func (s *traceRunStore) Metrics(context.Context, graphrun.MetricRequest) (*entities.GraphRunMetrics, error) {
 	return nil, nil
 }
-func (s *traceRunStore) HasActiveForFlow(context.Context, string, string) (bool, error) {
+func (s *traceRunStore) HasActiveForAgentGraph(context.Context, string, string) (bool, error) {
 	return false, nil
 }
-func (s *traceRunStore) Save(context.Context, *entities.FlowRunInfo) error   { return nil }
-func (s *traceRunStore) Delete(context.Context, string) error                { return nil }
-func (s *traceRunStore) Create(context.Context, *entities.FlowRunInfo) error { return nil }
-func (s *traceRunStore) Update(context.Context, *entities.FlowRunInfo) error { return nil }
-func (s *traceRunStore) Cancel(context.Context, string) error                { return nil }
+func (s *traceRunStore) Save(context.Context, *entities.GraphRun) error   { return nil }
+func (s *traceRunStore) Delete(context.Context, string) error             { return nil }
+func (s *traceRunStore) Create(context.Context, *entities.GraphRun) error { return nil }
+func (s *traceRunStore) Update(context.Context, *entities.GraphRun) error { return nil }
+func (s *traceRunStore) Cancel(context.Context, string) error             { return nil }
 
 type traceQueryStub struct {
 	called bool
 }
 
-func (q *traceQueryStub) QueryRun(_ context.Context, runID string) (*entities.RunTrace, error) {
+func (q *traceQueryStub) QueryRun(_ context.Context, runID string) (*entities.GraphRunTrace, error) {
 	q.called = true
-	return &entities.RunTrace{RunID: runID, Source: "jaeger", FetchedAt: time.Now(), Traces: []entities.TraceInfo{}}, nil
+	return &entities.GraphRunTrace{GraphRunID: runID, Source: "jaeger", FetchedAt: time.Now(), Traces: []entities.TraceInfo{}}, nil
 }
 
 func TestTraceHandlerEnforcesRunNamespace(t *testing.T) {
 	t.Parallel()
 	query := &traceQueryStub{}
-	handler := newTraceHandler(&traceRunStore{run: &entities.FlowRunInfo{
+	handler := newTraceHandler(&traceRunStore{run: &entities.GraphRun{
 		BaseEntity: entities.BaseEntity{ID: "run-1", Namespace: "tenant-a"},
 	}}, query)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", handler.GetRunTrace)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/trace", handler.GetRunTrace)
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/tenant-b/runs/run-1/trace", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tenant-b/graph-runs/run-1/trace", nil)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 
@@ -66,13 +66,13 @@ func TestTraceHandlerEnforcesRunNamespace(t *testing.T) {
 func TestTraceHandlerReturnsNormalizedTrace(t *testing.T) {
 	t.Parallel()
 	query := &traceQueryStub{}
-	handler := newTraceHandler(&traceRunStore{run: &entities.FlowRunInfo{
+	handler := newTraceHandler(&traceRunStore{run: &entities.GraphRun{
 		BaseEntity: entities.BaseEntity{ID: "run-1", Namespace: "tenant-a"},
 	}}, query)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", handler.GetRunTrace)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/trace", handler.GetRunTrace)
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/tenant-a/runs/run-1/trace", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tenant-a/graph-runs/run-1/trace", nil)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 

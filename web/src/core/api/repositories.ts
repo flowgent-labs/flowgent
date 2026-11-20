@@ -4,12 +4,12 @@ import { HttpRuntimeConfigRepository } from './http-runtime-config-repository'
 import {
   HttpAgentRepository,
   HttpAnalyticsRepository,
-  HttpFlowRepository,
+  HttpAgentGraphRepository,
   HttpKnowledgeRepository,
   HttpLlmRepository,
   HttpMcpRepository,
   HttpNotificationRepository,
-  HttpRunRepository,
+  HttpGraphRunRepository,
   HttpSkillRepository,
   HttpRuntimeSkillRepository,
   HttpTraceRepository,
@@ -18,8 +18,8 @@ import {
 export function createRepositories(): Repositories {
   const api = new ApiClient()
   return {
-    flows: new HttpFlowRepository(api),
-    runs: new HttpRunRepository(api),
+    graphs: new HttpAgentGraphRepository(api),
+    graphRuns: new HttpGraphRunRepository(api),
     traces: new HttpTraceRepository(api),
     analytics: new HttpAnalyticsRepository(api),
     knowledge: new HttpKnowledgeRepository(api),

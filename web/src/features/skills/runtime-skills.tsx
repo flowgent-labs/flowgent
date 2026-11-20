@@ -14,23 +14,23 @@ import {
   PageHeader,
   StatusBadge,
 } from '../../shared/components/ui'
-import type { Flow } from '../../core/domain/types'
+import type { AgentGraph } from '../../core/domain/types'
 import { useAppStore } from '../../app/store'
 import { ManifestImportButton } from '../resources/manifest-import-button'
-import { manifestToFlow } from '../resources/manifest'
+import { manifestToAgentGraph } from '../resources/manifest'
 
 export function RuntimeSkills() {
   const { t } = useTranslation()
   const namespace = useAppStore((state) => state.namespace)
   const repositories = useRepositories()
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState<Flow | null>(null)
+  const [draft, setDraft] = useState<AgentGraph | null>(null)
   const query = useQuery({
     queryKey: [namespace, 'runtime-skills'],
     queryFn: ({ signal }) => repositories.runtimeSkills.list(namespace, signal),
   })
   const save = useMutation({
-    mutationFn: (skill: Flow) => repositories.runtimeSkills.save(namespace, skill, true),
+    mutationFn: (skill: AgentGraph) => repositories.runtimeSkills.save(namespace, skill, true),
     onSuccess: () => {
       setDraft(null)
       void queryClient.invalidateQueries({ queryKey: [namespace, 'runtime-skills'] })
@@ -53,7 +53,7 @@ export function RuntimeSkills() {
             label={t('common.importManifest')}
             onImport={(source) => {
               try {
-                setDraft(manifestToFlow(source, 'Skill'))
+                setDraft(manifestToAgentGraph(source, 'Skill'))
               } catch (error) {
                 window.alert(error instanceof Error ? error.message : String(error))
               }
@@ -89,7 +89,7 @@ export function RuntimeSkills() {
                   <div>
                     <dt>
                       <GitBranch size={13} />
-                      {t('flows.nodes')}
+                      {t('graphs.nodes')}
                     </dt>
                     <dd>{skill.nodes.length}</dd>
                   </div>

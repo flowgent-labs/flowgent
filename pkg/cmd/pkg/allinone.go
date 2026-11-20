@@ -20,7 +20,7 @@ import (
 	"github.com/flowgent-labs/flowgent/api/pkg"
 	"github.com/flowgent-labs/flowgent/api/pkg/authz"
 	handler "github.com/flowgent-labs/flowgent/api/pkg/handler"
-	"github.com/flowgent-labs/flowgent/api/pkg/taskpayload"
+	"github.com/flowgent-labs/flowgent/api/pkg/nodepayload"
 	tracequery "github.com/flowgent-labs/flowgent/api/pkg/trace"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
@@ -33,8 +33,8 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/notifier/pkg"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
-	flowreleasestore "github.com/flowgent-labs/flowgent/storage/pkg/flowrelease"
+	graph "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
+	graphreleasestore "github.com/flowgent-labs/flowgent/storage/pkg/graphrelease"
 )
 
 // allInOneState bundles shared dependencies for the all-in-one process.
@@ -43,10 +43,10 @@ type allInOneState struct {
 	store       storage.IStorage
 	apiClient   *client.FlowgentClient
 	namespace   string
-	taskClient  *client.TaskStateClient
+	taskClient  *client.NodeRunStateClient
 	humanClient *client.HumanApprovalClient
 	logger      *utils.Logger
-	payloads    taskpayload.ITaskPayloadProvider
+	payloads    nodepayload.INodePayloadProvider
 	queue       messager.IMessager
 }
 
@@ -83,9 +83,9 @@ func startAllInOne(cfgPath string) error {
 	logger := utils.NewLogger(svcCfg.Logging.Mode, svcCfg.Logging.Level)
 	storeImpl := storage.InitStorage(svcCfg)
 	defer storeImpl.(interface{ Close() error }).Close()
-	payloadProvider, err := taskpayload.NewProvider(context.Background(), svcCfg.Storage.Artifacts)
+	payloadProvider, err := nodepayload.NewProvider(context.Background(), svcCfg.Storage.Artifacts)
 	if err != nil {
-		return fmt.Errorf("create task payload provider: %w", err)
+		return fmt.Errorf("create noderun payload provider: %w", err)
 	}
 	defer payloadProvider.Close()
 	queue := messager.NewQueueFromConfig(
@@ -105,16 +105,16 @@ func startAllInOne(cfgPath string) error {
 		store:       storeImpl,
 		apiClient:   apiClient,
 		namespace:   namespace,
-		taskClient:  &client.TaskStateClient{Client: apiClient, Namespace: namespace},
+		taskClient:  &client.NodeRunStateClient{Client: apiClient, Namespace: namespace},
 		humanClient: &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
 		logger:      logger,
 		payloads:    payloadProvider,
 		queue:       queue,
 	}
 
-	// Flow definitions are DB-backed and are loaded through the store.
-	agentFlows, subFlows := loadFlows(state)
-	allFlows := append(agentFlows, flattenSubflows(subFlows)...)
+	// AgentGraph definitions are DB-backed and are loaded through the store.
+	agentGraphs, subAgentGraphs := loadAgentGraphs(state)
+	allAgentGraphs := append(agentGraphs, flattenSubGraphs(subAgentGraphs)...)
 
 	// Notifier + WS bridge (before REST so bridge is available)
 	notifSvc, wsBridge, err := startNotifier(state)
@@ -125,7 +125,7 @@ func startAllInOne(cfgPath string) error {
 	// REST API Server (with optional WS bridge). The standalone Resource
 	// Manager resolves its DB-backed runtime registry through this internal
 	// endpoint, so the API must be accepting traffic before RM construction.
-	restServers, flowHandler, err := startRESTServer(state, agentFlows, subFlows, wsBridge)
+	restServers, graphHandler, err := startRESTServer(state, agentGraphs, subAgentGraphs, wsBridge)
 	if err != nil {
 		return err
 	}
@@ -143,10 +143,10 @@ func startAllInOne(cfgPath string) error {
 	}
 
 	// Cron triggers
-	startCronScheduler(allFlows, state.apiClient, state.namespace)
+	startCronScheduler(allAgentGraphs, state.apiClient, state.namespace)
 
 	// JobManager + RunPoller
-	startOrchestrator(state, rm, flowHandler.AgentFlows())
+	startOrchestrator(state, rm, graphHandler.AgentGraphs())
 
 	// A2A Server
 	a2aSrv, err := startA2AServer(state)
@@ -185,20 +185,20 @@ func waitForAllInOneREST(cfg *config.FlowgentConfig) error {
 	return fmt.Errorf("all-in-one internal API did not become ready: %w", lastErr)
 }
 
-// ─── Flow loading ─────────────────────────────────────────────────
+// ─── AgentGraph loading ─────────────────────────────────────────────────
 
-func loadFlows(state *allInOneState) ([]entities.FlowInfo, map[string]entities.FlowInfo) {
-	agentFlows, subFlows, err := flow.LoadFromDB(context.Background(), state.store, state.namespace)
+func loadAgentGraphs(state *allInOneState) ([]entities.AgentGraph, map[string]entities.AgentGraph) {
+	agentGraphs, subAgentGraphs, err := graph.LoadFromDB(context.Background(), state.store, state.namespace)
 	if err != nil {
-		slog.Warn("load agent flows from database", "error", err)
-		return nil, make(map[string]entities.FlowInfo)
+		slog.Warn("load agent graphs from database", "error", err)
+		return nil, make(map[string]entities.AgentGraph)
 	}
-	slog.Info("AgentFlows loaded", "count", len(agentFlows)+len(subFlows))
-	return agentFlows, subFlows
+	slog.Info("AgentGraphs loaded", "count", len(agentGraphs)+len(subAgentGraphs))
+	return agentGraphs, subAgentGraphs
 }
 
-func flattenSubflows(m map[string]entities.FlowInfo) []entities.FlowInfo {
-	var out []entities.FlowInfo
+func flattenSubGraphs(m map[string]entities.AgentGraph) []entities.AgentGraph {
+	var out []entities.AgentGraph
 	for _, v := range m {
 		out = append(out, v)
 	}
@@ -210,7 +210,7 @@ func flattenSubflows(m map[string]entities.FlowInfo) []entities.FlowInfo {
 func createStandaloneRM(state *allInOneState) (resourcemanager.ResourceManager, error) {
 	return resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider:         engine.ProviderStandalone,
-		PoolSize:         state.cfg.Orchestration.MaxConcurrentFlows,
+		PoolSize:         state.cfg.Orchestration.MaxConcurrentAgentGraphs,
 		TaskState:        state.taskClient,
 		ApprovalInfo:     state.humanClient,
 		Logger:           state.logger,
@@ -236,8 +236,8 @@ func startNotifier(state *allInOneState) (*notifier.FlowgentNotifierManager, *ha
 
 // ─── REST API Server ──────────────────────────────────────────────
 
-func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
-	subFlows map[string]entities.FlowInfo, wsBridge *handler.NotifierWSBridge) (*allInOneRESTServers, *handler.FlowDefHandler, error) {
+func startRESTServer(state *allInOneState, agentGraphs []entities.AgentGraph,
+	subAgentGraphs map[string]entities.AgentGraph, wsBridge *handler.NotifierWSBridge) (*allInOneRESTServers, *handler.AgentGraphHandler, error) {
 
 	var mqttPub handler.MQTTPublisher
 	if state.cfg.Messager.Type == "mqtt" && state.cfg.Messager.MQTT.Broker != "" {
@@ -247,14 +247,17 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 			state.cfg.Messager.MQTT.Password)
 	}
 
+	if mqttPub == nil && state.cfg.Messager.Type == "memory" {
+		mqttPub = &localOutboxPublisher{queue: state.queue}
+	}
 	if mqttPub != nil {
 		go storage.RunOutboxPublisher(context.Background(), state.store.DB(), mqttPub.Publish)
 	}
-	flowHandler := handler.NewFlowDefHandler(state.store, state.logger, agentFlows, subFlows, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, "default", mqttPub)
+	graphHandler := handler.NewAgentGraphHandler(state.store, state.logger, agentGraphs, subAgentGraphs, state.cfg.Runtime.Namespace.NamespacePrefix, state.cfg.Runtime.Namespace.DefaultNamespace, "default", mqttPub)
 	agentHandler := handler.NewAgentDefHandler(state.store, state.logger)
 	skillHandler := handler.NewSkillHandler(state.store)
 	humanHandler := handler.NewHumanHandler(state.store, mqttPub, state.logger)
-	runHandler := handler.NewFlowRunHandler(state.store, state.payloads, mqttPub, state.logger)
+	runHandler := handler.NewGraphRunHandler(state.store, state.payloads, mqttPub, state.logger)
 	notifHandler, err := handler.NewNotifierHandler(state.store, state.cfg.Notifier, mqttPub, state.logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("notification secret encryption: %w", err)
@@ -262,25 +265,25 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 	llmProviderHandler := handler.NewLlmProviderHandler(state.store)
 	mcpHandler := handler.NewMcpHandler(state.store)
 	knowledgeHandler := handler.NewKnowledgeHandler(state.store)
-	webhookHandler := handler.NewWebhookHandler(flowHandler, state.logger, state.cfg.Runtime.Namespace.DefaultNamespace)
+	webhookHandler := handler.NewWebhookHandler(graphHandler, state.logger, state.cfg.Runtime.Namespace.DefaultNamespace)
 	jaegerClient, traceErr := tracequery.NewJaegerClientFromConfig(state.cfg.Mgmt.OTEL)
 	if traceErr != nil {
 		slog.Warn("Jaeger query client init failed, trace query disabled", "error", traceErr)
 		jaegerClient = nil
 	}
 	traceHandler := handler.NewTraceHandler(state.store, jaegerClient)
-	flowReleaseRepository, err := flowreleasestore.NewRepository(state.store)
+	graphReleaseRepository, err := graphreleasestore.NewRepository(state.store)
 	if err != nil {
-		return nil, nil, fmt.Errorf("flow release repository: %w", err)
+		return nil, nil, fmt.Errorf("graph release repository: %w", err)
 	}
-	flowReleaseHandler := handler.NewFlowReleaseHandler(flowReleaseRepository, flowHandler)
+	graphReleaseHandler := handler.NewAgentGraphReleaseHandler(graphReleaseRepository, graphHandler)
 	runtimeConfigHandler, err := handler.NewRuntimeConfigHandler(state.store, state.cfg.Notifier.SecretEncryption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("runtime configuration secrets: %w", err)
 	}
 	restMux := api.RegisterRESTRoutes(
-		&handler.HealthHandler{}, flowHandler, agentHandler, skillHandler,
-		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, flowReleaseHandler, runtimeConfigHandler)
+		&handler.HealthHandler{}, graphHandler, agentHandler, skillHandler,
+		runHandler, humanHandler, notifHandler, wsBridge, llmProviderHandler, mcpHandler, webhookHandler, knowledgeHandler, traceHandler, graphReleaseHandler, runtimeConfigHandler)
 
 	adapter, err := authz.NewAdapter(state.cfg.AuthGuardAdapter)
 	if err != nil {
@@ -318,30 +321,30 @@ func startRESTServer(state *allInOneState, agentFlows []entities.FlowInfo,
 			_ = servers.internal.ListenAndServe()
 		}()
 	}
-	return servers, flowHandler, nil
+	return servers, graphHandler, nil
 }
 
 // ─── Cron Scheduler ───────────────────────────────────────────────
 
-func startCronScheduler(allFlows []entities.FlowInfo, apiClient *client.FlowgentClient, namespace string) {
+func startCronScheduler(allAgentGraphs []entities.AgentGraph, apiClient *client.FlowgentClient, namespace string) {
 	cronSched := trigger.NewScheduleTrigger()
-	flowByID := make(map[string]entities.FlowInfo, len(allFlows))
-	for i := range allFlows {
-		flowByID[allFlows[i].ID] = allFlows[i]
+	graphByID := make(map[string]entities.AgentGraph, len(allAgentGraphs))
+	for i := range allAgentGraphs {
+		graphByID[allAgentGraphs[i].ID] = allAgentGraphs[i]
 	}
-	cronSched.RegisterAgentFlows(allFlows, func(ctx context.Context, id string) {
-		spec, ok := flowByID[id]
+	cronSched.RegisterAgentGraphs(allAgentGraphs, func(ctx context.Context, id string) {
+		spec, ok := graphByID[id]
 		if !ok {
-			slog.Warn("cron trigger skipped unknown flow", "flow_id", id)
+			slog.Warn("cron trigger skipped unknown graph", "agent_graph_id", id)
 			return
 		}
 		if err := entities.ValidateRuntimeMode(spec.RuntimeMode); err != nil {
-			slog.Warn("cron trigger skipped flow with invalid runtime_mode", "flow_id", id, "runtime_mode", spec.RuntimeMode, "error", err)
+			slog.Warn("cron trigger skipped graph with invalid runtime_mode", "agent_graph_id", id, "runtime_mode", spec.RuntimeMode, "error", err)
 			return
 		}
-		run := &entities.FlowRunInfo{AgentFlowID: id, Version: 1, Status: entities.RunPending, RuntimeMode: spec.RuntimeMode}
+		run := &entities.GraphRun{AgentGraphName: id, AgentGraphRevision: 1, Status: entities.GraphRunPending, RuntimeMode: spec.RuntimeMode}
 		run.SetTrigger(entities.TriggerInfo{Type: "schedule", Source: "cron"})
-		_, _ = apiClient.CreateRun(ctx, namespace, run)
+		_, _ = apiClient.CreateGraphRun(ctx, namespace, run)
 	})
 	cronSched.Start()
 }
@@ -349,26 +352,26 @@ func startCronScheduler(allFlows []entities.FlowInfo, apiClient *client.Flowgent
 // ─── Orchestrator (JM + RunPoller) ────────────────────────────────
 
 func startOrchestrator(state *allInOneState, rm resourcemanager.ResourceManager,
-	flowMap map[string]*entities.FlowInfo) {
+	graphMap map[string]*entities.AgentGraph) {
 
-	timeout := parseDuration(state.cfg.Orchestration.FlowExecutionTimeout, 30*time.Minute)
-	stateClient := &client.RunStateClient{Client: state.apiClient, Namespace: state.namespace}
+	timeout := parseDuration(state.cfg.Orchestration.AgentGraphExecutionTimeout, 30*time.Minute)
+	stateClient := &client.GraphRunStateClient{Client: state.apiClient, Namespace: state.namespace}
 
 	jm, err := jobmanager.NewJobManager(stateClient, rm, state.logger, &jobmanager.JobManagerConfig{
-		FlowExecutionTimeout: timeout,
-		MaxNodeRetries:       state.cfg.Orchestration.MaxNodeRetries,
-		MaxConcurrentFlows:   state.cfg.Orchestration.MaxConcurrentFlows,
-		RuntimeClusterID:     "local",
+		AgentGraphExecutionTimeout: timeout,
+		MaxNodeRetries:             state.cfg.Orchestration.MaxNodeRetries,
+		MaxConcurrentAgentGraphs:   state.cfg.Orchestration.MaxConcurrentAgentGraphs,
+		RuntimeClusterID:           "local",
 	})
 	if err != nil {
 		slog.Error("create jobmanager", "error", err)
 		return
 	}
 
-	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.namespace, jm, flowMap, jobmanager.RunPollerConfig{
+	go jobmanager.StartGraphRunPoller(context.Background(), state.apiClient, state.namespace, jm, graphMap, jobmanager.GraphRunPollerConfig{
 		RuntimeMode: entities.RuntimeModeApplication,
 	})
-	go jobmanager.StartRunPoller(context.Background(), state.apiClient, state.namespace, jm, flowMap, jobmanager.RunPollerConfig{
+	go jobmanager.StartGraphRunPoller(context.Background(), state.apiClient, state.namespace, jm, graphMap, jobmanager.GraphRunPollerConfig{
 		RuntimeMode: entities.RuntimeModeSession,
 	})
 }
@@ -381,7 +384,7 @@ func startA2AServer(state *allInOneState) (*http.Server, error) {
 	}
 	taskStore, err := a2apkg.NewPersistentTaskStore(state.store)
 	if err != nil {
-		return nil, fmt.Errorf("create A2A task store: %w", err)
+		return nil, fmt.Errorf("create A2A noderun store: %w", err)
 	}
 	a2aSrv, err := a2apkg.NewHTTPServer(state.cfg, taskStore)
 	if err != nil {
@@ -514,4 +517,10 @@ func uniqueRawMQTTClientID(base string) string {
 		return base
 	}
 	return fmt.Sprintf("%s-%s", base, host)
+}
+
+type localOutboxPublisher struct{ queue messager.IMessager }
+
+func (p *localOutboxPublisher) Publish(ctx context.Context, topic string, data []byte) error {
+	return p.queue.Publish(ctx, topic, &messager.InterMessage{Payload: data})
 }

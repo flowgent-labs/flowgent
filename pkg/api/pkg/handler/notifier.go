@@ -261,10 +261,10 @@ func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
 	msg := model.NotifierMessage{
 		ChannelID: req.ChannelID, DeliveryID: req.DeliveryID, Recipient: req.Recipient,
 		Title: req.Title, Body: req.Message, Namespace: channel.Namespace,
-		AgentFlowID: "notification-test", Timestamp: time.Now().UTC(),
+		AgentGraphName: "notification-test", Timestamp: time.Now().UTC(),
 	}
 	payload, _ := json.Marshal(msg)
-	topic := messager.NotifyEventTopic(channel.Namespace, msg.AgentFlowID, req.DeliveryID)
+	topic := messager.NotifyEventTopic(channel.Namespace, msg.AgentGraphName, req.DeliveryID)
 	if err := h.mqtt.Publish(r.Context(), topic, payload); err != nil {
 		http.Error(w, "notification queue publish failed", http.StatusServiceUnavailable)
 		return
@@ -273,7 +273,7 @@ func (h *NotifierHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"delivery_id":  req.DeliveryID,
-		"result_topic": messager.NotifyResultTopic(channel.Namespace, msg.AgentFlowID, req.DeliveryID),
+		"result_topic": messager.NotifyResultTopic(channel.Namespace, msg.AgentGraphName, req.DeliveryID),
 	})
 }
 
@@ -315,7 +315,7 @@ type NotifierWSBridge struct {
 }
 
 type NotifierService interface {
-	RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error)
+	RegisterWS(ctx context.Context, agentGraphID string) (WSConn, error)
 }
 
 type WSConn interface {

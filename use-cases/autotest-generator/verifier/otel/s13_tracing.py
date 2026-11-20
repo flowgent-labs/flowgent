@@ -33,7 +33,7 @@ class E2ES13TracingVerifier(BaseVerifier):
                 config.JAEGER_UI_URL.rstrip("/") + "/api/traces",
                 params={
                     "service": service,
-                    "tags": json.dumps({"run.id": self.execution["run_id"]}),
+                    "tags": json.dumps({"run.id": self.execution["graph_run_id"]}),
                     "lookback": "24h",
                     "limit": 100,
                 },
@@ -45,19 +45,19 @@ class E2ES13TracingVerifier(BaseVerifier):
                     tags = {
                         tag["key"]: tag.get("value") for tag in span.get("tags", [])
                     }
-                    if tags.get("flowgent.task_id"):
+                    if tags.get("flowgent.node_run_id"):
                         observed.add(
                             (
-                                tags.get("flowgent.task_id"),
-                                tags.get("flowgent.node_id"),
+                                tags.get("flowgent.node_run_id"),
+                                tags.get("flowgent.node_instance_id"),
                                 tags.get("flowgent.attempt"),
                             )
                         )
         for task in self.execution["tasks"]:
-            if (task["task_id"], task["node_id"], task["attempt"]) not in observed:
+            if (task["node_run_id"], task["node_instance_id"], task["attempt"]) not in observed:
                 raise AssertionError(
-                    f"Jaeger lacks the exact persisted AutoTest attempt {task['task_id']}"
+                    f"Jaeger lacks the exact persisted AutoTest attempt {task['node_run_id']}"
                 )
         self.details.append(
-            f"Matched every persisted attempt for AutoTest run {self.execution['run_id']}"
+            f"Matched every persisted attempt for AutoTest run {self.execution['graph_run_id']}"
         )

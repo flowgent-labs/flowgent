@@ -61,12 +61,12 @@ func startController(cfgPath string) error {
 		namespace = "default"
 	}
 
-	stateClient := &client.TaskStateClient{Client: apiClient, Namespace: namespace}
+	stateClient := &client.NodeRunStateClient{Client: apiClient, Namespace: namespace}
 	humanClient := &client.HumanApprovalClient{Client: apiClient, Namespace: namespace}
 
 	rm, err := resourcemanager.NewResourceManager(&resourcemanager.ResourceManagerConfig{
 		Provider:         engine.ProviderStandalone,
-		PoolSize:         svcCfg.Orchestration.MaxConcurrentFlows,
+		PoolSize:         svcCfg.Orchestration.MaxConcurrentAgentGraphs,
 		TaskState:        stateClient,
 		ApprovalInfo:     humanClient,
 		Logger:           logger,
@@ -87,7 +87,7 @@ func startController(cfgPath string) error {
 		logger.Info("Controller using static discovery client (env vars)")
 	}
 
-	flowCtrl := ctrl.NewFlowgentController(apiClient, namespace, rm, logger, svcCfg, cfgPath, disc)
+	graphCtrl := ctrl.NewFlowgentController(apiClient, namespace, rm, logger, svcCfg, cfgPath, disc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -101,7 +101,7 @@ func startController(cfgPath string) error {
 		cancel()
 	}()
 
-	if err := flowCtrl.Run(ctx); err != nil {
+	if err := graphCtrl.Run(ctx); err != nil {
 		return fmt.Errorf("controller run: %w", err)
 	}
 	return nil

@@ -26,8 +26,9 @@ class E2EOtherDefinitions:
     LOCAL_SCANNER_PORT = int(os.getenv("FLOWGENT_E2E_SCANNER_PORT", "39093"))
 
     SCENARIOS = {
-        "61": ("Subflow — Static, Adaptive, CAS and Seal", "verifier.agentflow.s61_dynamic_subflow"),
-        "62": ("Durable execution — Claims, immutable results and Outbox", "verifier.agentflow.s62_durable_delivery"),
+        "63": ("Checkpoint — Workspace rollback, retry and committed-state recovery", "verifier.agentgraph.s63_checkpoint_workspace"),
+        "61": ("SubGraph — Static, Adaptive, CAS and Seal", "verifier.agentgraph.s61_dynamic_sub_graph"),
+        "62": ("Durable execution — Claims, immutable results and Outbox", "verifier.agentgraph.s62_durable_delivery"),
         "01": (
             "E2E Structure — Layered Deployment and Verifier Contracts",
             "verifier.infra.s01_structure",
@@ -44,7 +45,7 @@ class E2EOtherDefinitions:
             "AuthGuard — LDAP Federation + GitHub OAuth + Envoy Policy",
             "verifier.infra.s14_authguard",
         ),
-        "41": ("Web Console — Flow CRUD & Run Lifecycle", "verifier.web.s41_flow_crud"),
+        "41": ("Web Console — AgentGraph CRUD & Run Lifecycle", "verifier.web.s41_agent_graph_crud"),
         "42": ("Web Console — Agent CRUD and Revision", "verifier.web.s42_agent_crud"),
         "43": (
             "Web Console — Skill CRUD and Workspace Uploads",
@@ -59,27 +60,27 @@ class E2EOtherDefinitions:
             "Hosted Login — OAuth Session and Business Sign-out",
             "verifier.web.s46_hosted_login",
         ),
-        "31": ("E2E Fixer — Seed & Trigger", "verifier.agentflow.s31_seed_trigger"),
+        "31": ("E2E Fixer — Seed & Trigger", "verifier.agentgraph.s31_seed_trigger"),
         "32": (
             "E2E Fixer — Discovery & Analyze",
-            "verifier.agentflow.s32_discovery_analyze",
+            "verifier.agentgraph.s32_discovery_analyze",
         ),
-        "33": ("E2E Fixer — Remediation", "verifier.agentflow.s33_remediation"),
+        "33": ("E2E Fixer — Remediation", "verifier.agentgraph.s33_remediation"),
         "34": (
             "E2E Fixer — Delivery & Report",
-            "verifier.agentflow.s34_delivery_report",
+            "verifier.agentgraph.s34_delivery_report",
         ),
         "35": (
             "PR Commits — Verify Fix Commits on Target PR",
-            "verifier.agentflow.s35_pr_commit",
+            "verifier.agentgraph.s35_pr_commit",
         ),
         "36": (
             "Knowledge — Approved Publication and Scoped Retrieval",
-            "verifier.agentflow.s36_knowledge",
+            "verifier.agentgraph.s36_knowledge",
         ),
         "37": (
             "Volume Workspace — Pod Mount and Git Clone Evidence",
-            "verifier.agentflow.s37_volume_workspace",
+            "verifier.agentgraph.s37_volume_workspace",
         ),
         "21": (
             "API Server — Canonical CRUD, Revisions, Run State, and Publication",

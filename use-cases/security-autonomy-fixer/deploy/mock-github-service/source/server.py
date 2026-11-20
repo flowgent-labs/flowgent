@@ -67,12 +67,12 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         form = parse_qs(self.rfile.read(length).decode())
         code = form.get("code", [""])[0]
-        flow = CODES.pop(code, None)
+        graph = CODES.pop(code, None)
         if (
-            flow is None
+            graph is None
             or form.get("client_id", [""])[0] != CLIENT_ID
             or form.get("client_secret", [""])[0] != CLIENT_SECRET
-            or form.get("redirect_uri", [""])[0] != flow["redirect_uri"]
+            or form.get("redirect_uri", [""])[0] != graph["redirect_uri"]
         ):
             self._json(400, {"error": "invalid_grant"})
             return

@@ -183,14 +183,14 @@ class SonarScannerRuntime:
                         json.dumps(result, indent=2) + "\n"
                     )
                     print(
-                        f"Real initial analysis: commit={result['commit']} CE={result['ce_task_id']} analysis={result['analysis_id']} issues={result['issue_total']}"
+                        f"Real initial analysis: commit={result['commit']} CE={result['ce_node_run_id']} analysis={result['analysis_id']} issues={result['issue_total']}"
                     )
                     return result
                 time.sleep(3)
         raise AssertionError("Initial official scanner analysis timed out")
 
     @staticmethod
-    def bind_run(run_id: str) -> None:
+    def bind_run(graph_run_id: str) -> None:
         result = json.loads(SonarScannerRuntime.BASELINE.read_text())
-        result["run_id"] = run_id
+        result["graph_run_id"] = graph_run_id
         SonarScannerRuntime.BASELINE.write_text(json.dumps(result, indent=2) + "\n")

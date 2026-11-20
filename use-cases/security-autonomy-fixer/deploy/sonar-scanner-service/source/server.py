@@ -132,7 +132,7 @@ class Scanner:
                         commit = json.load(response)["sha"]
                     if job["expected_commit"] and commit != job["expected_commit"]:
                         raise ValueError(
-                            "Branch head differs from the Flow's delivered commit"
+                            "Branch head differs from the AgentGraph's delivered commit"
                         )
                     job["commit"] = commit
                     job["phase"] = "DOWNLOAD_SOURCE"
@@ -221,14 +221,14 @@ class Scanner:
                         .splitlines()
                         if "=" in line
                     )
-                    task_id = report.get("ceTaskId")
-                    if not task_id:
+                    node_run_id = report.get("ceTaskId")
+                    if not node_run_id:
                         raise ValueError("Official scanner produced no CE task ID")
-                    job["ce_task_id"] = task_id
+                    job["ce_node_run_id"] = node_run_id
                     job["phase"] = "CE_TASK"
                     deadline = time.monotonic() + 600
                     while time.monotonic() < deadline:
-                        task = cls.api("/api/ce/task?id=" + parse.quote(task_id))[
+                        task = cls.api("/api/ce/task?id=" + parse.quote(node_run_id))[
                             "task"
                         ]
                         job["ce_status"] = task["status"]

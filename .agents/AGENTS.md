@@ -67,7 +67,7 @@ historical context and are not authoritative for the current implementation.
 | Doc | Summary |
 |-----|---------|
 | [docs/architecture/overview.md](../docs/architecture/overview.md) | L1 engine overview: cross-component calls, MQTT/ExecutionPlan contracts, deployment, observability, and physical component links |
-| [docs/architecture/agent-flow.md](../docs/architecture/agent-flow.md) | Generic L2 application architecture: DAG model, capabilities, limits, and authoring practices |
+| [docs/architecture/agent-graph.md](../docs/architecture/agent-graph.md) | Generic L2 application architecture: DAG model, capabilities, limits, and authoring practices |
 | [docs/architecture/data-lifecycle.md](../docs/architecture/data-lifecycle.md) | Durable identity/revision model, instruction/knowledge/execution-memory separation, approvals, and vector retrieval |
 | [docs/architecture/engine/wallet.md](../docs/architecture/engine/wallet.md) | AgentVault boundary and the remaining legacy x402 client integration gap |
 
@@ -78,7 +78,7 @@ historical context and are not authoritative for the current implementation.
 | [docs/index.md#applications](../docs/index.md#applications) | Application catalog and use-case README ownership rules |
 | [use-cases/security-autonomy-fixer/README.md](../use-cases/security-autonomy-fixer/README.md) | Security Autonomy Fixer application design, nodes, edges, resources, limits, and verification entry points |
 | [use-cases/security-autonomy-fixer/MANUAL_ACCEPTANCE.md](../use-cases/security-autonomy-fixer/MANUAL_ACCEPTANCE.md) | Current K8s E2E topology and reproducible manual acceptance checklist |
-| [use-cases/security-autonomy-fixer/deploy/flowgent/config/mcps/sonarqube.yaml](../use-cases/security-autonomy-fixer/deploy/flowgent/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer flow |
+| [use-cases/security-autonomy-fixer/deploy/flowgent/config/mcps/sonarqube.yaml](../use-cases/security-autonomy-fixer/deploy/flowgent/config/mcps/sonarqube.yaml) | SonarQube MCP definition used by the canonical security fixer graph |
 | [use-cases/autotest-generator/README.md](../use-cases/autotest-generator/README.md) | AutoTest Generator draft, owned resources, current execution gaps, and expected behavior |
 
 ### Active Development and History

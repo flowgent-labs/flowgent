@@ -7,7 +7,7 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
-	flowstore "github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	flowstore "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
 )
 
 type testStore struct{ db any }
@@ -18,8 +18,8 @@ func (s *testStore) Close() error { return nil }
 func TestSQLiteRepositoryRoundTripAndUpsert(t *testing.T) {
 	db := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer db.Close()
-	if err := flowstore.NewFlowSQLiteStore(db).CreateSpec(context.Background(), &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "fixer", Namespace: "team-a"}, Kind: "flow",
+	if err := flowstore.NewAgentGraphSQLiteStore(db).CreateSpec(context.Background(), &entities.AgentGraph{Name: "fixer",
+		BaseEntity: entities.BaseEntity{ID: "fixer", Namespace: "team-a"}, Kind: "graph",
 	}, "tester", "runtime configuration fixture"); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestSQLiteRepositoryRoundTripAndUpsert(t *testing.T) {
 	}
 	item := &entities.RuntimeConfiguration{
 		BaseEntity: entities.BaseEntity{ID: "cfg-1", Namespace: "team-a"},
-		ScopeType:  entities.RuntimeConfigScopeFlow, ScopeID: "fixer",
+		ScopeType:  entities.RuntimeConfigScopeAgentGraph, ScopeID: "fixer",
 		Environment: map[string]string{"REGION": "cn"}, ConfiguredSecretKeys: []string{"TOKEN"},
 		SealedSecrets: &secretbox.Envelope{Version: 1, Algorithm: "AES-256-GCM", KeyID: "v1", Nonce: "n", Ciphertext: "c"},
 	}
@@ -37,7 +37,7 @@ func TestSQLiteRepositoryRoundTripAndUpsert(t *testing.T) {
 	if err := repo.Upsert(context.Background(), item); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.Get(context.Background(), "team-a", entities.RuntimeConfigScopeFlow, "fixer")
+	got, err := repo.Get(context.Background(), "team-a", entities.RuntimeConfigScopeAgentGraph, "fixer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSQLiteRepositoryRoundTripAndUpsert(t *testing.T) {
 	if err := repo.Upsert(context.Background(), item); err != nil {
 		t.Fatal(err)
 	}
-	got, err = repo.Get(context.Background(), "team-a", entities.RuntimeConfigScopeFlow, "fixer")
+	got, err = repo.Get(context.Background(), "team-a", entities.RuntimeConfigScopeAgentGraph, "fixer")
 	if err != nil || got.Environment["REGION"] != "us" || got.ID != "cfg-1" {
 		t.Fatalf("upsert = %+v err=%v", got, err)
 	}

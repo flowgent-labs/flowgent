@@ -21,18 +21,18 @@
 | L1 引擎 | [Sandbox](architecture/engine/sandbox_ZH.md) | Controller 管理的固定池（已确认设计，待代码迁移） |
 | L1 引擎 | [Notifier](architecture/engine/notifier_ZH.md) | Delivery 与 UI event 边界 |
 | L1 引擎 | [AgentVault / x402](architecture/engine/wallet_ZH.md) | 外部托管边界与尚未完成的旧客户端集成迁移 |
-| L2 AgentFlow | [AgentFlow 应用架构](architecture/agent-flow_ZH.md) | 通用 DAG 模型、能力、限制与编排实践 |
+| L2 AgentGraph | [AgentGraph 应用架构](architecture/agent-graph_ZH.md) | 通用 DAG 模型、能力、限制与编排实践 |
 
 ## 应用
 
 每个应用在 `use-cases/{use-case}/README.md` 中归口自己的 Nodes、Edges、
 Integrations、Limits 与 Verification；可执行资源与其放在同一用例目录。
-共享 DAG 语义归属 [AgentFlow 应用架构](architecture/agent-flow_ZH.md)。
+共享 DAG 语义归属 [AgentGraph 应用架构](architecture/agent-graph_ZH.md)。
 
 | 应用 | 范围 | 入口 |
 |---|---|---|
-| Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/deploy/flowgent/config/flows/security-autonomy-fixer.yaml) |
-| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/deploy/flowgent/config/flows/autotest-generation-v1.yaml) |
+| Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/deploy/flowgent/config/agent-graphs/security-autonomy-fixer.yaml) |
+| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/deploy/flowgent/config/agent-graphs/autotest-generation-v1.yaml) |
 
 ## 开发与历史
 
@@ -58,10 +58,10 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 ## 维护规则
 
 - 当前行为 **MUST** 写入拥有该行为的现行设计文档。
-- 通用 AgentFlow 语义 **MUST** 保留在 `architecture/`；应用专属 Nodes、Edges、
+- 通用 AgentGraph 语义 **MUST** 保留在 `architecture/`；应用专属 Nodes、Edges、
   Integrations 与 E2E 证据 **MUST** 保留在所属的
   `use-cases/{use-case}/README.md`。
-- 每个真实应用 **MUST** 提供 `README.md` 和 `README_ZH.md`；其 Flow、Agent 与
+- 每个真实应用 **MUST** 提供 `README.md` 和 `README_ZH.md`；其 AgentGraph、Agent 与
   MCP Definition **MUST** 在 `use-cases/{use-case}/deploy/flowgent/config/` 下保持自包含，运行凭据
   **MUST** 保留在 Manifest 之外。
 - 每个设计概念 **MUST** 只有一个规范归属位置；其他文档 **MUST** 通过链接引用，禁止复制。

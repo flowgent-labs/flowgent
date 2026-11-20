@@ -27,7 +27,7 @@
 2. [文档索引](../index_ZH.md)
 3. [引擎总览](../architecture/overview_ZH.md)
 4. [持久数据生命周期](../architecture/data-lifecycle_ZH.md)
-5. [AgentFlow 应用模型](../architecture/agent-flow_ZH.md)
+5. [AgentGraph 应用模型](../architecture/agent-graph_ZH.md)
 6. [AuthGuard 边界](../architecture/authguard-integration_ZH.md)
 7. [API Server 路由/状态边界](../architecture/engine/apiserver_ZH.md)
 8. [Security Autonomy Fixer](../../use-cases/security-autonomy-fixer/README_ZH.md)
@@ -82,15 +82,15 @@ source ~/.wl4gshrc.sec
   `orh_a2a_task`；JobManager 只可把 PostgreSQL/Redis 用作协调锁。
 - **控制面：** Controller 根据活跃 Run 管理 Application JM；JM 拥有 DAG 并协调
   TM/Sandbox。Plan/Result/Sandbox Work 走 MQTT，持久状态走 REST。
-- **稳定身份：** Flow、Agent、便携式 Skill、Knowledge Document 均使用稳定 Owner +
-  不可变 Revision；Run 引用确定 Flow Revision。
+- **稳定身份：** AgentGraph、Agent、便携式 Skill、Knowledge Document 均使用稳定 Owner +
+  不可变 Revision；Run 引用确定 AgentGraph Revision。
 - **上下文：** Instruction、Knowledge、Execution Memory 分离。公开/持久层规范名是
-  NodeRun，`TaskRunInfo` 只是内部兼容名。
+  NodeRun，`NodeRun` 只是内部兼容名。
 - **Knowledge：** Source → Document → Revision → 层级 Content → Embedding；PG 使用
   pgvector，SQLite 使用 sqlite-vec；发布走 Candidate → Approval → 事务 CAS。
 - **安全：** AuthGuard 拥有 IAM 与授权决策；Flowgent 只保存 canonical principal
   引用，并在正文进入 LLM 前执行 SQL Scope/ACL。
-- **UI：** Overview、Run/Trace/Log/File Preview、可视化 Flow、Agent、两类 Skill 管理、
+- **UI：** Overview、Run/Trace/Log/File Preview、可视化 AgentGraph、Agent、两类 Skill 管理、
   MCP、LLM、Published Knowledge、Notification、Runtime Config 与嵌入式账户安全已实现。
   Runtime Skill 管理已实现，但 `kind: skill` DAG Node 执行未实现。
 - **部署：** Helm 以分布式模式为主。E2E 把 Flowgent、AuthGuard、Storage、SonarQube、
@@ -101,7 +101,7 @@ source ~/.wl4gshrc.sec
 | 领域 | 当前实现 |
 |---|---|
 | REST CRUD | `pkg/api/pkg/server.go` 规范路由、严格 OpenAPI、AuthGuard Scope |
-| Revision | Flow/Agent/Skill/Document 稳定身份、不可变 Revision、CAS 指针 |
+| Revision | AgentGraph/Agent/Skill/Document 稳定身份、不可变 Revision、CAS 指针 |
 | Run/NodeRun | Attempt、输入输出错误、Checkpoint、Message、Lease、Fencing、Workspace Version |
 | Runtime | Application/Session，Controller/JM/TM/Sandbox Ownership 与 GC |
 | 统一审批 | `orh_approval` 覆盖 Human/Tool/Payment/Knowledge/Instruction |
@@ -110,7 +110,7 @@ source ~/.wl4gshrc.sec
 | 安全总结 | 默认关闭；只处理 Completed Run；脱敏后只生成待审批 Candidate |
 | Secret | Notification AES-256-GCM 只写字段；运行凭据只保存环境引用 |
 | Observability | MQTT W3C Context、Jaeger Proxy、Run/NodeRun 关联、UI Waterfall |
-| Flow Release | 不可变目录、Grant、消费方自有安装副本 |
+| AgentGraph Release | 不可变目录、Grant、消费方自有安装副本 |
 | A2A | A2A 0.3 JSON-RPC/Agent Card 与 Principal 隔离的持久 Task Store |
 | Browser | S41–S46 真实 Chromium CRUD/Login/Trace/File Preview |
 | Cleanup | Helm/Namespace 正常删除 + 有界 Finalizer 恢复，`/finalize` 最后兜底 |
@@ -145,7 +145,7 @@ Schema 事实源：
 3. NodeRun Checkpoint/Fencing 结构已存在，但并非所有重派路径都会把持久 Checkpoint
    装入 `ExecutionPlan`。需 Kill TM/JM 的恢复测试，证明同 Attempt 恢复且不合并失败分支。
 4. 多个已注册 DAG Node 不是端到端可用能力：`SkillExecutor` 与
-   `SubflowExecutor` 只返回 Stub Marker；`MapExecutor` 未连接已有 Fan-out Runner；
+   `SubGraphExecutor` 只返回 Stub Marker；`MapExecutor` 未连接已有 Fan-out Runner；
    `HumanExecutor` 会持久化 Approval，但 JobManager 不会暂停/恢复 DAG；
    Supervisor Action 仅校验，不会应用 Retry/Redirect/Inject/Abort 图变更。
    对外宣称支持前必须补 Contract Test 与定向 E2E。
@@ -166,8 +166,8 @@ Schema 事实源：
 
 ### P2：收敛与增强
 
-1. Go Entity 仍保留 `AgentFlowID`、`Vars`、Provider Endpoint、MCP URL/Type、
-   `TaskRunInfo` 等内部兼容 Alias。公开 REST/DB 已规范；只能在 MQTT/A2A 兼容测试保护下移除。
+1. Go Entity 仍保留 `AgentGraphName`、`Vars`、Provider Endpoint、MCP URL/Type、
+   `NodeRun` 等内部兼容 Alias。公开 REST/DB 已规范；只能在 MQTT/A2A 兼容测试保护下移除。
 2. Helm `global.mode: all-in-one` 仍标 TODO；Chart 以 Distributed 为主，应实现或移除。
 3. 根 Makefile 尚无 PostgreSQL Integration Test Target。新增根级 Target 前，不得用临时
    `go test` 绕过仓库规则。
@@ -190,7 +190,7 @@ Schema 事实源：
 1. Review/Commit 本次架构与交接文档。
 2. 发布并 Pin AuthGuard Web 固定镜像，在无本地 Cache 的新机器证明 S46。
 3. 端到端强制 ContextSnapshot Revision，并增加 Checkpoint/Workspace/Fencing Kill Test。
-4. 完成 Human/Map/Subflow/Skill/Supervisor Runtime 语义与定向测试。
+4. 完成 Human/Map/SubGraph/Skill/Supervisor Runtime 语义与定向测试。
 5. 接入 `orh_effect_execution`，随后实现 AgentVault Adapter 与真实支付 E2E。
 6. 实现生产 Embedding Ingestion/Reindex。
 7. 实现 Gemini，或在 Runtime 可用前禁止创建 Gemini Provider。
@@ -242,7 +242,7 @@ CLI/UI 验收见
 |---|---|
 | REST Route | `pkg/api/pkg/server.go`、Handler、OpenAPI Test |
 | 持久模型 | Bootstrap DDL、`pkg/model/pkg/entities`、`pkg/storage` |
-| Run Snapshot | `pkg/storage/pkg/flowrun/flowrun_{postgres,sqlite}.go` |
+| Run Snapshot | `pkg/storage/pkg/graphrun/graphrun_{postgres,sqlite}.go` |
 | Knowledge/Vector/Publish | `pkg/storage/pkg/knowledge`、Knowledge Handler |
 | Summarizer | `pkg/core/pkg/engine/jobmanager/jobmaster.go` |
 | Retry/Checkpoint | JobManager、ResourceManager、TaskManager、`orh_node_*` Storage |

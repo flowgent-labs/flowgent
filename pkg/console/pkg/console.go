@@ -12,15 +12,15 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/storage/pkg/agent"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	graph "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 	"github.com/flowgent-labs/flowgent/storage/pkg/llmprovider"
 	"github.com/flowgent-labs/flowgent/storage/pkg/mcp"
 	"github.com/flowgent-labs/flowgent/storage/pkg/notifier"
 )
 
 // FlowgentConsole is the unified resource management class for import/export
-// and CRUD of all Flowgent resource kinds (agents, flows, MCPs, LLM providers,
+// and CRUD of all Flowgent resource kinds (agents, graphs, MCPs, LLM providers,
 // channels, skills, and runs). Wallet keys are owned by the external Wallet
 // service and are managed with walletd, outside the Flowgent process.
 type FlowgentConsole struct {
@@ -34,8 +34,8 @@ type FlowgentConsole struct {
 // lazyStores holds lazily-initialized per-entity stores.
 type lazyStores struct {
 	agents   agent.IAgentInfoStore
-	flows    flow.IFlowInfoStore
-	runs     flowrun.IFlowRunStore
+	graphs   graph.IAgentGraphStore
+	runs     graphrun.IGraphRunStore
 	channels notifier.INotifierStore
 	llm      llmprovider.ILlmProviderStore
 	mcps     mcp.IMCPStore
@@ -99,15 +99,15 @@ func (fc *FlowgentConsole) getStores() *lazyStores {
 	switch db := fc.store.DB().(type) {
 	case *pgxpool.Pool:
 		ls.agents = agent.NewAgentPostgresStore(db)
-		ls.flows = flow.NewFlowPostgresStore(db)
-		ls.runs = flowrun.NewFlowRunPostgresStore(db)
+		ls.graphs = graph.NewAgentGraphPostgresStore(db)
+		ls.runs = graphrun.NewGraphRunPostgresStore(db)
 		ls.channels = notifier.NewNotifierPostgresStore(db)
 		ls.llm = llmprovider.NewLlmProviderPostgresStore(db)
 		ls.mcps = mcp.NewMCPPostgresStore(db)
 	case *sql.DB:
 		ls.agents = agent.NewAgentSQLiteStore(db)
-		ls.flows = flow.NewFlowSQLiteStore(db)
-		ls.runs = flowrun.NewFlowRunSQLiteStore(db)
+		ls.graphs = graph.NewAgentGraphSQLiteStore(db)
+		ls.runs = graphrun.NewGraphRunSQLiteStore(db)
 		ls.channels = notifier.NewNotifierSQLiteStore(db)
 		ls.llm = llmprovider.NewLlmProviderSQLiteStore(db)
 		ls.mcps = mcp.NewMCPSQLiteStore(db)

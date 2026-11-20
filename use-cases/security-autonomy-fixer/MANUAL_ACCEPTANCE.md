@@ -96,13 +96,13 @@ AuthGuard SecurityPolicy must be accepted with resolved references.
 curl -sS -o /dev/null -w 'public dashboard: %{http_code}\n' \
   https://flowgent.wl4g.com/dashboard
 curl -sS -o /dev/null -w 'public anonymous API: %{http_code}\n' \
-  https://flowgent.wl4g.com/api/v1/security-fixer/flows
+  https://flowgent.wl4g.com/api/v1/security-fixer/agent-graphs
 
 NODE_IP=$(k get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 curl -sS -o /dev/null -w 'NodePort dashboard: %{http_code}\n' \
   "http://${NODE_IP}:31080/dashboard"
 curl -sS -o /dev/null -w 'NodePort anonymous API: %{http_code}\n' \
-  "http://${NODE_IP}:31080/api/v1/security-fixer/flows"
+  "http://${NODE_IP}:31080/api/v1/security-fixer/agent-graphs"
 
 curl -sS https://flowgent.wl4g.com/.well-known/authn.json |
   jq '{application, standalone}'
@@ -144,7 +144,7 @@ Use the left navigation and complete these checks:
 4. Click **Focus this attempt in trace** — Tracking must open with the exact
    `node_run_id` attempt selected, scrolled into view, and highlighted in the
    waterfall/span detail.
-5. **Flows** — open the visual DAG editor, inspect its embedded recent-runs list,
+5. **AgentGraphs** — open the visual DAG editor, inspect its embedded recent-runs list,
    save a harmless description change, and verify the revision increments.
 6. **Agents** — inspect soul, instruction, input/output schemas, and immutable
    revision history. A save must create a new revision.
@@ -177,7 +177,7 @@ k exec -n e2e-flowgent-storage-system pgvector-0 -- \
 k exec -n e2e-flowgent-storage-system pgvector-0 -- \
   psql -U test -d flowgent -P pager=off -c \
   "SET search_path TO e2e_flowgent;
-   SELECT status, count(*) FROM orh_run GROUP BY status ORDER BY status;"
+   SELECT status, count(*) FROM orh_graph_run GROUP BY status ORDER BY status;"
 
 k port-forward -n e2e-flowgent-system service/flowgent-jaeger 16688:16686
 # In another terminal: open http://127.0.0.1:16688
@@ -200,7 +200,7 @@ The current matrix has 25 groups (`runner.py --list`). All enabled groups must
 pass before claiming complete acceptance. Historical `23/23` is not current
 evidence; [known runtime gaps](../../docs/development/e2e-runtime-gaps.md) remain
 explicit failures. Important evidence includes the UI
-Flow/Run/Trace report (`41`), AuthGuard/login report (`46`), Jaeger coverage
+AgentGraph/Run/Trace report (`41`), AuthGuard/login report (`46`), Jaeger coverage
 report (`13`), and Controller/JM/TM/Sandbox lifecycle report (`23`).
 
 ## 8. Cleanup and post-cleanup audit

@@ -7,13 +7,13 @@ Controller owns independent Sandbox pools. JM MUST NOT scale or delete a
 referenced pool when a Run ends. Sandbox management below describes the
 current implementation, superseded by the pending [fixed-pool design](sandbox.md).
 
-JobManager is the per-run DAG orchestrator. It reads flow/run state through the
+JobManager is the per-run DAG orchestrator. It reads graph/run state through the
 API Server, turns runnable DAG nodes into `ExecutionPlan` messages, consumes
 state-only execution results, and owns TaskManager and Sandbox capacity through
 a pluggable ResourceManager. It never connects to the database directly.
 
 The canonical public and persistence term for one node attempt is **NodeRun**.
-`TaskRunInfo`, `SaveTask`, and `task_id` remain internal Go/wire compatibility
+`NodeRun`, `SaveNodeRun`, and `node_run_id` remain internal Go/wire compatibility
 names; new REST routes and durable models MUST use NodeRun terminology.
 
 ```text
@@ -26,10 +26,10 @@ API Server REST ──► JobManager / JobMaster
 
 ## DAG Orchestration
 
-The JM is the singleton control plane for one active Flow. It polls
+The JM is the singleton control plane for one active AgentGraph. It polls
 the apiserver REST API (`FlowgentClient.ListRuns`) for PENDING runs (with namespace
-filtering), parses the `AgentFlowSpec` JSON, and spawns a **JobMaster** per run.
-Each JobMaster builds a DAG from `AgentFlowSpec.Nodes` + `Edges`, persists execution
+filtering), parses the `AgentGraphSpec` JSON, and spawns a **JobMaster** per run.
+Each JobMaster builds a DAG from `AgentGraphSpec.Nodes` + `Edges`, persists execution
 state via the apiserver REST API, and executes nodes in topological order via the
 ResourceManager.
 
@@ -41,7 +41,7 @@ state between runs.
 
 ```
 Execute(run, spec):
-  // Step 1: Build DAG from AgentFlowSpec JSON
+  // Step 1: Build DAG from AgentGraphSpec JSON
   buildExecutionGraph(spec, runID)
     → For each node: create ExecutionPlan in memory (planMap)
     → One ExecutionPlan per DAG node
@@ -89,13 +89,13 @@ time precedes its start time.
 
 Session deployments start `jobmanager start` and poll only session runs in the
 configured runtime namespace. Application deployments start
-`jobmanager start --flow-id <id> --run-id <runId>` and poll only that FlowRun.
-Before scheduling, the JobManager uses the FlowRun's immutable runtime mode and
-its configured `runtime_cluster_id`; a later Flow edit cannot move an active run.
+`jobmanager start --agent-graph-name <id> --graph-run-id <runId>` and poll only that GraphRun.
+Before scheduling, the JobManager uses the GraphRun's immutable runtime mode and
+its configured `runtime_cluster_id`; a later AgentGraph edit cannot move an active run.
 
 ### DAG Dependency Coordination — Iteration Loop + Blocking Schedule
 
-The JM is the **sole dependency controller** for a flow run. It does not just
+The JM is the **sole dependency controller** for a graph run. It does not just
 fire off ExecutionPlans and hope they execute in order — it actively enforces
 the DAG's topological constraints through a **two-level loop pattern**: an outer
 iteration loop that repeatedly discovers newly-ready nodes, and an inner per-node
@@ -105,7 +105,7 @@ dispatching the next.
 Here, an **iteration** is a scheduler readiness pass. It does not reset node
 state: once a node is completed or skipped, a back-edge cannot make it execute
 again in the same run. See the
-[AgentFlow loop limitation](../agent-flow.md#flexibility-and-current-limits).
+[AgentGraph loop limitation](../agent-graph.md#flexibility-and-current-limits).
 
 #### Execution Loop (Pseudocode)
 
@@ -124,10 +124,10 @@ Execute(run, spec):
     for each nodeID in ready:
       plan := buildPlan(nodeID, resolvedInputs)
       result := scheduleNodeWithRetry(plan)
-        state.SaveTask(attempt)      // one durable row per attempt
+        state.SaveNodeRun(attempt)      // one durable row per attempt
         rm.Schedule(plan)            // ← BLOCKING: waits for TM result
       if result.Error != "":
-        Fail(nodeID)                 // child nodes stay blocked → flow fails
+        Fail(nodeID)                 // child nodes stay blocked → graph fails
         continue
 
       nodeOutputs[nodeID] = result.Output
@@ -156,7 +156,7 @@ no node retry policy, a node executes exactly once. With a policy, it executes
 at most `retry.max + 1` attempts using context-cancellable exponential backoff.
 
 Each attempt has a distinct bounded task ID, a one-based `sequence`, a zero-based
-`retry_count`, and `parent_task_run_id` pointing to the prior failed attempt.
+`retry_count`, and `parent_node_run_id` pointing to the prior failed attempt.
 The resolved input, exact output/error and timestamps are persisted for every
 attempt through API Server REST. The ExecutionPlan carries the parent attempt ID
 to TaskManager so the retry chain remains intact even if JobManager fails after
@@ -193,7 +193,7 @@ branch and all of its single-path descendants are skipped. A dormant conditional
 feedback edge does not block an already-active initial path, but it cannot make
 a node ready by itself. This is scheduling compatibility only: a completed DAG
 node is never re-executed, so conditional back-edges do not implement iteration;
-iterative workflows require an explicit future loop/subflow contract.
+iterative workflows require an explicit future loop/subgraph contract.
 
 #### K8s Mode: Subscribe-Before-Publish + Per-Node Channel Routing
 
@@ -206,11 +206,11 @@ K8sRM.Schedule(plan):
 
   2. SUBSCRIBE to exec/results (once per run):
      if s.runResults[runID] == nil:
-       q.Subscribe("exec/results/{namespace}/{flow}/{run}", callback)
-     s.runResults[runID][plan.NodeID] = resultCh
+       q.Subscribe("exec/results/{namespace}/{graph}/{run}", callback)
+     s.runResults[runID][plan.NodeInstanceID] = resultCh
      // ^^ channel registered BEFORE publish — no race
 
-  3. PUBLISH plan to exec/plans/{namespace}/{cluster}/{flow}/{run}
+  3. PUBLISH plan to exec/plans/{namespace}/{cluster}/{graph}/{run}
      → TM pods consume via $share/tm-{namespace}-{cluster}
 
   4. BLOCK on resultCh (with planTimeout):
@@ -218,12 +218,12 @@ K8sRM.Schedule(plan):
        case <-ctx.Done():  → timeout, return error
        case er := <-resultCh:
          if er.State == "FAILED" → return error
-         return TaskResult{Output: {plan_id, node_id, state}}
+         return NodeResult{Output: {plan_id, node_instance_id, state}}
      }
 ```
 
 The callback routes incoming `exec/results` messages to the correct node's
-channel by matching `er.NodeID` against registered channels, then deletes
+channel by matching `er.NodeInstanceID` against registered channels, then deletes
 the channel entry (cleanup). The `runResults` map is keyed by `(runID,
 nodeID)` — each node gets its own dedicated channel. This means even though
 nodes are dispatched sequentially, the routing infrastructure supports
@@ -241,7 +241,7 @@ Ready() → [A]
   │                   Publish exec/plans ────►  ──────────────►  Dequeue ($share)
   │                                                                Execute via Router
   │                   ◄── Publish exec/results ──  ◄────────────  Save task via REST
-  │                   Route er.NodeID → chan[A]                    Report state back
+  │                   Route er.NodeInstanceID → chan[A]                    Report state back
   │                   delete chan[A]
   ◄── result ────────
   Done(A)
@@ -257,9 +257,9 @@ Ready() → [B]          // B was blocked on A, now ready
 | **Root nodes (no deps)** | `Ready()` returns them immediately — first iteration |
 | **Parallel siblings** | All siblings become `Ready()` in the same iteration after their shared parent is `Done()`. Dispatched sequentially but each blocks independently. |
 | **Condition node → nonmatching branch** | `Ready()` propagates inactive edges to `SKIPPED` at a fixed point; merge nodes still run when another inbound edge is active. |
-| **Node fails** | `Fail(node)` — children stay blocked (never become ready). `HasFailed()` → flow terminates. |
+| **Node fails** | `Fail(node)` — children stay blocked (never become ready). `HasFailed()` → graph terminates. |
 | **Deadlock** (Ready=∅, !IsComplete, !HasFailed) | Some nodes have permanently unsatisfied deps (e.g. a dependency was never created). Loop breaks, returns nil — nodes left in PENDING. |
-| **TM timeout** | `planTimeout` (default 5 min) — `Schedule()` returns error, node is marked failed, flow terminates. |
+| **TM timeout** | `planTimeout` (default 5 min) — `Schedule()` returns error, node is marked failed, graph terminates. |
 | **TM crash mid-execution** | JM heartbeat monitor detects dead TM after 30s. Orphaned plans are re-dispatched (failover). |
 
 ---
@@ -276,7 +276,7 @@ auto-scaling replicas to meet demand.
 type ResourceManager interface {
     Provider() engine.Provider
     Validate(ctx) error
-    Schedule(ctx, plan) (*TaskResult, error)
+    Schedule(ctx, plan) (*NodeResult, error)
     Shutdown(ctx) error
 }
 ```
@@ -301,7 +301,7 @@ ordering avoids the race where the TM responds before the JM is listening.
 
 The per-run result routing map (`runResults map[string]map[string]chan execResult`)
 routes incoming `exec/results` messages to the correct node's channel by matching
-`er.NodeID`. When a result arrives, the channel entry is deleted (cleanup). Each
+`er.NodeInstanceID`. When a result arrives, the channel entry is deleted (cleanup). Each
 `Schedule()` call creates its own channel and waits on it independently — this
 means the JM dispatches sibling nodes **sequentially** (one completes before the
 next is dispatched), not concurrently. See
@@ -319,14 +319,14 @@ any application-mode pod-size override. Each pod's shared subscription is scoped
 to namespace/cluster.
 
 A `scalingLoop` reconciles observed replicas and readiness. Runtime-cluster id
-is the hard isolation boundary; a FlowRun cannot silently burst into another
+is the hard isolation boundary; a GraphRun cannot silently burst into another
 cluster.
 
 ---
 
 ## Expected Behavior
 
-1. **Given** a flow run, **when** JobMaster builds its graph, **then** every
+1. **Given** a graph run, **when** JobMaster builds its graph, **then** every
    configured node MUST map to one stable ExecutionPlan identity for that run.
 2. **Given** unsatisfied dependencies, **when** readiness is evaluated, **then**
    the dependent node MUST remain pending; root and fully satisfied nodes alone

@@ -1,6 +1,6 @@
 # Sandbox 固定池
 
-[系统总览](../overview_ZH.md) · [Controller](controller_ZH.md) · [TaskManager](taskmanager_ZH.md) · [AgentFlow](../agent-flow_ZH.md)
+[系统总览](../overview_ZH.md) · [Controller](controller_ZH.md) · [TaskManager](taskmanager_ZH.md) · [AgentGraph](../agent-graph_ZH.md)
 
 **状态：2026-11-14 已确认固定池架构；运行时代码尚未迁移。**
 下列字段、接口和 Topic 是目标契约，不是已经可用的 API 或可导入配置。
@@ -10,7 +10,7 @@
 
 - UI 管理具名 Sandbox 记录，包含 CPU/内存和入站/出站网络规则。
 - Controller 将每个启用的 Sandbox 协调为持久存在的服务 Worker 池。
-- 每个 AgentFlow 显式引用 `sandbox_id`；多个获授权 Flow 可以共用一个池。
+- 每个 AgentGraph 显式引用 `sandbox_id`；多个获授权 AgentGraph 可以共用一个池。
   application/session 仍决定 JM/TM 拓扑，不决定也不拥有 Sandbox 池。
 - TM 只向该 Sandbox 的 Topic 发送脚本任务；Worker 只订阅其配置的
   namespace 与 Sandbox ID。Run 结束不删除池。
@@ -19,7 +19,7 @@
 
 ## 资源与持久化契约
 
-Sandbox 是独立的 Namespace 资源，不是 Flow 内联的部署配置。建议物理表名
+Sandbox 是独立的 Namespace 资源，不是 AgentGraph 内联的部署配置。建议物理表名
 `orh_sandbox`，与现有 `orh_*` 引擎表一致。PostgreSQL/SQLite Store **MUST**
 提供相同契约。只有 API Server 访问表；Controller/Worker 使用 workload REST API。
 
@@ -40,10 +40,10 @@ Sandbox 是独立的 Namespace 资源，不是 Flow 内联的部署配置。建�
 
 建议管理资源为 `/api/v1/{namespace}/sandboxes`，支持列表/创建，再按稳定 ID
 查询/更新/删除。UI 展示期望/就绪副本、活动/可用 Slot、策略就绪和协调错误。
-管理及 Flow 绑定 **MUST** 使用 AuthGuard Action 和 Namespace/Resource SQL Scope。
+管理及 AgentGraph 绑定 **MUST** 使用 AuthGuard Action 和 Namespace/Resource SQL Scope。
 Controller 回写观察状态，UI 不能通过编辑状态把池声明为 Ready。
 
-建议 Flow 片段（当前严格解码器尚不接受）：
+建议 AgentGraph 片段（当前严格解码器尚不接受）：
 
 ```yaml
 sandbox_id: 9b91d028-7f3e-4a38-89e4-0b1aa42764ee
@@ -53,8 +53,8 @@ resources:
   taskmanager: {cpu: "1", memory: "1Gi"}
 ```
 
-API 在保存和启动 Flow 时校验引用与授权。Sandbox ID **MUST** 经 Run/
-ExecutionPlan 传到 TM；Worker **MUST** 与权威 Run 绑定核对。之后修改 Flow
+API 在保存和启动 AgentGraph 时校验引用与授权。Sandbox ID **MUST** 经 Run/
+ExecutionPlan 传到 TM；Worker **MUST** 与权威 Run 绑定核对。之后修改 AgentGraph
 **MUST NOT** 静默重定向已创建 Run。该身份绑定不定义 checkpoint/barrier/
 safepoint 或恢复语义。
 
@@ -62,8 +62,8 @@ safepoint 或恢复语义。
 
 ```mermaid
 flowchart LR
-    UI[UI: Sandbox 与 Flow 绑定] --> API[API Server]
-    API --> DB[(Sandbox 记录 / Flow 绑定)]
+    UI[UI: Sandbox 与 AgentGraph 绑定] --> API[API Server]
+    API --> DB[(Sandbox 记录 / AgentGraph 绑定)]
     API -->|资源事件 + REST 协调| C[Controller]
     C -->|副本、CPU/内存、网络规则| P[Sandbox 服务 Worker 池]
     JM[JobManager] -->|ExecutionPlan + sandbox_id| TM[TaskManager]
@@ -77,10 +77,10 @@ flowchart LR
     TM -->|执行结果| JM
 ```
 
-1. UI 经 API Server 保存 Sandbox 与 Flow 引用；持久资源事件触发 Controller，
+1. UI 经 API Server 保存 Sandbox 与 AgentGraph 引用；持久资源事件触发 Controller，
    周期列表协调补偿遗漏事件。
 2. Controller 拥有池 Deployment、运行配置、网络执行规则和 Workspace 挂载。
-   协调归属按 `(namespace_id, sandbox_id)`，独立于 Flow/Run 和 JM 生命周期。
+   协调归属按 `(namespace_id, sandbox_id)`，独立于 AgentGraph/Run 和 JM 生命周期。
 3. Controller 在接纳脚本前建立网络边界。Ready 必须包含 Worker 就绪、策略/
    能力探针生效和 MQTT 订阅成功；仅 Deployment Ready 不够。
 4. JM 正常调度 Node；TM 将脚本/输入写入获授权 Attempt Workspace，先订阅
@@ -110,17 +110,17 @@ flowgent/v1/{namespace_id}/sandbox/trigger/{sandbox_id}
 $share/sandbox-{namespace_id}-{sandbox_id}/flowgent/v1/{namespace_id}/sandbox/trigger/{sandbox_id}
 
 # Worker 发布，原 TM 精确订阅自己的 Attempt：
-flowgent/v1/{namespace_id}/sandbox/result/{sandbox_id}/{run_id}/{node_run_id}
+flowgent/v1/{namespace_id}/sandbox/result/{sandbox_id}/{graph_run_id}/{node_run_id}
 ```
 
-Trigger/Result Envelope **MUST** 携带 `sandbox_id`、`namespace_id`、`flow_id`、
-`run_id`、`node_id`、`node_run_id`、`plan_id`、`attempt`、关联 ID、TraceContext
+Trigger/Result Envelope **MUST** 携带 `sandbox_id`、`namespace_id`、`agent_graph_id`、
+`graph_run_id`、`node_instance_id`、`node_run_id`、`plan_id`、`attempt`、关联 ID、TraceContext
 和 Deadline。NodeRun 表示一次 Attempt，重试 **MUST NOT** 重用结果路径。
 Trigger 引用脚本/输入 Artifact；Result 引用输出 Artifact 并提供退出/错误诊断。
 
 `runtime_cluster_id` 可作为来源/Trace 元数据保留，不再是 Sandbox 消费边界。
 Worker **MUST NOT** 通配订阅所有 Sandbox ID。共享组按池建立，不按副本或
-Flow 建立，否则不同组会各自收到同一任务。Broker ACL 和 Worker 绑定校验
+AgentGraph 建立，否则不同组会各自收到同一任务。Broker ACL 和 Worker 绑定校验
 **MUST** 共同执行边界；Topic 名称本身不是授权。
 
 共享订阅提供负载分摊，不保证脚本 exactly-once。接纳/去重与权威完成
@@ -148,8 +148,8 @@ Flow 建立，否则不同组会各自收到同一任务。Broker ACL 和 Worker
 ## 生命周期与待定事项
 
 池满时在有界 Deadline 内排队或明确失败，**MUST NOT** 换投其他池或更弱后端。
-禁用/缩容先停止新接纳，再排空已接纳 Attempt。有 Flow 引用或已接纳执行时
-**MUST** 阻止删除。Flow/Run GC **MUST NOT** 删除共享 Sandbox 池。
+禁用/缩容先停止新接纳，再排空已接纳 Attempt。有 AgentGraph 引用或已接纳执行时
+**MUST** 阻止删除。AgentGraph/Run GC **MUST NOT** 删除共享 Sandbox 池。
 
 网络/资源更新 **MUST NOT** 让不同策略 Worker 在同一 Topic 竞争任务。实现变更
 前需选定：暂停接纳并排空整池后重配，或创建新 Sandbox ID、只重绑定未来 Run。
@@ -160,10 +160,10 @@ Flow 建立，否则不同组会各自收到同一任务。Broker ACL 和 Worker
 
 | 范围 | 当前代码 | 固定池目标 |
 | --- | --- | --- |
-| 持久化/UI | 全局与 Flow/Node 内联 Sandbox Policy，没有池目录 | Namespace Sandbox 资源与 Flow 选择器 |
+| 持久化/UI | 全局与 AgentGraph/Node 内联 Sandbox Policy，没有池目录 | Namespace Sandbox 资源与 AgentGraph 选择器 |
 | 归属 | JM ResourceManager 按 Runtime Cluster 创建/扩缩 Sandbox | Controller 独立协调 Sandbox；JM 继续管理 TM |
-| Trigger | Namespace + Runtime Cluster + Flow/Run Topic | Namespace + Sandbox-ID Topic |
-| Result | Run 级 Topic，回调直接接收未关联 TaskResult | 精确 NodeRun Attempt 路由与 Envelope 校验 |
+| Trigger | Namespace + Runtime Cluster + AgentGraph/Run Topic | Namespace + Sandbox-ID Topic |
+| Result | Run 级 Topic，回调直接接收未关联 NodeResult | 精确 NodeRun Attempt 路由与 Envelope 校验 |
 | 网络 | 子进程 Re-exec + seccomp Notifier | 固定池统一标准平台网络 |
 | 本地模式 | 本地进程/内嵌执行 | 显式配置的容器池，不静默降级为无限制执行 |
 
@@ -171,7 +171,7 @@ Flow 建立，否则不同组会各自收到同一任务。Broker ACL 和 Worker
 [TM Executor](../../../pkg/core/pkg/engine/executor/sandbox.go)、
 [Worker](../../../pkg/sandbox/pkg/sandboxmanager.go)、
 [Topic](../../../pkg/messager/pkg/messager.go)、
-[Flow Model](../../../pkg/model/pkg/entities/flow.go)。
+[AgentGraph Model](../../../pkg/model/pkg/entities/graph.go)。
 
 实施时须同步迁移 Model/Store/API/UI、Controller、Run/Plan 绑定、Topic Helper、
 Worker 接纳/结果和两种部署后端。旧 `resources.sandbox`、`sandbox_policy` 和

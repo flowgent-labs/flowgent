@@ -104,7 +104,7 @@
 <text x="40" y="96" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Solid: service calls   /   Dashed: resource control   /   Dotted: state or files   /   † Planned integration</text>
 <text x="65" y="187" font-size="25" fill="#b8c4ed" font-weight="650" text-anchor="start">Browser / Application UI</text>
 <text x="88" y="254" font-size="24" fill="#b8c4ed" font-weight="650" text-anchor="start">Flowgent Web Console</text>
-<text x="88" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentFlows / FlowRuns</text>
+<text x="88" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentGraphs / GraphRuns</text>
 <text x="88" y="313" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Agents / MCPs / Skills</text>
 <text x="88" y="341" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Notifications / Sandbox pools†</text>
 <text x="88" y="369" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Resource CRUD / Run control</text>

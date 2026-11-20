@@ -1,6 +1,6 @@
 # TaskManager
 
-[系统总览](../overview_ZH.md) · [AgentFlow 应用层](../agent-flow_ZH.md) · [Sandbox](sandbox_ZH.md)
+[系统总览](../overview_ZH.md) · [AgentGraph 应用层](../agent-graph_ZH.md) · [Sandbox](sandbox_ZH.md)
 
 **Sandbox 目标（2026-11-14）：** TM 按 Run 绑定的 `sandbox_id` 分发，按
 NodeRun Attempt 关联结果，不选择池策略或创建 Worker。[固定池契约](sandbox_ZH.md)
@@ -10,14 +10,14 @@ TaskManager 是执行 Worker。MQTT 共享订阅在 Pod 与 Slot 之间分配 Pl
 Slot 将一个 Plan 路由到对应 Executor，通过 API Server 持久化 Task 状态，并
 把路由/状态结果返回 JobManager。TaskManager 不直接访问数据库。
 
-一个节点 Attempt 的公开 API 与持久层规范名称是 **NodeRun**。`TaskRunInfo`、
-`TaskStateStore` 和 `task_id` 是 Go/Wire 兼容名称，不构成第二套外部资源。
+一个节点 Attempt 的公开 API 与持久层规范名称是 **NodeRun**。`NodeRun`、
+`TaskStateStore` 和 `node_run_id` 是 Go/Wire 兼容名称，不构成第二套外部资源。
 
 ```text
 JobManager ──ExecutionPlan/MQTT──► SlotWorker ──► TaskExecutorRouter
      ▲                                  │                 │
      └──────exec/result/MQTT────────────┘                 ├── LLM / MCP
-                                                         ├── Subflow / Skill（已注册 Stub）
+                                                         ├── SubGraph / Skill（已注册 Stub）
                                                          └── Sandbox via MQTT
 ```
 
@@ -29,7 +29,7 @@ Worker。TaskManager Worker 只订阅自己的 ExecutionPlan topic，并拒绝 n
 每个 TM Pod 运行 N 个
 `SlotWorker` Goroutine（默认 4）。每个 Slot 独立从 MQTT Queue（或 Channel）
 取一个 `ExecutionPlan`，通过 `TaskExecutorRouter` 执行，经 API Server REST
-（`TaskStateStore.SaveTask`）持久化 Task 状态，再通过 MQTT 向 JM 报告结果。
+（`TaskStateStore.SaveNodeRun`）持久化 Task 状态，再通过 MQTT 向 JM 报告结果。
 
 执行关系是：**1 Slot = 1 ExecutionPlan attempt**。JobManager 为每个 DAG Node
 保留一个逻辑 Plan，但在显式 Node retry policy 下可重复分发；每次分发都有独立
@@ -43,7 +43,7 @@ Trace attributes 只含有界的 content type、byte count、SHA-256 与 capture
 ### Executor Router 边界
 
 TaskManager 拥有 `TaskExecutorRouter`，但 Node 语义与组合规则属于 L2。
-规范的 12 Node 矩阵见 [AgentFlow Node 目录](../agent-flow_ZH.md)。
+规范的 12 Node 矩阵见 [AgentGraph Node 目录](../agent-graph_ZH.md)。
 
 ### MCP 传输——仅 HTTP（Streamable HTTP）
 

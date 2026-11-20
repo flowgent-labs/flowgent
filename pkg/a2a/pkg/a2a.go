@@ -1,5 +1,5 @@
 // Package a2a provides the A2A protocol administration server.
-// It exposes AgentFlow CRUD and FlowRun lifecycle control to external
+// It exposes AgentGraph CRUD and GraphRun lifecycle control to external
 // Admin Agent systems via the A2A JSON-RPC protocol.
 package a2a
 
@@ -56,7 +56,7 @@ func NewFlowgentA2AServer(cfg *config.FlowgentConfig) (*FlowgentA2AServer, error
 }
 
 // NewHTTPServer creates the canonical A2A HTTP server used by both standalone
-// and all-in-one modes. Callers own the supplied task store and server lifecycle.
+// and all-in-one modes. Callers own the supplied noderun store and server lifecycle.
 func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) (*http.Server, error) {
 	executor := &adminAgentHandler{apiServerURL: cfg.Runtime.APIServerURL}
 
@@ -64,7 +64,7 @@ func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) (*htt
 
 	card := &a2a.AgentCard{
 		Name:               cfg.ServiceName + "-admin",
-		Description:        "Flowgent Admin Agent — AgentFlow CRUD and FlowRun lifecycle control",
+		Description:        "Flowgent Admin Agent — AgentGraph CRUD and GraphRun lifecycle control",
 		URL:                fmt.Sprintf("http://%s:%d", cfg.A2A.Host, cfg.A2A.Port),
 		Version:            "dev",
 		ProtocolVersion:    string(a2a.Version),
@@ -73,15 +73,15 @@ func NewHTTPServer(cfg *config.FlowgentConfig, taskStore a2asrv.TaskStore) (*htt
 		DefaultInputModes:  []string{"application/json", "text/plain"},
 		DefaultOutputModes: []string{"application/json"},
 		Skills: []a2a.AgentSkill{
-			{ID: "list_flows", Name: "List AgentFlows", Description: "List all agentflow definitions"},
-			{ID: "get_flow", Name: "Get AgentFlow", Description: "Get a single agentflow by ID"},
-			{ID: "create_flow", Name: "Create AgentFlow", Description: "Create a new agentflow definition"},
-			{ID: "update_flow", Name: "Update AgentFlow", Description: "Update an existing agentflow"},
-			{ID: "delete_flow", Name: "Delete AgentFlow", Description: "Delete an agentflow definition"},
-			{ID: "start_run", Name: "Start FlowRun", Description: "Trigger a new flow run"},
-			{ID: "cancel_run", Name: "Cancel FlowRun", Description: "Cancel a running flow"},
-			{ID: "get_run", Name: "Get FlowRun", Description: "Query run status by ID"},
-			{ID: "list_runs", Name: "List FlowRuns", Description: "List recent runs"},
+			{ID: "list_agent_graphs", Name: "List AgentGraphs", Description: "List all agentgraph definitions"},
+			{ID: "get_agent_graph", Name: "Get AgentGraph", Description: "Get a single agentgraph by ID"},
+			{ID: "create_agent_graph", Name: "Create AgentGraph", Description: "Create a new agentgraph definition"},
+			{ID: "update_agent_graph", Name: "Update AgentGraph", Description: "Update an existing agentgraph"},
+			{ID: "delete_agent_graph", Name: "Delete AgentGraph", Description: "Delete an agentgraph definition"},
+			{ID: "start_graph_run", Name: "Start GraphRun", Description: "Trigger a new graph run"},
+			{ID: "cancel_graph_run", Name: "Cancel GraphRun", Description: "Cancel a running graph"},
+			{ID: "get_graph_run", Name: "Get GraphRun", Description: "Query run status by ID"},
+			{ID: "list_graph_runs", Name: "List GraphRuns", Description: "List recent runs"},
 		},
 	}
 
@@ -166,12 +166,12 @@ type adminAgentHandler struct {
 
 // adminRequest is the expected JSON payload from admin agents.
 type adminRequest struct {
-	Action      string             `json:"action"`
-	AgentFlowID string             `json:"agentflow_id,omitempty"`
-	RunID       string             `json:"run_id,omitempty"`
-	Spec        *entities.FlowInfo `json:"spec,omitempty"`
-	Vars        map[string]any     `json:"vars,omitempty"`
-	Namespace   string             `json:"namespace,omitempty"`
+	Action         string               `json:"action"`
+	AgentGraphName string               `json:"agent_graph_name,omitempty"`
+	GraphRunID     string               `json:"graph_run_id,omitempty"`
+	Spec           *entities.AgentGraph `json:"spec,omitempty"`
+	Vars           map[string]any       `json:"vars,omitempty"`
+	Namespace      string               `json:"namespace,omitempty"`
 }
 
 func (h *adminAgentHandler) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, queue eventqueue.Queue) error {
@@ -210,16 +210,16 @@ func (h *adminAgentHandler) Cancel(ctx context.Context, reqCtx *a2asrv.RequestCo
 func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (string, error) {
 	apiClient := client.NewFlowgentClient(h.apiServerURL)
 	switch req.Action {
-	case "list_flows":
-		flows, err := apiClient.ListFlows(ctx, req.Namespace)
+	case "list_agent_graphs":
+		graphs, err := apiClient.ListAgentGraphs(ctx, req.Namespace)
 		if err != nil {
 			return "", err
 		}
-		b, _ := json.Marshal(flows)
+		b, _ := json.Marshal(graphs)
 		return string(b), nil
 
-	case "get_flow":
-		spec, err := apiClient.GetFlow(ctx, req.Namespace, req.AgentFlowID)
+	case "get_agent_graph":
+		spec, err := apiClient.GetAgentGraph(ctx, req.Namespace, req.AgentGraphName)
 		if err != nil {
 			return "", err
 		}
@@ -229,46 +229,46 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		b, _ := json.Marshal(spec)
 		return string(b), nil
 
-	case "create_flow":
+	case "create_agent_graph":
 		if req.Spec == nil {
-			return "", fmt.Errorf("spec is required for create_flow")
+			return "", fmt.Errorf("spec is required for create_agent_graph")
 		}
-		if err := apiClient.CreateFlow(ctx, req.Namespace, req.Spec); err != nil {
+		if err := apiClient.CreateAgentGraph(ctx, req.Namespace, req.Spec); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"status":"created","agentflow_id":"%s"}`, req.Spec.ID), nil
+		return fmt.Sprintf(`{"status":"created","agent_graph_name":"%s"}`, req.Spec.ID), nil
 
-	case "update_flow":
+	case "update_agent_graph":
 		if req.Spec == nil {
-			return "", fmt.Errorf("spec is required for update_flow")
+			return "", fmt.Errorf("spec is required for update_agent_graph")
 		}
-		if err := apiClient.UpdateFlow(ctx, req.Namespace, req.AgentFlowID, req.Spec); err != nil {
+		if err := apiClient.UpdateAgentGraph(ctx, req.Namespace, req.AgentGraphName, req.Spec); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"status":"updated","agentflow_id":"%s"}`, req.AgentFlowID), nil
+		return fmt.Sprintf(`{"status":"updated","agent_graph_name":"%s"}`, req.AgentGraphName), nil
 
-	case "delete_flow":
-		if err := apiClient.DeleteFlow(ctx, req.Namespace, req.AgentFlowID); err != nil {
+	case "delete_agent_graph":
+		if err := apiClient.DeleteAgentGraph(ctx, req.Namespace, req.AgentGraphName); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"status":"deleted","agentflow_id":"%s"}`, req.AgentFlowID), nil
+		return fmt.Sprintf(`{"status":"deleted","agent_graph_name":"%s"}`, req.AgentGraphName), nil
 
-	case "start_run":
+	case "start_graph_run":
 		trigger := entities.TriggerInfo{Type: "a2a", Source: "admin"}
-		run, err := apiClient.TriggerRun(ctx, req.Namespace, req.AgentFlowID, req.Vars, trigger)
+		run, err := apiClient.TriggerRun(ctx, req.Namespace, req.AgentGraphName, req.Vars, trigger)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"status":"triggered","agentflow_id":"%s","run_id":"%s"}`, req.AgentFlowID, run.RunID), nil
+		return fmt.Sprintf(`{"status":"triggered","agent_graph_name":"%s","graph_run_id":"%s"}`, req.AgentGraphName, run.GraphRunID), nil
 
-	case "cancel_run":
-		if err := apiClient.CancelRun(ctx, req.Namespace, req.RunID); err != nil {
+	case "cancel_graph_run":
+		if err := apiClient.CancelGraphRun(ctx, req.Namespace, req.GraphRunID); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"status":"cancelled","run_id":"%s"}`, req.RunID), nil
+		return fmt.Sprintf(`{"status":"cancelled","graph_run_id":"%s"}`, req.GraphRunID), nil
 
-	case "get_run":
-		run, err := apiClient.GetRun(ctx, req.Namespace, req.RunID)
+	case "get_graph_run":
+		run, err := apiClient.GetGraphRun(ctx, req.Namespace, req.GraphRunID)
 		if err != nil {
 			return "", err
 		}
@@ -278,8 +278,8 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		b, _ := json.Marshal(run)
 		return string(b), nil
 
-	case "list_runs":
-		runs, err := apiClient.ListRuns(ctx, req.Namespace, "", "", "", req.AgentFlowID, 1, 50)
+	case "list_graph_runs":
+		runs, err := apiClient.ListGraphRuns(ctx, req.Namespace, "", "", "", req.AgentGraphName, 1, 50)
 		if err != nil {
 			return "", err
 		}
@@ -287,7 +287,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		return string(b), nil
 
 	default:
-		return "", fmt.Errorf("unknown admin action: %q (available: list_flows, get_flow, create_flow, update_flow, delete_flow, start_run, cancel_run, get_run, list_runs)", req.Action)
+		return "", fmt.Errorf("unknown admin action: %q (available: list_agent_graphs, get_agent_graph, create_agent_graph, update_agent_graph, delete_agent_graph, start_graph_run, cancel_graph_run, get_graph_run, list_graph_runs)", req.Action)
 	}
 }
 
@@ -321,11 +321,11 @@ func applyAdminData(req *adminRequest, data map[string]any) {
 	if v, ok := data["action"].(string); ok {
 		req.Action = v
 	}
-	if v, ok := data["agentflow_id"].(string); ok {
-		req.AgentFlowID = v
+	if v, ok := data["agent_graph_name"].(string); ok {
+		req.AgentGraphName = v
 	}
-	if v, ok := data["run_id"].(string); ok {
-		req.RunID = v
+	if v, ok := data["graph_run_id"].(string); ok {
+		req.GraphRunID = v
 	}
 	if v, ok := data["vars"].(map[string]any); ok {
 		req.Vars = v
@@ -335,7 +335,7 @@ func applyAdminData(req *adminRequest, data map[string]any) {
 	}
 	if raw, ok := data["spec"]; ok {
 		b, _ := json.Marshal(raw)
-		var spec entities.FlowInfo
+		var spec entities.AgentGraph
 		if json.Unmarshal(b, &spec) == nil {
 			req.Spec = &spec
 		}

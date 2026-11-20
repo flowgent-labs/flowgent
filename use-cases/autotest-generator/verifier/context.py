@@ -30,25 +30,25 @@ class VerificationContext:
     def execution(self) -> dict:
         from util.postgres import E2EPostgresChecker
 
-        run_id = os.getenv("FLOWGENT_E2E_RUN_ID", "")
-        if not run_id:
+        graph_run_id = os.getenv("FLOWGENT_E2E_RUN_ID", "")
+        if not graph_run_id:
             raise AssertionError(
                 "A real AutoTest Run ID is required; business contracts remain documented in docs/development/e2e-runtime-gaps.md"
             )
         namespace = config.NAMESPACE_ID
-        api = self.request(f"/api/v1/{namespace}/runs/{run_id}").json()
+        api = self.request(f"/api/v1/{namespace}/graph-runs/{graph_run_id}").json()
         with contextlib.closing(
             E2EPostgresChecker.connect(config.postgres_dsn())
         ) as connection:
             rows = E2EPostgresChecker.query(
                 connection,
-                "SELECT f.name,r.status,r.flow_revision_id FROM orh_run r JOIN orh_flow f ON f.id=r.flow_id AND f.namespace_id=r.namespace_id WHERE r.id=%s AND r.namespace_id=%s",
-                (run_id, namespace),
+                "SELECT f.name,r.status,r.agent_graph_revision_id FROM orh_graph_run r JOIN orh_agent_graph f ON f.id=r.agent_graph_id AND f.namespace_id=r.namespace_id WHERE r.id=%s AND r.namespace_id=%s",
+                (graph_run_id, namespace),
             )
             tasks = E2EPostgresChecker.query(
                 connection,
-                "SELECT DISTINCT ON (node_key) node_key,id,status,attempt,execution_id FROM orh_node_run WHERE run_id=%s AND namespace_id=%s ORDER BY node_key,attempt DESC",
-                (run_id, namespace),
+                "SELECT DISTINCT ON (node_instance_id) node_instance_id,id,status,attempt,execution_id FROM orh_node_run WHERE graph_run_id=%s AND namespace_id=%s ORDER BY node_instance_id,attempt DESC",
+                (graph_run_id, namespace),
             )
         if (
             len(rows) != 1
@@ -71,14 +71,14 @@ class VerificationContext:
                 "The supplied AutoTest run has missing or nonterminal node evidence"
             )
         return {
-            "run_id": run_id,
+            "graph_run_id": graph_run_id,
             "namespace": namespace,
-            "flow_id": rows[0][0],
+            "agent_graph_id": rows[0][0],
             "revision": rows[0][2],
             "tasks": [
                 {
-                    "node_id": row[0],
-                    "task_id": row[1],
+                    "node_instance_id": row[0],
+                    "node_run_id": row[1],
                     "attempt": row[3],
                     "execution_id": row[4],
                 }

@@ -67,7 +67,7 @@ func NewAdapter(cfg config.AuthGuardAdapterConfig) (*Adapter, error) {
 }
 
 // Middleware protects a business HTTP surface using the same fail-closed,
-// action-bound SQL-scope flow as AuthGuard's official Go SQLx integration.
+// action-bound SQL-scope graph as AuthGuard's official Go SQLx integration.
 // Development deployments remain open only when the adapter is disabled.
 func (a *Adapter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

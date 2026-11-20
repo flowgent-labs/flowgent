@@ -1,8 +1,8 @@
 # AutoTest Generator
 
-[中文](README_ZH.md) · [AgentFlow architecture](../../docs/architecture/agent-flow.md)
+[中文](README_ZH.md) · [AgentGraph architecture](../../docs/architecture/agent-graph.md)
 
-AutoTest Generator is an L2 AgentFlow application definition for turning a
+AutoTest Generator is an L2 AgentGraph application definition for turning a
 Confluence requirement into structured test plans and generated Cucumber test
 assets, reviewing them, and delivering them through GitHub. It is an early
 application definition: the DAG is present, while several referenced agents,
@@ -27,7 +27,7 @@ autotest-generator/
 
 | Resource | Canonical location | Current role |
 |---|---|---|
-| Flow | [`autotest-generation-v1.yaml`](deploy/flowgent/config/flows/autotest-generation-v1.yaml) | 18-node, 22-edge application DAG |
+| AgentGraph | [`autotest-generation-v1.yaml`](deploy/flowgent/config/agent-graphs/autotest-generation-v1.yaml) | 18-node, 22-edge application DAG |
 | Requirement analyst | [`01-requirement-analyst.yaml`](deploy/flowgent/config/agents/01-requirement-analyst.yaml) | Confluence content to strict requirement JSON |
 | Test planner | [`02-test-planner.yaml`](deploy/flowgent/config/agents/02-test-planner.yaml) | Per-project test plan |
 | Test generator | [`03-test-generator.yaml`](deploy/flowgent/config/agents/03-test-generator.yaml) | Cucumber and step-definition files |
@@ -36,7 +36,7 @@ autotest-generator/
 The YAML manifest is the executable source of truth. This README states both
 its intended pipeline and the gaps that currently prevent a self-contained run.
 
-## Flow Contract
+## AgentGraph Contract
 
 ```mermaid
 flowchart TD
@@ -58,21 +58,21 @@ flowchart TD
     N --> E[end]
 ```
 
-The flow declares a weekday cron trigger and a GitHub pull-request webhook. Its
+The graph declares a weekday cron trigger and a GitHub pull-request webhook. Its
 `generate-tests` map has concurrency `3` over `spring-boot`, `flask`, and
 `react`. The manifest contains 7 tool nodes, 6 agent nodes, and one each of
 `map`, `committee`, `supervisor`, `condition`, and `noop`.
 
-Only the three agent resources listed above currently exist. The flow also
+Only the three agent resources listed above currently exist. The graph also
 references `security-reviewer`, `quality-reviewer`, `arch-reviewer`, and
 `supervisor`. It invokes `confluence` and `github`, but this directory does not
 yet contain importable resource manifests for those two MCP identities.
 
 ## Current Limits
 
-1. The four review/control agent resources referenced by the flow are absent.
+1. The four review/control agent resources referenced by the graph are absent.
 2. Importable Confluence and GitHub MCP resource definitions are absent. The
-   existing MCP Go source directories do not by themselves satisfy the flow's
+   existing MCP Go source directories do not by themselves satisfy the graph's
    resource references.
 3. `${item}` is used by GitHub delivery nodes outside the `generate-tests` map
    child scope. The manifest needs an explicit repository source and map/join
@@ -85,7 +85,7 @@ yet contain importable resource manifests for those two MCP identities.
    documented end-to-end acceptance evidence yet.
 
 Runtime credentials MUST enter through deployment Secrets or environment
-contracts. They MUST NOT be embedded in the flow, agent files, or README.
+contracts. They MUST NOT be embedded in the graph, agent files, or README.
 
 ## Expected Behavior
 

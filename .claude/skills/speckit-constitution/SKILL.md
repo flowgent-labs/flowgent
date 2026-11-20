@@ -60,7 +60,7 @@ You are updating the project constitution at `.specify/memory/constitution.md`. 
 
 **Note**: If `.specify/memory/constitution.md` does not exist yet, it should have been initialized from `.specify/templates/constitution-template.md` during project setup. If it's missing, copy the template first.
 
-Follow this execution flow:
+Follow this execution graph:
 
 1. Load the existing constitution at `.specify/memory/constitution.md`.
    - Identify every placeholder token of the form `[ALL_CAPS_IDENTIFIER]`.

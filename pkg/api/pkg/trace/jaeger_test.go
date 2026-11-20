@@ -20,8 +20,8 @@ func TestJaegerClientQueryRunNormalizesAndFilters(t *testing.T) {
 		if err := json.Unmarshal([]byte(r.URL.Query().Get("tags")), &tags); err != nil {
 			t.Fatalf("decode tags: %v", err)
 		}
-		if tags["run.id"] != "run-1" {
-			t.Fatalf("run tag = %q", tags["run.id"])
+		if tags["graph_run.id"] != "run-1" {
+			t.Fatalf("run tag = %q", tags["graph_run.id"])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -37,7 +37,7 @@ func TestJaegerClientQueryRunNormalizesAndFilters(t *testing.T) {
                   "startTime": 1000000,
                   "duration": 2500,
                   "tags": [
-                    {"key":"run.id","type":"string","value":"run-1"},
+                    {"key":"graph_run.id","type":"string","value":"run-1"},
                     {"key":"otel.status_code","type":"string","value":"OK"}
                   ],
                   "logs": [],
@@ -52,7 +52,7 @@ func TestJaegerClientQueryRunNormalizesAndFilters(t *testing.T) {
                   "startTime": 1000500,
                   "duration": 500,
                   "tags": [
-                    {"key":"flowgent.node_id","type":"string","value":"review"},
+                    {"key":"flowgent.node_instance_id","type":"string","value":"review"},
                     {"key":"error","type":"bool","value":true}
                   ],
                   "logs": [{"timestamp":1000900,"fields":[{"key":"event","type":"string","value":"exception"}]}],
@@ -70,7 +70,7 @@ func TestJaegerClientQueryRunNormalizesAndFilters(t *testing.T) {
               "spans": [{
                 "traceID":"trace-other","spanID":"other","operationName":"jobmaster.execute",
                 "references":[],"startTime":2000000,"duration":1,
-                "tags":[{"key":"run.id","type":"string","value":"run-other"}],
+                "tags":[{"key":"graph_run.id","type":"string","value":"run-other"}],
                 "logs":[],"processID":"p1","warnings":null
               }],
               "processes":{"p1":{"serviceName":"flowgent-jobmanager","tags":[]}}

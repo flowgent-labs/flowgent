@@ -27,7 +27,7 @@ from verifier.context import BaseVerifier, VerificationContext
 
 A2A = config.K8S_A2A_URL.rstrip("/")
 NAMESPACE = config.NAMESPACE_ID
-FLOW_ID = "a2a-e2e-" + uuid.uuid4().hex[:8]
+AGENT_GRAPH_NAME = "a2a-e2e-" + uuid.uuid4().hex[:8]
 SESSION = common_api.FlowgentE2EProject.session()
 
 
@@ -140,24 +140,24 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
         assert state == "completed", (
             f"A2A action {action} task={task.get('id', '<unknown>')} state={state}"
         )
-        task_id = task.get("id")
-        assert task_id, f"A2A action {action} did not return a protocol task id"
+        node_run_id = task.get("id")
+        assert node_run_id, f"A2A action {action} did not return a protocol task id"
 
         persisted = E2ES25A2AProtocolVerifier._rpc(
-            "tasks/get", {"id": task_id, "historyLength": 5}
+            "tasks/get", {"id": node_run_id, "historyLength": 5}
         )
-        assert persisted.get("id") == task_id, (
+        assert persisted.get("id") == node_run_id, (
             "A2A task was not readable from the shared store"
         )
         assert (persisted.get("status") or {}).get("state") == "completed"
         return task, E2ES25A2AProtocolVerifier._result_payload(task)
 
     @staticmethod
-    def _wait_run(run_id: str):
+    def _wait_run(graph_run_id: str):
         deadline = time.time() + 5 * 60
         last = ""
         while time.time() < deadline:
-            _, run = E2ES25A2AProtocolVerifier._action("get_run", run_id=run_id)
+            _, run = E2ES25A2AProtocolVerifier._action("get_graph_run", graph_run_id=graph_run_id)
             last = run.get("status", "")
             if last == "COMPLETED":
                 return
@@ -168,7 +168,7 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_scenario():
-        print("  Scenario 25: standard A2A JSON-RPC + real FlowRun")
+        print("  Scenario 25: standard A2A JSON-RPC + real GraphRun")
 
         SESSION.headers["x-authguard-context"] = (
             E2ES25A2AProtocolVerifier._authguard_context()
@@ -191,13 +191,13 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
             f"  agent card OK: protocol={card['protocolVersion']} skills={len(card['skills'])}"
         )
 
-        _, flows = E2ES25A2AProtocolVerifier._action("list_flows")
-        assert isinstance(flows, list), (
-            f"A2A list_flows returned {type(flows).__name__}, want list"
+        _, graphs = E2ES25A2AProtocolVerifier._action("list_agent_graphs")
+        assert isinstance(graphs, list), (
+            f"A2A list_agent_graphs returned {type(graphs).__name__}, want list"
         )
-        flow_spec = {
-            "id": FLOW_ID,
-            "kind": "flow",
+        graph_spec = {
+            "id": AGENT_GRAPH_NAME,
+            "kind": "graph",
             "description": "Real A2A protocol execution verifier",
             "runtime_mode": "session",
             "nodes": [
@@ -213,31 +213,31 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
         }
         try:
             _, created = E2ES25A2AProtocolVerifier._action(
-                "create_flow", spec=flow_spec
+                "create_graph", spec=graph_spec
             )
-            assert created.get("agentflow_id") == FLOW_ID, created
+            assert created.get("agent_graph_name") == AGENT_GRAPH_NAME, created
 
             _, triggered = E2ES25A2AProtocolVerifier._action(
-                "start_run",
-                agentflow_id=FLOW_ID,
+                "start_graph_run",
+                agent_graph_name=AGENT_GRAPH_NAME,
                 vars={"verification": "security-autonomy-fixer/a2a"},
             )
-            run_id = triggered.get("run_id")
-            assert run_id, f"A2A start_run response omitted run_id: {triggered}"
-            E2ES25A2AProtocolVerifier._wait_run(run_id)
-            print(f"  real A2A FlowRun completed: run_id={run_id}")
+            graph_run_id = triggered.get("graph_run_id")
+            assert graph_run_id, f"A2A start_graph_run response omitted graph_run_id: {triggered}"
+            E2ES25A2AProtocolVerifier._wait_run(graph_run_id)
+            print(f"  real A2A GraphRun completed: graph_run_id={graph_run_id}")
 
             _, runs = E2ES25A2AProtocolVerifier._action(
-                "list_runs", agentflow_id=FLOW_ID
+                "list_graph_runs", agent_graph_name=AGENT_GRAPH_NAME
             )
             items = runs.get("items") if isinstance(runs, dict) else runs
             assert isinstance(items, list), (
-                f"A2A list_runs returned {type(runs).__name__}, want list"
+                f"A2A list_graph_runs returned {type(runs).__name__}, want list"
             )
-            assert any(item.get("id") == run_id for item in (items or [])), runs
+            assert any(item.get("id") == graph_run_id for item in (items or [])), runs
         finally:
             try:
-                E2ES25A2AProtocolVerifier._action("delete_flow", agentflow_id=FLOW_ID)
+                E2ES25A2AProtocolVerifier._action("delete_graph", agent_graph_name=AGENT_GRAPH_NAME)
             except Exception as exc:
                 print(f"  WARN: A2A verifier cleanup failed: {exc}")
 
@@ -251,7 +251,7 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
     def verifier(self, context: VerificationContext) -> VerificationResult:
         return self.execute(
             lambda: self.step(
-                "verify Agent Card, JSON-RPC, and real FlowRun", self._verify_protocol
+                "verify Agent Card, JSON-RPC, and real GraphRun", self._verify_protocol
             )
         )
 

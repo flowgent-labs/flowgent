@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PersistentTaskStore keeps A2A protocol task state in Flowgent's shared
+// PersistentTaskStore keeps A2A protocol a2aTask state in Flowgent's shared
 // database. Tasks are isolated by a one-way digest of the AuthGuard-verified
 // principal identifier.
 type PersistentTaskStore struct {
@@ -29,7 +29,7 @@ type PersistentTaskStore struct {
 }
 
 // NewPersistentTaskStore adapts Flowgent's configured database to the A2A SDK
-// task-store contract. Migrations are owned by the regular store bootstrap.
+// a2aTask-store contract. Migrations are owned by the regular store bootstrap.
 func NewPersistentTaskStore(store storage.IStorage) (*PersistentTaskStore, error) {
 	switch db := store.DB().(type) {
 	case *sql.DB:
@@ -43,25 +43,25 @@ func NewPersistentTaskStore(store storage.IStorage) (*PersistentTaskStore, error
 
 func (s *PersistentTaskStore) Save(
 	ctx context.Context,
-	task *protocol.Task,
+	a2aTask *protocol.Task,
 	_ protocol.Event,
 	_ *protocol.Task,
 	previousVersion protocol.TaskVersion,
 ) (protocol.TaskVersion, error) {
-	if task == nil || task.ID == "" {
-		return protocol.TaskVersionMissing, fmt.Errorf("task id is required: %w", protocol.ErrInvalidParams)
+	if a2aTask == nil || a2aTask.ID == "" {
+		return protocol.TaskVersionMissing, fmt.Errorf("a2aTask id is required: %w", protocol.ErrInvalidParams)
 	}
-	payload, err := json.Marshal(task)
+	payload, err := json.Marshal(a2aTask)
 	if err != nil {
-		return protocol.TaskVersionMissing, fmt.Errorf("marshal task: %w", err)
+		return protocol.TaskVersionMissing, fmt.Errorf("marshal a2aTask: %w", err)
 	}
 	if s.sqlite != nil {
-		return s.saveSQLite(ctx, task, payload, previousVersion)
+		return s.saveSQLite(ctx, a2aTask, payload, previousVersion)
 	}
-	return s.savePostgres(ctx, task, payload, previousVersion)
+	return s.savePostgres(ctx, a2aTask, payload, previousVersion)
 }
 
-func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Task, payload []byte, previousVersion protocol.TaskVersion) (protocol.TaskVersion, error) {
+func (s *PersistentTaskStore) saveSQLite(ctx context.Context, a2aTask *protocol.Task, payload []byte, previousVersion protocol.TaskVersion) (protocol.TaskVersion, error) {
 	tx, err := s.sqlite.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.TaskVersionMissing, err
@@ -70,7 +70,7 @@ func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Tas
 
 	var current int64
 	var owner string
-	err = tx.QueryRowContext(ctx, `SELECT row_version, caller_key FROM orh_a2a_task WHERE id=?`, task.ID).Scan(&current, &owner)
+	err = tx.QueryRowContext(ctx, `SELECT row_version, caller_key FROM orh_a2a_task WHERE id=?`, a2aTask.ID).Scan(&current, &owner)
 	next := int64(1)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	caller := a2aCallerKey(ctx)
@@ -78,7 +78,7 @@ func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Tas
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx, `INSERT INTO orh_a2a_task
 			(id, caller_key, context_id, status, task, row_version, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, 1, ?, ?)`, task.ID, caller, task.ContextID, task.Status.State, string(payload), now, now)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)`, a2aTask.ID, caller, a2aTask.ContextID, a2aTask.Status.State, string(payload), now, now)
 	case err != nil:
 		return protocol.TaskVersionMissing, err
 	default:
@@ -88,7 +88,7 @@ func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Tas
 		next = current + 1
 		_, err = tx.ExecContext(ctx, `UPDATE orh_a2a_task
 			SET context_id=?, status=?, task=?, row_version=?, updated_at=? WHERE id=? AND caller_key=?`,
-			task.ContextID, task.Status.State, string(payload), next, now, task.ID, caller)
+			a2aTask.ContextID, a2aTask.Status.State, string(payload), next, now, a2aTask.ID, caller)
 	}
 	if err != nil {
 		return protocol.TaskVersionMissing, err
@@ -99,7 +99,7 @@ func (s *PersistentTaskStore) saveSQLite(ctx context.Context, task *protocol.Tas
 	return protocol.TaskVersion(next), nil
 }
 
-func (s *PersistentTaskStore) savePostgres(ctx context.Context, task *protocol.Task, payload []byte, previousVersion protocol.TaskVersion) (protocol.TaskVersion, error) {
+func (s *PersistentTaskStore) savePostgres(ctx context.Context, a2aTask *protocol.Task, payload []byte, previousVersion protocol.TaskVersion) (protocol.TaskVersion, error) {
 	tx, err := s.postgres.Begin(ctx)
 	if err != nil {
 		return protocol.TaskVersionMissing, err
@@ -108,14 +108,14 @@ func (s *PersistentTaskStore) savePostgres(ctx context.Context, task *protocol.T
 
 	var current int64
 	var owner string
-	err = tx.QueryRow(ctx, `SELECT row_version, caller_key FROM orh_a2a_task WHERE id=$1 FOR UPDATE`, task.ID).Scan(&current, &owner)
+	err = tx.QueryRow(ctx, `SELECT row_version, caller_key FROM orh_a2a_task WHERE id=$1 FOR UPDATE`, a2aTask.ID).Scan(&current, &owner)
 	next := int64(1)
 	caller := a2aCallerKey(ctx)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		_, err = tx.Exec(ctx, `INSERT INTO orh_a2a_task
 			(id, caller_key, context_id, status, task, row_version) VALUES ($1, $2, $3, $4, $5, 1)`,
-			task.ID, caller, task.ContextID, task.Status.State, payload)
+			a2aTask.ID, caller, a2aTask.ContextID, a2aTask.Status.State, payload)
 	case err != nil:
 		return protocol.TaskVersionMissing, err
 	default:
@@ -125,7 +125,7 @@ func (s *PersistentTaskStore) savePostgres(ctx context.Context, task *protocol.T
 		next = current + 1
 		_, err = tx.Exec(ctx, `UPDATE orh_a2a_task
 			SET context_id=$1, status=$2, task=$3, row_version=$4, updated_at=NOW()
-            WHERE id=$5 AND caller_key=$6`, task.ContextID, task.Status.State, payload, next, task.ID, caller)
+            WHERE id=$5 AND caller_key=$6`, a2aTask.ContextID, a2aTask.Status.State, payload, next, a2aTask.ID, caller)
 	}
 	if err != nil {
 		return protocol.TaskVersionMissing, err
@@ -153,11 +153,11 @@ func (s *PersistentTaskStore) Get(ctx context.Context, taskID protocol.TaskID) (
 	if err != nil {
 		return nil, protocol.TaskVersionMissing, err
 	}
-	var task protocol.Task
-	if err := json.Unmarshal(payload, &task); err != nil {
-		return nil, protocol.TaskVersionMissing, fmt.Errorf("decode stored task: %w", err)
+	var a2aTask protocol.Task
+	if err := json.Unmarshal(payload, &a2aTask); err != nil {
+		return nil, protocol.TaskVersionMissing, fmt.Errorf("decode stored a2aTask: %w", err)
 	}
-	return &task, protocol.TaskVersion(version), nil
+	return &a2aTask, protocol.TaskVersion(version), nil
 }
 
 func (s *PersistentTaskStore) List(ctx context.Context, req *protocol.ListTasksRequest) (*protocol.ListTasksResponse, error) {
@@ -248,11 +248,11 @@ func (s *PersistentTaskStore) listPostgres(ctx context.Context, req *protocol.Li
 		if err := rows.Scan(&payload); err != nil {
 			return nil, err
 		}
-		task, err := decodeListedTask(payload, req)
+		a2aTask, err := decodeListedTask(payload, req)
 		if err != nil {
 			return nil, err
 		}
-		tasks = append(tasks, task)
+		tasks = append(tasks, a2aTask)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -273,11 +273,11 @@ func decodeTaskPage(rows rowScanner, req *protocol.ListTasksRequest, pageSize, o
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		task, err := decodeListedTask([]byte(raw), req)
+		a2aTask, err := decodeListedTask([]byte(raw), req)
 		if err != nil {
 			return nil, err
 		}
-		tasks = append(tasks, task)
+		tasks = append(tasks, a2aTask)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -286,17 +286,17 @@ func decodeTaskPage(rows rowScanner, req *protocol.ListTasksRequest, pageSize, o
 }
 
 func decodeListedTask(payload []byte, req *protocol.ListTasksRequest) (*protocol.Task, error) {
-	var task protocol.Task
-	if err := json.Unmarshal(payload, &task); err != nil {
-		return nil, fmt.Errorf("decode stored task: %w", err)
+	var a2aTask protocol.Task
+	if err := json.Unmarshal(payload, &a2aTask); err != nil {
+		return nil, fmt.Errorf("decode stored a2aTask: %w", err)
 	}
-	if req.HistoryLength > 0 && len(task.History) > req.HistoryLength {
-		task.History = task.History[len(task.History)-req.HistoryLength:]
+	if req.HistoryLength > 0 && len(a2aTask.History) > req.HistoryLength {
+		a2aTask.History = a2aTask.History[len(a2aTask.History)-req.HistoryLength:]
 	}
 	if !req.IncludeArtifacts {
-		task.Artifacts = nil
+		a2aTask.Artifacts = nil
 	}
-	return &task, nil
+	return &a2aTask, nil
 }
 
 func taskPage(tasks []*protocol.Task, pageSize, offset, total int) *protocol.ListTasksResponse {

@@ -73,7 +73,7 @@ class PrometheusRuntime:
                         "source_labels": [
                             "__meta_kubernetes_pod_label_flowgent_io_run"
                         ],
-                        "target_label": "run_id",
+                        "target_label": "graph_run_id",
                     },
                 ],
             }

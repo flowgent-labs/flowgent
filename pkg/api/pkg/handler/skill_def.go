@@ -36,8 +36,8 @@ var (
 )
 
 // SkillHandler manages reusable prompt/tool definitions and their local
-// workspace inputs. Executable kind=skill Flow definitions intentionally stay
-// on the existing FlowDefHandler routes.
+// workspace inputs. Executable kind=skill AgentGraph definitions intentionally stay
+// on the existing AgentGraphHandler routes.
 type SkillHandler struct {
 	store     skill.ISkillStore
 	workspace string

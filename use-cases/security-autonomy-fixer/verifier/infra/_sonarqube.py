@@ -429,7 +429,7 @@ class SonarQubeRuntime:
 
 
 class SonarQubeDeployer(BaseDeployer):
-    """Own the SonarQube fixture consumed by the security-fixer flow."""
+    """Own the SonarQube fixture consumed by the security-fixer graph."""
 
     component = "sonarqube"
 

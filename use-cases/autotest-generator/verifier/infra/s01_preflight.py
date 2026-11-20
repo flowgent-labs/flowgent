@@ -45,9 +45,9 @@ class E2ES01PreflightVerifier(BaseVerifier):
             for doc in resources
         }
         problems = []
-        flows = [doc.get("data", doc) for doc in resources if doc.get("kind") == "Flow"]
-        if not flows:
-            return ["No Flow manifest is defined"]
+        graphs = [doc.get("data", doc) for doc in resources if doc.get("kind") == "AgentGraph"]
+        if not graphs:
+            return ["No AgentGraph manifest is defined"]
 
         def check(node, in_map=False):
             identifier = node.get("id", "<missing>")
@@ -65,7 +65,7 @@ class E2ES01PreflightVerifier(BaseVerifier):
                 problems.append(
                     f"{identifier}: item reference escapes its map child scope"
                 )
-            if node.get("kind") in {"map", "agentflow", "skill"}:
+            if node.get("kind") in {"map", "subgraph", "skill"}:
                 problems.append(
                     f"{identifier}: {node['kind']} execution is not implemented by the documented runtime"
                 )
@@ -79,15 +79,15 @@ class E2ES01PreflightVerifier(BaseVerifier):
             if isinstance(child, dict):
                 check(child, True)
 
-        for flow in flows:
-            nodes = flow.get("nodes", [])
+        for graph in graphs:
+            nodes = graph.get("nodes", [])
             names = [node.get("id") for node in nodes]
             if not nodes or None in names or len(names) != len(set(names)):
-                problems.append("Flow has missing or duplicate node IDs")
+                problems.append("AgentGraph has missing or duplicate node IDs")
             incoming = {name: set() for name in names}
-            for edge in flow.get("edges", []):
+            for edge in graph.get("edges", []):
                 if edge.get("from") not in incoming or edge.get("to") not in incoming:
-                    problems.append("Flow has an edge referencing a missing node")
+                    problems.append("AgentGraph has an edge referencing a missing node")
                 else:
                     incoming[edge["to"]].add(edge["from"])
             processed = set()
@@ -102,7 +102,7 @@ class E2ES01PreflightVerifier(BaseVerifier):
                 processed.update(ready)
             if len(processed) != len(incoming):
                 problems.append(
-                    "Flow has a feedback cycle; repeated-node execution is not implemented"
+                    "AgentGraph has a feedback cycle; repeated-node execution is not implemented"
                 )
             for node in nodes:
                 check(node)

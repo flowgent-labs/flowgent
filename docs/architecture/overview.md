@@ -5,15 +5,15 @@
 **Status:** application/session runtime clusters implemented; Sandbox fixed-pool
 design approved on 2026-11-14, runtime migration pending.
 
-**Sandbox boundary update:** Controller will own pools by `sandbox_id`, Flows
+**Sandbox boundary update:** Controller will own pools by `sandbox_id`, AgentGraphs
 will reference those pools, and JM retains TM ownership. Sandbox management,
 cluster topics and per-script seccomp below describe the current legacy
 implementation, not the new target. The [Sandbox pool contract](engine/sandbox.md)
 owns the pending migration.
 
-Flowgent is a distributed, multi-namespace AgentFlow engine. This overview is the
+Flowgent is a distributed, multi-namespace AgentGraph engine. This overview is the
 cross-component contract: it explains how the physical services call one
-another, where durable state lives, how work crosses MQTT, and how a flow moves
+another, where durable state lives, how work crosses MQTT, and how a graph moves
 from trigger to completion. Component internals and L2 DAG semantics live in
 their owning documents.
 
@@ -29,7 +29,7 @@ expanded at the bottom of each diagram.
 ![Flowgent physical call architecture](assets/flowgent—physical-architecture.svg)
 
 Envoy Gateway routes all protected resource, A2A, generated MCP, and AgentVault
-APIs. AuthGuard makes access decisions. The UI manages AgentFlows, FlowRuns,
+APIs. AuthGuard makes access decisions. The UI manages AgentGraphs, GraphRuns,
 Agents, MCPs, Skills and Notifications. Flowgent workers use REST for business
 state and MQTT for dispatch; Controller owns JM lifecycle and JM owns TM capacity.
 
@@ -63,14 +63,14 @@ SDK contract.
 | Security | [AuthGuard integration](authguard-integration.md) | Gateway trust boundary, adapters SDK, and repository SQL scope |
 | Data | [Durable data lifecycle](data-lifecycle.md) | Identity/revision, snapshot, Knowledge/vector, execution-memory, and approval contracts |
 | L1 Engine | [API Server](engine/apiserver.md) | External REST/A2A gateway and canonical business-state client |
-| L1 Engine | [Controller](engine/controller.md) | Flow discovery and active-run JobManager lifecycle |
+| L1 Engine | [Controller](engine/controller.md) | AgentGraph discovery and active-run JobManager lifecycle |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters.md) | Application/session runtime lifecycle and isolation |
 | L1 Engine | [JobManager](engine/jobmanager.md) | Per-run DAG readiness, plan creation, and runtime capacity |
 | L1 Engine | [TaskManager](engine/taskmanager.md) | Slot workers and executor routing |
 | L1 Engine | [Sandbox](engine/sandbox.md) | Isolated script execution and shared workspace |
 | L1 Engine | [Notifier](engine/notifier.md) | Multi-channel delivery and WebSocket UI push |
 | L1 Engine | [AgentVault and x402](engine/wallet.md) | External custody boundary and legacy x402 client migration status |
-| L2 AgentFlow | [AgentFlow application architecture](agent-flow.md) | DAG configuration, node semantics, limits, and best practices |
+| L2 AgentGraph | [AgentGraph application architecture](agent-graph.md) | DAG configuration, node semantics, limits, and best practices |
 
 ## Cross-Component Call Contract
 
@@ -78,13 +78,13 @@ SDK contract.
 flowchart LR
     Client[UI / REST / A2A / Webhook] --> API[API Server]
     API --> DB[(PostgreSQL / SQLite)]
-    API -->|flow lifecycle| MQ[(MQTT)]
+    API -->|graph lifecycle| MQ[(MQTT)]
 
-    API -->|flow/run REST| CTRL[Controller]
+    API -->|graph/run REST| CTRL[Controller]
     MQ -->|lifecycle events| CTRL
     CTRL -->|create / delete| JM[JobManager]
 
-    API -->|run + flow REST| JM
+    API -->|run + graph REST| JM
     JM -->|ExecutionPlan| MQ
     MQ --> TM[TaskManager]
     TM -->|task state REST| API
@@ -107,7 +107,7 @@ flowchart LR
 
 | Contract | Use | Prohibited shortcut |
 |---|---|---|
-| API Server REST | Durable Flow, Run, NodeRun, approval, and resource state | Execution components must not connect to business tables |
+| API Server REST | Durable AgentGraph, Run, NodeRun, approval, and resource state | Execution components must not connect to business tables |
 | Flowgent MQTT | Lifecycle events, execution plans/results, sandbox work, and notifications | Do not use WebSocket/SSE for internal engine coordination |
 | Wallet protocol | Bounded digest signing over independent MQTT topics or a Unix socket | Private keys and Wallet server configuration MUST NOT enter Flowgent |
 | Shared workspace | Large scripts, repositories, and sandbox result files | Do not move large artifacts through task-state JSON |
@@ -126,7 +126,7 @@ This aligns with Kubernetes' single-etcd-access pattern and Flink's Akka-based T
 
 ```
 ═══════════════════════════════════════════════════════════════════════════════════
-PHASE 1 — Flow Design & Trigger (Sync)
+PHASE 1 — AgentGraph Design & Trigger (Sync)
 ═══════════════════════════════════════════════════════════════════════════════════
 
   UI / REST / A2A / Webhook          Notifier (WS push to UI only)
@@ -135,10 +135,10 @@ PHASE 1 — Flow Design & Trigger (Sync)
   ┌──────────────────────────────────────────┼──────────────────────────┐
   │                           API Server                               │
   │                                                                    │
-  │  • Flow/Agent CRUD → PG (business-state gateway)   port 9999       │
+  │  • AgentGraph/Agent CRUD → PG (business-state gateway)   port 9999       │
   │  • Trigger → CREATE PENDING run                    port 9992 (A2A) │
-  │  • Flow lifecycle → MQTT events (create/update/delete)             │
-  │  • Flow cache + hot-reload (static YAML dir)                       │
+  │  • AgentGraph lifecycle → MQTT events (create/update/delete)             │
+  │  • AgentGraph cache + hot-reload (static YAML dir)                       │
   │  • State reads/writes via REST handlers                            │
   └──────────┬─────────────────────────────────┬───────────────────────┘
              │                                 │
@@ -153,10 +153,10 @@ PHASE 2 — Scheduling (Async)                      │
 ═══════════════════════════════════════════════════╪═══════════════════════
                                                    │
   Controller                                       │
-  • FlowgentClient.ListFlows (apiserver REST)      │
+  • FlowgentClient.ListAgentGraphs (apiserver REST)      │
   • MQTT: subscribe lifecycle events               │
-  • hash(flow_id) % N → N-way sharded              │
-  • MQTT: ctrl.jm.create/{namespace}/{flow} ──────────┤  → dedicated JM
+  • hash(agent_graph_id) % N → N-way sharded              │
+  • MQTT: ctrl.jm.create/{namespace}/{graph} ──────────┤  → dedicated JM
                                                    │
 ═══════════════════════════════════════════════════╪═══════════════════════
 PHASE 3 — Execution (Async)                       │
@@ -167,7 +167,7 @@ PHASE 3 — Execution (Async)                       │
   • Build DAG → ExecutionPlans                     │
   • MQTT: .../exec/plans ──────────────────────────┤  → dispatch to TM
   • MQTT: .../exec/results ← consume ──────────────┤  ← TM results
-  • State: UpdateRun/SaveTask via apiserver REST   │
+  • State: UpdateRun/SaveNodeRun via apiserver REST   │
        │                                           │
        ▼                                           │
   TaskManager (N pods × M slots)                   │
@@ -175,7 +175,7 @@ PHASE 3 — Execution (Async)                       │
   • ExecutorRouter: 12 node types                  │
   • Skill/sandbox nodes → dispatch via MQTT to SB  │
   • MQTT: .../exec/results ────────────────────────┤  → status to JM
-  • State: SaveTask via apiserver REST (TaskStateStore) │
+  • State: SaveNodeRun via apiserver REST (TaskStateStore) │
        │                                           │
        ▼                                           │
   Sandbox (N pods, independent Deployment)         │
@@ -187,7 +187,7 @@ PHASE 3 — Execution (Async)                       │
   Notifier                                         │
   • $share/notify-pool: consume events             │
   • → Slack / Telegram / DingTalk / Email / Webhook│
-  • MQTT: notify.result.{namespace}.{flow} ───────────┤  → confirmation
+  • MQTT: notify.result.{namespace}.{graph} ───────────┤  → confirmation
   • WS → UI clients only (human approval push)     │
                                                    │
   Business-state writes: → FlowgentClient REST → apiserver → PG/DB
@@ -198,7 +198,7 @@ PHASE 3 — Execution (Async)                       │
 
 | Constraint | Detail |
 |------------|--------|
-| **API Server owns business tables** | PostgreSQL/SQLite gateway with Flow cache; standalone A2A owns only its task table |
+| **API Server owns business tables** | PostgreSQL/SQLite gateway with AgentGraph cache; standalone A2A owns only its task table |
 | **Execution components: MQTT or API REST** | Controller, JM, TM, Sandbox, Notifier — no direct business-table access |
 | **Management chain** | controller → JM → TM + Sandbox (JM manages both via K8sRM) |
 | **State writes via API Server** | POST/PUT REST API for Run/NodeRun status updates |
@@ -210,7 +210,7 @@ PHASE 3 — Execution (Async)                       │
 Distributed execution follows a Flink-style topology with two lifecycle modes.
 Helm deploys the API Server, Controller, Notifier, optional A2A gateway, and the
 optional session JobManager. For `runtime_mode=application`, the Controller
-creates one JobManager for each active FlowRun; that JobManager's ResourceManager
+creates one JobManager for each active GraphRun; that JobManager's ResourceManager
 creates TM/Sandbox Deployments isolated by `runtime_cluster_id`. For
 `runtime_mode=session`, the Helm-deployed session JobManager consumes session
 runs and manages only workers carrying its own cluster id.
@@ -219,11 +219,11 @@ runs and manages only workers carrying its own cluster id.
 |---|---|---|
 | API Server / Controller / Notifier / A2A | Helm | platform |
 | Session JobManager | Helm | namespace + session runtime cluster |
-| Application JobManager | Controller | namespace + Flow + Run; active application runs only |
+| Application JobManager | Controller | namespace + AgentGraph + Run; active application runs only |
 | TaskManager | JobManager ResourceManager | namespace + runtime_cluster_id |
 | Sandbox | JobManager ResourceManager | namespace + runtime_cluster_id |
 
-Every Flow requires `runtime_mode`. Application-mode Flow definitions may set
+Every AgentGraph requires `runtime_mode`. Application-mode AgentGraph definitions may set
 top-level pod-size overrides under `resources.jobmanager`, `resources.taskmanager`,
 and `resources.sandbox`; replicas and slots remain platform defaults. ExecutionPlan
 and SandboxTrigger topics include namespace and cluster id, and workers subscribe
@@ -236,11 +236,11 @@ fundamental differences:
 
 | Flink Operator | Flowgent Controller |
 |---|---|
-| Watches K8s CRDs (FlinkDeployment) | **Polls apiserver REST API** (FlowgentClient.ListFlows) |
+| Watches K8s CRDs (FlinkDeployment) | **Polls apiserver REST API** (FlowgentClient.ListAgentGraphs) |
 | Single active (leader-elected) | **N-way sharded** (hash-mod across pods) |
 | CRD-driven reconciliation | **API-scan reconciliation** (Apache ShardingSphere style) |
 
-The API polling approach avoids CRD complexity and keeps the flow catalog
+The API polling approach avoids CRD complexity and keeps the graph catalog
 behind the apiserver as the single DB gateway.
 
 ### Deployment Namespaces and Pod Naming
@@ -253,18 +253,18 @@ Namespace isolation uses two K8s layers:
   a2a, and middleware deployed by Helm.
 - **Workload namespace**: `{runtime.namespace.namespace_prefix}{namespaceId}`
   (default `flowgent-{namespaceId}`). Runtime workers live here:
-  jobmanager, taskmanager, and sandbox. A namespace's flows share the same
-  workload namespace; Flow and runtime-cluster ownership is expressed by deployment names
+  jobmanager, taskmanager, and sandbox. A namespace's graphs share the same
+  workload namespace; AgentGraph and runtime-cluster ownership is expressed by deployment names
   and labels.
 
-Pod names and labels carry `namespace_id` + `flow_id` for observability:
+Pod names and labels carry `namespace_id` + `agent_graph_id` for observability:
 
 **Components** (distributed mode):
 
 | Component | Required | K8s namespace | Role |
 |-----------|----------|---------------|------|
 | apiserver | yes | System namespace | REST API gateway, auth, triggers |
-| controller | yes | System namespace | Flow discovery, run dispatch, hash-mod sharding |
+| controller | yes | System namespace | AgentGraph discovery, run dispatch, hash-mod sharding |
 | jobmanager | yes | Workload namespace | DAG orchestration, task scheduling |
 | taskmanager | yes | Workload namespace | Runtime-cluster task execution via router (12 node types) |
 | sandbox | yes | Workload namespace | Runtime-cluster isolated script execution |
@@ -281,8 +281,8 @@ Pod names and labels carry `namespace_id` + `flow_id` for observability:
 System services (Helm release in flowgent-system, {hash}=K8s suffix):
   flowgent-{component}-{hash}
 
-Application FlowRun JobManager ({hash}=K8s suffix):
-  flowgent-jobmanager-{namespaceId}-{flowId}-{runId}-{hash}
+Application GraphRun JobManager ({hash}=K8s suffix):
+  flowgent-jobmanager-{namespaceId}-{graphId}-{runId}-{hash}
 
 Runtime-cluster workers:
   flowgent-{taskmanager|sandbox}-{namespaceId}-{clusterId}-{hash}
@@ -308,7 +308,7 @@ flowgent.io/namespace:       "default"
 flowgent.io/runtime-cluster: "app-run123"    # JM/TM/Sandbox
 flowgent.io/runtime-mode:    "application"   # JM/TM/Sandbox
 flowgent.io/managed-by:      "runtime-cluster" # TM/Sandbox
-flowgent.io/runtime-boundary: "flow-jobmanager" # JM
+flowgent.io/runtime-boundary: "graph-jobmanager" # JM
 ```
 
 ---
@@ -318,16 +318,16 @@ flowgent.io/runtime-boundary: "flow-jobmanager" # JM
 | Decision | Rationale |
 |----------|-----------|
 | **API Server owns business-table access** | Controller, JM, TM, Sandbox, and Notifier use MQTT or API REST. Standalone A2A owns only its task-store table, while coordination locks are not business-state access. |
-| **Controller gets flows via apiserver REST API, not PG scan** | `FlowgentClient.ListFlows()` and subscribes to MQTT lifecycle events for real-time changes. apiserver publishes flow lifecycle events on create/update/delete. Hash-mod sharding still applies. |
-| **Every Flow declares `runtime_mode`** | `application` creates a per-run runtime cluster; `session` uses the Helm-deployed session cluster. Run snapshots preserve scheduling determinism. |
-| **JobManager owns TM/Sandbox via `runtime_cluster_id`** | Controller owns application JM Deployments only while a real application run is active. Each JM/RM manages only workers carrying its cluster id. State flows back via MQTT → API Server → PG. |
-| **Runtime credentials enter pods through K8s Secret envFrom** | Host shell env is only a deployer/console-import input. Kubernetes runtime credentials for external MCPs, GitHub, SonarQube, and LLM calls are provided by the Secret named in `runtime.credential_env_secret`. Controller mounts it into per-flow JM pods, and JM's K8sRM mounts it into TM/Sandbox pods via optional `envFrom.secretRef`. |
+| **Controller gets graphs via apiserver REST API, not PG scan** | `FlowgentClient.ListAgentGraphs()` and subscribes to MQTT lifecycle events for real-time changes. apiserver publishes graph lifecycle events on create/update/delete. Hash-mod sharding still applies. |
+| **Every AgentGraph declares `runtime_mode`** | `application` creates a per-run runtime cluster; `session` uses the Helm-deployed session cluster. Run snapshots preserve scheduling determinism. |
+| **JobManager owns TM/Sandbox via `runtime_cluster_id`** | Controller owns application JM Deployments only while a real application run is active. Each JM/RM manages only workers carrying its cluster id. State graphs back via MQTT → API Server → PG. |
+| **Runtime credentials enter pods through K8s Secret envFrom** | Host shell env is only a deployer/console-import input. Kubernetes runtime credentials for external MCPs, GitHub, SonarQube, and LLM calls are provided by the Secret named in `runtime.credential_env_secret`. Controller mounts it into per-graph JM pods, and JM's K8sRM mounts it into TM/Sandbox pods via optional `envFrom.secretRef`. |
 | **Resource definitions store credential references, not values** | LLM/MCP APIs accept environment reference names, redact reads, and resolve them only inside runtime pods. Notification secret fields are encrypted with AES-256-GCM and remain write-only. Values never belong in browser state, NodeRun payloads, OTel attributes, logs, or screenshots. |
 | **Instruction, Knowledge, and Execution Memory are separate** | Immutable Instructions govern behavior; scoped Knowledge stores retrievable facts; NodeRun checkpoints/messages/tool state belong only to that Run and attempt. See [Durable data lifecycle](data-lifecycle.md). |
-| **One JobManager contract** | Session JMs poll session runs; application JMs poll one flow/run. Both build the DAG and route every plan using the Run's immutable runtime mode and cluster id. |
+| **One JobManager contract** | Session JMs poll session runs; application JMs poll one graph/run. Both build the DAG and route every plan using the Run's immutable runtime mode and cluster id. |
 | **A2A uses `a2aproject/a2a-go` types directly, not ADK's `adka2a` wrapper** | ADK's A2A server binds to `session.Session`, `genai.Content`, and ADK internal types — all incompatible with Flowgent's DAG orchestration model. The official `a2aproject/a2a-go` SDK provides clean protocol types (`AgentCard`, `Task`, `Message`) without opinionated framework coupling |
-| **Sandbox as independent pods managed by JM (defense-in-depth)** | Sandbox runs as separate K8s pods managed by JM's K8sRM (same goroutine pattern as TM scaling). The JM — as the job/flow-level orchestrator — is the natural owner for both TM and sandbox lifecycle. Two-layer isolation: pod-level (K8s NetworkPolicy + seccomp RuntimeDefault profile) blocks broad egress at the CNI/container runtime layer; process-level (seccomp-bpf + userspace notifier) enforces per-flow per-node dynamic allowlists. Independent CPU/mem/volume limits prevent noisy-neighbor resource contention between TM and sandbox. TM and sandbox share a ReadWriteMany PVC organized by flowId directory — TM writes scripts, sandbox executes them, TM reads results from the same volume. |
-| **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-flow per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See the [Sandbox design](engine/sandbox.md) for the full isolation model. |
+| **Sandbox as independent pods managed by JM (defense-in-depth)** | Sandbox runs as separate K8s pods managed by JM's K8sRM (same goroutine pattern as TM scaling). The JM — as the job/graph-level orchestrator — is the natural owner for both TM and sandbox lifecycle. Two-layer isolation: pod-level (K8s NetworkPolicy + seccomp RuntimeDefault profile) blocks broad egress at the CNI/container runtime layer; process-level (seccomp-bpf + userspace notifier) enforces per-graph per-node dynamic allowlists. Independent CPU/mem/volume limits prevent noisy-neighbor resource contention between TM and sandbox. TM and sandbox share a ReadWriteMany PVC organized by graphId directory — TM writes scripts, sandbox executes them, TM reads results from the same volume. |
+| **Sandbox network isolation via seccomp-bpf + userspace notifier, not iptables** | Per-graph per-node dynamic allowlists require per-execution granularity. iptables is pod-level static (iptables rules apply to all processes in a netns). Istio/envoy is also pod-level via sidecar injection. seccomp-bpf with `SECCOMP_RET_USER_NOTIF` gives **per-thread, per-execution** filtering at the syscall level — the filter is installed dynamically before each script runs and dies with the child process. A userspace notifier goroutine (in the sandbox runner) resolves hosts → IPs and checks each `connect()`/`sendto()`/`sendmsg()` target address against the resolved allowlist by reading `/proc/<pid>/mem`. DNS (port 53) is unconditionally allowed at the BPF level so hostnames can be resolved before connect. SOCK_RAW is unconditionally blocked. See the [Sandbox design](engine/sandbox.md) for the full isolation model. |
 | **MCP transport is HTTP-only (Streamable HTTP), not stdio subprocess** | TM pods are backend K8s agents without human interaction or a desktop environment. Spawning MCP server binaries as stdio subprocesses (`NewStdioMCPClient`) is a desktop/IDE pattern (Claude Code, Cursor) — it requires the MCP binary to be in the container image, adds subprocess lifecycle management overhead, and couples the TM to specific binary versions. HTTP mode (`NewStreamableHttpClient`) treats MCP servers as independent services — they can be deployed, scaled, and updated separately (e.g. sonarqube-mcp as a Docker container or Helm release). The `McpInfo` entity stores a URL + headers, not a command vector. See [TaskManager MCP transport](engine/taskmanager.md#mcp-transport-http-only-streamable-http). |
 
 ---
@@ -335,53 +335,53 @@ flowgent.io/runtime-boundary: "flow-jobmanager" # JM
 
 ## MQTT Event Bus
 
-All inter-component communication flows through MQTT topics under a unified
+All inter-component communication graphs through MQTT topics under a unified
 namespace. The hierarchy isolates logical namespaces and routes execution by
 runtime cluster.
 
 ### Topic Hierarchy
 
 All inter-component communication uses MQTT topics under `flowgent/v1/` with
-a hierarchical `{namespaceId}/flows/{flowId}/runs/{runId}` structure for
+a hierarchical `{namespaceId}/agent-graphs/{graphId}/graph-runs/{runId}` structure for
 observability and multi-namespace isolation. Durable business state is written
 through API Server; the documented A2A task-store and coordination-lock
 exceptions remain outside this event bus.
 
 ```
 # ── Execution Plan Dispatch: JM → TM ──────────────────────────
-flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/exec/plans
+flowgent/v1/{namespace}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/exec/plans
   JM publishes: serialized ExecutionPlan JSON
   TM subscribes via $share/tm-{namespace}-{cluster}/.../exec/plans
   → All routing info visible in topic for debugging
 
 # ── Execution Result: TM → JM ─────────────────────────────────
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results
-  TM publishes: TaskResult JSON (status, output, error)
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/exec/results
+  TM publishes: NodeResult JSON (status, output, error)
   JM subscribes per-run: JM polls results for active runs
 
 # ── Sandbox Trigger: TM → Sandbox ─────────────────────────────
-flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger
-  TM publishes: model.SandboxTrigger (flowId, runId, scriptPath, ...)
+flowgent/v1/{namespace}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/trigger
+  TM publishes: model.SandboxTrigger (graphId, runId, scriptPath, ...)
   Sandbox subscribes via $share/sandbox-{namespace}-{cluster}/.../sandbox/trigger
   (load-balanced only across the selected runtime cluster's Sandbox slots)
 
 # ── Sandbox Result: Sandbox → TM ──────────────────────────────
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
-  Sandbox publishes: TaskResult JSON (stdout, stderr, exit_code)
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/result
+  Sandbox publishes: NodeResult JSON (stdout, stderr, exit_code)
   TM (originating slot only) subscribes: continues DAG execution
 
 # ── Controller → JM (dedicated JM creation) ───────────────────
-flowgent/v1/{namespace}/flows/{flowId}/ctrl/jm/create
-  Controller publishes: "create dedicated JM for this flow"
+flowgent/v1/{namespace}/agent-graphs/{graphId}/ctrl/jm/create
+  Controller publishes: "create dedicated JM for this graph"
   JM (leader-elected) subscribes: creates K8s JM Deployment
 
 # ── Notifier Events: Publisher → Notifier ─────────────────────
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/event
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/notify/event
   JM/Controller/TM publishes: notification event
   Notifier subscribes via $share/notify-pool/.../notify/event (load-balanced)
 
 # ── Notifier Results: Notifier → Publisher ────────────────────
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/result
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/notify/result
   Notifier publishes: delivery confirmation
   Publisher subscribes per-run
 
@@ -395,7 +395,7 @@ flowgent/v1/notify/pod/{podId}/ws/{wsId}
   Cross-pod WS message delivery for human approval push
 
 # ── State Write (via apiserver, NOT MQTT) ─────────────────────
-PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}
+PUT /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}
   TM/sandbox/notifier → apiserver → PG
   (status updates, results, errors — persisted via REST)
 ```
@@ -404,11 +404,11 @@ PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}
 
 | Publisher | Topic | Consumer | Mechanism |
 |-----------|-------|----------|-----------|
-| K8sRM.Schedule | `flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/exec/plans` | SlotWorker.Loop | namespace/cluster shared consumers |
-| SlotWorker (result) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results` | JobMaster | Per-run subscription |
-| SandboxExecutor (TM) | `flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger` | SandboxRunner (sandbox pod) | namespace/cluster shared consumers |
-| SandboxRunner (sandbox pod) | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result` | SandboxExecutor (TM) | Per-run subscription |
-| Notifier.Publish | `flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/event` | Notifier consumer | `$share/notify-pool` per-namespace |
+| K8sRM.Schedule | `flowgent/v1/{namespace}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/exec/plans` | SlotWorker.Loop | namespace/cluster shared consumers |
+| SlotWorker (result) | `flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/exec/results` | JobMaster | Per-run subscription |
+| SandboxExecutor (TM) | `flowgent/v1/{namespace}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/trigger` | SandboxRunner (sandbox pod) | namespace/cluster shared consumers |
+| SandboxRunner (sandbox pod) | `flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/result` | SandboxExecutor (TM) | Per-run subscription |
+| Notifier.Publish | `flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/notify/event` | Notifier consumer | `$share/notify-pool` per-namespace |
 | TM heartbeat | `flowgent/v1/heartbeat/{tmId}` | HeartbeatMonitor | Wildcard `flowgent/v1/heartbeat/+` for all TMs |
 
 ### DAG Execution Round-Trip (exec/plans + exec/results)
@@ -431,10 +431,10 @@ for iteration=1,2,...:
     │                                                                       SlotWorker dequeue
     │                                                                       Executor.Execute()
     │                                                                       PUT /node-runs (REST)
-    │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_id,state}
-    │                     Route er.NodeID → chan[nodeID]
+    │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_instance_id,state}
+    │                     Route er.NodeInstanceID → chan[nodeID]
     │                     delete chan[nodeID]
-    ◄── TaskResult ──────
+    ◄── NodeResult ──────
     Done(nodeID)          // unblocks children for next iteration
     │
     // next iteration: children of just-completed nodes become Ready()
@@ -446,9 +446,9 @@ publishing to `exec/plans`. If the order were reversed, a fast TM could
 publish the result before the JM's callback is registered, causing the
 `Schedule()` call to hang until `planTimeout`.
 
-**State-only callback**: `exec/results` carries only `{plan_id, node_id,
+**State-only callback**: `exec/results` carries only `{plan_id, node_instance_id,
 state}` — the actual output data is persisted by the TM via
-`PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` BEFORE publishing to
+`PUT /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}` BEFORE publishing to
 `exec/results`. The JM then reads output data from the task record (or relies
 on the in-memory `nodeOutputs` map populated from the Schedule return value
 for variable resolution in subsequent nodes). See
@@ -470,7 +470,7 @@ messager:
     broker: "tcp://<host>:1883"
 ```
 The topic prefix `flowgent/v1/` is a hardcoded constant in the messager package.
-Topic builders like `messager.ExecPlansTopic(namespace, flow, run)` construct the
+Topic builders like `messager.ExecPlansTopic(namespace, graph, run)` construct the
 full hierarchical path from routing keys.
 
 ### Fail-Fast in Distributed Mode
@@ -495,7 +495,7 @@ The `ExecutionPlan` is the atomic unit of work dispatched to TM slots. The data
 hierarchy is:
 
 ```
-Flow revision (defines Nodes + Edges)
+AgentGraph revision (defines Nodes + Edges)
   └── Run (one invocation, status: PENDING→RUNNING→COMPLETED/FAILED)
         ├── execution_plan (plan-node-A, 1:1 with DAG node A)
         ├── execution_plan (plan-node-B, 1:1 with DAG node B)
@@ -507,11 +507,10 @@ to exactly one Run.** Retry dispatches create distinct NodeRun attempts. The
 plan is serialized for dispatch; its durable execution representation is the
 NodeRun/checkpoint/dispatch state rather than a separate plan JSON table.
 
-Each ExecutionPlan contains: PlanID, NodeID, AgentFlowRunID (legacy wire name
-for Run ID), TaskType, Input,
+Each ExecutionPlan contains: PlanID, NodeInstanceID, GraphRunID, NodeKind, Input,
 RetryPolicy, and Agent/Tool references.
 
-### TaskCheckpoint
+### NodeCheckpoint
 
 The schemas persist per-attempt checkpoint, execution memory, messages,
 workspace version, lease, and fencing state. The runtime can carry checkpoint
@@ -534,17 +533,17 @@ cache. For development and small-scale standalone testing only.
 
 ### Distributed Kubernetes
 
-Controller detects an active run for a flow (`PENDING`, `RUNNING`, or `PAUSED`)
+Controller detects an active run for a graph (`PENDING`, `RUNNING`, or `PAUSED`)
 → creates a dedicated K8s JM Deployment
-(`flowgent-jobmanager-{namespaceId}-{flowId}-{runId}` — see `runtimeNamespace` in
-`pkg/controller/pkg/controller.go`) in the flow's **namespace** namespace
+(`flowgent-jobmanager-{namespaceId}-{graphId}-{runId}` — see `runtimeNamespace` in
+`pkg/controller/pkg/controller.go`) in the graph's **namespace** namespace
 (`{namespace_prefix}{namespaceId}`, per
-[Deployment Namespaces and Pod Naming](#deployment-namespaces-and-pod-naming) — every flow of the same namespace
+[Deployment Namespaces and Pod Naming](#deployment-namespaces-and-pod-naming) — every graph of the same namespace
 shares one namespace; Helm does not pre-create it) → JM reconciles the run's
-TM/Sandbox workers by `runtime_cluster_id`. Flow/Skill import alone creates no
+TM/Sandbox workers by `runtime_cluster_id`. AgentGraph/Skill import alone creates no
 application runtime Pods. When no active run remains, Controller GC removes the
 application JM and application TM/Sandbox Deployments. The namespace itself
-remains because other Flows may use it.
+remains because other AgentGraphs may use it.
 
 ---
 
@@ -557,19 +556,19 @@ There are two paths to trigger a run:
 
 ```
 1. TRIGGER (sync)
-   → REST:     POST /api/v1/{namespace}/flows/{flow_id}/trigger  {input}
-   → A2A 0.3:  POST /  JSON-RPC message/send          {action:start_run, agentflow_id, vars}
+   → REST:     POST /api/v1/{namespace}/agent-graphs/{agent_graph_id}/trigger  {input}
+   → A2A 0.3:  POST /  JSON-RPC message/send          {action:start_graph_run, agent_graph_name, vars}
    → Webhook:  POST /api/v1/webhook/{provider}       (e.g, GitHub/GitLab/BitBucket req body)
        → per-provider adapter normalizes body → canonical WebhookEvent
-       → for each flow whose triggers match {provider, event}: one run
-   → all paths converge on FlowDefHandler.CreateRunFromTrigger:
+       → for each graph whose triggers match {provider, event}: one run
+   → all paths converge on AgentGraphHandler.CreateRunFromTrigger:
        → validate spec exists
        → persist PENDING run with logical/Kubernetes namespaces and runtime_mode snapshot
        → publish ctrl/run/created lifecycle event on MQTT
-       → return run_id(s) to caller    ← sync ends here
+       → return graph_run_id(s) to caller    ← sync ends here
 
-   The A2A administration payload retains `agentflow_id`/`vars` as its current
-   external protocol contract; it is normalized to canonical Flow/Run fields at
+   The A2A administration payload retains `agent_graph_name`/`vars` as its current
+   external protocol contract; it is normalized to canonical AgentGraph/Run fields at
    the API boundary.
 
 2. JM POLL (async)
@@ -581,12 +580,12 @@ There are two paths to trigger a run:
 
 ```
 1. CONTROLLER POLL
-   → Controller polls apiserver ListFlows every 10s
-   → Hash-mod shard: only processes owned flows (peer snapshot fetched once/tick)
-   → Registers cron / interval triggers for owned flow definitions
-   → Flow definition import/update alone is metadata only; no JM/TM allocation
-   → API/webhook/A2A/cron creates FlowRun (PENDING) with runtime_mode snapshot
-   → Active application-run reconcile ensures K8s Deployment flowgent-jobmanager-{namespaceId}-{flowId}-{runId}
+   → Controller polls apiserver ListAgentGraphs every 10s
+   → Hash-mod shard: only processes owned graphs (peer snapshot fetched once/tick)
+   → Registers cron / interval triggers for owned graph definitions
+   → AgentGraph definition import/update alone is metadata only; no JM/TM allocation
+   → API/webhook/A2A/cron creates GraphRun (PENDING) with runtime_mode snapshot
+   → Active application-run reconcile ensures K8s Deployment flowgent-jobmanager-{namespaceId}-{graphId}-{runId}
 
 2. JM POLL
    → Dedicated JM picks up its own namespace runs
@@ -597,9 +596,9 @@ There are two paths to trigger a run:
 
 ```
 3. DAG BUILD (JobMaster.Execute)
-   → Parses agentflow definition JSON (AgentFlowSpec.Nodes + Edges)
+   → Parses agentgraph definition JSON (AgentGraphSpec.Nodes + Edges)
    → BuildGraphNodes → initializes DAG state
-   → Persists task runs via apiserver REST (RunStateStore.SaveTask)
+   → Persists task runs via apiserver REST (GraphRunStateStore.SaveNodeRun)
    → run.Status = RUNNING
 
 4. TOPOLOGICAL LOOP
@@ -626,7 +625,7 @@ There are two paths to trigger a run:
 7. COMPLETION
    → IsComplete() → run.Status = COMPLETED
    → HasFailed()  → run.Status = FAILED
-   → Persist final state via apiserver REST (RunStateStore.UpdateRun)
+   → Persist final state via apiserver REST (GraphRunStateStore.UpdateRun)
 ```
 
 ### TM Failover
@@ -657,13 +656,13 @@ Execution truth and telemetry are intentionally separate but correlated:
 
 | Layer | Source of truth | Purpose |
 |---|---|---|
-| Run DAG | Flow definition + latest NodeRun attempt per node | Logical business progress and node status |
+| Run DAG | AgentGraph definition + latest NodeRun attempt per node | Logical business progress and node status |
 | Node attempts | One durable NodeRun row per execution attempt | Exact attempt input/output/error, retry chain, timing, audit and recovery |
 | Runtime trace | OpenTelemetry spans stored by Jaeger | Actual cross-service call tree, events, latency and failure localization |
 
 The relationship is `DAG node 1 → N NodeRun attempts 1 → N spans`. Span
 attributes carry stable correlation identifiers (`run.id`,
-`flowgent.node_id`, `flowgent.task_id`, and one-based `flowgent.attempt`) plus
+`flowgent.node_instance_id`, `flowgent.node_run_id`, and one-based `flowgent.attempt`) plus
 bounded payload metadata (content type, byte size, SHA-256, capture flag).
 Full input/output, prompts, model responses, and arbitrary previews MUST NOT be
 stored in span attributes. They remain durable NodeRun data; a future
@@ -733,6 +732,6 @@ see [AgentVault and x402](engine/wallet.md).
 6. **Given** an internal engine interaction, **when** components communicate,
    **then** they MUST use REST, MQTT, Kubernetes API, or the shared workspace as
    assigned here; WebSocket MUST remain a Notifier-to-UI boundary.
-7. **Given** no active run for a Flow, **when** lifecycle cleanup completes,
+7. **Given** no active run for a AgentGraph, **when** lifecycle cleanup completes,
    **then** its application JobManager and application TM/Sandbox Deployments
    MUST disappear after the orphan observation window.

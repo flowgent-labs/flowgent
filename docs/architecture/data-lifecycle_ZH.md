@@ -24,7 +24,7 @@ Advisory Lock；SQLite 在检查记录前取得写锁，避免并发启动重复
 
 | 前缀 | 归属 |
 |---|---|
-| `orh_*` | Namespace、Flow Revision、Run、NodeRun、Checkpoint、Dispatch、Event、Outbox、Approval、Effect、运行配置与 Release |
+| `orh_*` | Namespace、AgentGraph Revision、Run、NodeRun、Checkpoint、Dispatch、Event、Outbox、Approval、Effect、运行配置与 Release |
 | `llm_*` | Provider、MCP、Agent 及 Revision、可复用 Skill Definition 与文件、Instruction |
 | `knw_*` | Source、Document 及 Revision、层级 Content、Embedding Profile/Vector 与发布 Candidate |
 | `nfy_*` | 加密的通知渠道配置 |
@@ -39,25 +39,25 @@ API Server 是持久业务状态的规范网关。只有两个明确的窄例外
 
 ## 稳定身份与不可变版本
 
-Flow、Agent、可复用 Skill 与 Knowledge Document 均把稳定身份和不可变内容版本分开：
+AgentGraph、Agent、可复用 Skill 与 Knowledge Document 均把稳定身份和不可变内容版本分开：
 
-- `orh_flow` 指向 `orh_flow_revision`；
+- `orh_agent_graph` 指向 `orh_agent_graph_revision`；
 - `llm_agent` 指向 `llm_agent_revision`；
 - `llm_skill` 指向 `llm_skill_revision`，`llm_skill_file` 属于具体 Revision，并保存
   内容寻址的文件元数据；
 - `knw_document` 指向 `knw_document_revision`。
 
 保存或发布会创建新 Revision，并通过 CAS 切换 Owner 当前指针。Run 总是引用确定的
-Flow Revision；数据库会强制 current-revision pointer 属于其 Owner。
+AgentGraph Revision；数据库会强制 current-revision pointer 属于其 Owner。
 
-公开 API 与持久层对执行尝试的规范名称是 **NodeRun**。部分 Go 内部类型仍使用旧名
-`TaskRunInfo`；该名字 **MUST NOT** 再成为新的 REST 或数据库契约。
+定义和运行时类型统一为 AgentGraph、GraphNode、GraphRun、NodeRun。一个 NodeRun
+代表一次 Attempt，node_instance_id 在重试间保持稳定，旧领域别名已经删除。
 
 ## Instruction、Knowledge 与 Execution Memory
 
 三者 **MUST** 保持分离：
 
-- **Instruction** 控制“怎么做”。Namespace/Flow Instruction 以不可变 Revision 保存于
+- **Instruction** 控制“怎么做”。Namespace/AgentGraph Instruction 以不可变 Revision 保存于
   `llm_instruction`。System Instruction 由部署提供，不是可编辑业务配置。Run 可归档正文
   或不可变引用。
 - **Knowledge** 是可检索事实或经验，遵循 Source → Document → DocumentRevision →
@@ -73,24 +73,23 @@ Instruction，**MUST NOT** 把失败会话状态复制到后续 Run。
 
 创建 Run 时使用 serializable transaction 锁定：
 
-- 稳定 Flow 身份及确定的 Flow Revision/checksum；
+- 稳定 AgentGraph 身份及确定的 AgentGraph Revision/checksum；
 - 引用的 Agent Revision ID；
-- Namespace/Flow Instruction pointer；
+- Namespace/AgentGraph Instruction pointer；
 - 当时已授权且当前可见的 Knowledge Revision ID；
 - 最终生效的 `summarize_enabled`。
 
-结果写入 `orh_run.context_snapshot`。其中保存版本清单或索引引用，不复制整个知识库；
+结果写入 `orh_graph_run.context_snapshot`。其中保存版本清单或索引引用，不复制整个知识库；
 快照创建后撤销权限仍应立即生效。
 
 `orh_node_run`、`orh_node_checkpoint`、`orh_node_message`、`orh_dispatch` 以及
 Lease/Fencing 字段保存安全重试所需的物理状态。同一物理 attempt 的重投继续原 attempt；
 业务重试创建新 attempt，并可从选定 Checkpoint 恢复。过期 fencing token 写入会被拒绝。
 
-当前限制：快照采集已实现，但运行时尚未强制使用其中每一个版本。Agent 执行仍可能按
-名称解析 latest Agent；Knowledge Search 尚未限制到快照的 `knowledge_revision_ids`；
-默认 System Instruction 是 `deployment://system-instruction` 引用而非归档正文。Schema
-具备持久 Checkpoint 恢复结构，但调度层尚未在所有重派路径把已存 Checkpoint 装载回新
-ExecutionPlan。这些属于正确性缺口，不是已完成能力。
+GraphRun 快照已固定嵌套定义和 Agent Revision，执行时读取固定的 Agent 版本。
+GraphCheckpoint 恢复叠加已提交 NodeRun；Sandbox 重试先恢复经过校验的基线。
+Knowledge Search 仍需限制到 knowledge_revision_ids，默认 System Instruction
+仍为部署引用。无法确认的外部副作用和活跃执行者必须先对账，再继续执行。
 
 ## Knowledge 检索与发布
 
@@ -117,13 +116,19 @@ Content 扩展；正文进入 LLM 前即完成授权。当前尚无 GraphRAG、�
 `rejected`、`expired` 或 `cancelled` 之一，终态不得改判。批准只证明允许执行；外部
 副作用仍需幂等执行与结果核对。
 
-Flow 总结默认关闭。创建 Run 时会把 Run 显式覆盖或 Flow Revision 配置合成为最终有效值
+AgentGraph 总结默认关闭。创建 Run 时会把 Run 显式覆盖或 AgentGraph Revision 配置合成为最终有效值
 并持久化。只有生效值为 true 且 Run 已完成时，built-in summarizer 才会运行；它会清理
-明显 Secret、生成 Flow-scope Candidate，并始终要求人工审批。它不会直接发布 Knowledge
+明显 Secret、生成 AgentGraph-scope Candidate，并始终要求人工审批。它不会直接发布 Knowledge
 或 Instruction，也不会重新拉起已完成 Run。
 
 ## Schema 演进
 
 `20260616a` 用于空库初始化，不转换旧的 pre-1.0 表结构。后续 DDL/DML 变更
 **MUST** 追加版本文件，不改写已执行的 Bootstrap 或迁移脚本。涉及已有数据的
-不兼容变更 **MUST** 提供经过验证的非破坏性升级路径。
+已发布部署的不兼容变更 **MUST** 提供经过验证的非破坏性升级路径。本项目当前的
+发布前规范化重置明确重建空数据库 Bootstrap，不会自动迁移或删除既有数据库。
+
+当前执行模型统一为 AgentGraph → GraphRun → NodeRun，子执行域使用
+SubGraph / GraphRevision / GraphPatch。GraphRun 创建时固定嵌套定义与 Agent
+版本，快照不可变。Checkpoint 和 Workspace 提交/恢复语义统一见
+[AgentGraph 持久恢复](agent-graph_ZH.md#agentgraph-领域与持久恢复)。

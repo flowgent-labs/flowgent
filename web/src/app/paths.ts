@@ -8,21 +8,21 @@ export function namespaceSettingsPath(namespace: string, resource = 'environment
   return namespacePathname(namespace, `/settings/${segment(resource)}`)
 }
 
-export function flowPath(namespace: string, flowId: string, suffix = ''): string {
-  return `/${segment(namespace)}/${segment(flowId)}${suffix}`
+export function graphPath(namespace: string, graphId: string, suffix = ''): string {
+  return `/${segment(namespace)}/${segment(graphId)}${suffix}`
 }
 
-export function flowRunPath(
+export function graphRunPath(
   namespace: string,
-  flowId: string,
-  runId?: string,
+  graphId: string,
+  graphRunId?: string,
   suffix = '',
 ): string {
-  const run = runId ? `/${segment(runId)}` : ''
-  return flowPath(namespace, flowId, `/runs${run}${suffix}`)
+  const run = graphRunId ? `/${segment(graphRunId)}` : ''
+  return graphPath(namespace, graphId, `/graph-runs${run}${suffix}`)
 }
 
-export function flowSettingsPath(namespace: string, flowId: string, section = ''): string {
+export function graphSettingsPath(namespace: string, graphId: string, section = ''): string {
   const suffix = section ? `/settings/${segment(section)}` : '/settings'
-  return flowPath(namespace, flowId, suffix)
+  return graphPath(namespace, graphId, suffix)
 }

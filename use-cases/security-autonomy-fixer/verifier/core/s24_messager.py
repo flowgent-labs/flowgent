@@ -13,8 +13,8 @@ Topic Coverage (14 topics, all prefixed flowgent/v1/):
 5.  notify/event         - Publisher → Notifier ($share/notify-pool)
 6.  notify/result        - Notifier → Publisher
 9.  heartbeat/{tmId}     - TM → JM
-10. ctrl/flow/updated    - API Server → Controller
-11. ctrl/flow/deleted    - API Server → Controller
+10. ctrl/graph/updated    - API Server → Controller
+11. ctrl/graph/deleted    - API Server → Controller
 12. ctrl/run/created     - API Server → Controller
 13. ctrl/run/status      - API Server → Controller
 14. notify/pod/{}/ws/{}  - Notifier → Notifier (cross-pod WS)
@@ -97,10 +97,10 @@ class E2ES24MessagerVerifier(BaseVerifier):
         print("\n  → Testing Sandbox E2E Chain...")
 
         namespace = NAMESPACE
-        flow_id = "test-flow-" + E2ES24MessagerVerifier.rand_id()
-        run_id = "run-" + E2ES24MessagerVerifier.rand_id()
+        agent_graph_id = "test-graph-" + E2ES24MessagerVerifier.rand_id()
+        graph_run_id = "run-" + E2ES24MessagerVerifier.rand_id()
         plan_id = "plan-" + E2ES24MessagerVerifier.rand_id()
-        task_id = "task-" + E2ES24MessagerVerifier.rand_id()
+        node_run_id = "task-" + E2ES24MessagerVerifier.rand_id()
         cluster_id = "test-cluster"
 
         try:
@@ -108,19 +108,19 @@ class E2ES24MessagerVerifier(BaseVerifier):
             print("    • Step 1: Setting up subscriptions...")
 
             # Shared subscription for TM (simulating one runtime cluster)
-            tester.subscribe("flowgent/v1/+/clusters/+/flows/+/runs/+/exec/plans")
+            tester.subscribe("flowgent/v1/+/clusters/+/agent-graphs/+/graph-runs/+/exec/plans")
 
             # Shared subscription for Sandbox (simulating one runtime cluster)
-            tester.subscribe("flowgent/v1/+/clusters/+/flows/+/runs/+/sandbox/trigger")
+            tester.subscribe("flowgent/v1/+/clusters/+/agent-graphs/+/graph-runs/+/sandbox/trigger")
 
             # Point-to-point for sandbox result (TM receives)
             tester.subscribe(
-                f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result"
+                f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/sandbox/result"
             )
 
             # Point-to-point for exec result (JM receives)
             tester.subscribe(
-                f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results"
+                f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/results"
             )
 
             time.sleep(0.5)
@@ -131,13 +131,13 @@ class E2ES24MessagerVerifier(BaseVerifier):
 
             exec_plan = {
                 "plan_id": plan_id,
-                "agentflow_run_id": run_id,
-                "agentflow_definition_id": flow_id,
+                "graph_run_id": graph_run_id,
+                "agent_graph_name": agent_graph_id,
                 "namespace_id": namespace,
                 "runtime_mode": "application",
                 "runtime_cluster_id": cluster_id,
-                "task_id": task_id,
-                "node_id": "sandbox-node",
+                "node_run_id": node_run_id,
+                "node_instance_id": "sandbox-node",
                 "task_type": "sandbox",
                 "state": "PENDING",
                 "node_spec": {
@@ -149,13 +149,13 @@ class E2ES24MessagerVerifier(BaseVerifier):
             }
 
             tester.publish(
-                f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
+                f"flowgent/v1/{namespace}/clusters/{cluster_id}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/plans",
                 {"id": plan_id, "payload": json.dumps(exec_plan)},
             )
 
             # Step 3: TM receives ExecutionPlan
             print("    • Step 3: TM receives exec/plans...")
-            exec_plans_topic = f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans"
+            exec_plans_topic = f"flowgent/v1/{namespace}/clusters/{cluster_id}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/plans"
             msg = tester.wait_for_message(exec_plans_topic, timeout=3)
             if not msg:
                 raise AssertionError("TM did not receive ExecutionPlan")
@@ -175,13 +175,13 @@ class E2ES24MessagerVerifier(BaseVerifier):
             }
 
             tester.publish(
-                f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger",
+                f"flowgent/v1/{namespace}/clusters/{cluster_id}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/sandbox/trigger",
                 {"id": plan_id, "payload": json.dumps(sandbox_req)},
             )
 
             # Step 5: Sandbox receives trigger
             print("    • Step 5: Sandbox receives trigger...")
-            sb_trigger_topic = f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/sandbox/trigger"
+            sb_trigger_topic = f"flowgent/v1/{namespace}/clusters/{cluster_id}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/sandbox/trigger"
             msg = tester.wait_for_message(sb_trigger_topic, timeout=3)
             if not msg:
                 raise AssertionError("Sandbox did not receive trigger")
@@ -199,14 +199,14 @@ class E2ES24MessagerVerifier(BaseVerifier):
             }
 
             tester.publish(
-                f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result",
+                f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/sandbox/result",
                 {"id": plan_id, "payload": json.dumps(sandbox_result)},
             )
 
             # Step 7: TM receives sandbox result
             print("    • Step 7: TM receives sandbox/result...")
             sb_result_topic = (
-                f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/sandbox/result"
+                f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/sandbox/result"
             )
             msg = tester.wait_for_message(sb_result_topic, timeout=3)
             if not msg:
@@ -230,19 +230,19 @@ class E2ES24MessagerVerifier(BaseVerifier):
 
             exec_result = {
                 "plan_id": plan_id,
-                "node_id": "sandbox-node",
+                "node_instance_id": "sandbox-node",
                 "state": "COMPLETED",  # State only, no data
             }
 
             tester.publish(
-                f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results",
+                f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/results",
                 {"id": plan_id, "payload": json.dumps(exec_result)},
             )
 
             # Step 10: JM receives state callback
             print("    • Step 10: JM receives exec/results...")
             exec_results_topic = (
-                f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results"
+                f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/results"
             )
             msg = tester.wait_for_message(exec_results_topic, timeout=5)
             if not msg:
@@ -276,8 +276,8 @@ class E2ES24MessagerVerifier(BaseVerifier):
         results = {}
 
         namespace = NAMESPACE
-        flow_id = "test-flow-" + E2ES24MessagerVerifier.rand_id()
-        run_id = "run-" + E2ES24MessagerVerifier.rand_id()
+        agent_graph_id = "test-graph-" + E2ES24MessagerVerifier.rand_id()
+        graph_run_id = "run-" + E2ES24MessagerVerifier.rand_id()
         tm_id = "tm-" + E2ES24MessagerVerifier.rand_id()
         cluster_id = "test-cluster"
 
@@ -285,8 +285,8 @@ class E2ES24MessagerVerifier(BaseVerifier):
         topic_tests = [
             {
                 "name": "exec/plans (JM → TM)",
-                "publish": f"flowgent/v1/{namespace}/clusters/{cluster_id}/flows/{flow_id}/runs/{run_id}/exec/plans",
-                "subscribe": "flowgent/v1/+/clusters/+/flows/+/runs/+/exec/plans",
+                "publish": f"flowgent/v1/{namespace}/clusters/{cluster_id}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/plans",
+                "subscribe": "flowgent/v1/+/clusters/+/agent-graphs/+/graph-runs/+/exec/plans",
                 "payload": {
                     "plan_id": E2ES24MessagerVerifier.rand_id(),
                     "task_type": "agent",
@@ -295,24 +295,24 @@ class E2ES24MessagerVerifier(BaseVerifier):
             },
             {
                 "name": "exec/results (TM → JM, state-only)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/exec/results",
-                "subscribe": "flowgent/v1/+/flows/+/runs/+/exec/results",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/exec/results",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/exec/results",
                 "payload": {
                     "plan_id": E2ES24MessagerVerifier.rand_id(),
-                    "node_id": "n1",
+                    "node_instance_id": "n1",
                     "state": "COMPLETED",
                 },
             },
             {
                 "name": "notify/event (Publisher → Notifier)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/notify/event",
-                "subscribe": "flowgent/v1/+/flows/+/runs/+/notify/event",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/notify/event",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/notify/event",
                 "payload": {"channel": "webhook", "message": "test notification"},
             },
             {
                 "name": "notify/result (Notifier → Publisher)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/notify/result",
-                "subscribe": "flowgent/v1/+/flows/+/runs/+/notify/result",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/notify/result",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/notify/result",
                 "payload": {"status": "delivered", "channel": "webhook"},
             },
             {
@@ -322,44 +322,44 @@ class E2ES24MessagerVerifier(BaseVerifier):
                 "payload": {"tm_id": tm_id, "status": "alive", "slots_free": 4},
             },
             {
-                "name": "ctrl/flow/updated (API → Controller)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/ctrl/flow/updated",
-                "subscribe": "flowgent/v1/+/flows/+/ctrl/flow/updated",
+                "name": "ctrl/graph/updated (API → Controller)",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/ctrl/graph/updated",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/ctrl/graph/updated",
                 "payload": {
                     "event_type": "UPDATED",
-                    "flow_id": flow_id,
+                    "agent_graph_id": agent_graph_id,
                     "namespace_id": namespace,
                 },
             },
             {
-                "name": "ctrl/flow/deleted (API → Controller)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/ctrl/flow/deleted",
-                "subscribe": "flowgent/v1/+/flows/+/ctrl/flow/deleted",
+                "name": "ctrl/graph/deleted (API → Controller)",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/ctrl/graph/deleted",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/ctrl/graph/deleted",
                 "payload": {
                     "event_type": "DELETED",
-                    "flow_id": flow_id,
+                    "agent_graph_id": agent_graph_id,
                     "namespace_id": namespace,
                 },
             },
             {
                 "name": "ctrl/run/created (API → Controller)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/ctrl/run/created",
-                "subscribe": "flowgent/v1/+/flows/+/runs/+/ctrl/run/created",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/ctrl/graph-run/created",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/ctrl/graph-run/created",
                 "payload": {
                     "event_type": "CREATED",
-                    "flow_id": flow_id,
-                    "run_id": run_id,
+                    "agent_graph_id": agent_graph_id,
+                    "graph_run_id": graph_run_id,
                     "status": "PENDING",
                 },
             },
             {
                 "name": "ctrl/run/status (API → Controller)",
-                "publish": f"flowgent/v1/{namespace}/flows/{flow_id}/runs/{run_id}/ctrl/run/status",
-                "subscribe": "flowgent/v1/+/flows/+/runs/+/ctrl/run/status",
+                "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/ctrl/graph-run/status",
+                "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/ctrl/graph-run/status",
                 "payload": {
                     "event_type": "STATUS_CHANGED",
-                    "flow_id": flow_id,
-                    "run_id": run_id,
+                    "agent_graph_id": agent_graph_id,
+                    "graph_run_id": graph_run_id,
                     "status": "RUNNING",
                 },
             },

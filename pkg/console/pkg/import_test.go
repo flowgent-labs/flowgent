@@ -14,7 +14,7 @@ import (
 func TestParseResourceImportAcceptsOnlyCanonicalEnvelope(t *testing.T) {
 	canonical := []byte(`
 consoleVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata:
   name: example
   namespace: default
@@ -33,15 +33,15 @@ data:
 
 	invalid := map[string][]byte{
 		"apiVersion alias": []byte(`apiVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata: {name: example}
 data: {id: example}`),
 		"spec payload": []byte(`consoleVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata: {name: example}
 spec: {id: example}`),
 		"unknown version": []byte(`consoleVersion: core.flowgent.io/v2
-kind: Flow
+kind: AgentGraph
 metadata: {name: example}
 data: {id: example}`),
 	}
@@ -55,8 +55,8 @@ data: {id: example}`),
 }
 
 func TestParseSpecRejectsUnknownFields(t *testing.T) {
-	var flow entities.FlowInfo
-	err := parseSpec([]byte(`{"id":"example","nodes":[],"edges":[],"spec":{}}`), &flow)
+	var graph entities.AgentGraph
+	err := parseSpec([]byte(`{"id":"example","nodes":[],"edges":[],"spec":{}}`), &graph)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("expected unknown field rejection, got %v", err)
 	}

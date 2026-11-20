@@ -15,7 +15,7 @@ Telemetry checks require a real AutoTest execution identified by
 `FLOWGENT_E2E_RUN_ID`, with matching API and PG evidence. Configure the actual
 Jaeger (`FLOWGENT_JAEGER_UI`) and Prometheus (`FLOWGENT_E2E_PROMETHEUS_URL`)
 endpoints; Prometheus discovery must retain the application's Kubernetes
-`flowgent.io/run` label as `run_id`. Logs require the producing workload to still
+`flowgent.io/run` label as `graph_run_id`. Logs require the producing workload to still
 exist. Missing run evidence or telemetry is a failure, never a successful stub.
 
 Legacy GitHub/SonarQube Go MCP components have full build/Compose/Helm assets

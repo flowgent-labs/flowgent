@@ -20,7 +20,7 @@ class E2ES51MetricsVerifier(BaseVerifier):
         import requests
 
         # Application JM targets must retain their Kubernetes run label in Prometheus.
-        labels = "run_id=" + json.dumps(self.execution["run_id"])
+        labels = "graph_run_id=" + json.dumps(self.execution["graph_run_id"])
         expected = {
             f'flowgent_jm_runs_total{{{labels},status="COMPLETED"}}': 1,
             f"flowgent_jm_plans_dispatched_total{{{labels}}}": len(

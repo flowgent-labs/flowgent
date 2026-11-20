@@ -105,7 +105,7 @@ storage:
     min_connections: 2
     max_connections: 20
     use_ssl: false
-  # Complete TaskRun input/output remains part of the REST resource. The
+  # Complete NodeRun input/output remains part of the REST resource. The
   # default provider stores JSON inline in the DB; S3/GCS keep only a versioned,
   # checksummed reference in JSONB and the API Server transparently hydrates it.
   artifacts:
@@ -113,7 +113,7 @@ storage:
     inline_max_bytes: 262144      # S3/GCS: keep values up to 256 KiB inline
     max_payload_bytes: 67108864   # reject a single JSON payload above 64 MiB
     compression: gzip             # none | gzip (external objects only)
-    prefix: flowgent/task-runs
+    prefix: flowgent/node-runs
     put_timeout: 30s
     get_timeout: 30s
     verify_checksum: true
@@ -152,7 +152,7 @@ lock:
     password: "bitnami"
 
 # ── Orchestration Engine ─────────────────────────────────────────────────────
-#    LLM providers, MCP servers, agents, skills, and agentflows are all
+#    LLM providers, MCP servers, agents, skills, and agentgraphs are all
 #    DB-backed. Use the management console to manage them:
 #
 #      flowgent console
@@ -163,13 +163,13 @@ lock:
 #      - llm_providers:  LLM provider definitions (model list, API keys, etc.)
 #      - mcps:           MCP server definitions (command, args, env vars)
 #      - agents:         Agent definitions (model, instruction, tools)
-#      - skills:         Skill definitions (sub-agentflow templates)
-#      - agentflows:     AgentFlow definitions (DAG of nodes + edges)
+#      - skills:         Skill definitions (sub-agentgraph templates)
+#      - agentgraphs:     AgentGraph definitions (DAG of nodes + edges)
 #
 #    Only these 3 orchestration knobs are in the static config file:
 orchestration:
-  max_concurrent_flows: 10
-  flow_execution_timeout: 30m
+  max_concurrent_graphs: 10
+  graph_execution_timeout: 30m
   max_node_retries: 3
 
 # ── Sandbox — Secure Script Execution Worker ─────────────────────────────────
@@ -252,10 +252,10 @@ runtime:
   namespace:
     default_namespace: "default"
     namespace_prefix: "flowgent-"
-  # CSI-mounted credential files hierarchy (namespace + flow level):
+  # CSI-mounted credential files hierarchy (namespace + graph level):
   #   {basePath}/{namespace}/secret/.credentials          (namespace-level)
-  #   {basePath}/{namespace}/{flow}/secret/.credentials   (flow-level)
-  # Flow-level credentials override namespace-level.
+  #   {basePath}/{namespace}/{graph}/secret/.credentials   (graph-level)
+  # AgentGraph-level credentials override namespace-level.
   credential_paths:
     base_path: "/var/flowgent"
   api_server_url: "http://127.0.0.1:9990"
@@ -266,8 +266,8 @@ runtime:
   session_cluster_id: "session"
   tm_orphan_timeout: "3m"
   credential_env_secret: ""
-  # agent_flow_id: ""            # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_ID)
-  # agent_flow_run_id: ""        # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID)
+  # agent_agent_graph_id: ""            # set by application JM at deploy time (FLOWGENT__RUNTIME__AGENT_GRAPH_NAME)
+  # agent_graph_run_id: ""        # set by application JM at deploy time (FLOWGENT__RUNTIME__GRAPH_RUN_ID)
   # tm_id: ""                    # set per TM pod (FLOWGENT__RUNTIME__TM_ID)
   tm_deploy: "flowgent-taskmanager"
   sandbox_deploy: "flowgent-sandbox"

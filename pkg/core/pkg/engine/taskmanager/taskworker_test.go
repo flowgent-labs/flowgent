@@ -23,11 +23,11 @@ func TestSlotWorker_Execute(t *testing.T) {
 		PlanID:           "plan-test-1",
 		Namespace:        "test-namespace",
 		RuntimeClusterID: "default",
-		NodeID:           "node-1",
-		TaskType:         entities.TaskNoop,
-		State:            entities.TaskPending,
+		NodeInstanceID:   "node-1",
+		NodeKind:         entities.NoopNode,
+		State:            entities.NodeRunPending,
 		Input:            map[string]any{"key": "val"},
-		NodeSpec:         &entities.NodeSpec{Kind: entities.NoopNode},
+		Node:             &entities.GraphNode{Kind: entities.NoopNode},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -37,7 +37,7 @@ func TestSlotWorker_Execute(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond) // let subscription register
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-graph", "test-run"), &messager.InterMessage{
 		ID:      "msg-1",
 		Payload: payload,
 	})
@@ -56,7 +56,7 @@ func TestSlotWorker_InvalidPayload(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-graph", "test-run"), &messager.InterMessage{
 		ID:      "msg-bad",
 		Payload: []byte("not-valid-json"),
 	})
@@ -75,10 +75,10 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 		PlanID:           "plan-fail-1",
 		Namespace:        "test-namespace",
 		RuntimeClusterID: "default",
-		NodeID:           "node-fail",
-		TaskType:         entities.TaskType("failing"),
-		State:            entities.TaskPending,
-		NodeSpec:         &entities.NodeSpec{Kind: entities.NodeType("failing")},
+		NodeInstanceID:   "node-fail",
+		NodeKind:         entities.NodeKind("failing"),
+		State:            entities.NodeRunPending,
+		Node:             &entities.GraphNode{Kind: entities.NodeKind("failing")},
 	}
 	payload, _ := json.Marshal(plan)
 
@@ -88,7 +88,7 @@ func TestSlotWorker_ExecuteError(t *testing.T) {
 	go worker.Loop(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-flow", "test-run"), &messager.InterMessage{
+	q.Publish(ctx, messager.ExecPlansTopic("test-namespace", "default", "test-graph", "test-run"), &messager.InterMessage{
 		ID:      "msg-fail",
 		Payload: payload,
 	})
@@ -100,13 +100,13 @@ func TestSlotWorker_EmitDownstreamRetriesPublish(t *testing.T) {
 	q := &flakyMessager{failures: 1}
 	worker := NewSlotWorker("slot-retry", "tm-test", "test-namespace", "default", q, nil, nil, nil)
 	plan := &entities.ExecutionPlan{
-		PlanID:                "plan-retry",
-		NodeID:                "node-retry",
-		AgentFlowDefinitionID: "flow-retry",
-		AgentFlowRunID:        "run-retry",
-		Namespace:             "test-namespace",
-		State:                 entities.Success,
-		Result:                &entities.TaskResult{Output: map[string]any{"ok": true}},
+		PlanID:         "plan-retry",
+		NodeInstanceID: "node-retry",
+		AgentGraphName: "graph-retry", AgentGraphID: "graph-retry-id",
+		GraphRunID: "run-retry",
+		Namespace:  "test-namespace",
+		State:      entities.NodeRunSucceeded,
+		Result:     &entities.NodeResult{Output: map[string]any{"ok": true}},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -116,15 +116,15 @@ func TestSlotWorker_EmitDownstreamRetriesPublish(t *testing.T) {
 	if q.calls != 2 {
 		t.Fatalf("expected one failed publish and one retry, got %d calls", q.calls)
 	}
-	if q.topic != messager.ExecResultsTopic("test-namespace", "flow-retry", "run-retry") {
+	if q.topic != messager.ExecResultsTopic("test-namespace", "graph-retry-id", "run-retry") {
 		t.Fatalf("unexpected topic: %s", q.topic)
 	}
 }
 
 type failingExecutor struct{}
 
-func (e *failingExecutor) TaskType() entities.TaskType { return "failing" }
-func (e *failingExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
+func (e *failingExecutor) NodeKind() entities.NodeKind { return "failing" }
+func (e *failingExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
 	return nil, context.DeadlineExceeded
 }
 

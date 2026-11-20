@@ -18,8 +18,8 @@ type NotifToWSAdapter struct {
 	Svc *FlowgentNotifierManager
 }
 
-func (a *NotifToWSAdapter) RegisterWS(ctx context.Context, agentFlowID string) (handler.WSConn, error) {
-	conn, err := a.Svc.RegisterWS(ctx, agentFlowID)
+func (a *NotifToWSAdapter) RegisterWS(ctx context.Context, agentGraphID string) (handler.WSConn, error) {
+	conn, err := a.Svc.RegisterWS(ctx, agentGraphID)
 	if err != nil {
 		return nil, err
 	}

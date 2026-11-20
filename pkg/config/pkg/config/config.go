@@ -18,7 +18,7 @@ import (
 // ─── Top-level config ────────────────────────────────────────
 
 // FlowgentConfig is the top-level runtime configuration for the flowgent engine.
-// All resource definitions (agents, agentflows, MCPs, skills, LLM providers, channels)
+// All resource definitions (agents, agentgraphs, MCPs, skills, LLM providers, channels)
 // are now DB-backed and managed via the management console or REST API.
 type FlowgentConfig struct {
 	ServiceName         string                 `json:"service_name" yaml:"service_name"`
@@ -94,7 +94,7 @@ type MetricsConfig struct {
 }
 
 type MetricsBoundaries struct {
-	Task  []float64 `json:"task" yaml:"task"`
+	Task  []float64 `json:"noderun" yaml:"noderun"`
 	LLM   []float64 `json:"llm" yaml:"llm"`
 	Queue []float64 `json:"queue" yaml:"queue"`
 }
@@ -172,9 +172,9 @@ type PostgresConfig struct {
 }
 
 // ArtifactStorageConfig controls storage for large, immutable runtime artifacts.
-// TaskRun input/output is the first artifact kind. The DB always retains either
+// NodeRun input/output is the first artifact kind. The DB always retains either
 // the complete inline JSON value or a versioned reference that the API Server
-// resolves before returning the TaskRun REST resource.
+// resolves before returning the NodeRun REST resource.
 type ArtifactStorageConfig struct {
 	Provider        string            `json:"provider" yaml:"provider"` // default | s3 | gcs
 	InlineMaxBytes  int64             `json:"inline_max_bytes" yaml:"inline_max_bytes"`
@@ -213,9 +213,9 @@ type GCSArtifactConfig struct {
 // ─── Orchestration ────────────────────────────────────────────
 
 type OrchestrationConfig struct {
-	MaxConcurrentFlows   int    `json:"max_concurrent_flows" yaml:"max_concurrent_flows"`
-	FlowExecutionTimeout string `json:"flow_execution_timeout" yaml:"flow_execution_timeout"`
-	MaxNodeRetries       int    `json:"max_node_retries" yaml:"max_node_retries"`
+	MaxConcurrentAgentGraphs   int    `json:"max_concurrent_graphs" yaml:"max_concurrent_graphs"`
+	AgentGraphExecutionTimeout string `json:"graph_execution_timeout" yaml:"graph_execution_timeout"`
+	MaxNodeRetries             int    `json:"max_node_retries" yaml:"max_node_retries"`
 }
 
 // SandboxConfig configures the sandbox execution environment.
@@ -313,8 +313,8 @@ type RuntimeConfig struct {
 	SystemNamespace     string                `json:"system_namespace" yaml:"system_namespace"`
 	Mode                string                `json:"mode" yaml:"mode"`
 	RuntimeClusterID    string                `json:"runtime_cluster_id" yaml:"runtime_cluster_id"`
-	AgentFlowID         string                `json:"agent_flow_id" yaml:"agent_flow_id"`
-	AgentFlowRunID      string                `json:"agent_flow_run_id" yaml:"agent_flow_run_id"`
+	AgentGraphName      string                `json:"agent_graph_name" yaml:"agent_graph_name"`
+	GraphRunID          string                `json:"graph_run_id" yaml:"graph_run_id"`
 	SessionClusterID    string                `json:"session_cluster_id" yaml:"session_cluster_id"`
 	Session             RuntimeClusterConfig  `json:"session" yaml:"session"`
 	Application         RuntimeClusterConfig  `json:"application" yaml:"application"`
@@ -338,7 +338,7 @@ type RuntimeConfig struct {
 
 // RuntimeClusterConfig configures one Flink-style runtime cluster topology.
 // Session values are supplied by the Helm release. Application values are
-// defaults; a Flow definition can override only pod resources via its top-level
+// defaults; a AgentGraph definition can override only pod resources via its top-level
 // resources block.
 type RuntimeClusterConfig struct {
 	ClusterID   string               `json:"cluster_id,omitempty" yaml:"cluster_id,omitempty"`
@@ -365,10 +365,10 @@ type RuntimeSandboxConfig struct {
 }
 
 // CredentialPathsConfig defines where credentials files are mounted in pods.
-// Two-level hierarchy, flow overrides namespace:
+// Two-level hierarchy, graph overrides namespace:
 //
 //	/var/secret/flowgent/{namespace}/credentials          (namespace-level)
-//	/var/secret/flowgent/{namespace}/{flow}/credentials    (flow-level)
+//	/var/secret/flowgent/{namespace}/{graph}/credentials    (graph-level)
 //
 // Only taskmanager, sandbox, and notifier load these at startup.
 type CredentialPathsConfig struct {
@@ -381,7 +381,7 @@ type CredentialPathsConfig struct {
 // Canonical config keys are snake_case, but relaxed binding also accepts kebab-case
 // and camelCase (see matchConfigKey). Environment variables prefixed with FLOWGENT__
 // (double underscore) use Spring Boot-style relaxed binding: __ separates nested config
-// levels (FLOWGENT__RUNTIME__AGENT_FLOW_ID → runtime.agent_flow_id). FLOWGENT__ env vars
+// levels (FLOWGENT__RUNTIME__AGENT_GRAPH_NAME → runtime.agent_graph_name). FLOWGENT__ env vars
 // take precedence over YAML file values.
 func Load(path string) (*FlowgentConfig, error) {
 	v := viper.New()
@@ -410,7 +410,7 @@ func Load(path string) (*FlowgentConfig, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Load CSI-mounted credentials (namespace + flow level)
+	// Load CSI-mounted credentials (namespace + graph level)
 	creds := loadCSICredentials(cfg.Runtime.CredentialPaths.BasePath)
 	if len(creds) > 0 {
 		cfg.ResolvedCredentials = creds
@@ -504,7 +504,7 @@ func normalizeConfigKey(s string) string {
 // keyToEnvSegment converts a single config-key segment (in any supported style) to
 // its UPPER_SNAKE env form. Canonical keys are snake_case ("jm_image" → "JM_IMAGE");
 // kebab-case and camelCase are also handled so the env mapping stays correct even if
-// a tag is written in a different style ("agentFlowId" → "AGENT_FLOW_ID"). Digits are
+// a tag is written in a different style ("agentGraphId" → "AGENT_GRAPH_NAME"). Digits are
 // treated as part of the surrounding word, not a boundary, so alphanumeric abbreviations
 // stay intact ("a2a" → "A2A", "x402" → "X402") instead of splitting into "A_2_A"/"X_402".
 func keyToEnvSegment(s string) string {
@@ -534,9 +534,9 @@ func keyToEnvSegment(s string) string {
 // loadCSICredentials reads credential files from CSI-mounted paths:
 //
 //	{basePath}/{namespace}/secret/.credentials          (namespace-level)
-//	{basePath}/{namespace}/{flowId}/secret/.credentials  (flow-level)
+//	{basePath}/{namespace}/{graphId}/secret/.credentials  (graph-level)
 //
-// Files are KEY=VALUE format, flow-level overrides namespace-level.
+// Files are KEY=VALUE format, graph-level overrides namespace-level.
 // If basePath is empty, defaults to /var/flowgent.
 func loadCSICredentials(basePath string) map[string]string {
 	if basePath == "" {
@@ -561,17 +561,17 @@ func loadCSICredentials(basePath string) map[string]string {
 				result[k] = v
 			}
 		}
-		// Flow-level credentials (scan subdirs)
-		flowEntries, err := os.ReadDir(filepath.Join(basePath, namespace))
+		// AgentGraph-level credentials (scan subdirs)
+		graphEntries, err := os.ReadDir(filepath.Join(basePath, namespace))
 		if err != nil {
 			continue
 		}
-		for _, fe := range flowEntries {
+		for _, fe := range graphEntries {
 			if !fe.IsDir() {
 				continue
 			}
-			flowCredFile := filepath.Join(basePath, namespace, fe.Name(), "secret", ".credentials")
-			if m := readEnvFile(flowCredFile); len(m) > 0 {
+			graphCredFile := filepath.Join(basePath, namespace, fe.Name(), "secret", ".credentials")
+			if m := readEnvFile(graphCredFile); len(m) > 0 {
 				for k, v := range m {
 					result[k] = v
 				}
@@ -749,5 +749,5 @@ func LogConfig(cfg *FlowgentConfig) {
 		slog.Info("Management", "host", cfg.Mgmt.Host, "port", cfg.Mgmt.Port, "pprof", cfg.Mgmt.PProf.Enabled, "otel", cfg.Mgmt.OTEL.Enabled)
 	}
 
-	slog.Info("Engine", "max_concurrent", cfg.Orchestration.MaxConcurrentFlows, "timeout", cfg.Orchestration.FlowExecutionTimeout, "max_retries", cfg.Orchestration.MaxNodeRetries)
+	slog.Info("Engine", "max_concurrent", cfg.Orchestration.MaxConcurrentAgentGraphs, "timeout", cfg.Orchestration.AgentGraphExecutionTimeout, "max_retries", cfg.Orchestration.MaxNodeRetries)
 }

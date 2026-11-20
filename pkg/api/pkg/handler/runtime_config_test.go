@@ -85,16 +85,16 @@ func TestRuntimeConfigEmptyLayersSerializeCollections(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfigFlowOverridesNamespaceAcrossValueKinds(t *testing.T) {
+func TestRuntimeConfigAgentGraphOverridesNamespaceAcrossValueKinds(t *testing.T) {
 	nsEnvironment := map[string]string{"SHARED": "ns", "SECRET_TO_ENV": "ns-env"}
 	nsSecrets := map[string]string{"SECRET_TO_ENV": "ns-secret", "ENV_TO_SECRET": "ns-secret"}
-	flowEnvironment := map[string]string{"SHARED": "flow", "SECRET_TO_ENV": "flow-env"}
-	flowSecrets := map[string]string{"ENV_TO_SECRET": "flow-secret"}
-	environment, secrets := mergeResolved(nsEnvironment, nsSecrets, flowEnvironment, flowSecrets)
-	if environment["SHARED"] != "flow" || environment["SECRET_TO_ENV"] != "flow-env" {
+	graphEnvironment := map[string]string{"SHARED": "graph", "SECRET_TO_ENV": "graph-env"}
+	graphSecrets := map[string]string{"ENV_TO_SECRET": "graph-secret"}
+	environment, secrets := mergeResolved(nsEnvironment, nsSecrets, graphEnvironment, graphSecrets)
+	if environment["SHARED"] != "graph" || environment["SECRET_TO_ENV"] != "graph-env" {
 		t.Fatalf("effective environment=%v", environment)
 	}
-	if _, exists := secrets["SECRET_TO_ENV"]; exists || secrets["ENV_TO_SECRET"] != "flow-secret" {
+	if _, exists := secrets["SECRET_TO_ENV"]; exists || secrets["ENV_TO_SECRET"] != "graph-secret" {
 		t.Fatalf("effective secrets=%v", secrets)
 	}
 }

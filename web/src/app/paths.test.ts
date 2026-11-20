@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { flowPath, flowRunPath, flowSettingsPath, namespaceSettingsPath } from './paths'
+import { graphPath, graphRunPath, graphSettingsPath, namespaceSettingsPath } from './paths'
 
 describe('canonical resource paths', () => {
-  it('uses GitHub-style namespace/flow paths', () => {
-    expect(flowPath('Acme_Team', 'Security-Fixer')).toBe('/Acme_Team/Security-Fixer')
-    expect(flowRunPath('Acme_Team', 'Security-Fixer', 'run 1', '/tracking')).toBe(
-      '/Acme_Team/Security-Fixer/runs/run%201/tracking',
+  it('uses GitHub-style namespace/graph paths', () => {
+    expect(graphPath('Acme_Team', 'Security-Fixer')).toBe('/Acme_Team/Security-Fixer')
+    expect(graphRunPath('Acme_Team', 'Security-Fixer', 'run 1', '/tracking')).toBe(
+      '/Acme_Team/Security-Fixer/graph-runs/run%201/tracking',
     )
-    expect(flowSettingsPath('Acme_Team', 'Security-Fixer')).toBe(
+    expect(graphSettingsPath('Acme_Team', 'Security-Fixer')).toBe(
       '/Acme_Team/Security-Fixer/settings',
     )
-    expect(flowSettingsPath('Acme_Team', 'Security-Fixer', 'environment')).toBe(
+    expect(graphSettingsPath('Acme_Team', 'Security-Fixer', 'environment')).toBe(
       '/Acme_Team/Security-Fixer/settings/environment',
     )
   })

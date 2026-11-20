@@ -6,7 +6,7 @@ separate design/implementation work; missing evidence must fail validation.
 - **Metrics:** `pkg/common/pkg/tracing/otel.go` creates a MeterProvider without
   a reader/exporter. Configuration declares Prometheus but no management
   `/metrics` handler is registered. JobManager metric recording methods are
-  declared but currently have no call sites. A real Prometheus scrape and per-Flow
+  declared but currently have no call sites. A real Prometheus scrape and per-AgentGraph
   counter assertion cannot succeed yet. Do not substitute a mock exporter.
 - **Checkpoint/recovery:** snapshot capture exists, but execution can still
   resolve the latest Agent and Knowledge revisions, and checkpoint restoration
@@ -26,7 +26,7 @@ separate design/implementation work; missing evidence must fail validation.
   orchestration-only mock output must not count as semantic remediation proof.
 - **AutoTest:** missing review agents, Confluence/GitHub resource manifests,
   out-of-map `${item}` references, stdio MCP versus HTTP-only runtime, and
-  unimplemented map dispatch prevent the proposed business acceptance flow.
+  unimplemented map dispatch prevent the proposed business acceptance graph.
   Preflight must report these before deployment; an empty matrix is not success.
 - **Translated allowlist sandbox:** the real Kubernetes main run reaches a
   successful official DeepSeek aggregation, then `git-clone` fails with
@@ -37,7 +37,7 @@ separate design/implementation work; missing evidence must fail validation.
   runtime/platform work. Do not disable the manifest's network policy or count
   missing remediation/delivery/rescan evidence as success.
 
-Evidence is scoped by namespace, Flow, Run, NodeRun attempt and plan ID. The UI
+Evidence is scoped by namespace, AgentGraph, Run, NodeRun attempt and plan ID. The UI
 scenario must create the workspace file; verification only reads and hashes it.
 Trace and log checks must refer to that persisted attempt, not arbitrary events
 from another run. Redis/pgvector evidence belongs in scenarios that actually use

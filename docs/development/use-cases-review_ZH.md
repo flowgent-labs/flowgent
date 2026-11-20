@@ -10,7 +10,7 @@ PG/向量、Workspace、Trace 与日志应归入对应操作，而不另设存�
 
 架构依据：[总览](../architecture/overview_ZH.md)、
 [持久数据生命周期](../architecture/data-lifecycle_ZH.md)、
-[AgentFlow](../architecture/agent-flow_ZH.md) 及各用例 README。
+[AgentGraph](../architecture/agent-graph_ZH.md) 及各用例 README。
 
 ## 已确认的场景决定
 
@@ -31,10 +31,10 @@ Security 保留原有 23 个 ID，并加入遥测 ID 51/52，共 25 组：
 | 01、11、12、14 | 目录结构、基础设施、Console 导入、认证 |
 | 21–25 | API 生命周期、通知投递、运行时生命周期、MQTT 分发、A2A |
 | 31–37 | Seed/Scan/Trigger、发现、修复、交付/重扫、Commit、Knowledge、Workspace |
-| 41–46 | 浏览器 Flow 执行、Agent、Skill、集成、Knowledge/通知、Hosted Login |
+| 41–46 | 浏览器 AgentGraph 执行、Agent、Skill、集成、Knowledge/通知、Hosted Login |
 | 13、51、52 | 持久业务执行关联到 Trace、指标与生命周期日志 |
 
-UI Flow 写入自己的 Workspace 文件；Verifier 读取字节/Hash，并关联同一持久 Attempt
+UI AgentGraph 写入自己的 Workspace 文件；Verifier 读取字节/Hash，并关联同一持久 Attempt
 的 Jaeger 与运行时日志。主流程检查保留每个活动 Node 的身份。Verifier 写入的数据库
 探针不得被当作业务产生的持久化或 Embedding 证据。
 

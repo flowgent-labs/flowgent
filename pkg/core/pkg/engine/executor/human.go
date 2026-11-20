@@ -23,19 +23,19 @@ func NewHumanExecutor(store HumanApprovalStore) *HumanExecutor {
 	return &HumanExecutor{store: store}
 }
 
-func (e *HumanExecutor) TaskType() entities.TaskType { return entities.TaskHuman }
+func (e *HumanExecutor) NodeKind() entities.NodeKind { return entities.HumanNode }
 
-func (e *HumanExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
+func (e *HumanExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
 	timeout := 24 * time.Hour
-	if plan.NodeSpec.Approval != nil && plan.NodeSpec.Approval.Timeout.IsPositive() {
-		timeout = plan.NodeSpec.Approval.Timeout.ToDuration()
+	if plan.Node.Approval != nil && plan.Node.Approval.Timeout.IsPositive() {
+		timeout = plan.Node.Approval.Timeout.ToDuration()
 	}
 
 	approval := &entities.ApprovalInfo{
-		TaskRunID:      plan.TaskID,
-		AgentFlowRunID: plan.AgentFlowRunID,
-		Timeout:        timeout,
-		Status:         "PENDING",
+		NodeRunID:  plan.NodeRunID,
+		GraphRunID: plan.GraphRunID,
+		Timeout:    timeout,
+		Status:     "PENDING",
 	}
 	if err := e.store.CreateApproval(ctx, approval); err != nil {
 		return nil, fmt.Errorf("create human approval: %w", err)
@@ -43,12 +43,12 @@ func (e *HumanExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 
 	onApprove := "continue"
 	onReject := "continue"
-	if plan.NodeSpec.Approval != nil {
-		onApprove = plan.NodeSpec.Approval.OnApprove
-		onReject = plan.NodeSpec.Approval.OnReject
+	if plan.Node.Approval != nil {
+		onApprove = plan.Node.Approval.OnApprove
+		onReject = plan.Node.Approval.OnReject
 	}
 
-	return &entities.TaskResult{Output: map[string]any{
+	return &entities.NodeResult{Output: map[string]any{
 		"approval_token": approval.Token,
 		"timeout":        timeout.String(),
 		"status":         "WAITING_HUMAN",

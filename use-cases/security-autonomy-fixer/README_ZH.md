@@ -1,8 +1,8 @@
 # Security Autonomy Fixer
 
-[English](README.md) · [AgentFlow 架构](../../docs/architecture/agent-flow_ZH.md)
+[English](README.md) · [AgentGraph 架构](../../docs/architecture/agent-graph_ZH.md)
 
-Security Autonomy Fixer 是一个自包含的 L2 AgentFlow 应用。它读取目标 GitHub
+Security Autonomy Fixer 是一个自包含的 L2 AgentGraph 应用。它读取目标 GitHub
 Commit 和 SonarQube Findings，选择有界源码上下文，生成并评审 Patch，通过确定性
 门禁与人工审批，经 GitHub 交付修改，重新检查 SonarQube，最后发布报告。
 
@@ -91,7 +91,7 @@ security-autonomy-fixer/
 │   ├── context.py                # shared context, lifecycle and application API
 │   ├── infra/sNN_*.py
 │   ├── core/sNN_*.py
-│   ├── agentflow/sNN_*.py
+│   ├── agentgraph/sNN_*.py
 │   ├── otel/sNN_*.py
 │   └── web/sNN_*.py
 └── reports/                      # ignored evidence and rolling archives
@@ -104,8 +104,8 @@ security-autonomy-fixer/
 
 | 资源   | 规范文件                                                                    | 作用                                                    |
 | ------ | --------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 主流程 | [`security-autonomy-fixer.yaml`](deploy/flowgent/config/flows/security-autonomy-fixer.yaml) | 29 Nodes、33 Edges 的修复 DAG                           |
-| 子流程 | [`sub-fix.yaml`](deploy/flowgent/config/flows/sub-fix.yaml)                                 | 三节点 analyze → patch → validate；当前为独立可复用定义 |
+| 主流程 | [`security-autonomy-fixer.yaml`](deploy/flowgent/config/agent-graphs/security-autonomy-fixer.yaml) | 29 Nodes、33 Edges 的修复 DAG                           |
+| 子流程 | [`sub-fix.yaml`](deploy/flowgent/config/agent-graphs/sub-fix.yaml)                                 | 三节点 analyze → patch → validate；当前为独立可复用定义 |
 | Agents | [`deploy/flowgent/config/agents/`](deploy/flowgent/config/agents/)                                      | Supervisor、Detector、Fixer、三个 Reviewer 与 Git Role  |
 | MCPs   | [`deploy/flowgent/config/mcps/`](deploy/flowgent/config/mcps/)                                          | GitHub 交付与 SonarQube Issue/Scan 访问                 |
 | Envoy  | [`deploy/flowgent/config/envoy/envoy.yaml`](deploy/flowgent/config/envoy/envoy.yaml)                    | 声明式边缘代理配置，与部署代码分离                       |
@@ -125,9 +125,9 @@ Agent 默认通过 `--e2e-llm-provider=mock` 使用确定性 Fixture。指定
 `--e2e-llm-provider=official` 时会选择已导入的 DeepSeek Provider，并在部署
 Flowgent 前校验其 `api_key_env` 指定的环境变量。
 
-## Flow 契约
+## AgentGraph 契约
 
-主流程有 **29 个 Nodes、33 条 Edges**，使用 8 种通用 AgentFlow Node：
+主流程有 **29 个 Nodes、33 条 Edges**，使用 8 种通用 AgentGraph Node：
 
 | Node Type    | 数量 | 应用用途                                       |
 | ------------ | ---: | ---------------------------------------------- |
@@ -188,7 +188,7 @@ flowchart TD
 
 全部箭头都是当前可执行的前向依赖。Review 反对意见进入持久化人工门禁，复扫
 未完成结果进入最终报告。在 Node Reset 语义实现前，多轮修复必须使用显式有界
-Subflow 或 Run 边界。
+SubGraph 或 Run 边界。
 
 ## 业务阶段
 
@@ -258,7 +258,7 @@ Subflow 或 Run 边界。
 | SonarQube MCP     | `deploy/flowgent/config/mcps/sonarqube.yaml`                              | Finding 发现、Export/Recheck 与修改后比较输入                       |
 | Notifiers         | `deploy/flowgent/config/notifiers/email.yaml`, `webhook.yaml`             | 可导入的通知 Channel；29 节点主 DAG 当前以 GitHub Comment Tool 终止 |
 
-运行时凭据 **MUST** 通过部署 Secret 或环境契约注入，**MUST NOT** 嵌入 Flow、
+运行时凭据 **MUST** 通过部署 Secret 或环境契约注入，**MUST NOT** 嵌入 AgentGraph、
 Agent、MCP 或 README。
 
 ## 当前限制
@@ -273,10 +273,10 @@ Agent、MCP 或 README。
    仍顺序分派。
 5. 复扫使用 E2E Scanner CI 适配器，必须关联实际交付 SHA、新的成功 CE 任务和同 SHA
    的分析版本；使用其他部署方式时，需要提供等价的 CI 适配器契约。
-6. 主 Manifest 没有 Node 引用 `sub-fix`；它是独立可复用 Flow，不属于 29 节点路径。
+6. 主 Manifest 没有 Node 引用 `sub-fix`；它是独立可复用 AgentGraph，不属于 29 节点路径。
 
 重复节点 Reset 语义实现前，可执行的多轮设计 **MUST** 使用有界 Node Retry 或
-明确的 Subflow/Run 边界。
+明确的 SubGraph/Run 边界。
 
 ## 验证与运维
 
@@ -290,7 +290,7 @@ HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm
 拓扑部署 AuthGuard/Envoy，导入 `config`，并验证基础设施、LDAP Principal 发现、
 GitHub OAuth、边缘 allow/deny 策略、Telemetry、API Server、Notifier、Controller、
 MQTT、A2A、修复、PR 交付、Knowledge、共享 Workspace，以及通过已发布 Web UI
-完成 sandbox Flow 的真实 Chromium 创建、执行、更新与删除。CI 外执行浏览器场景前，
+完成 sandbox AgentGraph 的真实 Chromium 创建、执行、更新与删除。CI 外执行浏览器场景前，
 请安装 E2E 依赖和 Chromium：
 
 ```bash
@@ -343,7 +343,11 @@ Manifest、REST State、MQTT Routing、PostgreSQL、Kubernetes Resource 或外�
 
 当前 Java 源码分析没有编译依赖字节码，因此不能据此声称完整的字节码/类型解析覆盖。
 
-新增 vNext 场景：`61` 验证旧 Static 子流、Adaptive Supervisor 扩图、Seal、图 CAS
+新增 vNext 场景：`61` 验证Static SubGraph、Adaptive Supervisor 扩图、Seal、图 CAS
 和决策重放；`62` 验证 10 个持久领取、重复完成、结果事务 Outbox 与旧 Attempt
 拒绝。使用确定性 LLM 测试服务执行。这些是协议与编排验证；尚未实现的恢复边界见
-[AgentFlow 实现边界](../../docs/architecture/agent-flow_ZH.md#subflow-vnext-实现边界)。
+[AgentGraph 实现边界](../../docs/architecture/agent-graph_ZH.md#agentgraph-领域与持久恢复)。
+
+场景 `63` 验证 Sandbox 修改期间 SIGKILL、新 NodeRun Attempt 执行前恢复基线、
+最终 WorkspaceSnapshot 校验、GraphRun 快照不可变及 GraphCheckpoint 一致恢复。
+REST/MQTT 使用统一的 AgentGraph 领域命名，旧别名已删除。

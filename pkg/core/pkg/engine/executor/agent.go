@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
@@ -36,15 +37,15 @@ func NewAgentExecutor(llm engine.LLMClient, apiClient *client.FlowgentClient, na
 }
 
 func (e *AgentExecutor) SetKnowledgeRetriever(k KnowledgeRetriever) { e.knowledge = k }
-func (e *AgentExecutor) TaskType() entities.TaskType                { return entities.TaskAgent }
+func (e *AgentExecutor) NodeKind() entities.NodeKind                { return entities.AgentNode }
 
-func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	agent, err := e.client.GetAgent(ctx, e.namespace, plan.NodeSpec.Agent)
+func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
+	agent, err := e.client.GetRunAgent(ctx, e.namespace, plan.GraphRunID, plan.Node.Agent)
 	if err != nil {
-		return nil, fmt.Errorf("agent not found %q: %w", plan.NodeSpec.Agent, err)
+		return nil, fmt.Errorf("agent not found %q: %w", plan.Node.Agent, err)
 	}
 	if agent == nil {
-		return nil, fmt.Errorf("agent not found: %s", plan.NodeSpec.Agent)
+		return nil, fmt.Errorf("agent not found: %s", plan.Node.Agent)
 	}
 
 	userPrompt := formatPlanInput(plan)
@@ -59,7 +60,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 		}
 	}
 
-	instruction := plan.NodeSpec.Instruction
+	instruction := plan.Node.Instruction
 	if instruction == "" {
 		instruction = agent.Instruction
 	}
@@ -77,8 +78,8 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 	}
 
 	outputSchema := agent.OutputSchema
-	if plan.NodeSpec.OutputSchema != nil {
-		outputSchema = plan.NodeSpec.OutputSchema
+	if plan.Node.OutputSchema != nil {
+		outputSchema = plan.Node.OutputSchema
 	}
 	if outputSchema != nil {
 		schemaJSON, _ := json.MarshalIndent(outputSchema, "", "  ")
@@ -94,10 +95,10 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 	for attempt := 0; attempt <= e.maxRetries; attempt++ {
 		attemptCtx, attemptSpan := tracing.Tracer("flowgent/executor/agent").Start(ctx, "agent.generate",
 			trace.WithAttributes(
-				attribute.String("run.id", plan.AgentFlowRunID),
-				attribute.String("agentflow.id", plan.AgentFlowDefinitionID),
-				attribute.String("flowgent.node_id", plan.NodeID),
-				attribute.String("flowgent.task_id", plan.TaskID),
+				attribute.String("graph_run.id", plan.GraphRunID),
+				attribute.String("agent_graph.name", plan.AgentGraphName),
+				attribute.String("flowgent.node_instance_id", plan.NodeInstanceID),
+				attribute.String("flowgent.node_run_id", plan.NodeRunID),
 				attribute.Int("flowgent.generation_attempt", attempt+1),
 				attribute.Int("flowgent.generation_max_retries", e.maxRetries),
 				attribute.String("gen_ai.request.model", agent.Model),
@@ -140,7 +141,8 @@ func (e *AgentExecutor) Execute(ctx context.Context, plan *entities.ExecutionPla
 
 		attemptSpan.SetStatus(codes.Ok, "done")
 		attemptSpan.End()
-		return &entities.TaskResult{Output: out}, nil
+		plan.Checkpoint = &entities.NodeCheckpoint{Messages: []entities.MessageEntry{{Role: "system", Content: soul}, {Role: "user", Content: userPrompt}, {Role: "assistant", Content: resp}}, LastStep: 1, CheckpointedAt: time.Now().UTC()}
+		return &entities.NodeResult{Output: out}, nil
 	}
 
 	return nil, lastErr

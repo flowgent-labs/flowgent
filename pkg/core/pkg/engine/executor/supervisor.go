@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
@@ -23,19 +24,19 @@ func NewSupervisorExecutor(llm engine.LLMClient, apiClient *client.FlowgentClien
 	return &SupervisorExecutor{llmClient: llm, client: apiClient, namespace: namespace}
 }
 
-func (e *SupervisorExecutor) TaskType() entities.TaskType { return entities.TaskSupervisor }
+func (e *SupervisorExecutor) NodeKind() entities.NodeKind { return entities.SupervisorNode }
 
-func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	agent, err := e.client.GetAgent(ctx, e.namespace, plan.NodeSpec.Agent)
+func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
+	agent, err := e.client.GetRunAgent(ctx, e.namespace, plan.GraphRunID, plan.Node.Agent)
 	if err != nil {
-		return nil, fmt.Errorf("supervisor agent not found %q: %w", plan.NodeSpec.Agent, err)
+		return nil, fmt.Errorf("supervisor agent not found %q: %w", plan.Node.Agent, err)
 	}
 	if agent == nil {
-		return nil, fmt.Errorf("supervisor agent not found: %s", plan.NodeSpec.Agent)
+		return nil, fmt.Errorf("supervisor agent not found: %s", plan.Node.Agent)
 	}
 
 	userPrompt := formatPlanInput(plan)
-	instruction := plan.NodeSpec.Instruction
+	instruction := plan.Node.Instruction
 	if instruction == "" {
 		instruction = agent.Instruction
 	}
@@ -43,8 +44,8 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.Executi
 		userPrompt = instruction + "\n\n" + userPrompt
 	}
 	outputSchema := agent.OutputSchema
-	if plan.NodeSpec.OutputSchema != nil {
-		outputSchema = plan.NodeSpec.OutputSchema
+	if plan.Node.OutputSchema != nil {
+		outputSchema = plan.Node.OutputSchema
 	}
 	if outputSchema != nil {
 		schemaJSON, _ := json.MarshalIndent(outputSchema, "", "  ")
@@ -69,8 +70,8 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.Executi
 		action = "continue"
 		decision["action"] = "continue"
 	}
-	if plan.NodeSpec.SupervisorConfig != nil && len(plan.NodeSpec.SupervisorConfig.AllowedActions) > 0 {
-		allowed := plan.NodeSpec.SupervisorConfig.AllowedActions
+	if plan.Node.SupervisorConfig != nil && len(plan.Node.SupervisorConfig.AllowedActions) > 0 {
+		allowed := plan.Node.SupervisorConfig.AllowedActions
 		found := false
 		for _, a := range allowed {
 			if a == action {
@@ -83,7 +84,8 @@ func (e *SupervisorExecutor) Execute(ctx context.Context, plan *entities.Executi
 		}
 	}
 
-	return &entities.TaskResult{Output: decision}, nil
+	plan.Checkpoint = &entities.NodeCheckpoint{Messages: []entities.MessageEntry{{Role: "user", Content: userPrompt}, {Role: "assistant", Content: resp}}, LastStep: 1, CheckpointedAt: time.Now().UTC()}
+	return &entities.NodeResult{Output: decision}, nil
 }
 
 // extractJSON finds the first balanced JSON object in text, handling LLM preamble.

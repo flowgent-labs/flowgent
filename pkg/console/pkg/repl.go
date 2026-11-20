@@ -127,8 +127,8 @@ func (s *consoleState) dispatch(line string) {
 	case "namespace":
 		s.cmdNamespace(args)
 
-	case "flow":
-		s.resourceCmd(args, "flow", s.flowList, s.flowGet, s.flowAdd, s.flowRemove)
+	case "graph":
+		s.resourceCmd(args, "graph", s.graphList, s.graphGet, s.graphAdd, s.graphRemove)
 	case "run":
 		s.cmdRun(args)
 	case "agent":
@@ -187,8 +187,8 @@ func (s *consoleState) cmdHelp(args []string) {
   namespace set <id>           Set the active namespace (required before CRUD commands)
   namespace unset              Clear the active namespace
 
-  flow    [list | get <id> | add | remove <id>]
-  run     [list | get <id> | create <flow-id> | start <run-id> | stop <run-id>]
+  graph    [list | get <id> | add | remove <id>]
+  run     [list | get <id> | create <graph-id> | start <run-id> | stop <run-id>]
   agent   [list | get <name> | add | remove <name>]
   mcp     [list | get <name> | add | remove <name>]
   skill   [list | get <id> | add | remove <id>]
@@ -233,84 +233,84 @@ func (s *consoleState) resourceCmd(args []string, name string, listFn, getFn, ad
 	}
 }
 
-// ─── Flow ───────────────────────────────────────────────────────
+// ─── AgentGraph ───────────────────────────────────────────────────────
 
-func (s *consoleState) flowList(args []string) {
+func (s *consoleState) graphList(args []string) {
 	if !s.requireNamespace() {
 		return
 	}
-	items, err := s.fc.ListFlows()
+	items, err := s.fc.ListAgentGraphs()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 	if len(items) == 0 {
-		fmt.Println("No agentflows found.")
+		fmt.Println("No agentgraphs found.")
 		return
 	}
 	fmt.Printf("%-38s %-8s %s\n", "ID", "VERSION", "CREATED")
 	fmt.Println(strings.Repeat("-", 80))
 	for _, f := range items {
-		fmt.Printf("%-38s %-8d %s\n", f.FlowID, f.Version, f.CreatedAt.Format("2006-01-02 15:04"))
+		fmt.Printf("%-38s %-8d %s\n", f.AgentGraphID, f.Revision, f.CreatedAt.Format("2006-01-02 15:04"))
 	}
-	fmt.Printf("(%d flows)\n", len(items))
+	fmt.Printf("(%d graphs)\n", len(items))
 }
 
-func (s *consoleState) flowGet(args []string) {
+func (s *consoleState) graphGet(args []string) {
 	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
-		fmt.Println("Usage: flow get <id>")
+		fmt.Println("Usage: graph get <id>")
 		return
 	}
-	spec, err := s.fc.GetFlow(args[0])
+	spec, err := s.fc.GetAgentGraph(args[0])
 	if err != nil || spec == nil {
-		fmt.Printf("Flow not found: %s\n", args[0])
+		fmt.Printf("AgentGraph not found: %s\n", args[0])
 		return
 	}
 	printJSON(spec)
 }
 
-func (s *consoleState) flowAdd(args []string) {
+func (s *consoleState) graphAdd(args []string) {
 	if !s.requireNamespace() {
 		return
 	}
 	s.fc.SetNamespace(s.namespace)
-	fmt.Println("Enter agentflow JSON (end with a line containing only '.'):")
+	fmt.Println("Enter agentgraph JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
-	var spec entities.FlowInfo
+	var spec entities.AgentGraph
 	if err := json.Unmarshal([]byte(body), &spec); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
 	}
-	if err := s.fc.AddFlow(&spec); err != nil {
+	if err := s.fc.AddAgentGraph(&spec); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	fmt.Printf("Created flow: %s\n", spec.ID)
+	fmt.Printf("Created graph: %s\n", spec.ID)
 }
 
-func (s *consoleState) flowRemove(args []string) {
+func (s *consoleState) graphRemove(args []string) {
 	if !s.requireNamespace() {
 		return
 	}
 	if len(args) < 1 {
-		fmt.Println("Usage: flow remove <id>")
+		fmt.Println("Usage: graph remove <id>")
 		return
 	}
-	if err := s.fc.RemoveFlow(args[0]); err != nil {
+	if err := s.fc.RemoveAgentGraph(args[0]); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	fmt.Printf("Deleted flow: %s\n", args[0])
+	fmt.Printf("Deleted graph: %s\n", args[0])
 }
 
 // ─── Run ────────────────────────────────────────────────────────
 
 func (s *consoleState) cmdRun(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: run [list | get <id> | create <flow-id> | start <run-id> | stop <run-id>]")
+		fmt.Println("Usage: run [list | get <id> | create <graph-id> | start <run-id> | stop <run-id>]")
 		return
 	}
 	switch strings.ToLower(args[0]) {
@@ -333,7 +333,7 @@ func (s *consoleState) runList(args []string) {
 	if !s.requireNamespace() {
 		return
 	}
-	items, err := s.fc.ListRuns()
+	items, err := s.fc.ListGraphRuns()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -345,7 +345,7 @@ func (s *consoleState) runList(args []string) {
 	fmt.Printf("%-38s %-36s %-12s %s\n", "RUN ID", "FLOW", "STATUS", "CREATED")
 	fmt.Println(strings.Repeat("-", 110))
 	for _, r := range items {
-		fmt.Printf("%-38s %-36s %-12s %s\n", r.ID, truncate(r.AgentFlowID, 36), string(r.Status), r.CreatedAt.Format("2006-01-02 15:04"))
+		fmt.Printf("%-38s %-36s %-12s %s\n", r.ID, truncate(r.AgentGraphName, 36), string(r.Status), r.CreatedAt.Format("2006-01-02 15:04"))
 	}
 	fmt.Printf("(%d runs)\n", len(items))
 }
@@ -358,7 +358,7 @@ func (s *consoleState) runGet(args []string) {
 		fmt.Println("Usage: run get <id>")
 		return
 	}
-	run, err := s.fc.GetRun(args[0])
+	run, err := s.fc.GetGraphRun(args[0])
 	if err != nil || run == nil {
 		fmt.Printf("Run not found: %s\n", args[0])
 		return
@@ -371,11 +371,11 @@ func (s *consoleState) runCreate(args []string) {
 		return
 	}
 	if len(args) < 1 {
-		fmt.Println("Usage: run create <flow-id>")
+		fmt.Println("Usage: run create <graph-id>")
 		return
 	}
 	s.fc.SetNamespace(s.namespace)
-	run, err := s.fc.CreateRun(args[0])
+	run, err := s.fc.CreateGraphRun(args[0])
 	if err != nil {
 		fmt.Printf("Error creating run: %v\n", err)
 		return
@@ -579,7 +579,7 @@ func (s *consoleState) skillList(args []string) {
 	fmt.Printf("%-38s %-8s %s\n", "ID", "VERSION", "CREATED")
 	fmt.Println(strings.Repeat("-", 80))
 	for _, sk := range items {
-		fmt.Printf("%-38s %-8d %s\n", sk.FlowID, sk.Version, sk.CreatedAt.Format("2006-01-02 15:04"))
+		fmt.Printf("%-38s %-8d %s\n", sk.AgentGraphID, sk.Revision, sk.CreatedAt.Format("2006-01-02 15:04"))
 	}
 	fmt.Printf("(%d skills)\n", len(items))
 }
@@ -607,7 +607,7 @@ func (s *consoleState) skillAdd(args []string) {
 	s.fc.SetNamespace(s.namespace)
 	fmt.Println("Enter skill JSON (end with a line containing only '.'):")
 	body := readMultiline(s.rl)
-	var spec entities.FlowInfo
+	var spec entities.AgentGraph
 	if err := json.Unmarshal([]byte(body), &spec); err != nil {
 		fmt.Printf("Invalid JSON: %v\n", err)
 		return
@@ -819,7 +819,7 @@ func (s *consoleState) cmdExport(args []string) {
 
 	if output == "" {
 		fmt.Println("Usage: export [--kind <kinds>] --output <filepath>")
-		fmt.Println("  --kind, -k     Comma-separated resource kinds: llm,channel,mcp,skill,agent,flow,flowrun")
+		fmt.Println("  --kind, -k     Comma-separated resource kinds: llm,channel,mcp,skill,agent,graph,graphrun")
 		fmt.Println("                 Default: all supported Flowgent resource kinds")
 		fmt.Println("  --output, -o   Output file path (.json or .yaml/.yml)")
 		fmt.Println()
@@ -830,10 +830,10 @@ func (s *consoleState) cmdExport(args []string) {
 	}
 
 	if len(kinds) > 0 {
-		validKinds := map[string]bool{"llm": true, "channel": true, "mcp": true, "skill": true, "agent": true, "flow": true, "flowrun": true}
+		validKinds := map[string]bool{"llm": true, "channel": true, "mcp": true, "skill": true, "agent": true, "graph": true, "graphrun": true}
 		for _, k := range kinds {
 			if !validKinds[k] {
-				fmt.Printf("Invalid kind %q. Valid kinds: llm, channel, mcp, skill, agent, flow, flowrun\n", k)
+				fmt.Printf("Invalid kind %q. Valid kinds: llm, channel, mcp, skill, agent, graph, graphrun\n", k)
 				return
 			}
 		}
@@ -864,9 +864,9 @@ func (s *consoleState) cmdExport(args []string) {
 		fmt.Printf("Error writing file: %v\n", err)
 		return
 	}
-	fmt.Printf("Exported to %s (%d llms, %d channels, %d mcps, %d skills, %d agents, %d flows, %d runs)\n",
+	fmt.Printf("Exported to %s (%d llms, %d channels, %d mcps, %d skills, %d agents, %d graphs, %d runs)\n",
 		output, len(data.LLMs), len(data.Channels), len(data.MCPs), len(data.Skills),
-		len(data.AgentDefs), len(data.AgentFlows), len(data.FlowRuns))
+		len(data.AgentDefs), len(data.AgentGraphs), len(data.GraphRuns))
 }
 
 func splitAndTrim(s string) []string {

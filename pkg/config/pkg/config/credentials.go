@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-// LoadCredentials reads credentials files in priority order (flow > namespace).
+// LoadCredentials reads credentials files in priority order (graph > namespace).
 // Returns a merged map suitable for setting as environment variables.
 //
 // Paths resolved (CSI-mounted secrets from GCP Secret Manager or similar):
 //
 //	{basePath}/{namespace}/secret/.credentials          (namespace-level, lower priority)
-//	{basePath}/{namespace}/{flow}/secret/.credentials   (flow-level, highest priority)
-func LoadCredentials(basePath, namespace, flow string) map[string]string {
+//	{basePath}/{namespace}/{graph}/secret/.credentials   (graph-level, highest priority)
+func LoadCredentials(basePath, namespace, graph string) map[string]string {
 	if basePath == "" {
 		basePath = "/var/flowgent"
 	}
@@ -34,15 +34,15 @@ func LoadCredentials(basePath, namespace, flow string) map[string]string {
 		slog.Debug("credentials loaded namespace-level", "path", nsPath, "vars", len(m))
 	}
 
-	// 2. Flow-level credentials (highest priority — overrides namespace)
-	if flow != "" {
-		flowPath := filepath.Join(basePath, namespace, flow, "secret", ".credentials")
-		if m := readEnvFile(flowPath); len(m) > 0 {
+	// 2. AgentGraph-level credentials (highest priority — overrides namespace)
+	if graph != "" {
+		graphPath := filepath.Join(basePath, namespace, graph, "secret", ".credentials")
+		if m := readEnvFile(graphPath); len(m) > 0 {
 			for k, v := range m {
 				result[k] = v
 			}
 			found = true
-			slog.Debug("credentials loaded flow-level", "path", flowPath, "vars", len(m))
+			slog.Debug("credentials loaded graph-level", "path", graphPath, "vars", len(m))
 		}
 
 	}
@@ -96,10 +96,10 @@ func CredentialPathsOrDefault(cfg *FlowgentConfig) CredentialPathsConfig {
 }
 
 // FormatCredentialPaths formats the expected credential file paths for display.
-func FormatCredentialPaths(basePath, namespace, flow string) string {
+func FormatCredentialPaths(basePath, namespace, graph string) string {
 	return fmt.Sprintf(
-		"namespace: %s | flow: %s",
+		"namespace: %s | graph: %s",
 		filepath.Join(basePath, namespace, "secret", ".credentials"),
-		filepath.Join(basePath, namespace, flow, "secret", ".credentials"),
+		filepath.Join(basePath, namespace, graph, "secret", ".credentials"),
 	)
 }

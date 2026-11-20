@@ -12,14 +12,14 @@ type NotifierEvent struct {
 
 // NotifierMessage is a queued notification to be consumed and dispatched.
 type NotifierMessage struct {
-	ChannelID   string    `json:"channel_id,omitempty"`
-	DeliveryID  string    `json:"delivery_id,omitempty"`
-	Recipient   string    `json:"recipient,omitempty"`
-	Title       string    `json:"title"`
-	Body        string    `json:"body"`
-	Namespace   string    `json:"namespace_id"`
-	AgentFlowID string    `json:"agentflow_id"`
-	Timestamp   time.Time `json:"timestamp"`
+	ChannelID      string    `json:"channel_id,omitempty"`
+	DeliveryID     string    `json:"delivery_id,omitempty"`
+	Recipient      string    `json:"recipient,omitempty"`
+	Title          string    `json:"title"`
+	Body           string    `json:"body"`
+	Namespace      string    `json:"namespace_id"`
+	AgentGraphName string    `json:"agent_graph_name"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // NotifierDeliveryResult is emitted only after a sender completed or failed;
@@ -32,12 +32,12 @@ type NotifierDeliveryResult struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
-// SubscriptionRoute maps a WebSocket connection to an agentflow for
+// SubscriptionRoute maps a WebSocket connection to an agentgraph for
 // clustered push delivery across multiple notification pod instances.
 type SubscriptionRoute struct {
-	ID          string    `json:"id"`
-	AgentFlowID string    `json:"agentflow_id"`
-	WSID        string    `json:"ws_id"`
-	PodID       string    `json:"pod_id"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	AgentGraphName string    `json:"agent_graph_name"`
+	WSID           string    `json:"ws_id"`
+	PodID          string    `json:"pod_id"`
+	CreatedAt      time.Time `json:"created_at"`
 }

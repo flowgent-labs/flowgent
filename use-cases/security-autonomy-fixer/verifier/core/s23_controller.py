@@ -7,50 +7,50 @@ cluster lifecycle.
 
 Prerequisites: K8s/K8S cluster, Helm release, Controller pod running.
 
-Steps with Expected I/O — Flow CREATE + TRIGGER Lifecycle:
-  Step 1. Create an application-mode AgentFlow via API
-    Action:  POST /api/v1/{namespace}/flows
-    Input:   {id: "test-flow-{uuid}", nodes: [short sandbox], edges: [], runtime_mode: "application"}
-    Output:  HTTP 200/201, flow ID returned
+Steps with Expected I/O — AgentGraph CREATE + TRIGGER Lifecycle:
+  Step 1. Create an application-mode AgentGraph via API
+    Action:  POST /api/v1/{namespace}/agent-graphs
+    Input:   {id: "test-graph-{uuid}", nodes: [short sandbox], edges: [], runtime_mode: "application"}
+    Output:  HTTP 200/201, graph ID returned
 
-  Step 1b. Verify MQTT ctrl/flow/updated event (best-effort)
-    Action:  Subscribe to ctrl/flow/updated, wait 5s after flow create
+  Step 1b. Verify MQTT ctrl/graph/updated event (best-effort)
+    Action:  Subscribe to ctrl/graph/updated, wait 5s after graph create
     Input:   MQTT broker reachable
-    Output:  Event with matching flow_id (WARN if not received — Controller may poll)
+    Output:  Event with matching agent_graph_id (WARN if not received — Controller may poll)
 
   Step 2. Verify metadata-only creation does not create runtime Deployments
-    Action:  kubectl get deployments with flow labels
+    Action:  kubectl get deployments with graph labels
     Output:  No JM/TM/Sandbox exists before a run is triggered
 
-  Step 3. Trigger flow run
-    Action:  POST /api/v1/{namespace}/flows/{id}/trigger
-    Output:  run_id returned
+  Step 3. Trigger graph run
+    Action:  POST /api/v1/{namespace}/agent-graphs/{id}/trigger
+    Output:  graph_run_id returned
 
-  Step 4. Wait for FlowRun JM and cluster-owned TM/Sandbox Deployments
+  Step 4. Wait for GraphRun JM and cluster-owned TM/Sandbox Deployments
     Action:  kubectl get deployment {jm_name}; kubectl get deployment {tm_name}
     Output:  JM exists; runtime workers are scoped by runtime_cluster_id
 
   Step 5. Verify Deployment Spec
     Action:  kubectl get deployment {name} -n {namespace_ns} -o json
     Input:   Deployment name
-    Output:  Container env includes FLOWGENT__RUNTIME__AGENT_FLOW_ID={flow_id}
+    Output:  Container env includes FLOWGENT__RUNTIME__AGENT_GRAPH_NAME={agent_graph_id}
 
-  Step 6. Wait for FlowRun JM and runtime worker Pods Running
+  Step 6. Wait for GraphRun JM and runtime worker Pods Running
     Action:  kubectl get pods -l flowgent.io/runtime-cluster={cluster_id}
     Input:   Label selector
     Output:  JM pod and cluster-owned TM/Sandbox pods reach Running
 
-  Step 7. Cancel Run and delete Flow
-    Action:  POST .../runs/{run_id}/cancel; DELETE .../flows/{id}
-    Output:  Run becomes CANCELLED and Flow DELETE returns HTTP 200/204
+  Step 7. Cancel Run and delete AgentGraph
+    Action:  POST .../graph-runs/{graph_run_id}/cancel; DELETE .../agent-graphs/{id}
+    Output:  Run becomes CANCELLED and AgentGraph DELETE returns HTTP 200/204
 
   Step 8. Verify application runtime cleanup
-    Action:  wait for per-run Deployments and per-Flow configuration deletion
-    Output:  Flow JM/config and application TM/Sandbox resources are deleted by Controller GC
+    Action:  wait for per-run Deployments and per-AgentGraph configuration deletion
+    Output:  AgentGraph JM/config and application TM/Sandbox resources are deleted by Controller GC
 
-Steps with Expected I/O — Flow UPDATE Lifecycle:
-  Step 9. Create metadata-only flow
-  Step 10. PUT /api/v1/{namespace}/flows/{id}  {description, version}
+Steps with Expected I/O — AgentGraph UPDATE Lifecycle:
+  Step 9. Create metadata-only graph
+  Step 10. PUT /api/v1/{namespace}/agent-graphs/{id}  {description, version}
     Input:   Updated description, new version
     Output:  HTTP 200, still no idle JM/TM without active run
 """
@@ -108,10 +108,10 @@ class E2ES23ControllerVerifier(BaseVerifier):
 
     @staticmethod
     def workload_namespace(namespace_id: str = NAMESPACE) -> str:
-        """Mirror controller.go/flow_def.go workload namespace: every Flow's
+        """Mirror controller.go/graph_def.go workload namespace: every AgentGraph's
         dedicated JM Deployment lives in its NAMESPACE's shared namespace
         "{namespace_prefix}{namespace_id}" (see docs/01-L1-Engine-Architecture.md
-        §1.3/§4.3 — namespace isolation is per-namespace, not per-flow), NOT in
+        §1.3/§4.3 — namespace isolation is per-namespace, not per-graph), NOT in
         NAMESPACE (tenant namespace ID, typically "default") — system pods run in
         config.SYSTEM_NAMESPACE."""
         return f"{config.K8S_WORKLOAD_NAMESPACE_PREFIX}{namespace_id}"
@@ -147,13 +147,13 @@ class E2ES23ControllerVerifier(BaseVerifier):
         return base[:max_base].rstrip("-") + "-" + digest
 
     @staticmethod
-    def application_runtime_cluster_id(run_id: str) -> str:
-        return E2ES23ControllerVerifier.kubernetes_name("app", run_id)
+    def application_runtime_cluster_id(graph_run_id: str) -> str:
+        return E2ES23ControllerVerifier.kubernetes_name("app", graph_run_id)
 
     @staticmethod
-    def application_jobmanager_deployment_name(flow_id: str, run_id: str) -> str:
+    def application_jobmanager_deployment_name(agent_graph_id: str, graph_run_id: str) -> str:
         return E2ES23ControllerVerifier.kubernetes_name(
-            "flowgent-jobmanager", NAMESPACE, flow_id, run_id
+            "flowgent-jobmanager", NAMESPACE, agent_graph_id, graph_run_id
         )
 
     @staticmethod
@@ -375,17 +375,17 @@ class E2ES23ControllerVerifier(BaseVerifier):
         return False
 
     @staticmethod
-    def test_flow_create_lifecycle() -> bool:
-        """Test metadata-only Flow, trigger-driven application runtime, and cleanup."""
-        print("\n  → Testing FlowRun JM and application runtime cluster lifecycle...")
+    def test_graph_create_lifecycle() -> bool:
+        """Test metadata-only AgentGraph, trigger-driven application runtime, and cleanup."""
+        print("\n  → Testing GraphRun JM and application runtime cluster lifecycle...")
 
         suffix = E2ES23ControllerVerifier.rand_id()
-        flow_id = "test-flow-" + suffix
-        runtime_config_map_name = f"flowgent-runtime-env-{NAMESPACE}-{flow_id}"
-        runtime_secret_name = f"flowgent-runtime-secrets-{NAMESPACE}-{flow_id}"
+        agent_graph_id = "test-graph-" + suffix
+        runtime_config_map_name = f"flowgent-runtime-env-{NAMESPACE}-{agent_graph_id}"
+        runtime_secret_name = f"flowgent-runtime-secrets-{NAMESPACE}-{agent_graph_id}"
         jm_namespace = E2ES23ControllerVerifier.workload_namespace()
         created_id = None
-        run_id = None
+        graph_run_id = None
         cluster_id = None
         jm_deployment_name = None
         tm_deployment_name = None
@@ -402,8 +402,8 @@ class E2ES23ControllerVerifier(BaseVerifier):
                 )
                 mqtt_client.connect(config.EMQX_HOST, config.EMQX_PORT, 10)
                 mqtt_client.loop_start()
-                mqtt_client.subscribe("flowgent/v1/+/flows/+/ctrl/flow/updated")
-                mqtt_client.subscribe("flowgent/v1/+/flows/+/ctrl/flow/deleted")
+                mqtt_client.subscribe("flowgent/v1/+/agent-graphs/+/ctrl/graph/updated")
+                mqtt_client.subscribe("flowgent/v1/+/agent-graphs/+/ctrl/graph/deleted")
                 time.sleep(0.3)
             except Exception:
                 if mqtt_client:
@@ -411,14 +411,14 @@ class E2ES23ControllerVerifier(BaseVerifier):
                 mqtt_client = None
 
         try:
-            # Step 1: Create an application-mode AgentFlow via API.
-            print(f"    • Step 1: Creating application-mode AgentFlow ({flow_id})...")
-            # POST /flows decodes the body directly into entities.FlowInfo —
+            # Step 1: Create an application-mode AgentGraph via API.
+            print(f"    • Step 1: Creating application-mode AgentGraph ({agent_graph_id})...")
+            # POST /agent-graphs decodes the body directly into entities.AgentGraph —
             # a flat shape ("id"/"nodes"/"edges"/"runtime_mode" at top level), not a
-            # nested "definition" object (see pkg/api/pkg/handler/flow_def.go Create).
+            # nested "definition" object (see pkg/api/pkg/handler/graph_def.go Create).
             payload = {
-                "name": flow_id,
-                "kind": "flow",
+                "name": agent_graph_id,
+                "kind": "graph",
                 "runtime_mode": "application",
                 "resources": {
                     "jobmanager": {"cpu": "50m", "memory": "256Mi"},
@@ -438,22 +438,22 @@ class E2ES23ControllerVerifier(BaseVerifier):
             }
 
             resp = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs", json=payload, timeout=10
             )
             if resp.status_code not in [200, 201]:
                 raise AssertionError(
-                    f"Flow creation failed: {resp.status_code} {resp.text}"
+                    f"AgentGraph creation failed: {resp.status_code} {resp.text}"
                 )
 
             created_id = resp.json().get("id")
-            print(f"      ✓ Flow created: id={created_id}")
+            print(f"      ✓ AgentGraph created: id={created_id}")
 
-            # Step 1b: Verify MQTT ctrl/flow/updated event (best-effort)
+            # Step 1b: Verify MQTT ctrl/graph/updated event (best-effort)
             if mqtt_client:
                 deadline = time.time() + 5
                 while time.time() < deadline:
                     for msg in mqtt_messages:
-                        if "ctrl/flow/updated" in msg["topic"]:
+                        if "ctrl/graph/updated" in msg["topic"]:
                             payload = msg.get("payload", {})
                             inner = payload.get("payload", payload)
                             if isinstance(inner, str):
@@ -463,10 +463,10 @@ class E2ES23ControllerVerifier(BaseVerifier):
                                     pass
                             if (
                                 isinstance(inner, dict)
-                                and inner.get("flow_id") == flow_id
+                                and inner.get("agent_graph_id") == agent_graph_id
                             ):
                                 print(
-                                    f"      ✓ MQTT ctrl/flow/updated event received (event_type={inner.get('event_type', '?')})"
+                                    f"      ✓ MQTT ctrl/graph/updated event received (event_type={inner.get('event_type', '?')})"
                                 )
                                 break
                     else:
@@ -475,7 +475,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
                     break
                 else:
                     print(
-                        "      ⚠ No ctrl/flow/updated MQTT event (Controller may use polling)"
+                        "      ⚠ No ctrl/graph/updated MQTT event (Controller may use polling)"
                     )
 
             # Step 2: Metadata creation must not allocate runtime components.
@@ -484,33 +484,33 @@ class E2ES23ControllerVerifier(BaseVerifier):
             )
             time.sleep(15)
             if E2ES23ControllerVerifier.deployment_with_labels(
-                jm_namespace, {"flowgent.io/flow": flow_id}
+                jm_namespace, {"flowgent.io/graph": agent_graph_id}
             ):
                 raise AssertionError(
-                    f"Runtime Deployment created before trigger for flow={flow_id}"
+                    f"Runtime Deployment created before trigger for graph={agent_graph_id}"
                 )
             print("      ✓ No idle JM/TM/Sandbox created before trigger")
 
             # Step 3: Trigger a real run. Controller should create JM for the active run.
-            print("    • Step 3: Triggering FlowRun...")
+            print("    • Step 3: Triggering GraphRun...")
             resp = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/trigger",
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/trigger",
                 json={},
                 timeout=10,
             )
             if resp.status_code not in [200, 201]:
                 raise AssertionError(
-                    f"Flow trigger failed: {resp.status_code} {resp.text}"
+                    f"AgentGraph trigger failed: {resp.status_code} {resp.text}"
                 )
-            run_id = resp.json().get("run_id") or resp.json().get("id")
-            if not run_id:
-                raise AssertionError(f"Trigger response missing run_id: {resp.text}")
-            print(f"      ✓ FlowRun triggered: run_id={run_id}")
+            graph_run_id = resp.json().get("graph_run_id") or resp.json().get("id")
+            if not graph_run_id:
+                raise AssertionError(f"Trigger response missing graph_run_id: {resp.text}")
+            print(f"      ✓ GraphRun triggered: graph_run_id={graph_run_id}")
 
-            cluster_id = E2ES23ControllerVerifier.application_runtime_cluster_id(run_id)
+            cluster_id = E2ES23ControllerVerifier.application_runtime_cluster_id(graph_run_id)
             jm_deployment_name = (
                 E2ES23ControllerVerifier.application_jobmanager_deployment_name(
-                    flow_id, run_id
+                    agent_graph_id, graph_run_id
                 )
             )
             tm_deployment_name = E2ES23ControllerVerifier.taskmanager_deployment_name(
@@ -564,13 +564,13 @@ class E2ES23ControllerVerifier(BaseVerifier):
                 "configmap", runtime_config_map_name, namespace=jm_namespace
             ):
                 raise AssertionError(
-                    f"Flow runtime ConfigMap was not materialized: {jm_namespace}/{runtime_config_map_name}"
+                    f"AgentGraph runtime ConfigMap was not materialized: {jm_namespace}/{runtime_config_map_name}"
                 )
             if not E2ES23ControllerVerifier.kubectl_get(
                 "secret", runtime_secret_name, namespace=jm_namespace
             ):
                 raise AssertionError(
-                    f"Flow runtime Secret was not materialized: {jm_namespace}/{runtime_secret_name}"
+                    f"AgentGraph runtime Secret was not materialized: {jm_namespace}/{runtime_secret_name}"
                 )
 
             spec = deployment.get("spec", {})
@@ -585,11 +585,11 @@ class E2ES23ControllerVerifier(BaseVerifier):
             env_vars = {e["name"]: e.get("value", "") for e in container.get("env", [])}
 
             # Verify environment variables. The controller injects Spring Boot-style
-            # FLOWGENT__ env vars (see controller.go buildJMDeployment): the flow ID
-            # binds to runtime.agentFlowId via FLOWGENT__RUNTIME__AGENT_FLOW_ID.
+            # FLOWGENT__ env vars (see controller.go buildJMDeployment): the graph ID
+            # binds to runtime.agentAgentGraphId via FLOWGENT__RUNTIME__AGENT_GRAPH_NAME.
             expected_env = {
-                "FLOWGENT__RUNTIME__AGENT_FLOW_ID": flow_id,
-                "FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID": run_id,
+                "FLOWGENT__RUNTIME__AGENT_GRAPH_NAME": agent_graph_id,
+                "FLOWGENT__RUNTIME__GRAPH_RUN_ID": graph_run_id,
                 "FLOWGENT__RUNTIME__MODE": "application",
                 "FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID": cluster_id,
             }
@@ -622,10 +622,10 @@ class E2ES23ControllerVerifier(BaseVerifier):
 
             print("      ✓ Deployment spec verified")
 
-            # Step 6: Wait for Flow JM and cluster-owned worker Pods to reach Running.
+            # Step 6: Wait for AgentGraph JM and cluster-owned worker Pods to reach Running.
             print("    • Step 6: Waiting for JM/TM/Sandbox Pods to reach Running...")
 
-            label_selector = f"flowgent.io/runtime-boundary=flow-jobmanager,flowgent.io/flow={flow_id},flowgent.io/run={run_id},flowgent.io/runtime-cluster={cluster_id}"
+            label_selector = f"flowgent.io/runtime-boundary=graph-jobmanager,flowgent.io/graph={agent_graph_id},flowgent.io/run={graph_run_id},flowgent.io/runtime-cluster={cluster_id}"
             if not E2ES23ControllerVerifier.wait_for_pod_running(
                 label_selector, namespace=jm_namespace, timeout=120
             ):
@@ -645,35 +645,35 @@ class E2ES23ControllerVerifier(BaseVerifier):
             ):
                 raise AssertionError("Application Sandbox Pod did not reach Running")
 
-            # Step 7: Cancel the active Run before deleting the Flow.
-            print("    • Step 7: Cancelling FlowRun and deleting AgentFlow...")
+            # Step 7: Cancel the active Run before deleting the AgentGraph.
+            print("    • Step 7: Cancelling GraphRun and deleting AgentGraph...")
             resp = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/cancel",
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/cancel",
                 json={},
                 timeout=10,
             )
             if resp.status_code not in [200, 204]:
                 raise AssertionError(
-                    f"FlowRun cancellation failed: {resp.status_code} {resp.text}"
+                    f"GraphRun cancellation failed: {resp.status_code} {resp.text}"
                 )
 
             resp = FLOWGENT_SESSION.delete(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}", timeout=10
             )
             if resp.status_code not in [200, 204]:
                 raise AssertionError(
-                    f"Flow deletion failed: {resp.status_code} {resp.text}"
+                    f"AgentGraph deletion failed: {resp.status_code} {resp.text}"
                 )
             resp = FLOWGENT_SESSION.get(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}", timeout=10
             )
             if resp.status_code != 404:
                 raise AssertionError(
-                    f"Deleted flow still readable from API: HTTP {resp.status_code}"
+                    f"Deleted graph still readable from API: HTTP {resp.status_code}"
                 )
 
             # Step 8: Controller GC removes per-run application runtime and deleted
-            # Flow configuration. There is no second runtime ownership plane.
+            # AgentGraph configuration. There is no second runtime ownership plane.
             print("    • Step 8: Verifying application runtime cleanup...")
             if not E2ES23ControllerVerifier.wait_for_deployment_deleted(
                 jm_deployment_name, namespace=jm_namespace, timeout=90
@@ -709,19 +709,19 @@ class E2ES23ControllerVerifier(BaseVerifier):
             if mqtt_client:
                 mqtt_client.loop_stop()
                 mqtt_client.disconnect()
-            print("    ✓ Flow CREATE lifecycle verified")
+            print("    ✓ AgentGraph CREATE lifecycle verified")
             return True
 
         except Exception as e:
-            print(f"    ✗ Flow CREATE lifecycle failed: {e}")
+            print(f"    ✗ AgentGraph CREATE lifecycle failed: {e}")
             if mqtt_client:
                 mqtt_client.loop_stop()
                 mqtt_client.disconnect()
 
-            if run_id:
+            if graph_run_id:
                 try:
                     FLOWGENT_SESSION.post(
-                        f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}/cancel",
+                        f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/cancel",
                         json={},
                         timeout=5,
                     )
@@ -731,7 +731,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
             if created_id:
                 try:
                     FLOWGENT_SESSION.delete(
-                        f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5
+                        f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}", timeout=5
                     )
                 except Exception:
                     pass
@@ -789,41 +789,41 @@ class E2ES23ControllerVerifier(BaseVerifier):
             return False
 
     @staticmethod
-    def test_flow_update_lifecycle() -> bool:
-        """Test Flow UPDATE remains metadata-only without active runs."""
-        print("\n  → Testing Flow UPDATE → no idle JM/TM allocation...")
+    def test_graph_update_lifecycle() -> bool:
+        """Test AgentGraph UPDATE remains metadata-only without active runs."""
+        print("\n  → Testing AgentGraph UPDATE → no idle JM/TM allocation...")
 
-        flow_id = "test-flow-" + E2ES23ControllerVerifier.rand_id()
+        agent_graph_id = "test-graph-" + E2ES23ControllerVerifier.rand_id()
         jm_namespace = E2ES23ControllerVerifier.workload_namespace()
         created_id = None
 
         try:
             payload = {
-                "id": flow_id,
-                "kind": "flow",
+                "id": agent_graph_id,
+                "kind": "graph",
                 "runtime_mode": "application",
                 "nodes": [{"id": "n1", "kind": "noop"}],
                 "edges": [],
             }
             resp = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs", json=payload, timeout=10
             )
             if resp.status_code not in [200, 201]:
-                raise AssertionError(f"Flow creation failed: {resp.status_code}")
+                raise AssertionError(f"AgentGraph creation failed: {resp.status_code}")
             created_id = resp.json().get("id")
 
             time.sleep(15)
             if E2ES23ControllerVerifier.deployment_with_labels(
-                jm_namespace, {"flowgent.io/flow": flow_id}
+                jm_namespace, {"flowgent.io/graph": agent_graph_id}
             ):
                 raise AssertionError(
-                    f"Runtime Deployment created before trigger for flow={flow_id}"
+                    f"Runtime Deployment created before trigger for graph={agent_graph_id}"
                 )
 
             resp = FLOWGENT_SESSION.put(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}",
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}",
                 json={
-                    "kind": "flow",
+                    "kind": "graph",
                     "description": "updated by e2e verifier",
                     "runtime_mode": "application",
                     "nodes": [{"id": "n1", "kind": "noop"}],
@@ -833,41 +833,41 @@ class E2ES23ControllerVerifier(BaseVerifier):
             )
             if resp.status_code != 200:
                 raise AssertionError(
-                    f"Flow update failed: {resp.status_code} {resp.text}"
+                    f"AgentGraph update failed: {resp.status_code} {resp.text}"
                 )
 
             time.sleep(15)
             if E2ES23ControllerVerifier.deployment_with_labels(
-                jm_namespace, {"flowgent.io/flow": flow_id}
+                jm_namespace, {"flowgent.io/graph": agent_graph_id}
             ):
                 raise AssertionError(
-                    f"Runtime Deployment created by metadata-only update for flow={flow_id}"
+                    f"Runtime Deployment created by metadata-only update for graph={agent_graph_id}"
                 )
-            print("      ✓ Flow update did not allocate an idle Flow JM")
+            print("      ✓ AgentGraph update did not allocate an idle AgentGraph JM")
 
             resp = FLOWGENT_SESSION.delete(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}", timeout=10
             )
             if resp.status_code not in [200, 204]:
                 raise AssertionError(
-                    f"Flow deletion failed: {resp.status_code} {resp.text}"
+                    f"AgentGraph deletion failed: {resp.status_code} {resp.text}"
                 )
             resp = FLOWGENT_SESSION.get(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}", timeout=10
             )
             if resp.status_code != 404:
                 raise AssertionError(
-                    f"Deleted flow still readable from API: HTTP {resp.status_code}"
+                    f"Deleted graph still readable from API: HTTP {resp.status_code}"
                 )
 
-            print("    ✓ Flow UPDATE lifecycle verified")
+            print("    ✓ AgentGraph UPDATE lifecycle verified")
             return True
         except Exception as e:
-            print(f"    ✗ Flow UPDATE lifecycle failed: {e}")
+            print(f"    ✗ AgentGraph UPDATE lifecycle failed: {e}")
             if created_id:
                 try:
                     FLOWGENT_SESSION.delete(
-                        f"{API_BASE}/api/v1/{NAMESPACE}/flows/{created_id}", timeout=5
+                        f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{created_id}", timeout=5
                     )
                 except Exception:
                     pass
@@ -887,12 +887,12 @@ class E2ES23ControllerVerifier(BaseVerifier):
             E2ES23ControllerVerifier.test_controller_pod_running()
         )
 
-        # Test flow lifecycle
-        results["Flow CREATE+TRIGGER Lifecycle"] = (
-            E2ES23ControllerVerifier.test_flow_create_lifecycle()
+        # Test graph lifecycle
+        results["AgentGraph CREATE+TRIGGER Lifecycle"] = (
+            E2ES23ControllerVerifier.test_graph_create_lifecycle()
         )
-        results["Flow UPDATE Metadata Lifecycle"] = (
-            E2ES23ControllerVerifier.test_flow_update_lifecycle()
+        results["AgentGraph UPDATE Metadata Lifecycle"] = (
+            E2ES23ControllerVerifier.test_graph_update_lifecycle()
         )
 
         # Summary
@@ -911,12 +911,12 @@ class E2ES23ControllerVerifier(BaseVerifier):
 
     @staticmethod
     def _verify_standalone_runtime():
-        """Docker parity: the all-in-one process owns the same FlowRun lifecycle."""
-        flow_id = f"test-flow-docker-{E2ES23ControllerVerifier.rand_id()}"
-        run_id = ""
+        """Docker parity: the all-in-one process owns the same GraphRun lifecycle."""
+        agent_graph_id = f"test-graph-docker-{E2ES23ControllerVerifier.rand_id()}"
+        graph_run_id = ""
         payload = {
-            "id": flow_id,
-            "kind": "flow",
+            "id": agent_graph_id,
+            "kind": "graph",
             "runtime_mode": "session",
             "nodes": [
                 {
@@ -931,27 +931,27 @@ class E2ES23ControllerVerifier(BaseVerifier):
         }
         try:
             response = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows", json=payload, timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs", json=payload, timeout=10
             )
             if response.status_code not in (200, 201):
                 raise AssertionError(
-                    f"Docker flow creation failed: {response.status_code} {response.text}"
+                    f"Docker graph creation failed: {response.status_code} {response.text}"
                 )
             response = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/trigger",
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/trigger",
                 json={},
                 timeout=10,
             )
             if response.status_code not in (200, 201):
                 raise AssertionError(
-                    f"Docker flow trigger failed: {response.status_code} {response.text}"
+                    f"Docker graph trigger failed: {response.status_code} {response.text}"
                 )
-            run_id = response.json().get("run_id") or response.json().get("id", "")
+            graph_run_id = response.json().get("graph_run_id") or response.json().get("id", "")
             deadline = time.time() + 120
             last_status = ""
             while time.time() < deadline:
                 current = FLOWGENT_SESSION.get(
-                    f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}/runs/{run_id}",
+                    f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}",
                     timeout=10,
                 )
                 if current.status_code == 200:
@@ -967,10 +967,10 @@ class E2ES23ControllerVerifier(BaseVerifier):
                 raise AssertionError(
                     f"Docker standalone run timed out; status={last_status}"
                 )
-            print(f"  Docker standalone runtime completed real FlowRun: {run_id}")
+            print(f"  Docker standalone runtime completed real GraphRun: {graph_run_id}")
         finally:
             FLOWGENT_SESSION.delete(
-                f"{API_BASE}/api/v1/{NAMESPACE}/flows/{flow_id}", timeout=10
+                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}", timeout=10
             )
 
     scenario_id = "23"

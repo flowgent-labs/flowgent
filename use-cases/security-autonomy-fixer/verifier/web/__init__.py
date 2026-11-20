@@ -27,7 +27,7 @@ class BrowserConsoleVerifier:
     """Mixin that equips a direct ``BaseVerifier`` scenario with a real browser."""
 
     page: Page | None = None
-    fixture_flow_id = "sub-fix"
+    fixture_agent_graph_id = "sub-fix"
 
     def __init__(self, context: VerificationContext) -> None:
         super().__init__(context)
@@ -92,7 +92,7 @@ class BrowserConsoleVerifier:
                 self.page = context.new_page()
                 fixture_route = return_path is None
                 return_path = (
-                    return_path or f"/{self.web_namespace}/{self.fixture_flow_id}"
+                    return_path or f"/{self.web_namespace}/{self.fixture_agent_graph_id}"
                 )
                 self.page.goto(
                     f"{self.origin}{return_path}",
@@ -108,8 +108,8 @@ class BrowserConsoleVerifier:
                 self.page.get_by_test_id("login-provider-github").click()
                 self.page.wait_for_url(f"{self.origin}{return_path}", timeout=30_000)
                 if fixture_route:
-                    expect(self.page.get_by_test_id("flow-id")).to_have_value(
-                        self.fixture_flow_id, timeout=20_000
+                    expect(self.page.get_by_test_id("graph-id")).to_have_value(
+                        self.fixture_agent_graph_id, timeout=20_000
                     )
                 else:
                     expect(
@@ -241,7 +241,7 @@ class BrowserConsoleVerifier:
         )
         protected_status = page.evaluate(
             """async () => (await fetch(
-              '/api/v1/security-fixer/flows/security-autonomy-fixer'
+              '/api/v1/security-fixer/agent-graphs/security-autonomy-fixer'
             )).status"""
         )
         if (
@@ -251,7 +251,7 @@ class BrowserConsoleVerifier:
         ):
             raise RuntimeError(
                 "standalone acceptance login did not traverse the complete security chain: "
-                f"session={session_status}, protected_flow={protected_status}, "
+                f"session={session_status}, protected_graph={protected_status}, "
                 f"runtime_namespace={runtime_namespace}"
             )
         self.screenshot("UI-48", "Standalone password acceptance login without TOTP")

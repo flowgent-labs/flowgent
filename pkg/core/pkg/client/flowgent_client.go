@@ -92,24 +92,24 @@ func (c *FlowgentClient) GetAgent(ctx context.Context, namespace, name string) (
 	return &item, nil
 }
 
-// ─── AgentFlow CRUD ──────────────────────────────────────────────
+// ─── AgentGraph CRUD ──────────────────────────────────────────────
 
-func (c *FlowgentClient) ListFlows(ctx context.Context, namespace string) ([]entities.FlowInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/flows", nil)
+func (c *FlowgentClient) ListAgentGraphs(ctx context.Context, namespace string) ([]entities.AgentGraph, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/agent-graphs", nil)
 	if err != nil {
-		return nil, fmt.Errorf("ListFlows: %w", err)
+		return nil, fmt.Errorf("ListAgentGraphs: %w", err)
 	}
-	var items []entities.FlowInfo
+	var items []entities.AgentGraph
 	if err := readJSON(resp, &items); err != nil {
-		return nil, fmt.Errorf("ListFlows: %w", err)
+		return nil, fmt.Errorf("ListAgentGraphs: %w", err)
 	}
 	return items, nil
 }
 
-func (c *FlowgentClient) GetFlow(ctx context.Context, namespace, flowID string) (*entities.FlowInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/flows/"+flowID, nil)
+func (c *FlowgentClient) GetAgentGraph(ctx context.Context, namespace, graphID string) (*entities.AgentGraph, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/agent-graphs/"+graphID, nil)
 	if err != nil {
-		return nil, fmt.Errorf("GetFlow: %w", err)
+		return nil, fmt.Errorf("GetAgentGraph: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
@@ -117,27 +117,27 @@ func (c *FlowgentClient) GetFlow(ctx context.Context, namespace, flowID string) 
 	}
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GetFlow %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("GetAgentGraph %d: %s", resp.StatusCode, string(b))
 	}
-	var spec entities.FlowInfo
+	var spec entities.AgentGraph
 	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
 		return nil, err
 	}
 	return &spec, nil
 }
 
-// ResolveFlowRuntimeConfig returns the effective namespace→Flow runtime
+// ResolveGraphRuntimeConfig returns the effective namespace→AgentGraph runtime
 // configuration for the controller. This endpoint is intentionally unavailable
 // to human/API-key roles because it contains plaintext secret values.
-func (c *FlowgentClient) ResolveFlowRuntimeConfig(ctx context.Context, namespace, flowID string) (*entities.ResolvedRuntimeConfig, error) {
-	path := "/api/v1/" + url.PathEscape(namespace) + "/flows/" + url.PathEscape(flowID) + "/runtime-config/resolved"
+func (c *FlowgentClient) ResolveGraphRuntimeConfig(ctx context.Context, namespace, graphID string) (*entities.ResolvedRuntimeConfig, error) {
+	path := "/api/v1/" + url.PathEscape(namespace) + "/agent-graphs/" + url.PathEscape(graphID) + "/runtime-config/resolved"
 	resp, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("ResolveFlowRuntimeConfig: %w", err)
+		return nil, fmt.Errorf("ResolveGraphRuntimeConfig: %w", err)
 	}
 	var resolved entities.ResolvedRuntimeConfig
 	if err := readJSON(resp, &resolved); err != nil {
-		return nil, fmt.Errorf("ResolveFlowRuntimeConfig: %w", err)
+		return nil, fmt.Errorf("ResolveGraphRuntimeConfig: %w", err)
 	}
 	if resolved.Environment == nil {
 		resolved.Environment = map[string]string{}
@@ -148,80 +148,81 @@ func (c *FlowgentClient) ResolveFlowRuntimeConfig(ctx context.Context, namespace
 	return &resolved, nil
 }
 
-func (c *FlowgentClient) CreateFlow(ctx context.Context, namespace string, spec *entities.FlowInfo) error {
+func (c *FlowgentClient) CreateAgentGraph(ctx context.Context, namespace string, spec *entities.AgentGraph) error {
 	b, _ := json.Marshal(spec)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/agent-graphs", bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("CreateFlow: %w", err)
+		return fmt.Errorf("CreateAgentGraph: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("CreateFlow %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("CreateAgentGraph %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-func (c *FlowgentClient) UpdateFlow(ctx context.Context, namespace, flowID string, spec *entities.FlowInfo) error {
+func (c *FlowgentClient) UpdateAgentGraph(ctx context.Context, namespace, graphID string, spec *entities.AgentGraph) error {
 	b, _ := json.Marshal(spec)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/flows/"+flowID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/agent-graphs/"+graphID, bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("UpdateFlow: %w", err)
+		return fmt.Errorf("UpdateAgentGraph: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("UpdateFlow %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("UpdateAgentGraph %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-func (c *FlowgentClient) DeleteFlow(ctx context.Context, namespace, flowID string) error {
-	resp, err := c.do(ctx, "DELETE", "/api/v1/"+namespace+"/flows/"+flowID, nil)
+func (c *FlowgentClient) DeleteAgentGraph(ctx context.Context, namespace, graphID string) error {
+	resp, err := c.do(ctx, "DELETE", "/api/v1/"+namespace+"/agent-graphs/"+graphID, nil)
 	if err != nil {
-		return fmt.Errorf("DeleteFlow: %w", err)
+		return fmt.Errorf("DeleteAgentGraph: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("DeleteFlow %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("DeleteAgentGraph %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// ─── FlowRun ─────────────────────────────────────────────────────
+// ─── GraphRun ─────────────────────────────────────────────────────
 
-// CreateRun creates a run directly with explicit namespace, namespace, and trigger info.
-func (c *FlowgentClient) CreateRun(ctx context.Context, namespace string, run *entities.FlowRunInfo) (*entities.FlowRunInfo, error) {
+// CreateGraphRun creates a run directly with explicit namespace, namespace, and trigger info.
+func (c *FlowgentClient) CreateGraphRun(ctx context.Context, namespace string, run *entities.GraphRun) (*entities.GraphRun, error) {
 	b, _ := json.Marshal(run)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/graph-runs", bytes.NewReader(b))
 	if err != nil {
-		return nil, fmt.Errorf("CreateRun: %w", err)
+		return nil, fmt.Errorf("CreateGraphRun: %w", err)
 	}
-	var created entities.FlowRunInfo
+	var created entities.GraphRun
 	if err := readJSON(resp, &created); err != nil {
-		return nil, fmt.Errorf("CreateRun: %w", err)
+		return nil, fmt.Errorf("CreateGraphRun: %w", err)
 	}
-	created.NormalizeAliases()
+	created.Normalize()
 	return &created, nil
 }
 
-// TriggerRunResult is the narrow response contract of POST /flows/{name}/trigger.
+// TriggerRunResult is the narrow response contract of POST /agent-graphs/{name}/trigger.
 // The trigger endpoint intentionally returns an acknowledgement rather than a
-// full FlowRunInfo; callers that need the run body can subsequently call
-// GetRun with RunID.
+// full GraphRun; callers that need the run body can subsequently call
+// GetGraphRun with GraphRunID.
 type TriggerRunResult struct {
-	RunID     string             `json:"run_id"`
-	Status    entities.RunStatus `json:"status"`
-	Namespace string             `json:"namespace"`
-	FlowID    string             `json:"flow_id"`
+	AgentGraphName string                  `json:"agent_graph_name"`
+	GraphRunID     string                  `json:"graph_run_id"`
+	Status         entities.GraphRunStatus `json:"status"`
+	Namespace      string                  `json:"namespace"`
+	AgentGraphID   string                  `json:"agent_graph_id"`
 }
 
 // TriggerRun creates a PENDING run via the trigger endpoint.
-func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, flowName string, input map[string]any, trigger entities.TriggerInfo) (*TriggerRunResult, error) {
+func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, graphName string, input map[string]any, trigger entities.TriggerInfo) (*TriggerRunResult, error) {
 	payload := map[string]any{"input": input, "trigger": trigger}
 	b, _ := json.Marshal(payload)
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/flows/"+url.PathEscape(flowName)+"/trigger", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/agent-graphs/"+url.PathEscape(graphName)+"/trigger", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
@@ -229,15 +230,15 @@ func (c *FlowgentClient) TriggerRun(ctx context.Context, namespace, flowName str
 	if err := readJSON(resp, &out); err != nil {
 		return nil, fmt.Errorf("TriggerRun: %w", err)
 	}
-	slog.Debug("api client TriggerRun", "namespace", namespace, "flow", flowName)
+	slog.Debug("api client TriggerRun", "namespace", namespace, "graph", graphName)
 	return &out, nil
 }
 
-// GetRun returns a run by namespace and ID.
-func (c *FlowgentClient) GetRun(ctx context.Context, namespace, runID string) (*entities.FlowRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID, nil)
+// GetGraphRun returns a run by namespace and ID.
+func (c *FlowgentClient) GetGraphRun(ctx context.Context, namespace, runID string) (*entities.GraphRun, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/graph-runs/"+runID, nil)
 	if err != nil {
-		return nil, fmt.Errorf("GetRun: %w", err)
+		return nil, fmt.Errorf("GetGraphRun: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
@@ -245,18 +246,18 @@ func (c *FlowgentClient) GetRun(ctx context.Context, namespace, runID string) (*
 	}
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GetRun %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("GetGraphRun %d: %s", resp.StatusCode, string(b))
 	}
-	var run entities.FlowRunInfo
+	var run entities.GraphRun
 	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
 		return nil, err
 	}
-	run.NormalizeAliases()
+	run.Normalize()
 	return &run, nil
 }
 
-// ListRuns returns runs with optional filters. status, runtimeMode, k8sNamespace, and flowID may be empty.
-func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, runtimeMode, k8sNamespace, flowID string, page, size int) (*entities.Page[entities.FlowRunInfo], error) {
+// ListGraphRuns returns runs with optional filters. status, runtimeMode, k8sNamespace, and graphID may be empty.
+func (c *FlowgentClient) ListGraphRuns(ctx context.Context, namespace, status, runtimeMode, k8sNamespace, graphID string, page, size int) (*entities.Page[entities.GraphRun], error) {
 	q := url.Values{}
 	if status != "" {
 		q.Set("status", status)
@@ -267,8 +268,8 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, runtim
 	if k8sNamespace != "" {
 		q.Set("k8s_namespace", k8sNamespace)
 	}
-	if flowID != "" {
-		q.Set("flow_id", flowID)
+	if graphID != "" {
+		q.Set("agent_graph_id", graphID)
 	}
 	if page > 0 {
 		q.Set("page", strconv.Itoa(page))
@@ -276,27 +277,27 @@ func (c *FlowgentClient) ListRuns(ctx context.Context, namespace, status, runtim
 	if size > 0 {
 		q.Set("size", strconv.Itoa(size))
 	}
-	raw := "/api/v1/" + namespace + "/runs?" + q.Encode()
+	raw := "/api/v1/" + namespace + "/graph-runs?" + q.Encode()
 	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
-		return nil, fmt.Errorf("ListRuns: %w", err)
+		return nil, fmt.Errorf("ListGraphRuns: %w", err)
 	}
-	var pageResp entities.Page[entities.FlowRunInfo]
+	var pageResp entities.Page[entities.GraphRun]
 	if err := readJSON(resp, &pageResp); err != nil {
-		return nil, fmt.Errorf("ListRuns: %w", err)
+		return nil, fmt.Errorf("ListGraphRuns: %w", err)
 	}
 	for _, run := range pageResp.Items {
 		if run != nil {
-			run.NormalizeAliases()
+			run.Normalize()
 		}
 	}
 	return &pageResp, nil
 }
 
 // UpdateRunLifecycle persists the lifecycle values produced by JobMaster.
-func (c *FlowgentClient) UpdateRunLifecycle(ctx context.Context, namespace, runID string, update entities.RunLifecycleUpdate) error {
+func (c *FlowgentClient) UpdateRunLifecycle(ctx context.Context, namespace, runID string, update entities.GraphRunLifecycleUpdate) error {
 	b, _ := json.Marshal(update)
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/graph-runs/"+runID, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("UpdateRunLifecycle: %w", err)
 	}
@@ -308,89 +309,89 @@ func (c *FlowgentClient) UpdateRunLifecycle(ctx context.Context, namespace, runI
 	return nil
 }
 
-// CancelRun cancels a run.
-func (c *FlowgentClient) CancelRun(ctx context.Context, namespace, runID string) error {
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs/"+runID+"/cancel", nil)
+// CancelGraphRun cancels a run.
+func (c *FlowgentClient) CancelGraphRun(ctx context.Context, namespace, runID string) error {
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/graph-runs/"+runID+"/cancel", nil)
 	if err != nil {
-		return fmt.Errorf("CancelRun: %w", err)
+		return fmt.Errorf("CancelGraphRun: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("CancelRun %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("CancelGraphRun %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// ─── TaskRuns ────────────────────────────────────────────────────
+// ─── NodeRuns ────────────────────────────────────────────────────
 
-// CreateTaskRun persists a new task run.
-func (c *FlowgentClient) CreateTaskRun(ctx context.Context, namespace, runID string, task *entities.TaskRunInfo) error {
-	if task == nil {
-		return fmt.Errorf("CreateTaskRun: task is required")
+// CreateNodeRun persists a new noderun run.
+func (c *FlowgentClient) CreateNodeRun(ctx context.Context, namespace, runID string, noderun *entities.NodeRun) error {
+	if noderun == nil {
+		return fmt.Errorf("CreateNodeRun: noderun is required")
 	}
-	task.NormalizeAliases()
-	b, err := json.Marshal(task)
+	noderun.Normalize()
+	b, err := json.Marshal(noderun)
 	if err != nil {
-		return fmt.Errorf("CreateTaskRun: encode task: %w", err)
+		return fmt.Errorf("CreateNodeRun: encode noderun: %w", err)
 	}
-	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs", bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", "/api/v1/"+namespace+"/graph-runs/"+runID+"/node-runs", bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("CreateTaskRun: %w", err)
+		return fmt.Errorf("CreateNodeRun: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("CreateTaskRun %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("CreateNodeRun %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// UpdateTaskRun updates an existing task run (status, output, error).
-func (c *FlowgentClient) UpdateTaskRun(ctx context.Context, namespace, runID, taskID string, task *entities.TaskRunInfo) error {
-	if task == nil {
-		return fmt.Errorf("UpdateTaskRun: task is required")
+// UpdateNodeRun updates an existing noderun run (status, output, error).
+func (c *FlowgentClient) UpdateNodeRun(ctx context.Context, namespace, runID, taskID string, noderun *entities.NodeRun) error {
+	if noderun == nil {
+		return fmt.Errorf("UpdateNodeRun: noderun is required")
 	}
-	task.NormalizeAliases()
-	b, err := json.Marshal(task)
+	noderun.Normalize()
+	b, err := json.Marshal(noderun)
 	if err != nil {
-		return fmt.Errorf("UpdateTaskRun: encode task: %w", err)
+		return fmt.Errorf("UpdateNodeRun: encode noderun: %w", err)
 	}
-	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs/"+taskID, bytes.NewReader(b))
+	resp, err := c.do(ctx, "PUT", "/api/v1/"+namespace+"/graph-runs/"+runID+"/node-runs/"+taskID, bytes.NewReader(b))
 	if err != nil {
-		return fmt.Errorf("UpdateTaskRun: %w", err)
+		return fmt.Errorf("UpdateNodeRun: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		eb, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("UpdateTaskRun %d: %s", resp.StatusCode, string(eb))
+		return fmt.Errorf("UpdateNodeRun %d: %s", resp.StatusCode, string(eb))
 	}
 	return nil
 }
 
-// ListTaskRuns returns all tasks for a run.
-func (c *FlowgentClient) ListTaskRuns(ctx context.Context, namespace, runID string) ([]*entities.TaskRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs", nil)
+// ListNodeRuns returns all tasks for a run.
+func (c *FlowgentClient) ListNodeRuns(ctx context.Context, namespace, runID string) ([]*entities.NodeRun, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/graph-runs/"+runID+"/node-runs", nil)
 	if err != nil {
-		return nil, fmt.Errorf("ListTaskRuns: %w", err)
+		return nil, fmt.Errorf("ListNodeRuns: %w", err)
 	}
-	var items []*entities.TaskRunInfo
+	var items []*entities.NodeRun
 	if err := readJSON(resp, &items); err != nil {
-		return nil, fmt.Errorf("ListTaskRuns: %w", err)
+		return nil, fmt.Errorf("ListNodeRuns: %w", err)
 	}
 	for _, item := range items {
 		if item != nil {
-			item.NormalizeAliases()
+			item.Normalize()
 		}
 	}
 	return items, nil
 }
 
-// GetTaskRun returns a single task run.
-func (c *FlowgentClient) GetTaskRun(ctx context.Context, namespace, runID, taskID string) (*entities.TaskRunInfo, error) {
-	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/runs/"+runID+"/node-runs/"+taskID, nil)
+// GetNodeRun returns a single noderun run.
+func (c *FlowgentClient) GetNodeRun(ctx context.Context, namespace, runID, taskID string) (*entities.NodeRun, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/"+namespace+"/graph-runs/"+runID+"/node-runs/"+taskID, nil)
 	if err != nil {
-		return nil, fmt.Errorf("GetTaskRun: %w", err)
+		return nil, fmt.Errorf("GetNodeRun: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
@@ -398,29 +399,29 @@ func (c *FlowgentClient) GetTaskRun(ctx context.Context, namespace, runID, taskI
 	}
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GetTaskRun %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("GetNodeRun %d: %s", resp.StatusCode, string(b))
 	}
-	var item entities.TaskRunInfo
+	var item entities.NodeRun
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
 		return nil, err
 	}
-	item.NormalizeAliases()
+	item.Normalize()
 	return &item, nil
 }
 
 // SavePlan creates/updates the execution plan state via apiserver.
 func (c *FlowgentClient) SavePlan(ctx context.Context, namespace, runID string, plan *entities.ExecutionPlan) error {
-	// execution plans flow through the tasks endpoint
-	task := &entities.TaskRunInfo{
-		BaseEntity:  entities.BaseEntity{ID: plan.TaskID},
-		RunID:       plan.AgentFlowRunID,
-		NodeKey:     plan.NodeID,
-		Attempt:     plan.RetryCount + 1,
-		Status:      plan.State,
-		Input:       plan.Input,
-		ExecutionID: plan.PlanID,
+	// execution plans graph through the tasks endpoint
+	noderun := &entities.NodeRun{
+		BaseEntity:     entities.BaseEntity{ID: plan.NodeRunID},
+		GraphRunID:     plan.GraphRunID,
+		NodeInstanceID: plan.NodeInstanceID,
+		Attempt:        plan.RetryCount + 1,
+		Status:         plan.State,
+		Input:          plan.Input,
+		ExecutionID:    plan.PlanID,
 	}
-	return c.CreateTaskRun(ctx, namespace, runID, task)
+	return c.CreateNodeRun(ctx, namespace, runID, noderun)
 }
 
 // ─── Human Approvals ─────────────────────────────────────────────
@@ -428,7 +429,7 @@ func (c *FlowgentClient) SavePlan(ctx context.Context, namespace, runID string, 
 // CreateApproval creates a pending human approval.
 func (c *FlowgentClient) CreateApproval(ctx context.Context, namespace string, approval *entities.ApprovalInfo) error {
 	b, _ := json.Marshal(approval)
-	resp, err := c.do(ctx, "POST", fmt.Sprintf("/api/v1/%s/runs/%s/approvals", namespace, approval.AgentFlowRunID), bytes.NewReader(b))
+	resp, err := c.do(ctx, "POST", fmt.Sprintf("/api/v1/%s/graph-runs/%s/approvals", namespace, approval.GraphRunID), bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("CreateApproval: %w", err)
 	}
@@ -561,7 +562,7 @@ func (c *FlowgentClient) ListLLMProviders(ctx context.Context, namespace string)
 	}
 	for _, item := range items {
 		if item != nil {
-			item.NormalizeAliases()
+			item.Normalize()
 		}
 	}
 	return items, nil
@@ -581,7 +582,7 @@ func (c *FlowgentClient) ListMCPs(ctx context.Context, namespace string) ([]*ent
 	}
 	for _, item := range items {
 		if item != nil {
-			item.NormalizeAliases()
+			item.Normalize()
 		}
 	}
 	return items, nil
@@ -629,32 +630,32 @@ func (c *FlowgentClient) CreateKnowledgeCandidate(ctx context.Context, namespace
 
 // ─── Watch (long-poll) ───────────────────────────────────────────
 
-// WatchFlows calls GET /api/v1/{namespace}/flows/watch?since=N (long-poll).
-func (c *FlowgentClient) WatchFlows(ctx context.Context, namespace string, since int64) ([]entities.FlowInfo, int64, error) {
-	raw := fmt.Sprintf("/api/v1/%s/flows/watch?since=%d", namespace, since)
+// WatchAgentGraphs calls GET /api/v1/{namespace}/agent-graphs/watch?since=N (long-poll).
+func (c *FlowgentClient) WatchAgentGraphs(ctx context.Context, namespace string, since int64) ([]entities.AgentGraph, int64, error) {
+	raw := fmt.Sprintf("/api/v1/%s/agent-graphs/watch?since=%d", namespace, since)
 	resp, err := c.do(ctx, "GET", raw, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("WatchFlows: %w", err)
+		return nil, 0, fmt.Errorf("WatchAgentGraphs: %w", err)
 	}
 	defer resp.Body.Close()
-	var wrapper entities.FlowWatchResponse
+	var wrapper entities.AgentGraphWatchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 		return nil, 0, fmt.Errorf("decode watch response: %w", err)
 	}
-	return wrapper.Flows, wrapper.Version, nil
+	return wrapper.AgentGraphs, wrapper.Cursor, nil
 }
 
 // ─── Client-backed state adapters ─────────────────────────────────
 
-// RunStateClient adapts FlowgentClient for JobMaster run/task persistence.
+// GraphRunStateClient adapts FlowgentClient for JobMaster run/noderun persistence.
 // Implements the narrow interface expected by the jobmanager engine package.
-type RunStateClient struct {
+type GraphRunStateClient struct {
 	Client    *FlowgentClient
 	Namespace string
 }
 
-func (a *RunStateClient) UpdateRun(ctx context.Context, run *entities.FlowRunInfo) error {
-	return a.Client.UpdateRunLifecycle(ctx, a.Namespace, run.ID, entities.RunLifecycleUpdate{
+func (a *GraphRunStateClient) UpdateGraphRun(ctx context.Context, run *entities.GraphRun) error {
+	return a.Client.UpdateRunLifecycle(ctx, a.Namespace, run.ID, entities.GraphRunLifecycleUpdate{
 		Status:     run.Status,
 		Error:      run.Error,
 		StartedAt:  run.StartedAt,
@@ -662,26 +663,26 @@ func (a *RunStateClient) UpdateRun(ctx context.Context, run *entities.FlowRunInf
 	})
 }
 
-func (a *RunStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
-	if task == nil {
-		return fmt.Errorf("save task: task is required")
+func (a *GraphRunStateClient) SaveNodeRun(ctx context.Context, noderun *entities.NodeRun) error {
+	if noderun == nil {
+		return fmt.Errorf("save noderun: noderun is required")
 	}
-	task.NormalizeAliases()
-	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.RunID, task.ID, task)
+	noderun.Normalize()
+	return a.Client.UpdateNodeRun(ctx, a.Namespace, noderun.GraphRunID, noderun.ID, noderun)
 }
 
-// TaskStateClient adapts FlowgentClient for TM/SlotWorker task persistence.
-type TaskStateClient struct {
+// NodeRunStateClient adapts FlowgentClient for TM/SlotWorker noderun persistence.
+type NodeRunStateClient struct {
 	Client    *FlowgentClient
 	Namespace string
 }
 
-func (a *TaskStateClient) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error {
-	if task == nil {
-		return fmt.Errorf("save task: task is required")
+func (a *NodeRunStateClient) SaveNodeRun(ctx context.Context, noderun *entities.NodeRun) error {
+	if noderun == nil {
+		return fmt.Errorf("save noderun: noderun is required")
 	}
-	task.NormalizeAliases()
-	return a.Client.UpdateTaskRun(ctx, a.Namespace, task.RunID, task.ID, task)
+	noderun.Normalize()
+	return a.Client.UpdateNodeRun(ctx, a.Namespace, noderun.GraphRunID, noderun.ID, noderun)
 }
 
 // HumanApprovalClient adapts FlowgentClient for HumanExecutor approval creation.
@@ -738,12 +739,12 @@ func (a *NotifierClient) SaveRoute(ctx context.Context, route *model.Subscriptio
 	return nil
 }
 
-func (a *NotifierClient) GetRoutesByFlow(ctx context.Context, agentFlowID string) ([]model.SubscriptionRoute, error) {
+func (a *NotifierClient) GetRoutesByAgentGraph(ctx context.Context, agentGraphID string) ([]model.SubscriptionRoute, error) {
 	a.routesMu.Lock()
 	defer a.routesMu.Unlock()
 	var result []model.SubscriptionRoute
 	for _, r := range a.routes {
-		if r.AgentFlowID == agentFlowID {
+		if r.AgentGraphName == agentGraphID {
 			result = append(result, *r)
 		}
 	}
@@ -790,46 +791,54 @@ func (a *McpProviderClient) ListMCPs(ctx context.Context) ([]*entities.McpInfo, 
 	return a.Client.ListMCPs(ctx, a.Namespace)
 }
 
-// InitializeSubflow returns the committed graph, pinning the referenced child
+// InitializeSubGraph returns the committed graph, pinning the referenced child
 // definition on first use. It never replaces an existing runtime graph.
-func (c *FlowgentClient) InitializeSubflow(ctx context.Context, namespace, runID, instance string) (*entities.SubflowState, error) {
-	return c.subflowRequest(ctx, namespace, runID, "subflows/initialize", map[string]string{"instance_id": instance})
+func (c *FlowgentClient) InitializeSubGraph(ctx context.Context, namespace, runID, instance string) (*entities.SubGraph, error) {
+	return c.subgraphRequest(ctx, namespace, runID, "subgraphs/initialize", map[string]string{"instance_id": instance})
 }
-func (c *FlowgentClient) ApplyGraphPatch(ctx context.Context, namespace string, patch entities.GraphPatch) (*entities.SubflowState, error) {
-	return c.subflowRequest(ctx, namespace, patch.FlowRunID, "graph-patches", patch)
+func (c *FlowgentClient) ApplyGraphPatch(ctx context.Context, namespace string, patch entities.GraphPatch) (*entities.SubGraph, error) {
+	return c.subgraphRequest(ctx, namespace, patch.GraphRunID, "graph-patches", patch)
 }
-func (c *FlowgentClient) subflowRequest(ctx context.Context, namespace, runID, path string, body any) (*entities.SubflowState, error) {
+func (c *FlowgentClient) subgraphRequest(ctx context.Context, namespace, runID, path string, body any) (*entities.SubGraph, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/%s/runs/%s/%s", url.PathEscape(namespace), url.PathEscape(runID), path), bytes.NewReader(data))
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/%s/graph-runs/%s/%s", url.PathEscape(namespace), url.PathEscape(runID), path), bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var state entities.SubflowState
+	var state entities.SubGraph
 	if err = readJSON(resp, &state); err != nil {
 		return nil, err
 	}
 	return &state, nil
 }
-func (a *RunStateClient) InitializeSubflow(ctx context.Context, runID, instance string) (*entities.SubflowState, error) {
-	return a.Client.InitializeSubflow(ctx, a.Namespace, runID, instance)
+func (a *GraphRunStateClient) InitializeSubGraph(ctx context.Context, runID, instance string) (*entities.SubGraph, error) {
+	return a.Client.InitializeSubGraph(ctx, a.Namespace, runID, instance)
 }
-func (a *RunStateClient) ApplyGraphPatch(ctx context.Context, p entities.GraphPatch) (*entities.SubflowState, error) {
+func (a *GraphRunStateClient) ApplyGraphPatch(ctx context.Context, p entities.GraphPatch) (*entities.SubGraph, error) {
 	return a.Client.ApplyGraphPatch(ctx, a.Namespace, p)
 }
-func (a *RunStateClient) ListTasks(ctx context.Context, runID string) ([]*entities.TaskRunInfo, error) {
-	return a.Client.ListTaskRuns(ctx, a.Namespace, runID)
+func (a *GraphRunStateClient) ListNodeRuns(ctx context.Context, runID string) ([]*entities.NodeRun, error) {
+	state, err := a.Client.GetGraphRecovery(ctx, a.Namespace, runID)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]*entities.NodeRun, len(state.NodeRuns))
+	for i := range state.NodeRuns {
+		nodes[i] = &state.NodeRuns[i]
+	}
+	return nodes, nil
 }
 
-func (a *TaskStateClient) ClaimTask(ctx context.Context, plan *entities.ExecutionPlan, owner string) (bool, error) {
+func (a *NodeRunStateClient) ClaimNodeRun(ctx context.Context, plan *entities.ExecutionPlan, owner string) (bool, error) {
 	data, err := json.Marshal(map[string]any{"node_instance_id": plan.NodeInstanceID, "dispatch_epoch": plan.DispatchEpoch, "owner": owner})
 	if err != nil {
 		return false, err
 	}
-	path := fmt.Sprintf("/api/v1/%s/runs/%s/node-runs/%s/claim", url.PathEscape(a.Namespace), url.PathEscape(plan.AgentFlowRunID), url.PathEscape(plan.TaskID))
+	path := fmt.Sprintf("/api/v1/%s/graph-runs/%s/node-runs/%s/claim", url.PathEscape(a.Namespace), url.PathEscape(plan.GraphRunID), url.PathEscape(plan.NodeRunID))
 	resp, err := a.Client.do(ctx, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return false, err
@@ -847,7 +856,7 @@ func (c *FlowgentClient) DispatchPlan(ctx context.Context, namespace string, pla
 	if err != nil {
 		return err
 	}
-	path := fmt.Sprintf("/api/v1/%s/runs/%s/node-runs/%s/dispatch", url.PathEscape(namespace), url.PathEscape(plan.AgentFlowRunID), url.PathEscape(plan.TaskID))
+	path := fmt.Sprintf("/api/v1/%s/graph-runs/%s/node-runs/%s/dispatch", url.PathEscape(namespace), url.PathEscape(plan.GraphRunID), url.PathEscape(plan.NodeRunID))
 	resp, err := c.do(ctx, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return err
@@ -859,15 +868,97 @@ func (c *FlowgentClient) DispatchPlan(ctx context.Context, namespace string, pla
 	}
 	return nil
 }
-func (c *FlowgentClient) GetRunDefinition(ctx context.Context, namespace, runID string) (*entities.FlowInfo, error) {
-	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/%s/runs/%s/definition", url.PathEscape(namespace), url.PathEscape(runID)), nil)
+func (c *FlowgentClient) GetGraphSnapshot(ctx context.Context, namespace, runID string) (*entities.AgentGraph, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/%s/graph-runs/%s/snapshot", url.PathEscape(namespace), url.PathEscape(runID)), nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var spec entities.FlowInfo
+	var spec entities.AgentGraph
 	if err = readJSON(resp, &spec); err != nil {
 		return nil, err
 	}
 	return &spec, nil
+}
+
+func (c *FlowgentClient) CreateGraphCheckpoint(ctx context.Context, namespace, graphRunID string) (*entities.GraphCheckpoint, error) {
+	response, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/%s/graph-runs/%s/checkpoints", url.PathEscape(namespace), url.PathEscape(graphRunID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var checkpoint entities.GraphCheckpoint
+	if err = readJSON(response, &checkpoint); err != nil {
+		return nil, err
+	}
+	return &checkpoint, nil
+}
+func (c *FlowgentClient) CommitNodeCheckpoint(ctx context.Context, namespace, graphRunID, nodeRunID string, epoch int64, checkpoint *entities.NodeCheckpoint) error {
+	data, err := json.Marshal(map[string]any{"dispatch_epoch": epoch, "checkpoint": checkpoint})
+	if err != nil {
+		return err
+	}
+	response, err := c.do(ctx, http.MethodPut, fmt.Sprintf("/api/v1/%s/graph-runs/%s/node-runs/%s/checkpoint", url.PathEscape(namespace), url.PathEscape(graphRunID), url.PathEscape(nodeRunID)), bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(response.Body)
+		return fmt.Errorf("checkpoint %d: %s", response.StatusCode, body)
+	}
+	return nil
+}
+func (a *GraphRunStateClient) Checkpoint(ctx context.Context, graphRunID string) error {
+	_, err := a.Client.CreateGraphCheckpoint(ctx, a.Namespace, graphRunID)
+	return err
+}
+
+func (c *FlowgentClient) GetGraphRecovery(ctx context.Context, namespace, graphRunID string) (*entities.GraphRecovery, error) {
+	response, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/%s/graph-runs/%s/recovery", url.PathEscape(namespace), url.PathEscape(graphRunID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var state entities.GraphRecovery
+	if err = readJSON(response, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (c *FlowgentClient) GetRunAgent(ctx context.Context, namespace, graphRunID, name string) (*entities.AgentInfo, error) {
+	if graphRunID == "" {
+		return c.GetAgent(ctx, namespace, name)
+	}
+	response, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/%s/graph-runs/%s/agents/%s", url.PathEscape(namespace), url.PathEscape(graphRunID), url.PathEscape(name)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var agent entities.AgentInfo
+	if err = readJSON(response, &agent); err != nil {
+		return nil, err
+	}
+	return &agent, nil
+}
+
+func (c *FlowgentClient) DispatchSandbox(ctx context.Context, trigger *model.SandboxTrigger) error {
+	return c.sandboxAction(ctx, trigger.Namespace, trigger.GraphRunID, trigger.NodeRunID, "sandbox-dispatch", trigger)
+}
+func (c *FlowgentClient) CommitSandboxResult(ctx context.Context, namespace, graphRunID, nodeRunID string, result *entities.NodeResult) error {
+	return c.sandboxAction(ctx, namespace, graphRunID, nodeRunID, "sandbox-result", result)
+}
+func (c *FlowgentClient) sandboxAction(ctx context.Context, namespace, graphRunID, nodeRunID, action string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	response, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/%s/graph-runs/%s/node-runs/%s/%s", url.PathEscape(namespace), url.PathEscape(graphRunID), url.PathEscape(nodeRunID), action), bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(response.Body)
+		return fmt.Errorf("sandbox %s %d: %s", action, response.StatusCode, body)
+	}
+	return nil
 }

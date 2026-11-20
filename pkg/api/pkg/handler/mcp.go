@@ -22,7 +22,7 @@ func publicMcp(m *entities.McpInfo) *entities.McpInfo {
 		return nil
 	}
 	result := *m
-	result.NormalizeAliases()
+	result.Normalize()
 	result.Headers = nil
 	result.HeaderRefs = make(map[string]string, len(m.Headers))
 	for key, value := range m.Headers {
@@ -111,7 +111,7 @@ func (h *McpHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
-	m.NormalizeAliases()
+	m.Normalize()
 	if !resourceNamePattern.MatchString(m.Name) {
 		http.Error(w, "name may contain only letters, digits, hyphens, and underscores", http.StatusBadRequest)
 		return
@@ -180,7 +180,7 @@ func (h *McpHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "namespace mismatch", http.StatusBadRequest)
 		return
 	}
-	updates.NormalizeAliases()
+	updates.Normalize()
 	if updates.Transport != "http" {
 		http.Error(w, "only streamable-http MCP transport is supported", http.StatusBadRequest)
 		return

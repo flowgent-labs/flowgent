@@ -77,7 +77,7 @@ storage:
     inlineMaxBytes: 262144
     maxPayloadBytes: 67108864
     compression: gzip          # none | gzip
-    prefix: flowgent/task-runs
+    prefix: flowgent/node-runs
     putTimeout: 30s
     getTimeout: 30s
     verifyChecksum: true
@@ -179,7 +179,7 @@ web:
     limits:   { cpu: "250m", memory: "256Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# Controller — Distributed Sharded Flow Driver
+# Controller — Distributed Sharded AgentGraph Driver
 # ═══════════════════════════════════════════════════════════════
 controller:
   replicas: 2
@@ -274,7 +274,7 @@ notifier:
 # Includes runtime modes, namespace isolation, credential paths, and secrets.
 #
 # namespacePrefix MUST match between the apiserver (Trigger routing) and the
-# Controller (per-namespace JM Deployment namespace placement — every flow's
+# Controller (per-namespace JM Deployment namespace placement — every graph's
 # dedicated JM Deployment lives in its namespace's shared K8s namespace,
 # "{namespacePrefix}{namespaceID}") — see pkg/controller/pkg/controller.go
 # runtimeNamespace contract.
@@ -382,7 +382,7 @@ runtime:
         inline_max_bytes: {{ int64 .Values.storage.artifacts.inlineMaxBytes }}
         max_payload_bytes: {{ int64 .Values.storage.artifacts.maxPayloadBytes }}
         compression: {{ .Values.storage.artifacts.compression | default "gzip" | quote }}
-        prefix: {{ .Values.storage.artifacts.prefix | default "flowgent/task-runs" | quote }}
+        prefix: {{ .Values.storage.artifacts.prefix | default "flowgent/node-runs" | quote }}
         put_timeout: {{ .Values.storage.artifacts.putTimeout | default "30s" | quote }}
         get_timeout: {{ .Values.storage.artifacts.getTimeout | default "30s" | quote }}
         verify_checksum: {{ .Values.storage.artifacts.verifyChecksum }}
@@ -397,8 +397,8 @@ runtime:
           credentials_file: {{ .Values.storage.artifacts.gcs.credentialsFile | default "" | quote }}
           anonymous: {{ .Values.storage.artifacts.gcs.anonymous }}
     orchestration:
-      max_concurrent_flows: 10
-      flow_execution_timeout: "30m"
+      max_concurrent_graphs: 10
+      graph_execution_timeout: "30m"
       max_node_retries: 3
     messager:
       type: {{ .Values.messaging.type | quote }}
@@ -522,12 +522,12 @@ runtime:
     defaultNamespace: "default"
     namespacePrefix: "flowgent-"
   # Credential file paths mounted in pods (K8s Secrets).
-  # Hierarchy: flow-level overrides namespace-level.
+  # Hierarchy: graph-level overrides namespace-level.
   credentialPaths:
     basePath: "/var/flowgent"
 
   # Session Runtime — Helm-deployed Flink-style shared runtime cluster.
-  # Flows with runtime_mode=session are consumed by this JobManager and execute
+  # AgentGraphs with runtime_mode=session are consumed by this JobManager and execute
   # only on TM/Sandbox pods carrying this clusterId.
   session:
     enabled: true
@@ -558,8 +558,8 @@ runtime:
           cpu: "500m"
           memory: "512Mi"
 
-  # Application Runtime Defaults — per-FlowRun runtime clusters created by the
-  # Controller. Flow YAML top-level resources may override only pod sizes.
+  # Application Runtime Defaults — per-GraphRun runtime clusters created by the
+  # Controller. AgentGraph YAML top-level resources may override only pod sizes.
   application:
     jobmanager:
       resources:

@@ -3,14 +3,14 @@
 [System overview](../overview.md) · [JobManager](jobmanager.md)
 
 **Sandbox target (2026-11-14):** Controller also reconciles registered Sandbox
-pools by namespace + `sandbox_id`, independently of active FlowRuns. The
+pools by namespace + `sandbox_id`, independently of active GraphRuns. The
 Sandbox ownership/GC statements below describe the current runtime-cluster
 implementation. The [fixed-pool contract](sandbox.md) supersedes those
 statements for the pending migration.
 
-The Controller owns distributed runtime reconciliation. It discovers Flows,
+The Controller owns distributed runtime reconciliation. It discovers AgentGraphs,
 active application-mode runs through the API Server, shards ownership across
-controller replicas, creates/removes per-FlowRun application JobManagers, and
+controller replicas, creates/removes per-GraphRun application JobManagers, and
 garbage-collects application runtime Deployments. It never connects to the
 database directly.
 
@@ -29,15 +29,15 @@ Deployment namespaces, pod naming, and lifecycle timing are documented in the
 
 ## Reconciliation and Dispatch
 
-Polls the apiserver REST API (`FlowgentClient.ListFlows`) for agentflow definitions,
+Polls the apiserver REST API (`FlowgentClient.ListAgentGraphs`) for agentgraph definitions,
 shards across pods via hash-mod, and ensures one dedicated K8s JobManager only
-when an owned Flow has an active run. Cron callbacks create a PENDING run through
+when an owned AgentGraph has an active run. Cron callbacks create a PENDING run through
 the API before reconciliation. The Controller also subscribes to MQTT lifecycle
-events for prompt Flow updates. It never calls a JobManager directly.
+events for prompt AgentGraph updates. It never calls a JobManager directly.
 
-Before reconciling an active application Flow runtime, the Controller resolves its effective
-namespace→Flow runtime configuration through the workload-only API. Public values
-are upserted into a per-Flow ConfigMap and secrets into a per-Flow Secret; plaintext
+Before reconciling an active application AgentGraph runtime, the Controller resolves its effective
+namespace→AgentGraph runtime configuration through the workload-only API. Public values
+are upserted into a per-AgentGraph ConfigMap and secrets into a per-AgentGraph Secret; plaintext
 secrets are never logged or stored in workload manifests. A deterministic content
 checksum rolls the application JM. The application JM's K8sRM then reconciles
 TM/Sandbox Deployments scoped by the run's `runtime_cluster_id`.
@@ -45,19 +45,19 @@ TM/Sandbox Deployments scoped by the run's `runtime_cluster_id`.
 ### Hash-Mod Sharding
 
 ```
-shard(flow_id) = fnv64a(flow_id) % total_controller_pods
+shard(agent_graph_id) = fnv64a(agent_graph_id) % total_controller_pods
 ```
 
 Each pod discovers total count via `IDiscoveryClient` (K8s label selector or env
-vars). Only processes flows where `shard == pod_index`.
+vars). Only processes graphs where `shard == pod_index`.
 
 ### Reconciliation Loop
 
 ```
 Every 10s:
   1. IDiscoveryClient.DiscoverPeers(labelSelector)
-  2. apiClient.ListFlows(namespace)
-  3. For each flow where shard(flow_id) == my_index:
+  2. apiClient.ListAgentGraphs(namespace)
+  3. For each graph where shard(agent_graph_id) == my_index:
      a. Inspect PENDING/RUNNING/PAUSED application runs
      b. For active application runs, create/reconcile their dedicated JobManager
   4. Re-register owned cron triggers
@@ -68,12 +68,12 @@ Every 10s:
 
 | Binding | Controller Action | Who Executes |
 |---------|-------------------|--------------|
-| `Flow.runtime_mode=application` | Preserve Run snapshot, ensure dedicated active-run JM with cluster id `app-{runId}` | TM/Sandbox workers whose subscription and pod labels match namespace + runtime cluster |
-| `Flow.runtime_mode=session` | Do not create a JM; session runs are consumed by the Helm session JM | Session TM/Sandbox workers whose labels match the session cluster id |
+| `AgentGraph.runtime_mode=application` | Preserve Run snapshot, ensure dedicated active-run JM with cluster id `app-{runId}` | TM/Sandbox workers whose subscription and pod labels match namespace + runtime cluster |
+| `AgentGraph.runtime_mode=session` | Do not create a JM; session runs are consumed by the Helm session JM | Session TM/Sandbox workers whose labels match the session cluster id |
 
 ### Dual Format: Static YAML vs DB JSON
 
-All deployments use `model.AgentFlowSpec` (dual-tagged `json:` + `yaml:`). Static YAML
+All deployments use `model.AgentGraphSpec` (dual-tagged `json:` + `yaml:`). Static YAML
 loaded at startup + hot-reload. DB JSON saved by UI via API, polled by Controller.
 
 ---
@@ -81,18 +81,18 @@ loaded at startup + hot-reload. DB JSON saved by UI via API, polled by Controlle
 ## Expected Behavior
 
 1. **Given** multiple Controller replicas, **when** they share one peer snapshot,
-   **then** hash-mod sharding MUST assign each flow to exactly one replica per
+   **then** hash-mod sharding MUST assign each graph to exactly one replica per
    reconciliation tick.
-2. **Given** an imported flow with no active run, **when** Controller reconciles,
+2. **Given** an imported graph with no active run, **when** Controller reconciles,
    **then** it MUST NOT create JobManager, TaskManager, or Sandbox workloads.
 3. **Given** an active run, **when** its owning Controller
    reconciles, **then** the correctly named and labelled JobManager deployment
    MUST exist in the tenant workload namespace.
-4. **Given** a completed/deleted flow or expired orphan window, **when** cleanup
+4. **Given** a completed/deleted graph or expired orphan window, **when** cleanup
    runs, **then** Controller MUST remove the owned runtime without deleting a
-   namespace still shared by other flows.
+   namespace still shared by other graphs.
 5. **Given** an API or Kubernetes failure, **when** reconciliation retries,
    **then** operations MUST remain idempotent and MUST NOT create duplicate JMs.
-6. **Given** a namespace default or Flow override changes, **when** Controller
+6. **Given** a namespace default or AgentGraph override changes, **when** Controller
    reconciles an active runtime, **then** JM, TM, and Sandbox MUST all receive the
    same effective configuration and stale pods MUST roll by checksum.

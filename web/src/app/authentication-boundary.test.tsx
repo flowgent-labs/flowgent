@@ -103,7 +103,7 @@ describe('AuthenticationBoundary', () => {
   })
 
   it('redirects an anonymous browser to Hosted Login with the full return path', async () => {
-    window.history.replaceState({}, '', '/flows?status=active#recent')
+    window.history.replaceState({}, '', '/agent-graphs?status=active#recent')
     const request = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
     const redirect = vi.fn()
 
@@ -115,7 +115,7 @@ describe('AuthenticationBoundary', () => {
 
     await waitFor(() =>
       expect(redirect).toHaveBeenCalledWith(
-        '/auth/login?return_to=%2Fflows%3Fstatus%3Dactive%23recent',
+        '/auth/login?return_to=%2Fagent-graphs%3Fstatus%3Dactive%23recent',
       ),
     )
     expect(screen.queryByText('must stay hidden')).not.toBeInTheDocument()

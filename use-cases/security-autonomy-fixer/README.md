@@ -1,8 +1,8 @@
 # Security Autonomy Fixer
 
-[中文](README_ZH.md) · [AgentFlow architecture](../../docs/architecture/agent-flow.md)
+[中文](README_ZH.md) · [AgentGraph architecture](../../docs/architecture/agent-graph.md)
 
-Security Autonomy Fixer is a self-contained L2 AgentFlow application. It reads
+Security Autonomy Fixer is a self-contained L2 AgentGraph application. It reads
 the target GitHub commit and SonarQube findings, selects bounded source context,
 generates and reviews a patch, passes deterministic and human gates, delivers
 the change through GitHub, rechecks SonarQube, and posts a final report.
@@ -91,7 +91,7 @@ security-autonomy-fixer/
 │   ├── context.py                # shared context, lifecycle and application API
 │   ├── infra/sNN_*.py
 │   ├── core/sNN_*.py
-│   ├── agentflow/sNN_*.py
+│   ├── agentgraph/sNN_*.py
 │   ├── otel/sNN_*.py
 │   └── web/sNN_*.py
 └── reports/                      # ignored evidence and rolling archives
@@ -104,8 +104,8 @@ Reusable runtime machinery lives in `tests/e2e_util/`; each case exposes the pre
 
 | Resource  | Canonical file                                                              | Role                                                                                 |
 | --------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Main flow | [`security-autonomy-fixer.yaml`](deploy/flowgent/config/flows/security-autonomy-fixer.yaml) | 29-node, 33-edge remediation DAG                                                     |
-| Subflow   | [`sub-fix.yaml`](deploy/flowgent/config/flows/sub-fix.yaml)                                 | Three-node analyze → patch → validate flow; currently a separate reusable definition |
+| Main graph | [`security-autonomy-fixer.yaml`](deploy/flowgent/config/agent-graphs/security-autonomy-fixer.yaml) | 29-node, 33-edge remediation DAG                                                     |
+| SubGraph   | [`sub-fix.yaml`](deploy/flowgent/config/agent-graphs/sub-fix.yaml)                                 | Three-node analyze → patch → validate graph; currently a separate reusable definition |
 | Agents    | [`deploy/flowgent/config/agents/`](deploy/flowgent/config/agents/)                                      | Supervisor, detector, fixer, and three reviewers plus Git role                       |
 | MCPs      | [`deploy/flowgent/config/mcps/`](deploy/flowgent/config/mcps/)                                          | GitHub delivery and SonarQube issue/scan access                                      |
 | Envoy     | [`deploy/flowgent/config/envoy/envoy.yaml`](deploy/flowgent/config/envoy/envoy.yaml)                    | Declarative edge-proxy configuration, separate from deployment code                  |
@@ -130,9 +130,9 @@ Agent execution defaults to the deterministic fixture with
 imported DeepSeek provider; the runner requires the environment variable named
 by its `api_key_env` before deploying Flowgent.
 
-## Flow Contract
+## AgentGraph Contract
 
-The main flow has **29 nodes and 33 edges**. It uses eight generic AgentFlow
+The main graph has **29 nodes and 33 edges**. It uses eight generic AgentGraph
 node types:
 
 | Node type    | Count | Application use                                                          |
@@ -195,7 +195,7 @@ flowchart TD
 
 All arrows are executable forward dependencies. Review disagreement is routed
 through the persisted human gate, and incomplete re-scan results are captured
-in the final report. Repeated remediation requires an explicit bounded subflow
+in the final report. Repeated remediation requires an explicit bounded subgraph
 or run boundary until node reset semantics exist.
 
 ## Business Stages
@@ -268,7 +268,7 @@ explicit Boolean condition:
 | Notifiers         | `deploy/flowgent/config/notifiers/email.yaml`, `webhook.yaml`                  | Importable notification-channel definitions; the main 29-node DAG currently terminates through a GitHub comment tool node |
 
 Runtime credentials MUST enter through the configured deployment Secret or
-environment contract. They MUST NOT be embedded in flow, agent, MCP, or README
+environment contract. They MUST NOT be embedded in graph, agent, MCP, or README
 files.
 
 ## Current Limits
@@ -279,7 +279,7 @@ files.
 2. Review disagreement still enters the human gate, and incomplete re-scan
    results still enter `summary-report`; this is the safe one-shot fallback
    until repeated-node reset semantics exist.
-3. `${vars.iteration}` starts at `0` and this flow does not mutate it. The
+3. `${vars.iteration}` starts at `0` and this graph does not mutate it. The
    `max_iterations` comparison does not by itself implement repeated runs.
 4. Review siblings are logically independent but are currently dispatched
    sequentially because JobManager blocks on each `Schedule()`.
@@ -287,10 +287,10 @@ files.
    SHA, a new successful CE task and an analysis revision matching that SHA.
    Deployments outside this fixture need an equivalent CI adapter contract.
 6. The `sub-fix` definition is not referenced by a node in the main manifest;
-   it is a separate reusable flow, not part of the 29-node execution path.
+   it is a separate reusable graph, not part of the 29-node execution path.
 
 Until repeated-node reset semantics exist, an executable multi-pass design
-MUST use a bounded node retry or an explicit subflow/run boundary.
+MUST use a bounded node retry or an explicit subgraph/run boundary.
 
 ## Verification and Operations
 
@@ -306,7 +306,7 @@ chart or the equivalent Compose topology with AuthGuard/Envoy, imports
 infrastructure, LDAP discovery, GitHub OAuth, edge allow/deny policy, telemetry,
 API Server, Notifier, Controller, MQTT, A2A, remediation, PR delivery, knowledge,
 the shared workspace, and a real Chromium console lifecycle (create, execute,
-update, and delete a sandbox Flow through the shipped Web UI). Install the E2E
+update, and delete a sandbox AgentGraph through the shipped Web UI). Install the E2E
 requirements and Chromium before running the browser scenario outside CI:
 
 ```bash
@@ -350,7 +350,7 @@ PostgreSQL, Kubernetes resources, or external-system outcomes.
    MUST feed the deterministic committee before supervisor or human approval.
 4. **Given** any Git mutation, **when** it becomes eligible, **then** committee,
    supervisor, condition, and persisted human gates MUST already have passed.
-5. **Given** either delivery branch, **when** code is pushed, **then** the flow
+5. **Given** either delivery branch, **when** code is pushed, **then** the graph
    MUST converge on SonarQube recheck, comparison, report, and GitHub comment.
 6. **Given** a negative review or incomplete re-scan, **when** one-shot runtime
    execution continues, **then** it MUST reach the human gate or final report
@@ -368,9 +368,14 @@ successful CE task; selected finding IDs are checked directly after analysis.
 The Java source analysis currently runs without compiling dependency bytecode;
 its results do not establish complete bytecode/type-resolution coverage.
 
-The additional vNext scenarios are `61` (legacy Static child execution,
+The additional vNext scenarios are `61` (Static SubGraph execution,
 Adaptive Supervisor expansion, Seal, graph CAS and decision replay) and `62`
 (10 persistent claims, duplicate completion, transactional result Outbox and
 late Attempt rejection). Run with the deterministic LLM fixture. These are
 protocol/orchestration checks; the unimplemented recovery boundaries are listed
-in [the AgentFlow implementation boundary](../../docs/architecture/agent-flow.md#subflow-vnext-implementation-boundary).
+in [the AgentGraph implementation boundary](../../docs/architecture/agent-graph.md#agentgraph-domain-and-durable-recovery).
+
+Scenario `63` verifies a SIGKILL during a Sandbox mutation, baseline restoration
+before a new NodeRun Attempt, verified final WorkspaceSnapshot, immutable
+GraphRun snapshot, and consistent GraphCheckpoint recovery. Namespace/graph/run
+REST and MQTT names use the canonical AgentGraph domain; old aliases are removed.

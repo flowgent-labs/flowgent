@@ -10,7 +10,7 @@ metadata:
 
 A Flowgent skill wrapping Nexus3 + SonatypeIQ APIs as a toolset for dependency firewall checking.
 
-This SKILL.md serves as a **tool catalog** — AI agents/LLMs read it to decide which script to invoke. The skill is a DAG node (`type: skill`) in a parent flow.
+This SKILL.md serves as a **tool catalog** — AI agents/LLMs read it to decide which script to invoke. The skill is a DAG node (`type: skill`) in a parent graph.
 
 ## Available Tools
 
@@ -45,7 +45,7 @@ Injected via environment variables (K8s Secrets → Sandbox Pod Env):
 Sandbox scripts execute in a shared workspace volume:
 
 ```
-{workspace}/{namespaceId}/{flowId}/{runId}/{taskId}/
+{workspace}/{namespaceId}/{graphId}/{runId}/{taskId}/
   ├── script.sh        ← written by SandboxExecutor
   ├── result.json      ← written by SandboxRunner after execution
   └── status
@@ -54,9 +54,9 @@ Sandbox scripts execute in a shared workspace volume:
 | Mode | Workspace Backend |
 |------|------------------|
 | Session | PVC (ReadWriteMany), shared across all sandbox pods |
-| Application | PVC — dedicated per `{namespace}/{flow_id}`, provisioned by Controller |
+| Application | PVC — dedicated per `{namespace}/{agent_graph_id}`, provisioned by Controller |
 
-This skill is **read-only** — it queries external APIs and returns data without modifying project files. Side effects (pom.xml edits, commits) are handled by subsequent DAG nodes in the parent flow.
+This skill is **read-only** — it queries external APIs and returns data without modifying project files. Side effects (pom.xml edits, commits) are handled by subsequent DAG nodes in the parent graph.
 
 ## Output
 

@@ -31,7 +31,7 @@ still HEAD after transfer.
 2. [Documentation index](../index.md)
 3. [Engine overview](../architecture/overview.md)
 4. [Durable data lifecycle](../architecture/data-lifecycle.md)
-5. [AgentFlow application model](../architecture/agent-flow.md)
+5. [AgentGraph application model](../architecture/agent-graph.md)
 6. [AuthGuard boundary](../architecture/authguard-integration.md)
 7. [API Server routes/state boundary](../architecture/engine/apiserver.md)
 8. [Security Autonomy Fixer](../../use-cases/security-autonomy-fixer/README.md)
@@ -95,11 +95,11 @@ Flowgent automation.
   JobManager Deployments. JobManager owns the DAG and reconciles
   TaskManager/Sandbox capacity. Execution plans/results and sandbox work travel
   over MQTT; durable state travels through REST.
-- **Stable identity:** Flow, Agent, portable Skill, and Knowledge Document use a
-  stable owner plus immutable revisions. Runs reference a concrete Flow
+- **Stable identity:** AgentGraph, Agent, portable Skill, and Knowledge Document use a
+  stable owner plus immutable revisions. Runs reference a concrete AgentGraph
   revision.
 - **Context:** Instruction, Knowledge, and Execution Memory are separate.
-  NodeRun is the canonical public/persistence term; `TaskRunInfo` remains an
+  NodeRun is the canonical public/persistence term; `NodeRun` remains an
   internal compatibility name.
 - **Knowledge:** Source → Document → DocumentRevision → hierarchical Content →
   Embedding. PostgreSQL uses pgvector; SQLite uses sqlite-vec. Publication uses
@@ -107,7 +107,7 @@ Flowgent automation.
 - **Security:** AuthGuard owns IAM and authorization decisions. Flowgent stores
   only canonical principal references and applies AuthGuard SQL scope before
   content is returned or sent to an LLM.
-- **UI:** Overview, Runs/trace/logs/file previews, visual Flows and revisions,
+- **UI:** Overview, Runs/trace/logs/file previews, visual AgentGraphs and revisions,
   Agents, portable/runtime Skill management, MCPs, LLMs, published Knowledge,
   Notifications, runtime configuration, and embedded account security are
   implemented. Runtime Skill management is implemented; execution of a
@@ -121,7 +121,7 @@ Flowgent automation.
 | Area | Implemented evidence / source |
 |---|---|
 | Canonical REST CRUD | `pkg/api/pkg/server.go`, strict OpenAPI contract, AuthGuard scoped repositories |
-| Flow/Agent/Skill/Document revisioning | owner/current-revision pointers, immutable revision tables, CAS updates |
+| AgentGraph/Agent/Skill/Document revisioning | owner/current-revision pointers, immutable revision tables, CAS updates |
 | Run/NodeRun execution | attempts, input/output/error, checkpoints, messages, leases, fencing, workspace version |
 | Runtime isolation | application/session modes, Controller/JM/TM/Sandbox ownership and GC |
 | Unified approvals | `orh_approval` for human/tool/payment/Knowledge/Instruction decisions |
@@ -131,7 +131,7 @@ Flowgent automation.
 | Notification secrets | AES-256-GCM write-only fields with versioned key ring |
 | Runtime credentials | environment references in definitions; Secret resolution inside runtime Pods |
 | Observability | W3C context over MQTT, Jaeger query proxy, Run/NodeRun correlation, UI waterfall/details |
-| Flow releases | immutable release catalog, grants, consumer-owned installation copies |
+| AgentGraph releases | immutable release catalog, grants, consumer-owned installation copies |
 | A2A | A2A 0.3 JSON-RPC/Agent Card and principal-partitioned persistent task store |
 | Browser console | real Chromium S41–S46 CRUD/login/trace/file-preview coverage |
 | E2E cleanup | ownership-scoped Helm/namespace deletion with bounded finalizer recovery and `/finalize` last resort |
@@ -164,7 +164,7 @@ The bootstrap DDL and startup migration runner are:
 
 ### P1 — Deterministic Runtime and Recovery
 
-1. `orh_run.context_snapshot` is captured transactionally, but Agent execution
+1. `orh_graph_run.context_snapshot` is captured transactionally, but Agent execution
    can still resolve the latest Agent by name and Knowledge search does not
    constrain results to snapshot `knowledge_revision_ids`. Make runtime
    execution consume the locked Agent/Instruction/Knowledge revisions.
@@ -176,7 +176,7 @@ The bootstrap DDL and startup migration runner are:
    Implement crash-recovery tests that kill TM/JM and prove same-attempt resume
    without merging a failed branch.
 4. Several registered DAG node types are not end-to-end runtime capabilities:
-   `SkillExecutor` and `SubflowExecutor` return stub markers; `MapExecutor` is
+   `SkillExecutor` and `SubGraphExecutor` return stub markers; `MapExecutor` is
    not connected to the existing fan-out runner; `HumanExecutor` persists an
    approval but JobManager does not suspend/resume the DAG; and Supervisor
    actions are validated but not applied as retry/redirect/inject/abort graph
@@ -206,8 +206,8 @@ The bootstrap DDL and startup migration runner are:
 
 ### P2 — Cleanup and Productization
 
-1. Internal entities retain deprecated aliases (`AgentFlowID`, `Vars`, provider
-   endpoint aliases, MCP URL/type, `TaskRunInfo`) for in-process/wire
+1. Internal entities retain deprecated aliases (`AgentGraphName`, `Vars`, provider
+   endpoint aliases, MCP URL/type, `NodeRun`) for in-process/wire
    compatibility. The public REST/database contract is canonical. Remove aliases
    only with explicit MQTT/A2A compatibility tests; do not perform a blind rename.
 2. Helm `global.mode: all-in-one` remains marked TODO. The production chart is
@@ -243,7 +243,7 @@ The bootstrap DDL and startup migration runner are:
    clean machine with no local image cache.
 3. Enforce ContextSnapshot revisions end to end, then add kill/restart recovery
    tests for checkpoint, workspace, and fencing consistency.
-4. Complete and test Human/Map/Subflow/Skill/Supervisor runtime semantics.
+4. Complete and test Human/Map/SubGraph/Skill/Supervisor runtime semantics.
 5. Wire `orh_effect_execution`; then implement the AgentVault adapter and real
    payment E2E.
 6. Add the production embedding ingestion/reindex pipeline.
@@ -300,7 +300,7 @@ Kubernetes Secret as instructed there; never hard-code them in a document.
 |---|---|
 | REST routes | `pkg/api/pkg/server.go`, then handler + OpenAPI tests |
 | Durable model | bootstrap DDL, `pkg/model/pkg/entities`, `pkg/storage` |
-| Run snapshot/revisions | `pkg/storage/pkg/flowrun/flowrun_{postgres,sqlite}.go` |
+| Run snapshot/revisions | `pkg/storage/pkg/graphrun/graphrun_{postgres,sqlite}.go` |
 | Knowledge/vector/publication | `pkg/storage/pkg/knowledge`, `pkg/api/pkg/handler/knowledge.go` |
 | Summarizer | `pkg/core/pkg/engine/jobmanager/jobmaster.go` |
 | Execution/retry/checkpoint | JobManager, ResourceManager, TaskManager, `orh_node_*` storage |

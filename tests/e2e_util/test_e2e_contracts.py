@@ -394,6 +394,22 @@ class ComponentRenderingTests(unittest.TestCase):
 
 
 class VerticalScenarioContractTests(unittest.TestCase):
+    def test_canonical_graph_domain_vocabulary(self):
+        import re
+        removed = ["Agent" + "Flow", "Flow" + "Run", "Task" + "Run", "Sub" + "flow", "Sub" + "Flow", "Node" + "Spec", "Flow" + "Info"]
+        pattern = re.compile(r"\b(?:" + "|".join(removed) + r")[A-Za-z0-9_]*\b")
+        failures = []
+        roots = [ROOT / "pkg", ROOT / "web/src", ROOT / "migration", ROOT / "deploy", ROOT / "docs", ROOT / "use-cases"]
+        suffixes = {".go", ".ts", ".tsx", ".py", ".sql", ".yaml", ".md", ".svg"}
+        for root in roots:
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix not in suffixes or any(part in {".venv", "reports", "node_modules", "dist"} for part in path.parts):
+                    continue
+                for line_number, line in enumerate(path.read_text().splitlines(), 1):
+                    if pattern.search(line):
+                        failures.append(f"{path.relative_to(ROOT)}:{line_number}: {line.strip()}")
+        self.assertEqual(failures, [], "Removed domain vocabulary remains:\n" + "\n".join(failures[:30]))
+
     @classmethod
     def setUpClass(cls):
         sys.path.insert(0, str(CASE))
@@ -405,7 +421,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
     def test_agent_reseeding_keeps_the_selected_provider_model(self):
         from unittest.mock import Mock
 
-        from verifier.agentflow import SecurityAutonomyFixture
+        from verifier.agentgraph import SecurityAutonomyFixture
 
         session = Mock()
         session.get.return_value.status_code = 200
@@ -430,7 +446,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
         from verifier.context import FlowgentRunEvidence
 
         evidence = {
-            "run_id": "run-ui",
+            "graph_run_id": "run-ui",
             "namespace": "test",
             "runtime_mode": "session",
             "plan_id": "plan-ui",
@@ -507,7 +523,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
             "msg": "slot worker task succeeded",
             "plan_id": "plan-ui",
         }
-        text_line = "[pod/taskmanager] 2026/11/13 14:25:51 INFO slot worker task succeeded slot_id=tm-1 plan_id=plan-ui node_id=console-sandbox"
+        text_line = "[pod/taskmanager] 2026/11/13 14:25:51 INFO slot worker task succeeded slot_id=tm-1 plan_id=plan-ui node_instance_id=console-sandbox"
         for line in (text_line, "[pod/taskmanager] " + json.dumps(event)):
             parsed = E2ES52LogsVerifier.parse_event(line)
             for key, value in event.items():
@@ -535,9 +551,9 @@ class VerticalScenarioContractTests(unittest.TestCase):
             },
         ]
         verifier.execution = {
-            "run_id": "run-ui",
+            "graph_run_id": "run-ui",
             "namespace": "test",
-            "node_id": "sandbox",
+            "node_instance_id": "sandbox",
             "plan_id": "plan-ui",
             "logs": [json.dumps(event) for event in events],
         }
@@ -557,7 +573,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
                 verifier._verify_logs()
 
     def test_missing_human_gate_cannot_pass_a_false_condition(self):
-        from verifier.agentflow.s33_remediation import E2ES33RemediationVerifier
+        from verifier.agentgraph.s33_remediation import E2ES33RemediationVerifier
 
         tasks = {
             "committee": self.completed({"decision": False}),
@@ -567,7 +583,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
             E2ES33RemediationVerifier.verify_condition_human(tasks)
 
     def test_committee_must_match_the_actual_review_votes(self):
-        from verifier.agentflow.s33_remediation import E2ES33RemediationVerifier
+        from verifier.agentgraph.s33_remediation import E2ES33RemediationVerifier
 
         tasks = {
             node: self.completed({"decision": True})
@@ -580,13 +596,13 @@ class VerticalScenarioContractTests(unittest.TestCase):
             E2ES33RemediationVerifier.verify_vote(tasks)
 
     def test_missing_report_is_not_a_path_dependent_pass(self):
-        from verifier.agentflow.s34_delivery_report import E2ES34DeliveryReportVerifier
+        from verifier.agentgraph.s34_delivery_report import E2ES34DeliveryReportVerifier
 
         with self.assertRaisesRegex(AssertionError, "summary-report"):
             E2ES34DeliveryReportVerifier.verify_report({})
 
     def test_aggregation_cannot_invent_source_findings(self):
-        from verifier.agentflow.s32_discovery_analyze import (
+        from verifier.agentgraph.s32_discovery_analyze import (
             E2ES32DiscoveryAnalyzeVerifier,
         )
 
@@ -606,7 +622,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
             E2ES32DiscoveryAnalyzeVerifier.verify_analyze(tasks)
 
     def test_mcp_sonar_envelope_preserves_actual_identifiers(self):
-        from verifier.agentflow import SecurityAutonomyFixture
+        from verifier.agentgraph import SecurityAutonomyFixture
 
         envelope = {
             "content": [
@@ -626,7 +642,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
         from verifier.otel.s51_metrics import E2ES51MetricsVerifier
 
         verifier = object.__new__(E2ES51MetricsVerifier)
-        verifier.execution = {"flow_id": "unique-ui-flow"}
+        verifier.execution = {"agent_graph_id": "unique-ui-graph"}
         verifier.context = SimpleNamespace(deployer="k8s")
         verifier.details = []
         verifier.prometheus = SimpleNamespace(

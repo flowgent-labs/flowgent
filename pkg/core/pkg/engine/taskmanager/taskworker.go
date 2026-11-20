@@ -31,11 +31,11 @@ type SlotWorker struct {
 	clusterID string
 	q         messager.IMessager
 	router    *executor.TaskExecutorRouter
-	state     TaskStateStore
+	state     NodeRunStateStore
 	metrics   *TaskManagerMetrics
 }
 
-func NewSlotWorker(id, tmID, namespace, clusterID string, q messager.IMessager, router *executor.TaskExecutorRouter, state TaskStateStore, metrics *TaskManagerMetrics) *SlotWorker {
+func NewSlotWorker(id, tmID, namespace, clusterID string, q messager.IMessager, router *executor.TaskExecutorRouter, state NodeRunStateStore, metrics *TaskManagerMetrics) *SlotWorker {
 	return &SlotWorker{
 		id:        id,
 		busy:      make(chan struct{}, 1),
@@ -87,24 +87,24 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 		}
 
 		if claimer, ok := sw.state.(interface {
-			ClaimTask(context.Context, *entities.ExecutionPlan, string) (bool, error)
+			ClaimNodeRun(context.Context, *entities.ExecutionPlan, string) (bool, error)
 		}); ok && plan.DispatchEpoch > 0 {
-			claimed, err := claimer.ClaimTask(ctx, &plan, sw.tmID+"/"+sw.id)
+			claimed, err := claimer.ClaimNodeRun(ctx, &plan, sw.tmID+"/"+sw.id)
 			if err != nil || !claimed {
-				slog.Warn("task claim rejected or already consumed", "task", plan.TaskID, "error", err)
+				slog.Warn("noderun claim rejected or already consumed", "noderun", plan.NodeRunID, "error", err)
 				return
 			}
 		}
-		slog.Debug("slot worker executing plan", "slot", sw.id, "plan", plan.PlanID, "node", plan.NodeID, "type", string(plan.TaskType))
+		slog.Debug("slot worker executing plan", "slot", sw.id, "plan", plan.PlanID, "node", plan.NodeInstanceID, "type", string(plan.NodeKind))
 		execCtx := otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(plan.TraceContext))
 		execCtx, span := tracing.Tracer("flowgent/taskmanager").Start(execCtx, "taskmanager.execute",
 			trace.WithAttributes(
-				attribute.String("run.id", plan.AgentFlowRunID),
-				attribute.String("agentflow.id", plan.AgentFlowDefinitionID),
-				attribute.String("flowgent.node_id", plan.NodeID),
-				attribute.String("flowgent.task_id", plan.TaskID),
+				attribute.String("graph_run.id", plan.GraphRunID),
+				attribute.String("agent_graph.name", plan.AgentGraphName),
+				attribute.String("flowgent.node_instance_id", plan.NodeInstanceID),
+				attribute.String("flowgent.node_run_id", plan.NodeRunID),
 				attribute.String("flowgent.plan_id", plan.PlanID),
-				attribute.String("flowgent.task_type", string(plan.TaskType)),
+				attribute.String("flowgent.node_kind", string(plan.NodeKind)),
 				attribute.Int("flowgent.attempt", plan.RetryCount+1),
 				attribute.String("flowgent.tm_id", sw.tmID),
 				attribute.String("flowgent.slot_id", sw.id),
@@ -126,50 +126,50 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 		execDur := time.Since(execStart)
 
 		if err != nil {
-			slog.Error("slot worker task failed",
+			slog.Error("slot worker noderun failed",
 				"plan_id", plan.PlanID,
-				"task_type", string(plan.TaskType),
+				"node_kind", string(plan.NodeKind),
 				"error", err,
 			)
-			plan.State = entities.Failed
-			plan.Result = &entities.TaskResult{Error: err.Error()}
+			plan.State = entities.NodeRunFailed
+			plan.Result = &entities.NodeResult{Error: err.Error()}
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "executor failed")
 		} else if result != nil && result.Error != "" {
-			slog.Error("slot worker task failed",
+			slog.Error("slot worker noderun failed",
 				"plan_id", plan.PlanID,
-				"task_type", string(plan.TaskType),
+				"node_kind", string(plan.NodeKind),
 				"error", result.Error,
 			)
-			plan.State = entities.Failed
+			plan.State = entities.NodeRunFailed
 			plan.Result = result
 			span.SetStatus(codes.Error, result.Error)
-		} else if result != nil && result.State == entities.TaskWaiting {
-			plan.State = entities.TaskWaiting
+		} else if result != nil && result.State == entities.NodeRunWaiting {
+			plan.State = entities.NodeRunWaiting
 			plan.Result = result
 		} else if result == nil {
-			plan.State = entities.Failed
-			plan.Result = &entities.TaskResult{Error: "executor returned no result"}
+			plan.State = entities.NodeRunFailed
+			plan.Result = &entities.NodeResult{Error: "executor returned no result"}
 		} else {
-			slog.Info("slot worker task succeeded", "slot_id", sw.id, "plan_id", plan.PlanID, "node_id", plan.NodeID)
-			plan.State = entities.Success
+			slog.Info("slot worker noderun succeeded", "slot_id", sw.id, "plan_id", plan.PlanID, "node_instance_id", plan.NodeInstanceID)
+			plan.State = entities.NodeRunSucceeded
 			plan.Result = result
 			span.SetAttributes(tracing.PayloadAttributes("output", result.Output)...)
 			span.SetStatus(codes.Ok, "done")
 		}
-		if plan.State != entities.TaskWaiting {
+		if plan.State != entities.NodeRunWaiting {
 			plan.FinishedAt = timePtr()
 		}
 
 		if sw.metrics != nil {
 			sw.metrics.TaskDuration.Record(ctx, float64(execDur.Milliseconds()))
 			sw.metrics.SlotsBusy.Add(ctx, -1)
-			sw.metrics.TasksExecuted.Add(ctx, 1, metric.WithAttributes(taskTypeAttr(plan.TaskType)))
+			sw.metrics.TasksExecuted.Add(ctx, 1, metric.WithAttributes(taskTypeAttr(plan.NodeKind)))
 		}
 
 		if sw.state != nil {
-			if err := sw.state.SaveTask(execCtx, taskRunFromPlan(&plan)); err != nil {
-				slog.Error("task result persistence failed", "task", plan.TaskID, "error", err)
+			if err := sw.state.SaveNodeRun(execCtx, nodeRunFromPlan(&plan)); err != nil {
+				slog.Error("noderun result persistence failed", "noderun", plan.NodeRunID, "error", err)
 				span.RecordError(err)
 				span.End()
 				return
@@ -181,38 +181,18 @@ func (sw *SlotWorker) Subscribe(ctx context.Context) error {
 	})
 }
 
-func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
-	return &entities.TaskRunInfo{
-		BaseEntity:    entities.BaseEntity{ID: plan.TaskID, Metadata: map[string]any{"node_spec": plan.NodeSpec}},
-		RunID:         plan.AgentFlowRunID,
-		GraphRevision: plan.GraphRevision, SubflowInstanceID: plan.SubflowInstanceID,
-		FlowNodeID:      plan.FlowNodeID,
-		NodeInstanceID:  plan.NodeInstanceID,
-		DispatchEpoch:   plan.DispatchEpoch,
-		FencingToken:    plan.FencingToken,
-		NodeKey:         plan.NodeID,
-		Attempt:         plan.RetryCount + 1,
-		Status:          plan.State,
-		Input:           plan.Input,
-		Output:          planResultOutput(plan.Result),
-		Error:           planResultError(plan.Result),
-		MaxRetries:      plan.MaxRetries,
-		ExecutionID:     fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1),
-		ParentNodeRunID: plan.ParentTaskRunID,
-		Sequence:        plan.RetryCount + 1,
-		StartedAt:       plan.StartedAt,
-		FinishedAt:      plan.FinishedAt,
-	}
+func nodeRunFromPlan(plan *entities.ExecutionPlan) *entities.NodeRun {
+	return entities.NodeRunFromPlan(plan)
 }
 
-func planResultOutput(r *entities.TaskResult) map[string]any {
+func planResultOutput(r *entities.NodeResult) map[string]any {
 	if r == nil {
 		return nil
 	}
 	return r.Output
 }
 
-func planResultError(r *entities.TaskResult) string {
+func planResultError(r *entities.NodeResult) string {
 	if r == nil {
 		return ""
 	}
@@ -224,17 +204,16 @@ func planResultError(r *entities.TaskResult) string {
 func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.ExecutionPlan) {
 	b, _ := json.Marshal(map[string]any{
 		"plan_id":     plan.PlanID,
-		"node_run_id": plan.TaskID, "node_instance_id": plan.NodeInstanceID, "dispatch_epoch": plan.DispatchEpoch,
-		"agentflow_run_id": plan.AgentFlowRunID,
-		"node_id":          plan.NodeID,
-		"state":            string(plan.State),
-		"output":           planResultOutput(plan.Result),
-		"error":            planResultError(plan.Result),
+		"node_run_id": plan.NodeRunID, "node_instance_id": plan.NodeInstanceID, "dispatch_epoch": plan.DispatchEpoch,
+		"graph_run_id": plan.GraphRunID,
+		"state":        string(plan.State),
+		"output":       planResultOutput(plan.Result),
+		"error":        planResultError(plan.Result),
 	})
-	topic := messager.ExecResultsTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
+	topic := messager.ExecResultsTopic(plan.Namespace, plan.AgentGraphID, plan.GraphRunID)
 	msg := &messager.InterMessage{
-		ID:      fmt.Sprintf("status-%s-%d", plan.TaskID, plan.DispatchEpoch),
-		Headers: map[string]string{"task_run_id": plan.AgentFlowRunID, "node_id": plan.NodeID},
+		ID:      fmt.Sprintf("status-%s-%d", plan.NodeRunID, plan.DispatchEpoch),
+		Headers: map[string]string{"node_run_id": plan.GraphRunID, "node_instance_id": plan.NodeInstanceID},
 		Payload: b,
 	}
 
@@ -243,7 +222,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.Executi
 			slog.Warn("slot worker result publish retry",
 				"slot_id", sw.id,
 				"plan_id", plan.PlanID,
-				"node_id", plan.NodeID,
+				"node_instance_id", plan.NodeInstanceID,
 				"topic", topic,
 				"attempt", attempt,
 				"error", err,
@@ -253,7 +232,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.Executi
 				slog.Error("slot worker result publish canceled",
 					"slot_id", sw.id,
 					"plan_id", plan.PlanID,
-					"node_id", plan.NodeID,
+					"node_instance_id", plan.NodeInstanceID,
 					"error", ctx.Err(),
 				)
 				return
@@ -267,7 +246,7 @@ func (sw *SlotWorker) emitDownstream(ctx context.Context, plan *entities.Executi
 	slog.Error("slot worker result publish failed",
 		"slot_id", sw.id,
 		"plan_id", plan.PlanID,
-		"node_id", plan.NodeID,
+		"node_instance_id", plan.NodeInstanceID,
 		"topic", topic,
 	)
 }

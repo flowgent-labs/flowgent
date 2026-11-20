@@ -27,8 +27,8 @@ func NewKnowledgePostgresStore(pool *pgxpool.Pool) *KnowledgePostgresStore {
 
 const knowledgeProjectionPG = `d.id,dr.id,dr.revision,dr.title,c.id,COALESCE(c.parent_id,''),c.type,
 	COALESCE(c.heading_path,''),c.page_start,c.page_end,c.content,s.name,COALESCE(d.source_uri,''),
-	COALESCE(dr.source_revision,''),d.scope,COALESCE(d.flow_id,''),
-	COALESCE((SELECT name FROM orh_flow WHERE id=d.flow_id),''),COALESCE(d.run_id,''),
+	COALESCE(dr.source_revision,''),d.scope,COALESCE(d.agent_graph_id,''),
+	COALESCE((SELECT name FROM orh_agent_graph WHERE id=d.agent_graph_id),''),COALESCE(d.graph_run_id,''),
 	COALESCE(d.acl_ref,''),d.classification,dr.provenance,COALESCE(d.metadata,'{}'::jsonb),
 	COALESCE(d.description,''),d.namespace_id,d.status,d.created_at,COALESCE(d.created_by,''),
 	d.updated_at,COALESCE(d.updated_by,''),d.row_version`
@@ -39,7 +39,7 @@ func scanKnowledgePG(row interface{ Scan(...any) error }) (*entities.KnowledgeEn
 	if err := row.Scan(&item.ID, &item.DocumentRevisionID, &item.Revision, &item.Title,
 		&item.ContentID, &item.ParentContentID, &item.ContentKind, &item.HeadingPath,
 		&item.PageStart, &item.PageEnd, &item.Content, &item.Source, &item.SourceRef,
-		&item.SourceRevision, &item.Scope, &item.FlowID, &item.FlowName, &item.RunID, &item.ACLRef,
+		&item.SourceRevision, &item.Scope, &item.AgentGraphID, &item.AgentGraphName, &item.GraphRunID, &item.ACLRef,
 		&item.Classification, &provenance, &metadata, &item.Description, &item.Namespace,
 		&item.Status, &item.CreatedAt, &item.CreatedBy, &item.UpdatedAt, &item.UpdatedBy,
 		&item.RowVersion); err != nil {
@@ -130,7 +130,7 @@ func (s *KnowledgePostgresStore) Save(ctx context.Context, entry *entities.Knowl
 	if entry.Namespace == "" {
 		entry.Namespace = "default"
 	}
-	scope, flowID, runID, err := normalizeKnowledgeScope(entry)
+	scope, graphID, runID, err := normalizeKnowledgeScope(entry)
 	if err != nil {
 		return err
 	}
@@ -170,20 +170,20 @@ func (s *KnowledgePostgresStore) Save(ctx context.Context, entry *entities.Knowl
 		ON CONFLICT(id) DO NOTHING`, entry.Namespace, principal); err != nil {
 		return err
 	}
-	flowName := ""
-	if scope == "flow" {
-		flowKey := flowID
-		if err = tx.QueryRow(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=$1
-			AND (id=$2 OR name=$2) AND status<>'DELETED' FOR SHARE`, entry.Namespace, flowKey).
-			Scan(&flowID, &flowName); err != nil {
-			return fmt.Errorf("resolve knowledge flow: %w", err)
+	graphName := ""
+	if scope == "graph" {
+		graphKey := graphID
+		if err = tx.QueryRow(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=$1
+			AND (id=$2 OR name=$2) AND status<>'DELETED' FOR SHARE`, entry.Namespace, graphKey).
+			Scan(&graphID, &graphName); err != nil {
+			return fmt.Errorf("resolve knowledge graph: %w", err)
 		}
 	} else if scope == "run" {
-		flowKey := flowID
-		if err = tx.QueryRow(ctx, `SELECT f.id,f.name FROM orh_flow f JOIN orh_run r
-			ON r.flow_id=f.id AND r.namespace_id=f.namespace_id WHERE f.namespace_id=$1
+		graphKey := graphID
+		if err = tx.QueryRow(ctx, `SELECT f.id,f.name FROM orh_agent_graph f JOIN orh_graph_run r
+			ON r.agent_graph_id=f.id AND r.namespace_id=f.namespace_id WHERE f.namespace_id=$1
 			AND (f.id=$2 OR f.name=$2) AND r.id=$3 AND f.status<>'DELETED' FOR SHARE OF f,r`,
-			entry.Namespace, flowKey, runID).Scan(&flowID, &flowName); err != nil {
+			entry.Namespace, graphKey, runID).Scan(&graphID, &graphName); err != nil {
 			return fmt.Errorf("resolve run-scoped knowledge owner: %w", err)
 		}
 	}
@@ -199,20 +199,20 @@ func (s *KnowledgePostgresStore) Save(ctx context.Context, entry *entities.Knowl
 		return err
 	}
 	var rowVersion, revision int64
-	var existingSource, existingScope, existingFlow, existingRun string
-	err = tx.QueryRow(ctx, `SELECT row_version,source_id,scope,COALESCE(flow_id,''),COALESCE(run_id,'')
+	var existingSource, existingScope, existingAgentGraph, existingRun string
+	err = tx.QueryRow(ctx, `SELECT row_version,source_id,scope,COALESCE(agent_graph_id,''),COALESCE(graph_run_id,'')
 		FROM knw_document WHERE namespace_id=$1 AND id=$2 FOR UPDATE`, entry.Namespace, entry.ID).
-		Scan(&rowVersion, &existingSource, &existingScope, &existingFlow, &existingRun)
+		Scan(&rowVersion, &existingSource, &existingScope, &existingAgentGraph, &existingRun)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_, err = tx.Exec(ctx, `INSERT INTO knw_document
-			(id,namespace_id,source_id,document_key,scope,flow_id,run_id,source_uri,classification,
+			(id,namespace_id,source_id,document_key,scope,agent_graph_id,graph_run_id,source_uri,classification,
 			 description,status,created_by,updated_by,metadata)
 			VALUES($1,$2,$3,$1,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),$8,$9,'ACTIVE',$10,$10,$11)`,
-			entry.ID, entry.Namespace, sourceID, scope, flowID, runID, entry.SourceRef,
+			entry.ID, entry.Namespace, sourceID, scope, graphID, runID, entry.SourceRef,
 			defaultString(entry.Classification, "internal"), entry.Description, principal, jsonBytes(metadata))
 		rowVersion, revision = 1, 1
 	} else if err == nil {
-		if existingSource != sourceID || existingScope != scope || existingFlow != flowID || existingRun != runID {
+		if existingSource != sourceID || existingScope != scope || existingAgentGraph != graphID || existingRun != runID {
 			return fmt.Errorf("knowledge document source and scope are immutable")
 		}
 		err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(revision),0)+1 FROM knw_document_revision WHERE document_id=$1`, entry.ID).Scan(&revision)
@@ -257,7 +257,7 @@ func (s *KnowledgePostgresStore) Save(ctx context.Context, entry *entities.Knowl
 		return err
 	}
 	entry.DocumentRevisionID, entry.Revision, entry.ContentID = revisionID, revision, contentID
-	entry.Scope, entry.FlowID, entry.FlowName, entry.RunID = scope, flowID, flowName, runID
+	entry.Scope, entry.AgentGraphID, entry.AgentGraphName, entry.GraphRunID = scope, graphID, graphName, runID
 	entry.Status, entry.RowVersion = "draft", rowVersion+1
 	return nil
 }
@@ -313,29 +313,29 @@ func (s *KnowledgePostgresStore) resolveSearchScope(ctx context.Context, namespa
 	if scope == "namespace" {
 		return req, nil
 	}
-	flowKey := req.FlowName
-	if flowKey == "" {
-		flowKey = req.FlowID
+	graphKey := req.AgentGraphName
+	if graphKey == "" {
+		graphKey = req.AgentGraphID
 	}
-	if flowKey == "" {
-		return req, fmt.Errorf("flow_id or flow_name is required for %s knowledge search", scope)
+	if graphKey == "" {
+		return req, fmt.Errorf("agent_graph_id or agent_graph_name is required for %s knowledge search", scope)
 	}
-	if scope == "flow" {
-		if err := s.pool.QueryRow(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=$1
-			AND (id=$2 OR name=$2) AND status<>'DELETED'`, namespace, flowKey).
-			Scan(&req.FlowID, &req.FlowName); err != nil {
-			return req, fmt.Errorf("resolve knowledge flow: %w", err)
+	if scope == "graph" {
+		if err := s.pool.QueryRow(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=$1
+			AND (id=$2 OR name=$2) AND status<>'DELETED'`, namespace, graphKey).
+			Scan(&req.AgentGraphID, &req.AgentGraphName); err != nil {
+			return req, fmt.Errorf("resolve knowledge graph: %w", err)
 		}
 		return req, nil
 	}
 	if scope == "run" {
-		if req.RunID == "" {
-			return req, fmt.Errorf("run_id is required for run knowledge search")
+		if req.GraphRunID == "" {
+			return req, fmt.Errorf("graph_run_id is required for run knowledge search")
 		}
-		if err := s.pool.QueryRow(ctx, `SELECT f.id,f.name FROM orh_flow f JOIN orh_run r
-			ON r.flow_id=f.id AND r.namespace_id=f.namespace_id WHERE f.namespace_id=$1
-			AND (f.id=$2 OR f.name=$2) AND r.id=$3`, namespace, flowKey, req.RunID).
-			Scan(&req.FlowID, &req.FlowName); err != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT f.id,f.name FROM orh_agent_graph f JOIN orh_graph_run r
+			ON r.agent_graph_id=f.id AND r.namespace_id=f.namespace_id WHERE f.namespace_id=$1
+			AND (f.id=$2 OR f.name=$2) AND r.id=$3`, namespace, graphKey, req.GraphRunID).
+			Scan(&req.AgentGraphID, &req.AgentGraphName); err != nil {
 			return req, fmt.Errorf("resolve run-scoped knowledge owner: %w", err)
 		}
 		return req, nil
@@ -424,16 +424,16 @@ func knowledgeScopePredicatePG(req entities.KnowledgeSearchRequest, first int) (
 	switch strings.ToLower(defaultString(req.Scope, "namespace")) {
 	case "namespace":
 		return "d.scope='namespace'", nil, nil
-	case "flow":
-		if req.FlowID == "" {
-			return "", nil, fmt.Errorf("flow_id is required for flow knowledge search")
+	case "graph":
+		if req.AgentGraphID == "" {
+			return "", nil, fmt.Errorf("agent_graph_id is required for graph knowledge search")
 		}
-		return fmt.Sprintf("(d.scope='namespace' OR (d.scope='flow' AND d.flow_id=$%d))", first), []any{req.FlowID}, nil
+		return fmt.Sprintf("(d.scope='namespace' OR (d.scope='graph' AND d.agent_graph_id=$%d))", first), []any{req.AgentGraphID}, nil
 	case "run":
-		if req.FlowID == "" || req.RunID == "" {
-			return "", nil, fmt.Errorf("flow_id and run_id are required for run knowledge search")
+		if req.AgentGraphID == "" || req.GraphRunID == "" {
+			return "", nil, fmt.Errorf("agent_graph_id and graph_run_id are required for run knowledge search")
 		}
-		return fmt.Sprintf("(d.scope='namespace' OR (d.scope='flow' AND d.flow_id=$%d) OR (d.scope='run' AND d.flow_id=$%d AND d.run_id=$%d))", first, first, first+1), []any{req.FlowID, req.RunID}, nil
+		return fmt.Sprintf("(d.scope='namespace' OR (d.scope='graph' AND d.agent_graph_id=$%d) OR (d.scope='run' AND d.agent_graph_id=$%d AND d.graph_run_id=$%d))", first, first, first+1), []any{req.AgentGraphID, req.GraphRunID}, nil
 	default:
 		return "", nil, fmt.Errorf("invalid knowledge scope %q", req.Scope)
 	}

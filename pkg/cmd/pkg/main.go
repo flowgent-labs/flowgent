@@ -1,7 +1,7 @@
-// Flowgent — Autonomous Agentflow Orchestration Engine
+// Flowgent — Autonomous AgentGraph Orchestration Engine
 //
 // Unified CLI entry point. Every daemon-like subcommand supports start/stop/restart.
-// Subcommand order follows the logical execution flow:
+// Subcommand order follows the logical execution graph:
 //
 //	all-in-one → apiserver → a2a → controller → jobmanager → taskmanager
 //	→ sandbox → notifier → wallet → console → version
@@ -55,16 +55,16 @@ for predictable, auditable, distributed enterprise workflows.`,
 // ─── Shared PID file flags ────────────────────────────────────
 
 var (
-	pidAllInOne    string
-	pidAPIServer   string
-	pidA2A         string
-	pidController  string
-	pidJobManager  string
-	jmFlowID       string
-	jmRunID        string
-	pidTaskManager string
-	pidSandbox     string
-	pidNotifier    string
+	pidAllInOne      string
+	pidAPIServer     string
+	pidA2A           string
+	pidController    string
+	pidJobManager    string
+	jmAgentGraphName string
+	jmGraphRunID     string
+	pidTaskManager   string
+	pidSandbox       string
+	pidNotifier      string
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -170,15 +170,15 @@ var a2aRestartCmd = &cobra.Command{
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 4. controller — distributed sharded flow driver
+// 4. controller — distributed sharded graph driver
 // ═══════════════════════════════════════════════════════════════
 
 var controllerCmd = &cobra.Command{
 	Use:   "controller",
-	Short: "Distributed sharded flow driver",
-	Long: `Start, stop, or restart a Controller that polls agentflow definitions from
+	Short: "Distributed sharded graph driver",
+	Long: `Start, stop, or restart a Controller that polls agentgraph definitions from
 PostgreSQL and drives execution via hash-mod sharding across N pods.
-Creates dedicated per-flow K8s JM Deployments.`,
+Creates dedicated per-graph K8s JM Deployments.`,
 }
 
 var controllerStartCmd = &cobra.Command{
@@ -211,7 +211,7 @@ var controllerRestartCmd = &cobra.Command{
 
 var jobmanagerCmd = &cobra.Command{
 	Use:   "jobmanager",
-	Short: "Control plane — parses flows, builds DAGs, dispatches plans",
+	Short: "Control plane — parses graphs, builds DAGs, dispatches plans",
 	Long:  "Start, stop, or restart a standalone JobManager for K8s distributed mode.",
 }
 
@@ -219,11 +219,11 @@ var jobmanagerStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the JobManager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if jmFlowID != "" {
-			os.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_ID", jmFlowID)
+		if jmAgentGraphName != "" {
+			os.Setenv("FLOWGENT__RUNTIME__AGENT_GRAPH_NAME", jmAgentGraphName)
 		}
-		if jmRunID != "" {
-			os.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID", jmRunID)
+		if jmGraphRunID != "" {
+			os.Setenv("FLOWGENT__RUNTIME__GRAPH_RUN_ID", jmGraphRunID)
 		}
 		return StartJobManager(cfgPath, pidJobManager)
 	},
@@ -357,11 +357,11 @@ var consoleCmd = &cobra.Command{
 	Long: `Open an interactive REPL for querying the Flowgent store.
 
 Commands:
-  list agentflows          List all agentflow definitions
+  list agentgraphs          List all agentgraph definitions
   list runs [id]           List recent runs
   show run <id>            Show details of a specific run
-  tasks <run-id>           List task runs for an agentflow run
-  show task <id>           Show details of a specific task
+  node-runs <graph-run-id>           List noderun runs for an agentgraph run
+  show noderun <id>           Show details of a specific noderun
   help                     Show available commands
   exit, quit               Exit the console`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -425,8 +425,8 @@ func main() {
 	jobmanagerCmd.AddCommand(jobmanagerStartCmd)
 	jobmanagerCmd.AddCommand(jobmanagerStopCmd)
 	jobmanagerCmd.AddCommand(jobmanagerRestartCmd)
-	jobmanagerStartCmd.Flags().StringVar(&jmFlowID, "flow-id", "", "Flow ID owned by this JobManager")
-	jobmanagerStartCmd.Flags().StringVar(&jmRunID, "run-id", "", "FlowRun ID owned by this application JobManager")
+	jobmanagerStartCmd.Flags().StringVar(&jmAgentGraphName, "agent-graph-name", "", "AgentGraph name owned by this JobManager")
+	jobmanagerStartCmd.Flags().StringVar(&jmGraphRunID, "graph-run-id", "", "GraphRun ID owned by this application JobManager")
 
 	// 6. taskmanager
 	rootCmd.AddCommand(taskmanagerCmd)

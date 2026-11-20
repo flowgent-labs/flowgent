@@ -403,7 +403,7 @@ type SonarQubeIssue struct {
 	Hash             string `json:"hash"`
 	Gap              int    `json:"gap,omitempty"`
 	QuickFixAvailable bool   `json:"quickFixAvailable,omitempty"`
-	Flow             []IssueFlow `json:"flows,omitempty"`
+	AgentGraph             []IssueAgentGraph `json:"graphs,omitempty"`
 }
 
 // IssueComment SonarQube 评论
@@ -416,8 +416,8 @@ type IssueComment struct {
 	Updatable bool   `json:"updatable"`
 }
 
-// IssueFlow SonarQube 数据流
-type IssueFlow struct {
+// IssueAgentGraph SonarQube 数据流
+type IssueAgentGraph struct {
 	Locations []IssueLocation `json:"locations"`
 }
 

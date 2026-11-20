@@ -13,7 +13,7 @@ scenarios.
 
 Architecture references: [overview](../architecture/overview.md),
 [data lifecycle](../architecture/data-lifecycle.md),
-[AgentFlow](../architecture/agent-flow.md), and the case READMEs.
+[AgentGraph](../architecture/agent-graph.md), and the case READMEs.
 
 ## Confirmed scenario decisions
 
@@ -34,11 +34,11 @@ Security retains the original 23 IDs and adds telemetry IDs 51/52 (25 groups):
 | 01, 11, 12, 14 | Layout, infrastructure, console import, authentication |
 | 21–25 | API lifecycle, notification delivery, runtime lifecycle, MQTT dispatch, A2A |
 | 31–37 | Seed/scan/trigger, discovery, remediation, delivery/rescan, commits, knowledge, workspace |
-| 41–46 | Browser flow execution, agent, skill, integrations, knowledge/notifications, Hosted Login |
+| 41–46 | Browser graph execution, agent, skill, integrations, knowledge/notifications, Hosted Login |
 | 13, 51, 52 | Persisted business execution → tracing, metrics and lifecycle logs |
 
-The UI Flow writes its own workspace file; the verifier reads its bytes/hash and
-correlates the same persisted attempt with Jaeger and runtime logs. Main-flow
+The UI AgentGraph writes its own workspace file; the verifier reads its bytes/hash and
+correlates the same persisted attempt with Jaeger and runtime logs. Main-graph
 checks retain each active node's identity. Database probes written by a verifier
 are never presented as business-produced persistence or embedding evidence.
 

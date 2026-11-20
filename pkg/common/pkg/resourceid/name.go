@@ -1,5 +1,5 @@
 // Package resourceid defines the stable, URL-safe identity contract shared by
-// namespace and flow write paths.
+// namespace and graph write paths.
 package resourceid
 
 import (
@@ -17,13 +17,13 @@ const (
 var (
 	namePattern        = regexp.MustCompile(Pattern)
 	reservedNamespaces = map[string]struct{}{
-		"api-keys": {}, "agents": {}, "dashboard": {}, "flows": {},
+		"api-keys": {}, "agents": {}, "dashboard": {}, "graphs": {},
 		"llms": {}, "mcps": {}, "memory": {}, "namespaces": {},
 		"notifications": {}, "runs": {}, "settings": {}, "skills": {},
 	}
 )
 
-// Validate verifies a canonical namespace or flow name. Names are preserved as
+// Validate verifies a canonical namespace or graph name. Names are preserved as
 // entered, while uniqueness is evaluated case-insensitively by persistence.
 func Validate(name string) error {
 	if !namePattern.MatchString(name) {
@@ -33,7 +33,7 @@ func Validate(name string) error {
 }
 
 // ValidateNamespace additionally excludes application root routes so the
-// canonical /{namespace}/{flow} URL is always unambiguous.
+// canonical /{namespace}/{graph} URL is always unambiguous.
 func ValidateNamespace(name string) error {
 	if err := Validate(name); err != nil {
 		return err

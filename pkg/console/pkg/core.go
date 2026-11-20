@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 )
 
 // ─── LLM Provider ────────────────────────────────────────────────
@@ -165,16 +165,16 @@ func (fc *FlowgentConsole) RemoveMCP(name string) error {
 	return fc.getStores().mcps.Delete(fc.ctx, fc.namespace, name)
 }
 
-// ─── Flow ────────────────────────────────────────────────────────
+// ─── AgentGraph ────────────────────────────────────────────────────────
 
-// ListFlows returns all flow version entries.
-func (fc *FlowgentConsole) ListFlows() ([]entities.FlowVersionInfo, error) {
+// ListAgentGraphs returns all graph version entries.
+func (fc *FlowgentConsole) ListAgentGraphs() ([]entities.AgentGraphRevision, error) {
 	ls := fc.getStores()
-	page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.graphs.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
-	var result []entities.FlowVersionInfo
+	var result []entities.AgentGraphRevision
 	for _, fv := range page.Items {
 		if fv != nil {
 			result = append(result, *fv)
@@ -183,43 +183,43 @@ func (fc *FlowgentConsole) ListFlows() ([]entities.FlowVersionInfo, error) {
 	return result, nil
 }
 
-// GetFlow returns a full flow spec by ID.
-func (fc *FlowgentConsole) GetFlow(id string) (*entities.FlowInfo, error) {
-	return fc.getStores().flows.GetSpec(fc.ctx, fc.namespace, id)
+// GetAgentGraph returns a full graph spec by ID.
+func (fc *FlowgentConsole) GetAgentGraph(id string) (*entities.AgentGraph, error) {
+	return fc.getStores().graphs.GetSpec(fc.ctx, fc.namespace, id)
 }
 
-// AddFlow saves a new flow spec. It generates an ID if empty and defaults Kind to "flow".
-func (fc *FlowgentConsole) AddFlow(spec *entities.FlowInfo) error {
+// AddAgentGraph saves a new graph spec. It generates an ID if empty and defaults Kind to "graph".
+func (fc *FlowgentConsole) AddAgentGraph(spec *entities.AgentGraph) error {
 	if spec.ID == "" {
 		spec.ID = uuid.New().String()
 	}
 	spec.Namespace = fc.namespace
 	if spec.Kind == "" {
-		spec.Kind = "flow"
+		spec.Kind = "graph"
 	}
-	return fc.getStores().flows.SaveSpec(fc.ctx, spec, "console", "added via console")
+	return fc.getStores().graphs.SaveSpec(fc.ctx, spec, "console", "added via console")
 }
 
-// RemoveFlow deletes a flow by ID.
-func (fc *FlowgentConsole) RemoveFlow(id string) error {
-	return fc.getStores().flows.Delete(fc.ctx, fc.namespace, id)
+// RemoveAgentGraph deletes a graph by ID.
+func (fc *FlowgentConsole) RemoveAgentGraph(id string) error {
+	return fc.getStores().graphs.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Skill ───────────────────────────────────────────────────────
 
 // ListSkills returns all skill version entries.
-func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
+func (fc *FlowgentConsole) ListSkills() ([]entities.AgentGraphRevision, error) {
 	ls := fc.getStores()
-	page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
+	page, err := ls.graphs.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 1000})
 	if err != nil {
 		return nil, err
 	}
-	var result []entities.FlowVersionInfo
+	var result []entities.AgentGraphRevision
 	for _, fv := range page.Items {
 		if fv == nil {
 			continue
 		}
-		spec, _ := ls.flows.GetSpec(fc.ctx, fc.namespace, fv.FlowID)
+		spec, _ := ls.graphs.GetSpec(fc.ctx, fc.namespace, fv.AgentGraphID)
 		if spec != nil && spec.Kind == "skill" {
 			result = append(result, *fv)
 		}
@@ -228,8 +228,8 @@ func (fc *FlowgentConsole) ListSkills() ([]entities.FlowVersionInfo, error) {
 }
 
 // GetSkill returns a single skill by ID.
-func (fc *FlowgentConsole) GetSkill(id string) (*entities.FlowInfo, error) {
-	spec, err := fc.getStores().flows.GetSpec(fc.ctx, fc.namespace, id)
+func (fc *FlowgentConsole) GetSkill(id string) (*entities.AgentGraph, error) {
+	spec, err := fc.getStores().graphs.GetSpec(fc.ctx, fc.namespace, id)
 	if err != nil || spec == nil {
 		return nil, fmt.Errorf("skill not found: %s", id)
 	}
@@ -237,33 +237,33 @@ func (fc *FlowgentConsole) GetSkill(id string) (*entities.FlowInfo, error) {
 }
 
 // AddSkill saves a new skill.
-func (fc *FlowgentConsole) AddSkill(spec *entities.FlowInfo) error {
+func (fc *FlowgentConsole) AddSkill(spec *entities.AgentGraph) error {
 	spec.Kind = "skill"
 	if spec.ID == "" {
 		spec.ID = uuid.New().String()
 	}
 	spec.Namespace = fc.namespace
-	return fc.getStores().flows.SaveSpec(fc.ctx, spec, "console", "added via console")
+	return fc.getStores().graphs.SaveSpec(fc.ctx, spec, "console", "added via console")
 }
 
 // RemoveSkill deletes a skill by ID.
 func (fc *FlowgentConsole) RemoveSkill(id string) error {
-	return fc.getStores().flows.Delete(fc.ctx, fc.namespace, id)
+	return fc.getStores().graphs.Delete(fc.ctx, fc.namespace, id)
 }
 
 // ─── Run ─────────────────────────────────────────────────────────
 
-// ListRuns returns all flow runs.
-func (fc *FlowgentConsole) ListRuns() ([]entities.FlowRunInfo, error) {
+// ListGraphRuns returns all graph runs.
+func (fc *FlowgentConsole) ListGraphRuns() ([]entities.GraphRun, error) {
 	ls := fc.getStores()
-	page, err := ls.runs.List(fc.ctx, flowrun.ListFilter{
+	page, err := ls.runs.List(fc.ctx, graphrun.ListFilter{
 		Namespace: fc.namespace,
 		Page:      entities.PageRequest{Page: 1, Size: 50},
 	})
 	if err != nil {
 		return nil, err
 	}
-	var result []entities.FlowRunInfo
+	var result []entities.GraphRun
 	for _, r := range page.Items {
 		if r != nil {
 			result = append(result, *r)
@@ -272,17 +272,17 @@ func (fc *FlowgentConsole) ListRuns() ([]entities.FlowRunInfo, error) {
 	return result, nil
 }
 
-// GetRun returns a single run by ID.
-func (fc *FlowgentConsole) GetRun(id string) (*entities.FlowRunInfo, error) {
+// GetGraphRun returns a single run by ID.
+func (fc *FlowgentConsole) GetGraphRun(id string) (*entities.GraphRun, error) {
 	return fc.getStores().runs.Get(fc.ctx, id)
 }
 
-// CreateRun creates a new pending run for the given flow ID.
-func (fc *FlowgentConsole) CreateRun(flowID string) (*entities.FlowRunInfo, error) {
-	run := &entities.FlowRunInfo{
-		BaseEntity:  entities.BaseEntity{ID: uuid.New().String(), Namespace: fc.namespace, CreatedAt: time.Now()},
-		AgentFlowID: flowID,
-		Status:      entities.RunPending,
+// CreateGraphRun creates a new pending run for the given graph ID.
+func (fc *FlowgentConsole) CreateGraphRun(graphID string) (*entities.GraphRun, error) {
+	run := &entities.GraphRun{
+		BaseEntity:     entities.BaseEntity{ID: uuid.New().String(), Namespace: fc.namespace, CreatedAt: time.Now()},
+		AgentGraphName: graphID,
+		Status:         entities.GraphRunPending,
 	}
 	if err := fc.getStores().runs.Create(fc.ctx, run); err != nil {
 		return nil, err
@@ -291,12 +291,12 @@ func (fc *FlowgentConsole) CreateRun(flowID string) (*entities.FlowRunInfo, erro
 }
 
 // StartRun transitions a run to Running status.
-func (fc *FlowgentConsole) StartRun(runID string) (*entities.FlowRunInfo, error) {
+func (fc *FlowgentConsole) StartRun(runID string) (*entities.GraphRun, error) {
 	run, err := fc.getStores().runs.Get(fc.ctx, runID)
 	if err != nil || run == nil {
 		return nil, fmt.Errorf("run not found: %s", runID)
 	}
-	run.Status = entities.RunRunning
+	run.Status = entities.GraphRunRunning
 	now := time.Now()
 	run.StartedAt = &now
 	if err := fc.getStores().runs.Update(fc.ctx, run); err != nil {

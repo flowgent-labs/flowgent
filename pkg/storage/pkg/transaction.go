@@ -97,3 +97,24 @@ func WrapSQLTransaction(tx any) *SQLTransaction {
 }
 
 func IsNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) }
+
+// SQLRows keeps consistent-cut reads inside the same transaction for both stores.
+type SQLRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close() error
+}
+type pgRows struct{ pgx.Rows }
+
+func (r pgRows) Close() error { r.Rows.Close(); return nil }
+func (t *SQLTransaction) Query(ctx context.Context, q string, args ...any) (SQLRows, error) {
+	if t.sqlite != nil {
+		return t.sqlite.QueryContext(ctx, q, args...)
+	}
+	rows, err := t.postgres.Query(ctx, postgresParameters(q), args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgRows{rows}, nil
+}

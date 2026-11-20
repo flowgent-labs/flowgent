@@ -300,3 +300,15 @@ test-vnext:
 	cd pkg/storage && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/api && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./...
 	cd pkg/core && CGO_ENABLED=0 $(GOENV) $(GO) test -count=1 -timeout 120s ./pkg/engine/jobmanager ./pkg/engine/taskmanager ./pkg/engine/resourcemanager ./pkg/client
+
+.PHONY: test-compile
+test-compile:
+	@failed=0; for module in $(_GO_MODULES); do \
+	  (cd "$$module" && CGO_ENABLED=0 $(GOENV) $(GO) test -run '^$$' ./...) || failed=1; \
+	done; exit $$failed
+
+.PHONY: test-recovery-race
+test-recovery-race:
+	cd pkg/sandbox && CGO_ENABLED=1 $(GOENV) $(GO) test -race -count=1 -timeout 180s -run 'WorkspaceSnapshot' ./pkg
+	cd pkg/storage && CGO_ENABLED=1 $(GOENV) $(GO) test -race -count=1 -timeout 180s -run 'GraphCheckpoint|Snapshot|GraphCAS|OldReady|ExecutionClaim|Outbox' ./...
+	cd pkg/core && CGO_ENABLED=1 $(GOENV) $(GO) test -race -count=1 -timeout 180s -run 'BoundedParallel|AdaptiveSubGraph' ./pkg/engine/jobmanager

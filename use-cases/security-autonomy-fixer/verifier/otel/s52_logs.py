@@ -7,7 +7,7 @@ import re
 import shlex
 
 from util.report import VerificationResult
-from verifier.agentflow import SecurityAutonomyFixture
+from verifier.agentgraph import SecurityAutonomyFixture
 from verifier.context import BaseVerifier, FlowgentRunEvidence, VerificationContext
 
 
@@ -47,7 +47,7 @@ class E2ES52LogsVerifier(BaseVerifier):
     def _verify_logs(self) -> None:
         evidence = self.execution
         persisted = FlowgentRunEvidence.persisted(
-            evidence["run_id"], evidence["namespace"], evidence["node_id"]
+            evidence["graph_run_id"], evidence["namespace"], evidence["node_instance_id"]
         )
         if persisted["plan_id"] != evidence["plan_id"]:
             raise AssertionError("Log evidence refers to another persisted plan")
@@ -86,7 +86,7 @@ class E2ES52LogsVerifier(BaseVerifier):
         artifact.write_text(
             json.dumps(
                 {
-                    "run_id": evidence["run_id"],
+                    "graph_run_id": evidence["graph_run_id"],
                     "plan_id": evidence["plan_id"],
                     "events": events,
                 },
@@ -104,19 +104,19 @@ class E2ES52LogsVerifier(BaseVerifier):
         from verifier.context import MAIN_LOG_PATH, RUN_ID_PATH, FlowgentE2EProject
 
         scope = json.loads(MAIN_LOG_PATH.read_text())
-        run_id = RUN_ID_PATH.read_text().strip()
+        graph_run_id = RUN_ID_PATH.read_text().strip()
         if (
-            scope.get("run_id") != run_id
+            scope.get("graph_run_id") != graph_run_id
             or scope.get("deployer") != self.context.deployer
         ):
             raise AssertionError(
                 "Main execution log capture belongs to another run/backend"
             )
         tasks = SecurityAutonomyFixture.tasks_by_node(
-            SecurityAutonomyFixture.get_tasks(FlowgentE2EProject.session(), run_id)
+            SecurityAutonomyFixture.get_tasks(FlowgentE2EProject.session(), graph_run_id)
         )
         active = SecurityAutonomyFixture.active_path(tasks)
-        SecurityAutonomyFixture.assert_persisted_attempts(run_id, active)
+        SecurityAutonomyFixture.assert_persisted_attempts(graph_run_id, active)
         events = {}
         for line in scope.get("logs", []):
             event = self.parse_event(line)

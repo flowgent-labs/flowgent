@@ -1,5 +1,5 @@
 import { parse } from 'yaml'
-import type { Agent, Flow, FlowNode, LlmProvider, McpServer } from '../../core/domain/types'
+import type { Agent, AgentGraph, GraphNode, LlmProvider, McpServer } from '../../core/domain/types'
 
 interface ManifestMetadata {
   name?: string
@@ -49,7 +49,7 @@ export function parseResourceManifest(source: string, expectedKind: string): Res
   return { consoleVersion: 'core.flowgent.io/v1', kind, metadata, data }
 }
 
-function manifestNodes(value: unknown): FlowNode[] {
+function manifestNodes(value: unknown): GraphNode[] {
   if (value === undefined) return []
   if (!Array.isArray(value)) throw new Error('data.nodes must be an array.')
   value.forEach((item, index) => {
@@ -63,19 +63,22 @@ function manifestNodes(value: unknown): FlowNode[] {
       }
     }
   })
-  return value as FlowNode[]
+  return value as GraphNode[]
 }
 
-export function manifestToFlow(source: string, expectedKind: 'Flow' | 'Skill'): Flow {
+export function manifestToAgentGraph(
+  source: string,
+  expectedKind: 'AgentGraph' | 'Skill',
+): AgentGraph {
   const manifest = parseResourceManifest(source, expectedKind)
   const data = manifest.data
   const runtimeMode = data.runtime_mode
-  if (expectedKind === 'Flow' && runtimeMode !== 'application' && runtimeMode !== 'session') {
-    throw new Error('Flow data.runtime_mode must be application or session.')
+  if (expectedKind === 'AgentGraph' && runtimeMode !== 'application' && runtimeMode !== 'session') {
+    throw new Error('AgentGraph data.runtime_mode must be application or session.')
   }
   return {
     ...emptyAudit,
-    ...(data as unknown as Flow),
+    ...(data as unknown as AgentGraph),
     id: '',
     name: manifest.metadata.name ?? '',
     revision: 1,
@@ -88,7 +91,7 @@ export function manifestToFlow(source: string, expectedKind: 'Flow' | 'Skill'): 
     runtime_mode:
       runtimeMode === 'application' || runtimeMode === 'session' ? runtimeMode : 'session',
     nodes: manifestNodes(data.nodes),
-    edges: Array.isArray(data.edges) ? (data.edges as Flow['edges']) : [],
+    edges: Array.isArray(data.edges) ? (data.edges as AgentGraph['edges']) : [],
   }
 }
 

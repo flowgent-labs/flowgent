@@ -59,7 +59,7 @@ class E2ES01StructureVerifier(BaseVerifier):
             "verifier/infra/_kubernetes.py",
             "verifier/infra/_docker.py",
             "verifier/infra/_gateway_post_renderer.py",
-            "verifier/agentflow/__init__.py",
+            "verifier/agentgraph/__init__.py",
         )
         for relative in required:
             if not (E2E_DIR / relative).is_file():
@@ -395,7 +395,7 @@ class E2ES01StructureVerifier(BaseVerifier):
             "deploy/mocksvc-github-service",
             "deploy/mocksvc-notification-service",
             "support",
-            "verifier/agentflow/base.py",
+            "verifier/agentgraph/base.py",
             "verifier/core/base.py",
             "verifier/infra/base.py",
         )

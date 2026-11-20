@@ -86,12 +86,12 @@ class E2ES21ApiserverVerifier(BaseVerifier):
         return row[0]
 
     @staticmethod
-    def flow_body(
+    def graph_body(
         name: str, description: str, summarize: bool = True
     ) -> dict[str, Any]:
         return {
             "name": name,
-            "kind": "flow",
+            "kind": "graph",
             "description": description,
             "summarize_enabled": summarize,
             "nodes": [{"id": "noop", "kind": "noop"}],
@@ -110,137 +110,137 @@ class E2ES21ApiserverVerifier(BaseVerifier):
     def _verify(self) -> None:
         connection = self.pg_connect()
         suffix = self.suffix()
-        flow_name = f"api-flow-{suffix}"
+        agent_graph_name = f"api-graph-{suffix}"
         agent_name = f"api-agent-{suffix}"
         skill_name = f"api-skill-{suffix}"
         mcp_name = f"api-mcp-{suffix}"
         llm_name = f"api-llm-{suffix}"
         channel_name = f"api-channel-{suffix}"
-        flow_created = False
-        run_id = ""
+        graph_created = False
+        graph_run_id = ""
         cleanup: list[tuple[str, str]] = []
 
         try:
-            flow = self._flow_crud(connection, flow_name)
-            flow_created = True
-            self._flow_lifecycle_event()
+            graph = self._graph_crud(connection, agent_graph_name)
+            graph_created = True
+            self._graph_lifecycle_event()
             self._agent_crud(connection, agent_name)
             self._skill_crud(connection, skill_name)
             self._mcp_crud(connection, mcp_name)
             self._llm_crud(connection, llm_name)
             self._notification_crud(connection, channel_name)
-            run_id = self._run_node_approval_and_publication(
-                connection, flow_name, flow
+            graph_run_id = self._run_node_approval_and_publication(
+                connection, agent_graph_name, graph
             )
             self.details.extend(
                 [
-                    f"Flow {flow_name} kept stable id {flow['id']} while revision advanced to 2.",
+                    f"AgentGraph {agent_graph_name} kept stable id {graph['id']} while revision advanced to 2.",
                     "Agent and Skill saves produced immutable revision 2 rows.",
                     "MCP, LLM, and notification definitions completed canonical CRUD without version aliases.",
-                    f"Run {run_id} persisted a locked Flow revision, NodeRun attempt/fencing state, and one unified approval.",
+                    f"Run {graph_run_id} persisted a locked AgentGraph revision, NodeRun attempt/fencing state, and one unified approval.",
                     "Knowledge candidate stayed invisible until approval, then published one immutable document revision.",
                 ]
             )
         finally:
-            if run_id:
-                self._ignore("DELETE", f"/api/v1/{NAMESPACE}/runs/{run_id}")
-            if flow_created:
-                self._ignore("DELETE", f"/api/v1/{NAMESPACE}/flows/{flow_name}")
+            if graph_run_id:
+                self._ignore("DELETE", f"/api/v1/{NAMESPACE}/graph-runs/{graph_run_id}")
+            if graph_created:
+                self._ignore("DELETE", f"/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_name}")
             for method, path in reversed(cleanup):
                 self._ignore(method, path)
             connection.close()
 
-    def _flow_crud(self, connection, name: str) -> dict[str, Any]:
-        base = f"/api/v1/{NAMESPACE}/flows"
+    def _graph_crud(self, connection, name: str) -> dict[str, Any]:
+        base = f"/api/v1/{NAMESPACE}/agent-graphs"
         created = self.request(
-            "POST", base, self.flow_body(name, "canonical API lifecycle"), (201,)
+            "POST", base, self.graph_body(name, "canonical API lifecycle"), (201,)
         )
         if created.get("name") != name or not created.get("id"):
-            raise AssertionError(f"Flow create omitted stable id/name: {created}")
+            raise AssertionError(f"AgentGraph create omitted stable id/name: {created}")
         if created.get("revision") != 1:
-            raise AssertionError(f"Flow create revision is not 1: {created}")
+            raise AssertionError(f"AgentGraph create revision is not 1: {created}")
         stable_id = created["id"]
         persisted = self.scalar(
             connection,
-            """SELECT COUNT(*) FROM orh_flow f
-               JOIN orh_flow_revision r ON r.id=f.current_revision_id
+            """SELECT COUNT(*) FROM orh_agent_graph f
+               JOIN orh_agent_graph_revision r ON r.id=f.current_revision_id
                WHERE f.id=%s AND f.namespace_id=%s AND f.name=%s
-                 AND f.status<>'DELETED' AND r.flow_id=f.id AND r.revision=1""",
+                 AND f.status<>'DELETED' AND r.agent_graph_id=f.id AND r.revision=1""",
             (stable_id, NAMESPACE, name),
         )
         if persisted != 1:
             raise AssertionError(
-                "Flow stable identity/current revision was not persisted"
+                "AgentGraph stable identity/current revision was not persisted"
             )
 
         fetched = self.request("GET", f"{base}/{name}")
         if fetched.get("id") != stable_id or fetched.get("name") != name:
-            raise AssertionError(f"Flow GET changed identity: {fetched}")
+            raise AssertionError(f"AgentGraph GET changed identity: {fetched}")
         listed = self.request("GET", base)
         if not any(
             item.get("id") == stable_id and item.get("name") == name for item in listed
         ):
-            raise AssertionError("Flow is absent from canonical LIST")
+            raise AssertionError("AgentGraph is absent from canonical LIST")
 
-        updated_body = self.flow_body(name, "canonical revision two")
+        updated_body = self.graph_body(name, "canonical revision two")
         updated_body["id"] = stable_id
         updated = self.request("PUT", f"{base}/{name}", updated_body)
         if updated.get("id") != stable_id or updated.get("revision") != 2:
             raise AssertionError(
-                f"Flow update did not preserve id/create revision 2: {updated}"
+                f"AgentGraph update did not preserve id/create revision 2: {updated}"
             )
         revision_state = self.scalar(
             connection,
             """SELECT COUNT(*)=2 AND MAX(r.revision)=2
-               FROM orh_flow_revision r WHERE r.flow_id=%s""",
+               FROM orh_agent_graph_revision r WHERE r.agent_graph_id=%s""",
             (stable_id,),
         )
         if not revision_state:
-            raise AssertionError("Flow immutable revision history is incomplete")
+            raise AssertionError("AgentGraph immutable revision history is incomplete")
         return updated
 
-    def _flow_lifecycle_event(self) -> None:
+    def _graph_lifecycle_event(self) -> None:
         mqtt = ApiLifecycleMqttClient(config.EMQX_HOST, config.EMQX_PORT)
         if not mqtt.client:
             raise AssertionError("MQTT is unavailable for lifecycle event verification")
-        temporary = f"event-flow-{self.suffix()}"
+        temporary = f"event-graph-{self.suffix()}"
         try:
-            mqtt.subscribe("flowgent/v1/+/flows/+/ctrl/flow/updated")
-            mqtt.subscribe("flowgent/v1/+/flows/+/ctrl/flow/deleted")
+            mqtt.subscribe("flowgent/v1/+/agent-graphs/+/ctrl/graph/updated")
+            mqtt.subscribe("flowgent/v1/+/agent-graphs/+/ctrl/graph/deleted")
             time.sleep(0.5)
             self.request(
                 "POST",
-                f"/api/v1/{NAMESPACE}/flows",
-                self.flow_body(temporary, "event evidence", False),
+                f"/api/v1/{NAMESPACE}/agent-graphs",
+                self.graph_body(temporary, "event evidence", False),
                 (201,),
             )
-            event = mqtt.wait_for_message("ctrl/flow/updated", timeout=8)
+            event = mqtt.wait_for_message("ctrl/graph/updated", timeout=8)
             if not event:
-                raise AssertionError("Flow create lifecycle event was not received")
+                raise AssertionError("AgentGraph create lifecycle event was not received")
             created_payload = event.get("payload", {})
             if (
-                created_payload.get("flow_id") != temporary
+                created_payload.get("agent_graph_id") != temporary
                 or created_payload.get("event_type") != "CREATED"
             ):
                 raise AssertionError(
-                    f"Flow create lifecycle payload is not canonical: {event}"
+                    f"AgentGraph create lifecycle payload is not canonical: {event}"
                 )
             self.request(
-                "DELETE", f"/api/v1/{NAMESPACE}/flows/{temporary}", expected=(204,)
+                "DELETE", f"/api/v1/{NAMESPACE}/agent-graphs/{temporary}", expected=(204,)
             )
-            deleted = mqtt.wait_for_message("ctrl/flow/deleted", timeout=8)
+            deleted = mqtt.wait_for_message("ctrl/graph/deleted", timeout=8)
             if not deleted:
-                raise AssertionError("Flow delete lifecycle event was not received")
+                raise AssertionError("AgentGraph delete lifecycle event was not received")
             deleted_payload = deleted.get("payload", {})
             if (
-                deleted_payload.get("flow_id") != temporary
+                deleted_payload.get("agent_graph_id") != temporary
                 or deleted_payload.get("event_type") != "DELETED"
             ):
                 raise AssertionError(
-                    f"Flow delete lifecycle payload is not canonical: {deleted}"
+                    f"AgentGraph delete lifecycle payload is not canonical: {deleted}"
                 )
         finally:
-            self._ignore("DELETE", f"/api/v1/{NAMESPACE}/flows/{temporary}")
+            self._ignore("DELETE", f"/api/v1/{NAMESPACE}/agent-graphs/{temporary}")
             mqtt.close()
 
     def _agent_crud(self, connection, name: str) -> None:
@@ -392,34 +392,34 @@ class E2ES21ApiserverVerifier(BaseVerifier):
         self.request("DELETE", f"{base}/{stable_id}", expected=(204,))
 
     def _run_node_approval_and_publication(
-        self, connection, flow_name: str, flow: dict[str, Any]
+        self, connection, agent_graph_name: str, graph: dict[str, Any]
     ) -> str:
-        runs = f"/api/v1/{NAMESPACE}/runs"
+        runs = f"/api/v1/{NAMESPACE}/graph-runs"
         run = self.request(
             "POST",
             runs,
             {
-                "flow_name": flow_name,
+                "agent_graph_name": agent_graph_name,
                 "status": "PENDING",
                 "input": {"origin": "scenario-21"},
                 "runtime_mode": "session",
             },
             (201,),
         )
-        run_id = run.get("id")
+        graph_run_id = run.get("id")
         if (
-            not run_id
-            or run.get("flow_id") != flow.get("id")
-            or run.get("flow_revision") != 2
+            not graph_run_id
+            or run.get("agent_graph_id") != graph.get("id")
+            or run.get("agent_graph_revision") != 2
         ):
-            raise AssertionError(f"Run did not lock canonical Flow revision: {run}")
+            raise AssertionError(f"Run did not lock canonical AgentGraph revision: {run}")
         if not run.get("context_snapshot") or run.get("summarize_enabled") is not True:
             raise AssertionError(f"Run snapshot/effective summary flag missing: {run}")
-        self.request("PUT", f"{runs}/{run_id}", {"status": "RUNNING"})
+        self.request("PUT", f"{runs}/{graph_run_id}", {"status": "RUNNING"})
 
-        tasks = f"{runs}/{run_id}/node-runs"
+        tasks = f"{runs}/{graph_run_id}/node-runs"
         task_body = {
-            "node_key": "noop",
+            "node_instance_id": "noop",
             "attempt": 1,
             "status": "RUNNING",
             "input": {"step": 1},
@@ -432,14 +432,14 @@ class E2ES21ApiserverVerifier(BaseVerifier):
             "checkpoint": {"last_step": 1},
         }
         task = self.request("POST", tasks, task_body, (201,))
-        task_id = task.get("id")
-        if task.get("node_key") != "noop" or task.get("attempt") != 1:
+        node_run_id = task.get("id")
+        if task.get("node_instance_id") != "noop" or task.get("attempt") != 1:
             raise AssertionError(f"NodeRun canonical fields missing: {task}")
         task_body.update({"status": "SUCCESS", "output": {"result": "ok"}})
-        self.request("PUT", f"{tasks}/{task_id}", task_body)
+        self.request("PUT", f"{tasks}/{node_run_id}", task_body)
         listed_tasks = self.request("GET", tasks)
         if not any(
-            item.get("id") == task_id
+            item.get("id") == node_run_id
             and item.get("execution_id") == task_body["execution_id"]
             and item.get("fencing_token") == 7
             for item in listed_tasks
@@ -449,7 +449,7 @@ class E2ES21ApiserverVerifier(BaseVerifier):
             self.scalar(
                 connection,
                 "SELECT COUNT(*) FROM orh_node_checkpoint WHERE node_run_id=%s AND fencing_token=7",
-                (task_id,),
+                (node_run_id,),
             )
             < 1
         ):
@@ -457,23 +457,23 @@ class E2ES21ApiserverVerifier(BaseVerifier):
                 "NodeRun checkpoint/fencing evidence was not persisted"
             )
 
-        approvals = f"{runs}/{run_id}/approvals"
+        approvals = f"{runs}/{graph_run_id}/approvals"
         approval_id = f"approval-{self.suffix()}"
         approval_request = {
             "tool": "manual-review",
-            "arguments": {"run_id": run_id, "node_run_id": task_id},
+            "arguments": {"graph_run_id": graph_run_id, "node_run_id": node_run_id},
         }
         self.request(
             "POST",
             approvals,
             {
                 "id": approval_id,
-                "node_run_id": task_id,
+                "node_run_id": node_run_id,
                 "type": "human_gate",
                 "subject_type": "node_run",
-                "subject_id": task_id,
+                "subject_id": node_run_id,
                 "request": approval_request,
-                "idempotency_key": f"human:{run_id}:{task_id}",
+                "idempotency_key": f"human:{graph_run_id}:{node_run_id}",
             },
             (201,),
         )
@@ -499,19 +499,19 @@ class E2ES21ApiserverVerifier(BaseVerifier):
         ):
             raise AssertionError("Unified approval terminal state was not persisted")
 
-        self.request("PUT", f"{runs}/{run_id}", {"status": "COMPLETED"})
+        self.request("PUT", f"{runs}/{graph_run_id}", {"status": "COMPLETED"})
         candidate_response = self.request(
             "POST",
             f"/api/v1/{NAMESPACE}/knowledge/candidates",
             {
-                "source_run_id": run_id,
-                "target_scope": "flow",
-                "target_flow_name": flow_name,
+                "source_graph_run_id": graph_run_id,
+                "target_scope": "graph",
+                "target_agent_graph_name": agent_graph_name,
                 "type": "knowledge",
-                "content": f"Scenario 21 approved operational fact for run {run_id}.",
+                "content": f"Scenario 21 approved operational fact for run {graph_run_id}.",
                 "provenance": {"origin": "scenario-21", "safe": True},
                 "expected_revision": 0,
-                "idempotency_key": f"knowledge:{run_id}",
+                "idempotency_key": f"knowledge:{graph_run_id}",
             },
             (201,),
         )
@@ -524,7 +524,7 @@ class E2ES21ApiserverVerifier(BaseVerifier):
                 f"Candidate/approval response incomplete: {candidate_response}"
             )
         visible_before = self.request(
-            "GET", f"/api/v1/{NAMESPACE}/knowledge?scope=flow"
+            "GET", f"/api/v1/{NAMESPACE}/knowledge?scope=graph"
         )
         if any(
             item.get("content") == candidate.get("content")
@@ -551,13 +551,13 @@ class E2ES21ApiserverVerifier(BaseVerifier):
                 connection,
                 """SELECT COUNT(*) FROM knw_document d
                JOIN knw_document_revision r ON r.id=d.current_revision_id
-               WHERE d.id=%s AND d.flow_id=%s AND r.revision=1 AND r.status='published'""",
-                (document_id, flow["id"]),
+               WHERE d.id=%s AND d.agent_graph_id=%s AND r.revision=1 AND r.status='published'""",
+                (document_id, graph["id"]),
             )
             != 1
         ):
             raise AssertionError("Published Knowledge current revision is inconsistent")
-        return run_id
+        return graph_run_id
 
     @classmethod
     def _ignore(cls, method: str, path: str) -> None:

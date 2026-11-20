@@ -32,7 +32,7 @@ CREATE TABLE orh_namespace (
 );
 CREATE UNIQUE INDEX uq_orh_namespace_name_ci ON orh_namespace(lower(name));
 
-CREATE TABLE orh_flow (
+CREATE TABLE orh_agent_graph (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -48,21 +48,21 @@ CREATE TABLE orh_flow (
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
     FOREIGN KEY (namespace_id) REFERENCES orh_namespace(id) ON DELETE RESTRICT,
     FOREIGN KEY (current_revision_id, id, namespace_id)
-        REFERENCES orh_flow_revision(id, flow_id, namespace_id)
+        REFERENCES orh_agent_graph_revision(id, agent_graph_id, namespace_id)
         DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (instruction_id, id, namespace_id)
-        REFERENCES llm_instruction(id, flow_id, namespace_id)
+        REFERENCES llm_instruction(id, agent_graph_id, namespace_id)
         DEFERRABLE INITIALLY DEFERRED,
     UNIQUE (namespace_id, name),
     UNIQUE (id, namespace_id)
 );
-CREATE UNIQUE INDEX uq_orh_flow_name_ci ON orh_flow(namespace_id, lower(name));
-CREATE INDEX idx_orh_flow_namespace_status ON orh_flow(namespace_id, status, updated_at DESC);
+CREATE UNIQUE INDEX uq_orh_agent_graph_name_ci ON orh_agent_graph(namespace_id, lower(name));
+CREATE INDEX idx_orh_agent_graph_namespace_status ON orh_agent_graph(namespace_id, status, updated_at DESC);
 
-CREATE TABLE orh_flow_revision (
+CREATE TABLE orh_agent_graph_revision (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL,
-    flow_id TEXT NOT NULL,
+    agent_graph_id TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK (revision > 0),
     definition TEXT NOT NULL CHECK (json_valid(definition)),
     summarize_enabled INTEGER NOT NULL DEFAULT 0 CHECK (summarize_enabled IN (0, 1)),
@@ -76,12 +76,12 @@ CREATE TABLE orh_flow_revision (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE RESTRICT,
-    UNIQUE (flow_id, revision),
-    UNIQUE (id, flow_id, namespace_id),
+    FOREIGN KEY (agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE RESTRICT,
+    UNIQUE (agent_graph_id, revision),
+    UNIQUE (id, agent_graph_id, namespace_id),
     UNIQUE (id, namespace_id)
 );
-CREATE INDEX idx_orh_flow_revision_owner ON orh_flow_revision(flow_id, revision DESC);
+CREATE INDEX idx_orh_agent_graph_revision_owner ON orh_agent_graph_revision(agent_graph_id, revision DESC);
 
 CREATE TABLE llm_provider (
     id TEXT PRIMARY KEY,
@@ -240,11 +240,12 @@ CREATE TABLE llm_skill_file (
     UNIQUE (skill_revision_id, kind, relative_path)
 );
 
-CREATE TABLE orh_run (
+CREATE TABLE orh_graph_run (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL,
-    flow_id TEXT NOT NULL,
-    flow_revision_id TEXT NOT NULL,
+    agent_graph_id TEXT NOT NULL,
+    agent_graph_revision_id TEXT NOT NULL,
+    snapshot TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(snapshot)),
     status TEXT NOT NULL DEFAULT 'PENDING',
     input TEXT CHECK (input IS NULL OR json_valid(input)),
     output TEXT CHECK (output IS NULL OR json_valid(output)),
@@ -266,21 +267,21 @@ CREATE TABLE orh_run (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (flow_revision_id, flow_id, namespace_id)
-        REFERENCES orh_flow_revision(id, flow_id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (agent_graph_revision_id, agent_graph_id, namespace_id)
+        REFERENCES orh_agent_graph_revision(id, agent_graph_id, namespace_id) ON DELETE RESTRICT,
     CHECK (finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at),
-    UNIQUE (id, flow_id, namespace_id),
+    UNIQUE (id, agent_graph_id, namespace_id),
     UNIQUE (id, namespace_id)
 );
-CREATE INDEX idx_orh_run_namespace_status ON orh_run(namespace_id, status, created_at DESC);
-CREATE INDEX idx_orh_run_flow_created ON orh_run(flow_id, created_at DESC);
+CREATE INDEX idx_orh_graph_run_namespace_status ON orh_graph_run(namespace_id, status, created_at DESC);
+CREATE INDEX idx_orh_graph_run_flow_created ON orh_graph_run(agent_graph_id, created_at DESC);
 
 CREATE TABLE orh_node_run (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    node_key TEXT NOT NULL,
+    graph_run_id TEXT NOT NULL,
+    node_instance_id TEXT NOT NULL,
     attempt INTEGER NOT NULL DEFAULT 1 CHECK (attempt > 0),
     agent_revision_id TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
@@ -305,18 +306,18 @@ CREATE TABLE orh_node_run (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (run_id, namespace_id) REFERENCES orh_run(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (graph_run_id, namespace_id) REFERENCES orh_graph_run(id, namespace_id) ON DELETE RESTRICT,
     FOREIGN KEY (agent_revision_id, namespace_id)
         REFERENCES llm_agent_revision(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (parent_node_run_id, run_id, namespace_id)
-        REFERENCES orh_node_run(id, run_id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (parent_node_run_id, graph_run_id, namespace_id)
+        REFERENCES orh_node_run(id, graph_run_id, namespace_id) ON DELETE RESTRICT,
     CHECK (finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at),
-    UNIQUE (run_id, node_key, attempt),
+    UNIQUE (graph_run_id, node_instance_id, attempt),
     UNIQUE (namespace_id, execution_id),
-    UNIQUE (id, run_id, namespace_id),
+    UNIQUE (id, graph_run_id, namespace_id),
     UNIQUE (id, namespace_id)
 );
-CREATE INDEX idx_orh_node_run_run_status ON orh_node_run(run_id, status, node_key, attempt DESC);
+CREATE INDEX idx_orh_node_run_run_status ON orh_node_run(graph_run_id, status, node_instance_id, attempt DESC);
 CREATE INDEX idx_orh_node_run_lease ON orh_node_run(status, lease_expires_at) WHERE lease_owner IS NOT NULL;
 
 CREATE TABLE orh_node_checkpoint (
@@ -382,7 +383,7 @@ CREATE INDEX idx_orh_dispatch_claim ON orh_dispatch(status, available_at, lease_
 CREATE TABLE orh_event (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    run_id TEXT,
+    graph_run_id TEXT,
     node_run_id TEXT,
     sequence INTEGER NOT NULL CHECK (sequence > 0),
     type TEXT NOT NULL,
@@ -391,14 +392,14 @@ CREATE TABLE orh_event (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by TEXT,
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (run_id, namespace_id) REFERENCES orh_run(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (node_run_id, run_id, namespace_id)
-        REFERENCES orh_node_run(id, run_id, namespace_id) ON DELETE RESTRICT,
-    CHECK (node_run_id IS NULL OR run_id IS NOT NULL),
+    FOREIGN KEY (graph_run_id, namespace_id) REFERENCES orh_graph_run(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (node_run_id, graph_run_id, namespace_id)
+        REFERENCES orh_node_run(id, graph_run_id, namespace_id) ON DELETE RESTRICT,
+    CHECK (node_run_id IS NULL OR graph_run_id IS NOT NULL),
     UNIQUE (namespace_id, idempotency_key),
-    UNIQUE (run_id, sequence)
+    UNIQUE (graph_run_id, sequence)
 );
-CREATE INDEX idx_orh_event_run_sequence ON orh_event(run_id, sequence);
+CREATE INDEX idx_orh_event_run_sequence ON orh_event(graph_run_id, sequence);
 
 CREATE TABLE orh_outbox (
     id TEXT PRIMARY KEY,
@@ -426,7 +427,7 @@ CREATE INDEX idx_orh_outbox_pending ON orh_outbox(status, available_at) WHERE st
 CREATE TABLE orh_approval (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    run_id TEXT,
+    graph_run_id TEXT,
     node_run_id TEXT,
     type TEXT NOT NULL CHECK (type IN ('human_gate', 'tool_call', 'payment',
         'knowledge_publish', 'instruction_publish')),
@@ -449,10 +450,10 @@ CREATE TABLE orh_approval (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (run_id, namespace_id) REFERENCES orh_run(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (node_run_id, run_id, namespace_id)
-        REFERENCES orh_node_run(id, run_id, namespace_id) ON DELETE RESTRICT,
-    CHECK (node_run_id IS NULL OR run_id IS NOT NULL),
+    FOREIGN KEY (graph_run_id, namespace_id) REFERENCES orh_graph_run(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (node_run_id, graph_run_id, namespace_id)
+        REFERENCES orh_node_run(id, graph_run_id, namespace_id) ON DELETE RESTRICT,
+    CHECK (node_run_id IS NULL OR graph_run_id IS NOT NULL),
     CHECK ((status = 'pending' AND decision IS NULL AND decided_by IS NULL AND decided_at IS NULL) OR
            (status <> 'pending' AND decided_at IS NOT NULL)),
     CHECK (type NOT IN ('tool_call', 'payment') OR expires_at IS NOT NULL),
@@ -461,12 +462,12 @@ CREATE TABLE orh_approval (
 );
 CREATE INDEX idx_orh_approval_pending ON orh_approval(namespace_id, expires_at, created_at)
     WHERE status = 'pending';
-CREATE INDEX idx_orh_approval_run ON orh_approval(run_id, status, created_at DESC);
+CREATE INDEX idx_orh_approval_run ON orh_approval(graph_run_id, status, created_at DESC);
 
 CREATE TABLE orh_effect_execution (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
+    graph_run_id TEXT NOT NULL,
     node_run_id TEXT,
     approval_id TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('tool_call', 'payment')),
@@ -484,9 +485,9 @@ CREATE TABLE orh_effect_execution (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (run_id, namespace_id) REFERENCES orh_run(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (node_run_id, run_id, namespace_id)
-        REFERENCES orh_node_run(id, run_id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (graph_run_id, namespace_id) REFERENCES orh_graph_run(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (node_run_id, graph_run_id, namespace_id)
+        REFERENCES orh_node_run(id, graph_run_id, namespace_id) ON DELETE RESTRICT,
     FOREIGN KEY (approval_id, namespace_id) REFERENCES orh_approval(id, namespace_id) ON DELETE RESTRICT,
     UNIQUE (namespace_id, idempotency_key, attempt)
 );
@@ -495,8 +496,8 @@ CREATE INDEX idx_orh_effect_approval ON orh_effect_execution(approval_id, status
 CREATE TABLE llm_instruction (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    scope TEXT NOT NULL CHECK (scope IN ('namespace', 'flow')),
-    flow_id TEXT,
+    scope TEXT NOT NULL CHECK (scope IN ('namespace', 'graph')),
+    agent_graph_id TEXT,
     revision INTEGER NOT NULL CHECK (revision > 0),
     content TEXT NOT NULL,
     content_hash TEXT NOT NULL CHECK (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
@@ -509,19 +510,19 @@ CREATE TABLE llm_instruction (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE RESTRICT,
     FOREIGN KEY (approval_id, namespace_id) REFERENCES orh_approval(id, namespace_id) ON DELETE RESTRICT,
-    CHECK ((scope = 'namespace' AND flow_id IS NULL) OR (scope = 'flow' AND flow_id IS NOT NULL)),
+    CHECK ((scope = 'namespace' AND agent_graph_id IS NULL) OR (scope = 'graph' AND agent_graph_id IS NOT NULL)),
     CHECK (status <> 'published' OR approval_id IS NOT NULL),
     UNIQUE (id, namespace_id),
-    UNIQUE (id, flow_id, namespace_id)
+    UNIQUE (id, agent_graph_id, namespace_id)
 );
 CREATE UNIQUE INDEX uq_llm_instruction_namespace_revision
     ON llm_instruction(namespace_id, revision) WHERE scope = 'namespace';
-CREATE UNIQUE INDEX uq_llm_instruction_flow_revision
-    ON llm_instruction(flow_id, revision) WHERE scope = 'flow';
+CREATE UNIQUE INDEX uq_llm_instruction_agent_graph_revision
+    ON llm_instruction(agent_graph_id, revision) WHERE scope = 'graph';
 CREATE INDEX idx_llm_instruction_owner_status
-    ON llm_instruction(namespace_id, flow_id, status, revision DESC);
+    ON llm_instruction(namespace_id, agent_graph_id, status, revision DESC);
 
 INSERT OR IGNORE INTO orh_namespace
     (id, name, description, created_by, updated_by)
@@ -551,9 +552,9 @@ CREATE TABLE knw_document (
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
     source_id TEXT NOT NULL,
     document_key TEXT NOT NULL,
-    scope TEXT NOT NULL CHECK (scope IN ('namespace', 'flow', 'run')),
-    flow_id TEXT,
-    run_id TEXT,
+    scope TEXT NOT NULL CHECK (scope IN ('namespace', 'graph', 'run')),
+    agent_graph_id TEXT,
+    graph_run_id TEXT,
     external_id TEXT,
     source_uri TEXT,
     acl_ref TEXT,
@@ -568,18 +569,18 @@ CREATE TABLE knw_document (
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
     FOREIGN KEY (source_id, namespace_id) REFERENCES knw_source(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (run_id, flow_id, namespace_id) REFERENCES orh_run(id, flow_id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (graph_run_id, agent_graph_id, namespace_id) REFERENCES orh_graph_run(id, agent_graph_id, namespace_id) ON DELETE RESTRICT,
     FOREIGN KEY (current_revision_id, id, namespace_id)
         REFERENCES knw_document_revision(id, document_id, namespace_id)
         DEFERRABLE INITIALLY DEFERRED,
-    CHECK ((scope = 'namespace' AND flow_id IS NULL AND run_id IS NULL) OR
-           (scope = 'flow' AND flow_id IS NOT NULL AND run_id IS NULL) OR
-           (scope = 'run' AND flow_id IS NOT NULL AND run_id IS NOT NULL)),
+    CHECK ((scope = 'namespace' AND agent_graph_id IS NULL AND graph_run_id IS NULL) OR
+           (scope = 'graph' AND agent_graph_id IS NOT NULL AND graph_run_id IS NULL) OR
+           (scope = 'run' AND agent_graph_id IS NOT NULL AND graph_run_id IS NOT NULL)),
     UNIQUE (namespace_id, document_key),
     UNIQUE (id, namespace_id)
 );
-CREATE INDEX idx_knw_document_scope ON knw_document(namespace_id, scope, flow_id, run_id, status);
+CREATE INDEX idx_knw_document_scope ON knw_document(namespace_id, scope, agent_graph_id, graph_run_id, status);
 CREATE INDEX idx_knw_document_source ON knw_document(source_id, status);
 
 CREATE TABLE knw_document_revision (
@@ -713,9 +714,9 @@ CREATE INDEX idx_knw_embedding_content ON knw_embedding(content_id, profile_key)
 CREATE TABLE knw_candidate (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    source_run_id TEXT NOT NULL,
-    target_scope TEXT NOT NULL CHECK (target_scope IN ('namespace', 'flow')),
-    target_flow_id TEXT,
+    source_graph_run_id TEXT NOT NULL,
+    target_scope TEXT NOT NULL CHECK (target_scope IN ('namespace', 'graph')),
+    target_agent_graph_id TEXT,
     target_document_id TEXT,
     type TEXT NOT NULL CHECK (type IN ('knowledge', 'instruction')),
     content TEXT NOT NULL,
@@ -732,12 +733,12 @@ CREATE TABLE knw_candidate (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (source_run_id, namespace_id) REFERENCES orh_run(id, namespace_id) ON DELETE RESTRICT,
-    FOREIGN KEY (target_flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (source_graph_run_id, namespace_id) REFERENCES orh_graph_run(id, namespace_id) ON DELETE RESTRICT,
+    FOREIGN KEY (target_agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE RESTRICT,
     FOREIGN KEY (target_document_id, namespace_id) REFERENCES knw_document(id, namespace_id) ON DELETE RESTRICT,
     FOREIGN KEY (approval_id, namespace_id) REFERENCES orh_approval(id, namespace_id) ON DELETE RESTRICT,
-    CHECK ((target_scope = 'namespace' AND target_flow_id IS NULL) OR
-           (target_scope = 'flow' AND target_flow_id IS NOT NULL)),
+    CHECK ((target_scope = 'namespace' AND target_agent_graph_id IS NULL) OR
+           (target_scope = 'graph' AND target_agent_graph_id IS NOT NULL)),
     CHECK ((type = 'instruction' AND target_document_id IS NULL) OR type = 'knowledge'),
     UNIQUE (approval_id),
     UNIQUE (namespace_id, idempotency_key)
@@ -747,8 +748,8 @@ CREATE INDEX idx_knw_candidate_publish ON knw_candidate(namespace_id, status, cr
 CREATE TABLE orh_runtime_configuration (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    scope TEXT NOT NULL CHECK (scope IN ('namespace', 'flow')),
-    flow_id TEXT,
+    scope TEXT NOT NULL CHECK (scope IN ('namespace', 'graph')),
+    agent_graph_id TEXT,
     environment TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(environment)),
     sealed_secrets TEXT CHECK (sealed_secrets IS NULL OR json_valid(sealed_secrets)),
     secret_keys TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(secret_keys)),
@@ -760,21 +761,21 @@ CREATE TABLE orh_runtime_configuration (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE CASCADE,
-    CHECK ((scope = 'namespace' AND flow_id IS NULL) OR (scope = 'flow' AND flow_id IS NOT NULL)),
-    UNIQUE (namespace_id, scope, flow_id)
+    FOREIGN KEY (agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE CASCADE,
+    CHECK ((scope = 'namespace' AND agent_graph_id IS NULL) OR (scope = 'graph' AND agent_graph_id IS NOT NULL)),
+    UNIQUE (namespace_id, scope, agent_graph_id)
 );
 CREATE UNIQUE INDEX uq_orh_runtime_configuration_namespace
     ON orh_runtime_configuration(namespace_id) WHERE scope = 'namespace';
-CREATE UNIQUE INDEX uq_orh_runtime_configuration_flow
-    ON orh_runtime_configuration(flow_id) WHERE scope = 'flow';
+CREATE UNIQUE INDEX uq_orh_runtime_configuration_graph
+    ON orh_runtime_configuration(agent_graph_id) WHERE scope = 'graph';
 
-CREATE TABLE orh_flow_release (
+CREATE TABLE orh_agent_graph_release (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL,
-    flow_id TEXT NOT NULL,
-    flow_revision_id TEXT NOT NULL,
-    flow_revision INTEGER NOT NULL CHECK (flow_revision > 0),
+    agent_graph_id TEXT NOT NULL,
+    agent_graph_revision_id TEXT NOT NULL,
+    agent_graph_revision INTEGER NOT NULL CHECK (agent_graph_revision > 0),
     release_version TEXT NOT NULL,
     definition TEXT NOT NULL CHECK (json_valid(definition)),
     checksum TEXT NOT NULL CHECK (length(checksum) = 64 AND checksum NOT GLOB '*[^0-9a-f]*'),
@@ -788,15 +789,15 @@ CREATE TABLE orh_flow_release (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (flow_revision_id, flow_id, namespace_id)
-        REFERENCES orh_flow_revision(id, flow_id, namespace_id) ON DELETE RESTRICT,
-    UNIQUE (namespace_id, flow_id, release_version),
+    FOREIGN KEY (agent_graph_revision_id, agent_graph_id, namespace_id)
+        REFERENCES orh_agent_graph_revision(id, agent_graph_id, namespace_id) ON DELETE RESTRICT,
+    UNIQUE (namespace_id, agent_graph_id, release_version),
     UNIQUE (namespace_id, checksum),
     UNIQUE (id, namespace_id)
 );
-CREATE INDEX idx_orh_flow_release_catalog ON orh_flow_release(visibility, status, published_at DESC);
+CREATE INDEX idx_orh_agent_graph_release_catalog ON orh_agent_graph_release(visibility, status, published_at DESC);
 
-CREATE TABLE orh_flow_release_grant (
+CREATE TABLE orh_agent_graph_release_grant (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
     release_id TEXT NOT NULL,
@@ -810,17 +811,17 @@ CREATE TABLE orh_flow_release_grant (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (release_id, namespace_id) REFERENCES orh_flow_release(id, namespace_id) ON DELETE CASCADE,
+    FOREIGN KEY (release_id, namespace_id) REFERENCES orh_agent_graph_release(id, namespace_id) ON DELETE CASCADE,
     UNIQUE (release_id, consumer_namespace_id)
 );
 
-CREATE TABLE orh_flow_installation (
+CREATE TABLE orh_agent_graph_installation (
     id TEXT PRIMARY KEY,
     namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    release_id TEXT NOT NULL REFERENCES orh_flow_release(id) ON DELETE RESTRICT,
+    release_id TEXT NOT NULL REFERENCES orh_agent_graph_release(id) ON DELETE RESTRICT,
     release_version TEXT NOT NULL,
     producer_namespace_id TEXT NOT NULL REFERENCES orh_namespace(id) ON DELETE RESTRICT,
-    installed_flow_id TEXT NOT NULL,
+    installed_agent_graph_id TEXT NOT NULL,
     release_checksum TEXT NOT NULL,
     applied_checksum TEXT NOT NULL,
     resource_bindings TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(resource_bindings)),
@@ -833,8 +834,8 @@ CREATE TABLE orh_flow_installation (
     updated_by TEXT,
     row_version INTEGER NOT NULL DEFAULT 1 CHECK (row_version > 0),
     metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
-    FOREIGN KEY (installed_flow_id, namespace_id) REFERENCES orh_flow(id, namespace_id) ON DELETE RESTRICT,
-    UNIQUE (namespace_id, installed_flow_id)
+    FOREIGN KEY (installed_agent_graph_id, namespace_id) REFERENCES orh_agent_graph(id, namespace_id) ON DELETE RESTRICT,
+    UNIQUE (namespace_id, installed_agent_graph_id)
 );
 
 CREATE TABLE nfy_channel (
@@ -879,13 +880,13 @@ BEFORE UPDATE OF instruction_id ON orh_namespace BEGIN
             i.namespace_id=new.id AND i.scope='namespace' AND i.status='published')
         THEN RAISE(ABORT, 'namespace current instruction must be a published namespace instruction') END;
 END;
-CREATE TRIGGER trg_orh_flow_instruction_pointer
-BEFORE UPDATE OF instruction_id ON orh_flow BEGIN
+CREATE TRIGGER trg_orh_agent_graph_instruction_pointer
+BEFORE UPDATE OF instruction_id ON orh_agent_graph BEGIN
     SELECT CASE WHEN new.instruction_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM llm_instruction i WHERE i.id=new.instruction_id AND
-            i.namespace_id=new.namespace_id AND i.flow_id=new.id AND
-            i.scope='flow' AND i.status='published')
-        THEN RAISE(ABORT, 'flow current instruction must be a published flow instruction') END;
+            i.namespace_id=new.namespace_id AND i.agent_graph_id=new.id AND
+            i.scope='graph' AND i.status='published')
+        THEN RAISE(ABORT, 'graph current instruction must be a published graph instruction') END;
 END;
 CREATE TRIGGER trg_knw_document_pointer BEFORE UPDATE OF current_revision_id ON knw_document BEGIN
     SELECT CASE WHEN new.current_revision_id IS NOT NULL AND NOT EXISTS (
@@ -919,7 +920,7 @@ CREATE TRIGGER trg_orh_approval_guard BEFORE UPDATE ON orh_approval BEGIN
     SELECT CASE WHEN new.request <> old.request OR new.request_hash <> old.request_hash OR
         new.type <> old.type OR new.subject_type <> old.subject_type OR new.subject_id <> old.subject_id OR
         new.idempotency_key <> old.idempotency_key OR new.namespace_id <> old.namespace_id OR
-        new.run_id IS NOT old.run_id OR new.node_run_id IS NOT old.node_run_id OR
+        new.graph_run_id IS NOT old.graph_run_id OR new.node_run_id IS NOT old.node_run_id OR
         new.expires_at IS NOT old.expires_at
         THEN RAISE(ABORT, 'approval request is immutable') END;
     SELECT CASE WHEN old.status <> 'pending' AND (new.status <> old.status OR
@@ -930,7 +931,7 @@ END;
 
 CREATE TRIGGER trg_llm_instruction_guard BEFORE UPDATE ON llm_instruction BEGIN
     SELECT CASE WHEN new.namespace_id <> old.namespace_id OR new.scope <> old.scope OR
-        new.flow_id IS NOT old.flow_id OR new.revision <> old.revision OR
+        new.agent_graph_id IS NOT old.agent_graph_id OR new.revision <> old.revision OR
         new.content <> old.content OR new.content_hash <> old.content_hash
         THEN RAISE(ABORT, 'instruction content and ownership are immutable') END;
     SELECT CASE WHEN old.status = 'published' AND new.approval_id IS NOT old.approval_id
@@ -938,8 +939,8 @@ CREATE TRIGGER trg_llm_instruction_guard BEFORE UPDATE ON llm_instruction BEGIN
 END;
 
 CREATE TRIGGER trg_knw_candidate_guard BEFORE UPDATE ON knw_candidate BEGIN
-    SELECT CASE WHEN new.namespace_id <> old.namespace_id OR new.source_run_id <> old.source_run_id OR
-        new.target_scope <> old.target_scope OR new.target_flow_id IS NOT old.target_flow_id OR
+    SELECT CASE WHEN new.namespace_id <> old.namespace_id OR new.source_graph_run_id <> old.source_graph_run_id OR
+        new.target_scope <> old.target_scope OR new.target_agent_graph_id IS NOT old.target_agent_graph_id OR
         new.target_document_id IS NOT old.target_document_id OR new.type <> old.type OR
         new.content <> old.content OR new.content_hash <> old.content_hash OR
         new.provenance <> old.provenance OR new.expected_revision <> old.expected_revision OR
@@ -968,10 +969,10 @@ CREATE TRIGGER trg_knw_content_delete_guard BEFORE DELETE ON knw_content BEGIN
         THEN RAISE(ABORT, 'published document content is immutable') END;
 END;
 
-CREATE TRIGGER trg_orh_flow_revision_update BEFORE UPDATE ON orh_flow_revision BEGIN
-    SELECT RAISE(ABORT, 'orh_flow_revision is append-only'); END;
-CREATE TRIGGER trg_orh_flow_revision_delete BEFORE DELETE ON orh_flow_revision BEGIN
-    SELECT RAISE(ABORT, 'orh_flow_revision is append-only'); END;
+CREATE TRIGGER trg_orh_agent_graph_revision_update BEFORE UPDATE ON orh_agent_graph_revision BEGIN
+    SELECT RAISE(ABORT, 'orh_agent_graph_revision is append-only'); END;
+CREATE TRIGGER trg_orh_agent_graph_revision_delete BEFORE DELETE ON orh_agent_graph_revision BEGIN
+    SELECT RAISE(ABORT, 'orh_agent_graph_revision is append-only'); END;
 CREATE TRIGGER trg_llm_agent_revision_update BEFORE UPDATE ON llm_agent_revision BEGIN
     SELECT RAISE(ABORT, 'llm_agent_revision is append-only'); END;
 CREATE TRIGGER trg_llm_agent_revision_delete BEFORE DELETE ON llm_agent_revision BEGIN
@@ -1013,8 +1014,8 @@ END;
 -- internal UPDATE statements execute exactly once.
 CREATE TRIGGER trg_orh_namespace_touch AFTER UPDATE ON orh_namespace BEGIN
     UPDATE orh_namespace SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
-CREATE TRIGGER trg_orh_flow_touch AFTER UPDATE ON orh_flow BEGIN
-    UPDATE orh_flow SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
+CREATE TRIGGER trg_orh_agent_graph_touch AFTER UPDATE ON orh_agent_graph BEGIN
+    UPDATE orh_agent_graph SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_llm_provider_touch AFTER UPDATE ON llm_provider BEGIN
     UPDATE llm_provider SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_llm_mcp_touch AFTER UPDATE ON llm_mcp BEGIN
@@ -1023,8 +1024,8 @@ CREATE TRIGGER trg_llm_agent_touch AFTER UPDATE ON llm_agent BEGIN
     UPDATE llm_agent SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_llm_skill_touch AFTER UPDATE ON llm_skill BEGIN
     UPDATE llm_skill SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
-CREATE TRIGGER trg_orh_run_touch AFTER UPDATE ON orh_run BEGIN
-    UPDATE orh_run SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
+CREATE TRIGGER trg_orh_graph_run_touch AFTER UPDATE ON orh_graph_run BEGIN
+    UPDATE orh_graph_run SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_orh_node_run_touch AFTER UPDATE ON orh_node_run BEGIN
     UPDATE orh_node_run SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_orh_dispatch_touch AFTER UPDATE ON orh_dispatch BEGIN
@@ -1051,13 +1052,17 @@ CREATE TRIGGER trg_knw_candidate_touch AFTER UPDATE ON knw_candidate BEGIN
     UPDATE knw_candidate SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_orh_runtime_configuration_touch AFTER UPDATE ON orh_runtime_configuration BEGIN
     UPDATE orh_runtime_configuration SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
-CREATE TRIGGER trg_orh_flow_release_touch AFTER UPDATE ON orh_flow_release BEGIN
-    UPDATE orh_flow_release SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
-CREATE TRIGGER trg_orh_flow_release_grant_touch AFTER UPDATE ON orh_flow_release_grant BEGIN
-    UPDATE orh_flow_release_grant SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
-CREATE TRIGGER trg_orh_flow_installation_touch AFTER UPDATE ON orh_flow_installation BEGIN
-    UPDATE orh_flow_installation SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
+CREATE TRIGGER trg_orh_agent_graph_release_touch AFTER UPDATE ON orh_agent_graph_release BEGIN
+    UPDATE orh_agent_graph_release SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
+CREATE TRIGGER trg_orh_agent_graph_release_grant_touch AFTER UPDATE ON orh_agent_graph_release_grant BEGIN
+    UPDATE orh_agent_graph_release_grant SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
+CREATE TRIGGER trg_orh_agent_graph_installation_touch AFTER UPDATE ON orh_agent_graph_installation BEGIN
+    UPDATE orh_agent_graph_installation SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_nfy_channel_touch AFTER UPDATE ON nfy_channel BEGIN
     UPDATE nfy_channel SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
 CREATE TRIGGER trg_orh_a2a_task_touch AFTER UPDATE ON orh_a2a_task BEGIN
     UPDATE orh_a2a_task SET updated_at=CURRENT_TIMESTAMP,row_version=old.row_version+1 WHERE id=old.id; END;
+
+CREATE TRIGGER trg_graph_run_snapshot_immutable BEFORE UPDATE OF snapshot,agent_graph_id,agent_graph_revision_id,namespace_id ON orh_graph_run
+WHEN OLD.snapshot<>NEW.snapshot OR OLD.agent_graph_id<>NEW.agent_graph_id OR OLD.agent_graph_revision_id<>NEW.agent_graph_revision_id OR OLD.namespace_id<>NEW.namespace_id
+BEGIN SELECT RAISE(ABORT,'GraphRun identity and snapshot are immutable'); END;

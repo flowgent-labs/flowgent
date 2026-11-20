@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
@@ -24,16 +25,25 @@ import (
 )
 
 // FlowgentSandboxManager consumes and executes sandbox triggers.
+// WorkspaceCheckpointWriter commits the pre-execution recovery point through
+// API Server. Sandbox never opens the business database.
+type WorkspaceCheckpointWriter interface {
+	CommitNodeCheckpoint(context.Context, string, string, string, int64, *entities.NodeCheckpoint) error
+	CommitSandboxResult(context.Context, string, string, string, *entities.NodeResult) error
+	ResolveGraphRuntimeConfig(context.Context, string, string) (*entities.ResolvedRuntimeConfig, error)
+}
+
 type FlowgentSandboxManager struct {
-	ID          string
-	queue       messager.IMessager
-	policy      *model.SandboxPolicy
-	image       string
-	workspace   string
-	distributed bool
-	slots       int
-	namespaceID string
-	clusterID   string
+	checkpointWriter WorkspaceCheckpointWriter
+	ID               string
+	queue            messager.IMessager
+	policy           *model.SandboxPolicy
+	image            string
+	workspace        string
+	distributed      bool
+	slots            int
+	namespaceID      string
+	clusterID        string
 
 	stopCh chan struct{}
 }
@@ -85,6 +95,10 @@ func NewFlowgentSandboxManager(id string, q messager.IMessager, image, workspace
 		slots:       1,
 		stopCh:      make(chan struct{}),
 	}
+}
+
+func (w *FlowgentSandboxManager) SetCheckpointWriter(writer WorkspaceCheckpointWriter) {
+	w.checkpointWriter = writer
 }
 
 func (w *FlowgentSandboxManager) GetID() string { return w.ID }
@@ -177,7 +191,7 @@ func (w *FlowgentSandboxManager) subscriptionTopic() string {
 	if w.namespaceID == "" || w.clusterID == "" {
 		return ""
 	}
-	filter := fmt.Sprintf("%s/%s/clusters/%s/flows/+/runs/+/sandbox/trigger", messager.TopicPrefix, w.namespaceID, w.clusterID)
+	filter := fmt.Sprintf("%s/%s/clusters/%s/agent-graphs/+/graph-runs/+/sandbox/trigger", messager.TopicPrefix, w.namespaceID, w.clusterID)
 	group := "sandbox-cluster-" + sanitizeShareGroup(w.namespaceID) + "-" + sanitizeShareGroup(w.clusterID)
 	if !w.distributed {
 		return filter
@@ -216,6 +230,42 @@ func (w *FlowgentSandboxManager) handleTrigger(ctx context.Context, workerID, to
 	}
 	slog.Info("sandbox trigger received", "worker", workerID, "topic", topic, "plan_id", trigger.PlanID, "runtime", trigger.Runtime)
 
+	source := trigger.Workspace
+	if source == "" {
+		source = trigger.ScriptPath
+	}
+	release, lockErr := lockWorkspace(ctx, w.workspace, source)
+	if lockErr != nil {
+		_ = w.publishError(ctx, &trigger, lockErr.Error())
+		return
+	}
+	defer release()
+	snapshotStore := WorkspaceStore{Root: filepath.Join(w.workspace, ".snapshots")}
+	// A redelivered physical handoff first reconciles its durable result file.
+	// It must never roll a completed workspace back to the pre-execution state.
+	if data, err := os.ReadFile(filepath.Join(trigger.ScriptPath, "result.json")); err == nil {
+		var cached entities.NodeResult
+		if json.Unmarshal(data, &cached) == nil && cached.NodeRunID == trigger.NodeRunID && cached.DispatchEpoch == trigger.DispatchEpoch && trigger.DispatchEpoch > 0 {
+			if cached.Error != "" || (cached.WorkspaceSnapshot != nil && snapshotStore.Verify(ctx, cached.WorkspaceSnapshot) == nil) {
+				_ = w.publishResult(ctx, &trigger, &cached)
+				return
+			}
+		}
+	}
+
+	var previous entities.NodeCheckpoint
+	if len(trigger.Checkpoint) > 0 {
+		if err := json.Unmarshal(trigger.Checkpoint, &previous); err != nil {
+			_ = w.publishError(ctx, &trigger, "invalid restore checkpoint")
+			return
+		}
+	}
+	if previous.WorkspaceSnapshot != nil {
+		if err := snapshotStore.Restore(ctx, previous.WorkspaceSnapshot, source); err != nil {
+			_ = w.publishError(ctx, &trigger, "restore workspace: "+err.Error())
+			return
+		}
+	}
 	script, err := w.readScriptFromVolume(&trigger)
 	if err != nil {
 		if err := w.publishError(ctx, &trigger, "read script: "+err.Error()); err != nil {
@@ -226,7 +276,60 @@ func (w *FlowgentSandboxManager) handleTrigger(ctx context.Context, workerID, to
 
 	os.WriteFile(filepath.Join(trigger.ScriptPath, "status"), []byte("RUNNING"), 0644)
 
+	var baselineCheckpoint *entities.NodeCheckpoint
+	if trigger.DispatchEpoch > 0 {
+		if w.checkpointWriter == nil {
+			_ = w.publishError(ctx, &trigger, "workspace checkpoint writer is unavailable")
+			return
+		}
+		baseline, err := snapshotStore.Capture(ctx, source)
+		if err != nil {
+			_ = w.publishError(ctx, &trigger, "workspace baseline: "+err.Error())
+			return
+		}
+		checkpoint := &entities.NodeCheckpoint{WorkspaceSnapshot: baseline, ScriptPath: trigger.ScriptPath, CheckpointedAt: time.Now().UTC()}
+		baselineCheckpoint = checkpoint
+		if err = w.checkpointWriter.CommitNodeCheckpoint(ctx, trigger.Namespace, trigger.GraphRunID, trigger.NodeRunID, trigger.DispatchEpoch, checkpoint); err != nil {
+			_ = w.publishError(ctx, &trigger, "commit workspace baseline: "+err.Error())
+			return
+		}
+	}
+	if trigger.Env == nil {
+		trigger.Env = map[string]string{}
+	}
+	if trigger.DispatchEpoch > 0 {
+		resolved, err := w.checkpointWriter.ResolveGraphRuntimeConfig(ctx, trigger.Namespace, trigger.AgentGraphName)
+		if err != nil {
+			_ = w.publishError(ctx, &trigger, "resolve sandbox runtime: "+err.Error())
+			return
+		}
+		if resolved != nil {
+			for key, value := range resolved.Environment {
+				trigger.Env[key] = value
+			}
+			for key, value := range resolved.Secrets {
+				trigger.Env[key] = value
+			}
+		}
+	}
+	trigger.Env["FLOWGENT_NODE_ATTEMPT"] = fmt.Sprint(trigger.Attempt)
 	result := w.execute(ctx, &trigger, script)
+	result.Checkpoint = baselineCheckpoint
+	if trigger.DispatchEpoch > 0 && result.Error == "" {
+		snapshot, err := snapshotStore.Capture(ctx, source)
+		if err != nil {
+			result = &entities.NodeResult{Error: "workspace snapshot: " + err.Error(), Checkpoint: baselineCheckpoint}
+		} else {
+			result.WorkspaceSnapshot = snapshot
+		}
+	}
+	result.NodeRunID = trigger.NodeRunID
+	result.DispatchEpoch = trigger.DispatchEpoch
+	if err := w.writeResultFile(trigger.ScriptPath, result); err != nil {
+		_ = w.publishError(ctx, &trigger, "persist sandbox result: "+err.Error())
+		return
+	}
+
 	if err := w.publishResult(ctx, &trigger, result); err != nil {
 		slog.Error("sandbox result publish failed", "worker", workerID, "plan_id", trigger.PlanID, "error", err)
 		return
@@ -244,16 +347,16 @@ func (w *FlowgentSandboxManager) Stop() {
 
 // ─── Execution ──────────────────────────────────────────────
 
-func (w *FlowgentSandboxManager) execute(ctx context.Context, trigger *model.SandboxTrigger, script string) *entities.TaskResult {
+func (w *FlowgentSandboxManager) execute(ctx context.Context, trigger *model.SandboxTrigger, script string) *entities.NodeResult {
 	runtime := trigger.Runtime
 	if runtime == "" {
 		runtime = "bash"
 	}
 	if !w.isRuntimeAllowed(runtime) {
-		return &entities.TaskResult{Error: fmt.Sprintf("runtime %q not allowed", runtime)}
+		return &entities.NodeResult{Error: fmt.Sprintf("runtime %q not allowed", runtime)}
 	}
 	if banned := w.checkBanned(script); banned != "" {
-		return &entities.TaskResult{Error: fmt.Sprintf("banned pattern: %q", banned)}
+		return &entities.NodeResult{Error: fmt.Sprintf("banned pattern: %q", banned)}
 	}
 
 	timeout := trigger.Timeout
@@ -278,20 +381,20 @@ func (w *FlowgentSandboxManager) execute(ctx context.Context, trigger *model.San
 	return w.executeInProcess(ctx, trigger.ScriptPath, script, runtime, netPolicy, trigger.Workspace, trigger.Env, d)
 }
 
-func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *entities.TaskResult {
+func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *entities.NodeResult {
 	scriptFile := filepath.Join(scriptPath, "script."+extForRuntime(runtime))
 	if err := os.WriteFile(scriptFile, []byte(script), 0700); err != nil {
-		return &entities.TaskResult{Error: "write script: " + err.Error()}
+		return &entities.NodeResult{Error: "write script: " + err.Error()}
 	}
 
 	filter, ferr := seccomp.BuildFilter(netPolicy)
 	if ferr != nil {
-		return &entities.TaskResult{Error: "seccomp build: " + ferr.Error()}
+		return &entities.NodeResult{Error: "seccomp build: " + ferr.Error()}
 	}
 
 	cmd, notifCh, cerr := filter.ScriptCmd(scriptPath, runtime, workspace)
 	if cerr != nil {
-		return &entities.TaskResult{Error: "seccomp cmd: " + cerr.Error()}
+		return &entities.NodeResult{Error: "seccomp cmd: " + cerr.Error()}
 	}
 
 	if ctx != nil {
@@ -319,8 +422,12 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
 	if err := cmd.Start(); err != nil {
-		return &entities.TaskResult{Error: "start script: " + err.Error()}
+		return &entities.NodeResult{Error: "start script: " + err.Error()}
 	}
 	for _, f := range cmd.ExtraFiles {
 		if f != nil {
@@ -335,22 +442,23 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 		case <-ctx.Done():
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return &entities.TaskResult{Error: "seccomp notifier handshake: " + ctx.Err().Error()}
+			return &entities.NodeResult{Error: "seccomp notifier handshake: " + ctx.Err().Error()}
 		case <-time.After(5 * time.Second):
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return &entities.TaskResult{Error: "seccomp notifier handshake timed out"}
+			return &entities.NodeResult{Error: "seccomp notifier handshake timed out"}
 		}
 		if notifier != nil {
 			go notifier.Start()
 		} else {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return &entities.TaskResult{Error: "seccomp notifier handshake failed"}
+			return &entities.NodeResult{Error: "seccomp notifier handshake failed"}
 		}
 	}
 
 	err := cmd.Wait()
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	if notifier != nil {
 		notifier.Close()
 	}
@@ -360,7 +468,7 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
-		result := &entities.TaskResult{
+		result := &entities.NodeResult{
 			Output: map[string]any{
 				"exit_code": exitCode,
 				"stdout":    stdout.String(), "stderr": stderr.String(),
@@ -375,16 +483,16 @@ func (w *FlowgentSandboxManager) executeInProcess(ctx context.Context, scriptPat
 
 	output := map[string]any{"exit_code": 0, "stdout": stdout.String(), "stderr": stderr.String(), "runtime": runtime}
 	attachParsedOutput(output, stdout.String())
-	result := &entities.TaskResult{Output: output}
+	result := &entities.NodeResult{Output: output}
 	w.writeResultFile(scriptPath, result)
 	os.WriteFile(filepath.Join(scriptPath, "status"), []byte("SUCCESS"), 0644)
 	return result
 }
 
-func (w *FlowgentSandboxManager) executeInDocker(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *entities.TaskResult {
+func (w *FlowgentSandboxManager) executeInDocker(ctx context.Context, scriptPath, script, runtime string, netPolicy *model.NetworkPolicy, workspace string, env map[string]string, timeout time.Duration) *entities.NodeResult {
 	scriptFile := filepath.Join(scriptPath, "script."+extForRuntime(runtime))
 	if err := os.WriteFile(scriptFile, []byte(script), 0700); err != nil {
-		return &entities.TaskResult{Error: "write script: " + err.Error()}
+		return &entities.NodeResult{Error: "write script: " + err.Error()}
 	}
 
 	containerName := fmt.Sprintf("flowgent-sandbox-%d", time.Now().UnixNano())
@@ -415,7 +523,7 @@ func (w *FlowgentSandboxManager) executeInDocker(ctx context.Context, scriptPath
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		result := &entities.TaskResult{
+		result := &entities.NodeResult{
 			Output: map[string]any{"stdout": stdout.String(), "stderr": stderr.String()},
 			Error:  fmt.Sprintf("docker sandbox failed: %v", err),
 		}
@@ -426,7 +534,7 @@ func (w *FlowgentSandboxManager) executeInDocker(ctx context.Context, scriptPath
 
 	output := map[string]any{"stdout": stdout.String(), "stderr": stderr.String(), "runtime": runtime}
 	attachParsedOutput(output, stdout.String())
-	result := &entities.TaskResult{Output: output}
+	result := &entities.NodeResult{Output: output}
 	w.writeResultFile(scriptPath, result)
 	os.WriteFile(filepath.Join(scriptPath, "status"), []byte("SUCCESS"), 0644)
 	return result
@@ -464,13 +572,37 @@ func (w *FlowgentSandboxManager) checkBanned(script string) string {
 	return ""
 }
 
-func (w *FlowgentSandboxManager) publishResult(ctx context.Context, trigger *model.SandboxTrigger, result *entities.TaskResult) error {
+func (w *FlowgentSandboxManager) publishResult(ctx context.Context, trigger *model.SandboxTrigger, result *entities.NodeResult) error {
+	result.NodeRunID = trigger.NodeRunID
+	result.DispatchEpoch = trigger.DispatchEpoch
+	if trigger.DispatchEpoch > 0 {
+		if w.checkpointWriter == nil {
+			return fmt.Errorf("sandbox state store unavailable")
+		}
+		var err error
+		for attempt := 0; attempt < 5; attempt++ {
+			err = w.checkpointWriter.CommitSandboxResult(ctx, trigger.Namespace, trigger.GraphRunID, trigger.NodeRunID, result)
+			if err == nil {
+				break
+			}
+			timer := time.NewTimer(time.Duration(attempt+1) * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
 	payload, _ := json.Marshal(result)
 	namespaceID := trigger.Namespace
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
-	resultTopic := messager.SandboxResultTopic(namespaceID, trigger.FlowID, trigger.RunID)
+	resultTopic := messager.SandboxResultTopic(namespaceID, trigger.AgentGraphID, trigger.GraphRunID)
 
 	msg := &messager.InterMessage{ID: trigger.PlanID, Payload: payload}
 	var lastErr error
@@ -493,12 +625,35 @@ func (w *FlowgentSandboxManager) publishResult(ctx context.Context, trigger *mod
 }
 
 func (w *FlowgentSandboxManager) publishError(ctx context.Context, trigger *model.SandboxTrigger, errStr string) error {
-	return w.publishResult(ctx, trigger, &entities.TaskResult{Error: errStr})
+	return w.publishResult(ctx, trigger, &entities.NodeResult{Error: errStr})
 }
 
-func (w *FlowgentSandboxManager) writeResultFile(scriptPath string, result *entities.TaskResult) {
-	data, _ := json.Marshal(result)
-	os.WriteFile(filepath.Join(scriptPath, "result.json"), data, 0644)
+func (w *FlowgentSandboxManager) writeResultFile(scriptPath string, result *entities.NodeResult) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(scriptPath, ".result-")
+	if err != nil {
+		return err
+	}
+	path := temporary.Name()
+	defer os.Remove(path)
+	if _, err = temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err = temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err = temporary.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(path, filepath.Join(scriptPath, "result.json")); err != nil {
+		return err
+	}
+	return syncWorkspaceDir(scriptPath)
 }
 
 // ─── Utilities ───────────────────────────────────────────────
