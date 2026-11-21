@@ -45,6 +45,7 @@ func startNotifierService(cfgPath string) error {
 	if err != nil {
 		return err
 	}
+	defer startOTELTracing(serviceCfg, "flowgent-notifier")()
 
 	apiClient := client.NewFlowgentClient(serviceCfg.Runtime.APIServerURL)
 	httpClient := client.NewGenericHttpClient(30 * time.Second)

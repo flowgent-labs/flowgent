@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,13 +15,14 @@ import (
 	"github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	sandbox "github.com/flowgent-labs/flowgent/sandbox/pkg"
 )
 
 // SandboxExecutor dispatches scripts to sandbox runner pods via MQTT + shared
 // workspace volume. The workspace is a persistent volume mounted to both TM and
 // sandbox pods, organized as:
 //
-//	{workspace}/{namespace_id}/{flow_id}/{run_id}/{task_plan_id}/
+//	{workspace}/{namespace_id}/{agent_graph_id}/{graph_run_id}/{task_plan_id}/
 //	  ├── script.{py,sh,js}
 //	  ├── input.json
 //	  ├── result.json
@@ -32,23 +32,26 @@ import (
 // In distributed mode (sandbox as independent pods), triggers are routed to the
 // run's runtime cluster:
 //
-//	flowgent/v1/{namespaceId}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger
+//	flowgent/v1/{namespaceId}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/trigger
 //
 // Results come back on:
 //
-//	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/sandbox/result
+//	flowgent/v1/{namespaceId}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/result
 type SandboxExecutor struct {
 	queue                 messager.IMessager
 	policy                *model.SandboxPolicy
 	workspace             string
 	runtimeConfigResolver RuntimeConfigResolver
+	dispatcher            interface {
+		DispatchSandbox(context.Context, *model.SandboxTrigger) error
+	}
 }
 
-// RuntimeConfigResolver provides the effective namespace→Flow configuration.
+// RuntimeConfigResolver provides the effective namespace→AgentGraph configuration.
 // Resolving per attempt keeps long-lived workers stateless and
-// prevents one Flow's environment or secrets from leaking into another Flow.
+// prevents one AgentGraph's environment or secrets from leaking into another AgentGraph.
 type RuntimeConfigResolver interface {
-	ResolveFlowRuntimeConfig(ctx context.Context, namespace, flowID string) (*entities.ResolvedRuntimeConfig, error)
+	ResolveGraphRuntimeConfig(ctx context.Context, namespace, graphID string) (*entities.ResolvedRuntimeConfig, error)
 }
 
 func NewSandboxExecutor(q messager.IMessager, policy *model.SandboxPolicy, workspace string) *SandboxExecutor {
@@ -57,53 +60,71 @@ func NewSandboxExecutor(q messager.IMessager, policy *model.SandboxPolicy, works
 
 func (e *SandboxExecutor) SetRuntimeConfigResolver(resolver RuntimeConfigResolver) {
 	e.runtimeConfigResolver = resolver
+	if dispatcher, ok := resolver.(interface {
+		DispatchSandbox(context.Context, *model.SandboxTrigger) error
+	}); ok {
+		e.dispatcher = dispatcher
+	}
 }
 
-func (e *SandboxExecutor) TaskType() entities.TaskType { return entities.TaskSandbox }
+func (e *SandboxExecutor) NodeKind() entities.NodeKind { return entities.SandboxNode }
 
-func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	if plan == nil || plan.NodeSpec == nil {
+func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
+	if plan == nil || plan.Node == nil {
 		return nil, fmt.Errorf("sandbox execution plan and node spec are required")
 	}
 	if e.queue == nil {
 		return nil, fmt.Errorf("sandbox message queue is not configured")
 	}
-	if e.policy != nil && plan.NodeSpec.NetworkPolicy == nil {
-		plan.NodeSpec.NetworkPolicy = &e.policy.Network
+	networkPolicy := plan.Node.NetworkPolicy
+	if networkPolicy == nil && e.policy != nil {
+		networkPolicy = &e.policy.Network
 	}
 
 	spanID := newSpanID()
 	scriptPath := e.buildPath(plan)
-	plan.NodeSpec.ScriptPath = scriptPath
-
-	if err := e.writeScript(plan); err != nil {
-		return nil, fmt.Errorf("sandbox write script: %w", err)
-	}
-
-	if plan.Input != nil {
-		if err := e.writeInput(plan); err != nil {
-			return nil, fmt.Errorf("sandbox write input: %w", err)
+	if plan.Checkpoint != nil && plan.Checkpoint.WorkspaceSnapshot != nil && plan.Checkpoint.ScriptPath != "" {
+		root, _ := filepath.Abs(e.workspace)
+		candidate, _ := filepath.Abs(plan.Checkpoint.ScriptPath)
+		relative, err := filepath.Rel(root, candidate)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("checkpoint script path escapes workspace")
 		}
+		scriptPath = candidate
 	}
-	if plan.NodeSpec.Workspace != "" {
-		if err := e.snapshotOriginals(plan); err != nil {
-			return nil, fmt.Errorf("sandbox snapshot: %w", err)
-		}
-	}
+	plan.WorkspacePath = scriptPath
 
+	if plan.Checkpoint == nil || plan.Checkpoint.WorkspaceSnapshot == nil {
+		if err := e.writeScript(plan); err != nil {
+			return nil, fmt.Errorf("sandbox write script: %w", err)
+		}
+
+		if plan.Input != nil {
+			if err := e.writeInput(plan); err != nil {
+				return nil, fmt.Errorf("sandbox write input: %w", err)
+			}
+		}
+
+	}
 	trigger := &model.SandboxTrigger{
+		Attempt:   plan.RetryCount + 1,
+		NodeRunID: plan.NodeRunID, NodeInstanceID: plan.NodeInstanceID, DispatchEpoch: plan.DispatchEpoch,
 		Namespace:        plan.Namespace,
 		RuntimeClusterID: plan.RuntimeClusterID,
-		FlowID:           plan.AgentFlowDefinitionID,
-		RunID:            plan.AgentFlowRunID,
+		AgentGraphID:     plan.AgentGraphID,
+		AgentGraphName:   plan.AgentGraphName,
+		GraphRunID:       plan.GraphRunID,
 		PlanID:           plan.PlanID,
 		ScriptPath:       scriptPath,
-		Runtime:          plan.NodeSpec.Runtime,
-		Timeout:          plan.NodeSpec.Timeout,
-		Resources:        plan.NodeSpec.Resources,
-		NetworkPolicy:    plan.NodeSpec.NetworkPolicy,
-		Workspace:        plan.NodeSpec.Workspace,
+		Runtime:          plan.Node.Runtime,
+		Timeout:          plan.Node.Timeout,
+		Resources:        plan.Node.Resources,
+		NetworkPolicy:    networkPolicy,
+		Workspace:        plan.Node.Workspace,
 		SpanID:           spanID,
+	}
+	if plan.Checkpoint != nil {
+		trigger.Checkpoint, _ = json.Marshal(plan.Checkpoint)
 	}
 	resolvedEnv, err := e.resolveEnvironment(ctx, plan)
 	if err != nil {
@@ -115,15 +136,18 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 		return nil, fmt.Errorf("sandbox marshal trigger: %w", err)
 	}
 
-	triggerTopic := messager.SandboxTriggerTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
-	resultTopic := messager.SandboxResultTopic(plan.Namespace, plan.AgentFlowDefinitionID, plan.AgentFlowRunID)
+	triggerTopic := messager.SandboxTriggerTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentGraphID, plan.GraphRunID)
+	resultTopic := messager.SandboxResultTopic(plan.Namespace, plan.AgentGraphID, plan.GraphRunID)
 
-	resultCh := make(chan *entities.TaskResult, 1)
+	resultCh := make(chan *entities.NodeResult, 1)
 
 	// Subscribe BEFORE publishing to avoid race (result arrives before subscriber is ready).
 	if err := e.queue.Subscribe(ctx, resultTopic, func(topic string, payload []byte) {
-		var result entities.TaskResult
+		var result entities.NodeResult
 		if err := json.Unmarshal(payload, &result); err != nil {
+			return
+		}
+		if !e.validResult(ctx, plan, &result) {
 			return
 		}
 		select {
@@ -134,10 +158,20 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 		return nil, fmt.Errorf("sandbox subscribe: %w", err)
 	}
 
-	if err := e.queue.Publish(ctx, triggerTopic, &messager.InterMessage{
-		ID: plan.PlanID, Payload: payload,
-	}); err != nil {
-		return nil, fmt.Errorf("sandbox publish: %w", err)
+	if plan.DispatchEpoch > 0 && e.dispatcher != nil {
+		// Only explicit non-secret node environment is sent durably. Runtime secret
+		// resolution happens in Sandbox after the dispatch is accepted.
+		trigger.Env = nil
+		if err := e.dispatcher.DispatchSandbox(ctx, trigger); err != nil {
+			return nil, fmt.Errorf("persist sandbox dispatch: %w", err)
+		}
+	} else {
+		if err := e.queue.Publish(ctx, triggerTopic, &messager.InterMessage{
+			ID: plan.PlanID, Payload: payload,
+		}); err != nil {
+			return nil, fmt.Errorf("sandbox publish: %w", err)
+		}
+
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -150,27 +184,27 @@ func (e *SandboxExecutor) Execute(ctx context.Context, plan *entities.ExecutionP
 		case result := <-resultCh:
 			return result, nil
 		case <-poll.C:
-			if result, err := e.readResultFile(scriptPath); err == nil {
+			if result, err := e.readResultFile(ctx, plan, scriptPath); err == nil {
 				return result, nil
 			}
 		case <-waitCtx.Done():
-			if result, err := e.readResultFile(scriptPath); err == nil {
+			if result, err := e.readResultFile(ctx, plan, scriptPath); err == nil {
 				return result, nil
 			}
-			return &entities.TaskResult{Error: "sandbox execution timeout"}, nil
+			return &entities.NodeResult{Error: "sandbox execution timeout"}, nil
 		}
 	}
 }
 
 func (e *SandboxExecutor) resolveEnvironment(ctx context.Context, plan *entities.ExecutionPlan) (map[string]string, error) {
-	env := config.LoadCredentials("/var/flowgent", plan.Namespace, plan.AgentFlowDefinitionID)
+	env := config.LoadCredentials("/var/flowgent", plan.Namespace, plan.AgentGraphName)
 	if env == nil {
 		env = make(map[string]string)
 	}
 	if e.runtimeConfigResolver == nil {
 		return env, nil
 	}
-	resolved, err := e.runtimeConfigResolver.ResolveFlowRuntimeConfig(ctx, plan.Namespace, plan.AgentFlowDefinitionID)
+	resolved, err := e.runtimeConfigResolver.ResolveGraphRuntimeConfig(ctx, plan.Namespace, plan.AgentGraphName)
 	if err != nil {
 		return nil, err
 	}
@@ -191,14 +225,14 @@ func (e *SandboxExecutor) buildPath(plan *entities.ExecutionPlan) string {
 	return filepath.Join(
 		e.workspace,
 		sanitize(plan.Namespace),
-		sanitize(plan.AgentFlowDefinitionID),
-		sanitize(plan.AgentFlowRunID),
-		sanitize(plan.PlanID),
+		sanitize(plan.AgentGraphName),
+		sanitize(plan.GraphRunID),
+		sanitize(plan.NodeRunID),
 	)
 }
 
 func (e *SandboxExecutor) writeInput(plan *entities.ExecutionPlan) error {
-	dir := plan.NodeSpec.ScriptPath
+	dir := plan.WorkspacePath
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -210,41 +244,35 @@ func (e *SandboxExecutor) writeInput(plan *entities.ExecutionPlan) error {
 }
 
 func (e *SandboxExecutor) writeScript(plan *entities.ExecutionPlan) error {
-	dir := plan.NodeSpec.ScriptPath
+	dir := plan.WorkspacePath
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	ext := "sh"
-	switch plan.NodeSpec.Runtime {
+	switch plan.Node.Runtime {
 	case "python3":
 		ext = "py"
 	case "node":
 		ext = "js"
 	}
-	if err := os.WriteFile(filepath.Join(dir, "script."+ext), []byte(plan.NodeSpec.Script), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "script."+ext), []byte(plan.Node.Script), 0700); err != nil {
 		return err
 	}
 	os.WriteFile(filepath.Join(dir, "status"), []byte("PENDING"), 0644)
 	return nil
 }
 
-func (e *SandboxExecutor) snapshotOriginals(plan *entities.ExecutionPlan) error {
-	origDir := filepath.Join(plan.NodeSpec.ScriptPath, "original")
-	if err := os.MkdirAll(origDir, 0755); err != nil {
-		return err
-	}
-	cmd := exec.Command("cp", "-a", plan.NodeSpec.Workspace, origDir+"/workspace")
-	return cmd.Run()
-}
-
-func (e *SandboxExecutor) readResultFile(scriptPath string) (*entities.TaskResult, error) {
+func (e *SandboxExecutor) readResultFile(ctx context.Context, plan *entities.ExecutionPlan, scriptPath string) (*entities.NodeResult, error) {
 	data, err := os.ReadFile(filepath.Join(scriptPath, "result.json"))
 	if err != nil {
 		return nil, err
 	}
-	var result entities.TaskResult
+	var result entities.NodeResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
+	}
+	if !e.validResult(ctx, plan, &result) {
+		return nil, fmt.Errorf("sandbox result identity or snapshot verification failed")
 	}
 	return &result, nil
 }
@@ -264,4 +292,20 @@ func sanitize(s string) string {
 	s = strings.ReplaceAll(s, "\\", "_")
 	s = strings.ReplaceAll(s, "..", "_")
 	return s
+}
+
+func (e *SandboxExecutor) validResult(ctx context.Context, plan *entities.ExecutionPlan, result *entities.NodeResult) bool {
+	if plan.DispatchEpoch == 0 {
+		return true
+	}
+	if result.NodeRunID != plan.NodeRunID || result.DispatchEpoch != plan.DispatchEpoch {
+		return false
+	}
+	if result.Error != "" {
+		return true
+	}
+	if result.WorkspaceSnapshot == nil {
+		return false
+	}
+	return (sandbox.WorkspaceStore{Root: filepath.Join(e.workspace, ".snapshots")}).Verify(ctx, result.WorkspaceSnapshot) == nil
 }

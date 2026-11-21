@@ -1,0 +1,231 @@
+package noderun
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/flowgent-labs/flowgent/common/pkg/utils"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/flowgent-labs/flowgent/storage/pkg"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type NodeRunPostgresStore struct{ pool *pgxpool.Pool }
+
+func NewNodeRunPostgresStore(pool *pgxpool.Pool) *NodeRunPostgresStore {
+	return &NodeRunPostgresStore{pool: pool}
+}
+func (s *NodeRunPostgresStore) scan(row interface{ Scan(...any) error }) (*entities.NodeRun, error) {
+	var record nodeRecord
+	if err := utils.ScanStruct(row, &record); err != nil {
+		return nil, err
+	}
+	return record.entity(), nil
+}
+func (s *NodeRunPostgresStore) Get(ctx context.Context, id string) (*entities.NodeRun, error) {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").PostgresWhere(2)
+	args := append([]any{id}, scopeArgs...)
+	return s.scan(s.pool.QueryRow(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE id=$1 AND status<>'DELETED' AND (`+scopeWhere+`)`, args...))
+}
+func (s *NodeRunPostgresStore) GetByExecutionID(ctx context.Context, executionID string) (*entities.NodeRun, error) {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").PostgresWhere(2)
+	args := append([]any{executionID}, scopeArgs...)
+	return s.scan(s.pool.QueryRow(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE execution_id=$1 AND status<>'DELETED' AND (`+scopeWhere+`)`, args...))
+}
+func (s *NodeRunPostgresStore) Select(ctx context.Context, req entities.PageRequest) (*entities.Page[entities.NodeRun], error) {
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.Size < 1 {
+		req.Size = 20
+	}
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").PostgresWhere(1)
+	var total int64
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM orh_node_run WHERE status<>'DELETED' AND (`+scopeWhere+`)`, scopeArgs...).Scan(&total); err != nil {
+		return nil, err
+	}
+	pos := len(scopeArgs) + 1
+	args := append(scopeArgs, req.Size, (req.Page-1)*req.Size)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT %s FROM orh_node_run WHERE status<>'DELETED' AND (%s) ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, utils.Columns[nodeRecord](), scopeWhere, pos, pos+1), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]*entities.NodeRun, 0)
+	for rows.Next() {
+		item, err := s.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return entities.NewPage(items, total, req), rows.Err()
+}
+func (s *NodeRunPostgresStore) Save(ctx context.Context, item *entities.NodeRun) error {
+	return s.UpdateNodeRun(ctx, item)
+}
+func (s *NodeRunPostgresStore) CreateNodeRun(ctx context.Context, item *entities.NodeRun) error {
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+	}
+	return s.UpdateNodeRun(ctx, item)
+}
+func (s *NodeRunPostgresStore) UpdateNodeRun(ctx context.Context, item *entities.NodeRun) error {
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		err = s.updateNodeRunOnce(ctx, item)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || (pgErr.Code != "40001" && pgErr.Code != "40P01") {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return err
+}
+func (s *NodeRunPostgresStore) updateNodeRunOnce(ctx context.Context, item *entities.NodeRun) error {
+	item.Normalize()
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+	}
+	if item.ExecutionID == "" {
+		item.ExecutionID = item.ID
+	}
+	if item.Status == "" {
+		item.Status = entities.NodeRunPending
+	}
+	scope := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run")
+	if scope.Where == "0=1" {
+		return storage.ErrFlowgentSqlScopeDenied
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	duplicate, err := prepareExecution(ctx, storage.WrapSQLTransaction(tx), item)
+	if err != nil {
+		return err
+	}
+	if duplicate {
+		return nil
+	}
+	var namespace string
+	if err = tx.QueryRow(ctx, `SELECT namespace_id FROM orh_graph_run WHERE id=$1`, item.GraphRunID).Scan(&namespace); err != nil {
+		return fmt.Errorf("resolve run namespace: %w", err)
+	}
+	if item.Namespace != "" && item.Namespace != namespace {
+		return fmt.Errorf("node run namespace mismatch")
+	}
+	item.Namespace = namespace
+	metadata := map[string]any{}
+	for key, value := range item.Metadata {
+		metadata[key] = value
+	}
+	metadata["workspace_snapshot"] = item.WorkspaceSnapshot
+	metadata["graph_revision"] = item.GraphRevision
+	metadata["subgraph_instance_id"] = item.SubGraphInstanceID
+	metadata["graph_node_id"] = item.GraphNodeID
+	metadata["node_instance_id"] = item.NodeInstanceID
+	metadata["dispatch_epoch"] = item.DispatchEpoch
+	metadata["max_retries"] = item.MaxRetries
+	metadata["sequence"] = item.Sequence
+	workspace := item.WorkspaceVersion
+
+	result, err := tx.Exec(ctx, `INSERT INTO orh_node_run(id,namespace_id,graph_run_id,node_instance_id,attempt,agent_revision_id,status,input,output,error,execution_memory,checkpoint,workspace_version,parent_node_run_id,execution_id,lease_owner,lease_expires_at,fencing_token,last_heartbeat_at,started_at,finished_at,description,created_by,updated_by,metadata) VALUES($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12,NULLIF($13,''),NULLIF($14,''),$15,NULLIF($16,''),$17,$18,$19,$20,$21,$22,$23,$23,$24) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,input=COALESCE(EXCLUDED.input,orh_node_run.input),output=COALESCE(EXCLUDED.output,orh_node_run.output),error=EXCLUDED.error,execution_memory=COALESCE(EXCLUDED.execution_memory,orh_node_run.execution_memory),checkpoint=COALESCE(EXCLUDED.checkpoint,orh_node_run.checkpoint),workspace_version=COALESCE(EXCLUDED.workspace_version,orh_node_run.workspace_version),lease_owner=EXCLUDED.lease_owner,lease_expires_at=EXCLUDED.lease_expires_at,fencing_token=EXCLUDED.fencing_token,last_heartbeat_at=EXCLUDED.last_heartbeat_at,started_at=COALESCE(EXCLUDED.started_at,orh_node_run.started_at),finished_at=EXCLUDED.finished_at,metadata=EXCLUDED.metadata WHERE orh_node_run.graph_run_id=EXCLUDED.graph_run_id AND orh_node_run.node_instance_id=EXCLUDED.node_instance_id AND orh_node_run.attempt=EXCLUDED.attempt AND orh_node_run.fencing_token<=EXCLUDED.fencing_token`, item.ID, namespace, item.GraphRunID, item.NodeInstanceID, item.Attempt, item.AgentRevisionID, item.Status, taskJSON(item.Input), taskJSON(item.Output), taskError(item.Error), taskJSON(item.ExecutionMemory), taskJSON(item.Checkpoint), workspace, item.ParentNodeRunID, item.ExecutionID, item.LeaseOwner, item.LeaseExpiresAt, item.FencingToken, item.LastHeartbeatAt, item.StartedAt, item.FinishedAt, item.Description, item.UpdatedBy, taskJSON(metadata))
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return executionConflict("stale node-run fencing token")
+	}
+	if item.Checkpoint != nil {
+		if err = appendCheckpointPG(ctx, tx, item, workspace); err != nil {
+			return err
+		}
+	}
+	if scope.Where != "1=1" {
+		where, args0 := scope.PostgresWhere(2)
+		args := append([]any{item.ID}, args0...)
+		var visible int
+		if err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM orh_node_run WHERE id=$1 AND (`+where+`)`, args...).Scan(&visible); err != nil {
+			return err
+		}
+		if visible != 1 {
+			return storage.ErrFlowgentSqlScopeDenied
+		}
+	}
+	if err = appendResultEvent(ctx, storage.WrapSQLTransaction(tx), item); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	item.CreatedAt = time.Now().UTC()
+	item.UpdatedAt = item.CreatedAt
+	item.RowVersion = 1
+	return nil
+}
+func appendCheckpointPG(ctx context.Context, tx pgx.Tx, item *entities.NodeRun, workspace string) error {
+	payload := taskJSON(item.Checkpoint)
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM orh_node_checkpoint WHERE node_run_id=$1 AND checkpoint=$2::jsonb AND workspace_version=$3 AND fencing_token=$4)`, item.ID, payload, workspace, item.FencingToken).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	var sequence int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM orh_node_checkpoint WHERE node_run_id=$1`, item.ID).Scan(&sequence); err != nil {
+		return err
+	}
+	checkpointID := uuid.NewString()
+	_, err := tx.Exec(ctx, `INSERT INTO orh_node_checkpoint(id,namespace_id,node_run_id,sequence,execution_memory,checkpoint,workspace_version,fencing_token,created_by,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, checkpointID, item.Namespace, item.ID, sequence, taskJSON(item.ExecutionMemory), payload, workspace, item.FencingToken, item.UpdatedBy, taskJSON(item.Metadata))
+	if err != nil {
+		return err
+	}
+	return appendMessages(ctx, storage.WrapSQLTransaction(tx), item, checkpointID)
+}
+func (s *NodeRunPostgresStore) ListByGraphRun(ctx context.Context, runID string) ([]*entities.NodeRun, error) {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").PostgresWhere(2)
+	args := append([]any{runID}, scopeArgs...)
+	rows, err := s.pool.Query(ctx, `SELECT `+utils.Columns[nodeRecord]()+` FROM orh_node_run WHERE graph_run_id=$1 AND status<>'DELETED' AND (`+scopeWhere+`) ORDER BY node_instance_id,attempt`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]*entities.NodeRun, 0)
+	for rows.Next() {
+		item, err := s.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+func (s *NodeRunPostgresStore) Delete(ctx context.Context, id string) error {
+	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_node_run").PostgresWhere(2)
+	args := append([]any{id}, scopeArgs...)
+	result, err := s.pool.Exec(ctx, `UPDATE orh_node_run SET status='DELETED' WHERE id=$1 AND (`+scopeWhere+`)`, args...)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("node run not found or outside authorization scope")
+	}
+	return nil
+}
+
+var _ = json.Valid

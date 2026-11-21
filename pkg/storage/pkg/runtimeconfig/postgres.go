@@ -14,22 +14,22 @@ import (
 type postgresRepository struct{ db *pgxpool.Pool }
 
 func (s *postgresRepository) Get(ctx context.Context, namespace, scope, scopeID string) (*entities.RuntimeConfiguration, error) {
-	flowID, flowName := "", ""
-	if scope == entities.RuntimeConfigScopeFlow {
-		if err := s.db.QueryRow(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=$1 AND (id=$2 OR name=$2) AND status<>'DELETED'`, namespace, scopeID).Scan(&flowID, &flowName); err != nil {
+	graphID, graphName := "", ""
+	if scope == entities.RuntimeConfigScopeAgentGraph {
+		if err := s.db.QueryRow(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=$1 AND (id=$2 OR name=$2) AND status<>'DELETED'`, namespace, scopeID).Scan(&graphID, &graphName); err != nil {
 			return nil, normalizeNotFound(err)
 		}
 	}
 	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_runtime_configuration").PostgresWhere(4)
-	args := append([]any{namespace, scope, flowID}, scopeArgs...)
+	args := append([]any{namespace, scope, graphID}, scopeArgs...)
 	var item entities.RuntimeConfiguration
 	var environment, envelope, keys, metadata []byte
-	err := s.db.QueryRow(ctx, `SELECT id,scope,COALESCE(flow_id,''),environment,sealed_secrets,secret_keys,description,namespace_id,status,created_at,created_by,updated_at,updated_by,row_version,metadata FROM orh_runtime_configuration WHERE namespace_id=$1 AND scope=$2 AND flow_id IS NOT DISTINCT FROM NULLIF($3,'') AND status<>'DELETED' AND (`+scopeWhere+`)`, args...).Scan(&item.ID, &item.Scope, &item.FlowID, &environment, &envelope, &keys, &item.Description, &item.Namespace, &item.Status, &item.CreatedAt, &item.CreatedBy, &item.UpdatedAt, &item.UpdatedBy, &item.RowVersion, &metadata)
+	err := s.db.QueryRow(ctx, `SELECT id,scope,COALESCE(agent_graph_id,''),environment,sealed_secrets,secret_keys,description,namespace_id,status,created_at,created_by,updated_at,updated_by,row_version,metadata FROM orh_runtime_configuration WHERE namespace_id=$1 AND scope=$2 AND agent_graph_id IS NOT DISTINCT FROM NULLIF($3,'') AND status<>'DELETED' AND (`+scopeWhere+`)`, args...).Scan(&item.ID, &item.Scope, &item.AgentGraphID, &environment, &envelope, &keys, &item.Description, &item.Namespace, &item.Status, &item.CreatedAt, &item.CreatedBy, &item.UpdatedAt, &item.UpdatedBy, &item.RowVersion, &metadata)
 	if err != nil {
 		return nil, normalizeNotFound(err)
 	}
-	item.FlowName = flowName
-	item.NormalizeAliases()
+	item.AgentGraphName = graphName
+	item.Normalize()
 	if err = decodeRuntimeConfig(&item, environment, envelope, keys); err != nil {
 		return nil, err
 	}
@@ -39,8 +39,8 @@ func (s *postgresRepository) Get(ctx context.Context, namespace, scope, scopeID 
 	return &item, nil
 }
 func (s *postgresRepository) Upsert(ctx context.Context, item *entities.RuntimeConfiguration) error {
-	item.NormalizeAliases()
-	flowKey := item.FlowKey()
+	item.Normalize()
+	graphKey := item.AgentGraphKey()
 	environment, envelope, keys, err := encodeRuntimeConfig(item)
 	if err != nil {
 		return err
@@ -57,19 +57,19 @@ func (s *postgresRepository) Upsert(ctx context.Context, item *entities.RuntimeC
 	if _, err = tx.Exec(ctx, `INSERT INTO orh_namespace(id,name,description,created_by,updated_by) VALUES($1::varchar(64),$1::text,'Flowgent namespace',$2::varchar(255),$2::varchar(255)) ON CONFLICT(id) DO NOTHING`, item.Namespace, item.CreatedBy); err != nil {
 		return err
 	}
-	if item.Scope == entities.RuntimeConfigScopeFlow {
-		if err = tx.QueryRow(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=$1 AND (id=$2 OR name=$2) AND status<>'DELETED' FOR SHARE`, item.Namespace, flowKey).Scan(&item.FlowID, &item.FlowName); err != nil {
-			return fmt.Errorf("resolve runtime configuration flow: %w", err)
+	if item.Scope == entities.RuntimeConfigScopeAgentGraph {
+		if err = tx.QueryRow(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=$1 AND (id=$2 OR name=$2) AND status<>'DELETED' FOR SHARE`, item.Namespace, graphKey).Scan(&item.AgentGraphID, &item.AgentGraphName); err != nil {
+			return fmt.Errorf("resolve runtime configuration graph: %w", err)
 		}
-		item.ScopeID = item.FlowName
+		item.ScopeID = item.AgentGraphName
 	} else {
-		item.FlowID, item.FlowName, item.ScopeID = "", "", ""
+		item.AgentGraphID, item.AgentGraphName, item.ScopeID = "", "", ""
 	}
 	var id string
 	var rowVersion int64
-	err = tx.QueryRow(ctx, `SELECT id,row_version FROM orh_runtime_configuration WHERE namespace_id=$1 AND scope=$2 AND flow_id IS NOT DISTINCT FROM NULLIF($3,'') FOR UPDATE`, item.Namespace, item.Scope, item.FlowID).Scan(&id, &rowVersion)
+	err = tx.QueryRow(ctx, `SELECT id,row_version FROM orh_runtime_configuration WHERE namespace_id=$1 AND scope=$2 AND agent_graph_id IS NOT DISTINCT FROM NULLIF($3,'') FOR UPDATE`, item.Namespace, item.Scope, item.AgentGraphID).Scan(&id, &rowVersion)
 	if err == pgx.ErrNoRows {
-		if _, err = tx.Exec(ctx, `INSERT INTO orh_runtime_configuration(id,namespace_id,scope,flow_id,environment,sealed_secrets,secret_keys,description,status,created_by,updated_by,metadata) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,'ACTIVE',$9,$9,$10)`, item.ID, item.Namespace, item.Scope, item.FlowID, environment, envelope, keys, item.Description, item.CreatedBy, jsonBytes(item.Metadata)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO orh_runtime_configuration(id,namespace_id,scope,agent_graph_id,environment,sealed_secrets,secret_keys,description,status,created_by,updated_by,metadata) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,'ACTIVE',$9,$9,$10)`, item.ID, item.Namespace, item.Scope, item.AgentGraphID, environment, envelope, keys, item.Description, item.CreatedBy, jsonBytes(item.Metadata)); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -86,9 +86,9 @@ func (s *postgresRepository) Upsert(ctx context.Context, item *entities.RuntimeC
 	}
 	if scope.Where != "1=1" {
 		where, args0 := scope.PostgresWhere(4)
-		args := append([]any{item.Namespace, item.Scope, item.FlowID}, args0...)
+		args := append([]any{item.Namespace, item.Scope, item.AgentGraphID}, args0...)
 		var visible int
-		if err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM orh_runtime_configuration WHERE namespace_id=$1 AND scope=$2 AND flow_id IS NOT DISTINCT FROM NULLIF($3,'') AND (`+where+`)`, args...).Scan(&visible); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM orh_runtime_configuration WHERE namespace_id=$1 AND scope=$2 AND agent_graph_id IS NOT DISTINCT FROM NULLIF($3,'') AND (`+where+`)`, args...).Scan(&visible); err != nil {
 			return err
 		}
 		if visible != 1 {

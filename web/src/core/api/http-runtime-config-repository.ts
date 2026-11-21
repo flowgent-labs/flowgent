@@ -28,23 +28,27 @@ export class HttpRuntimeConfigRepository implements RuntimeConfigRepository {
     })
   }
 
-  getFlow(namespace: string, flowId: string, signal?: AbortSignal) {
+  getAgentGraph(namespace: string, graphId: string, signal?: AbortSignal) {
     return this.api.request<RuntimeConfigView>(
-      namespacePath(namespace, `flows/${encodeURIComponent(flowId)}/runtime-config`),
+      namespacePath(namespace, `graphs/${encodeURIComponent(graphId)}/runtime-config`),
       { signal },
     )
   }
 
-  updateFlowEnvironment(namespace: string, flowId: string, environment: Record<string, string>) {
+  updateAgentGraphEnvironment(
+    namespace: string,
+    graphId: string,
+    environment: Record<string, string>,
+  ) {
     return this.api.request<RuntimeConfigView>(
-      namespacePath(namespace, `flows/${encodeURIComponent(flowId)}/runtime-config/environment`),
+      namespacePath(namespace, `graphs/${encodeURIComponent(graphId)}/runtime-config/environment`),
       { method: 'PUT', body: JSON.stringify({ environment }) },
     )
   }
 
-  updateFlowSecrets(namespace: string, flowId: string, update: RuntimeSecretUpdate) {
+  updateAgentGraphSecrets(namespace: string, graphId: string, update: RuntimeSecretUpdate) {
     return this.api.request<RuntimeConfigView>(
-      namespacePath(namespace, `flows/${encodeURIComponent(flowId)}/runtime-config/secrets`),
+      namespacePath(namespace, `graphs/${encodeURIComponent(graphId)}/runtime-config/secrets`),
       { method: 'PUT', body: JSON.stringify(update) },
     )
   }

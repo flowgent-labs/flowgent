@@ -1,0 +1,17 @@
+services:
+  sonarqube-mcp:
+    image: ${E2E_IMAGE_AUTOTEST_SONARQUBE_MCP}
+    platform: ${E2E_PLATFORM_AUTOTEST_SONARQUBE_MCP}
+    build:
+      context: ${FLOWGENT_REPO_DIR}
+      dockerfile: ${FLOWGENT_E2E_CASE_DIR}/deploy/sonarqube-mcp/Dockerfile
+      args:
+        GO_IMAGE: ${E2E_IMAGE_GOLANG}
+        RUNTIME_IMAGE: ${E2E_IMAGE_ALPINE}
+    profiles:
+    - manual-stdio
+    stdin_open: true
+    tty: false
+    environment:
+      SONARQUBE_TOKEN: ${SONARQUBE_TOKEN:-}
+      SONARQUBE_URL: ${SONARQUBE_URL:-http://sonarqube:9000}

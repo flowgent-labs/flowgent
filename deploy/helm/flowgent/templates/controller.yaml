@@ -35,13 +35,13 @@ subjects:
     name: {{ .Values.controller.serviceAccount.name }}
     namespace: {{ .Release.Namespace }}
 ---
-# Dedicated active-run Flow JobManagers land in their
-# namespace's namespace (flowgent-{namespaceID} — every flow of the same namespace
+# Dedicated active-run AgentGraph JobManagers land in their
+# namespace's namespace (flowgent-{namespaceID} — every graph of the same namespace
 # shares one namespace), so the Controller needs a ClusterRole to
 # create/list/update/delete Deployments across namespaces (buildJMDeployment /
 # gcOrphanedJMDeployments in pkg/controller), plus get/create on namespaces
 # themselves — the Controller lazily creates the workload namespace on
-# first dispatch of any of its flows, since Helm does not pre-create it.
+# first dispatch of any of its graphs, since Helm does not pre-create it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

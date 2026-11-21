@@ -73,7 +73,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/Dockerfile.core
+          file: deploy/docker/Dockerfile
           push: true
           build-args: BUILD_TAGS=x402
           labels: |
@@ -123,6 +123,9 @@ jobs:
         uses: azure/setup-helm@v4
         with:
           version: v3.17.0
+
+      - name: Install Python verification dependencies
+        run: python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
 
       - name: Build and run unit tests
         run: |
@@ -184,7 +187,7 @@ jobs:
     needs: build-and-test
     # A dedicated runner variable lets heavy E2E use a larger worker without
     # serializing it with Docker Compose on the same host.
-    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -192,8 +195,9 @@ jobs:
     outputs:
       summary_base64: ${{ steps.summary.outputs.base64 }}
     env:
+      IN_GFW: "false"
+      IN_CN_GFW: "false"
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-      FLOWGENT_E2E_PG_CONTAINER: sigbot_e2e_164364_postgres
       FLOWGENT_PG_USER: test
       FLOWGENT_PG_PASSWORD: test
       FLOWGENT_PG_DATABASE: flowgent
@@ -219,6 +223,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
+          cache-dependency-path: |
+            go.work.sum
+            pkg/*/go.sum
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -232,29 +239,13 @@ jobs:
 
       - name: Install k3s
         run: |
-          curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+          curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --disable traefik
           kubectl wait --for=condition=Ready node --all --timeout=180s
 
       - name: Install E2E Python dependencies
         run: |
-          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/e2e/requirements.txt
+          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
           python -m playwright install --with-deps chromium
-
-      - name: Start isolated PostgreSQL
-        run: |
-          docker run -d --name "${FLOWGENT_E2E_PG_CONTAINER}" \
-            -e POSTGRES_USER="${FLOWGENT_PG_USER}" \
-            -e POSTGRES_PASSWORD="${FLOWGENT_PG_PASSWORD}" \
-            -e POSTGRES_DB="${FLOWGENT_PG_DATABASE}" \
-            registry.cn-shenzhen.aliyuncs.com/wl4g/pgvector_pgvector:pg16
-          for attempt in $(seq 1 60); do
-            if docker exec "${FLOWGENT_E2E_PG_CONTAINER}" pg_isready -U "${FLOWGENT_PG_USER}" -d "${FLOWGENT_PG_DATABASE}"; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs "${FLOWGENT_E2E_PG_CONTAINER}"
-          exit 1
 
       - name: Pull dirty images for k3s import
         env:
@@ -268,17 +259,26 @@ jobs:
           docker tag "ghcr.io/flowgent-labs/flowgent-web:${DIRTY_TAG}" localhost/flowgent-web:latest
           docker logout ghcr.io
 
+      - name: Build pinned AuthGuard Web dependency
+        # The upstream 1.0.1 web package is private; its release source is public.
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg NODE_IMAGE=docker.io/library/node:22-alpine \
+            --build-arg WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine \
+            --tag ghcr.io/wl4g/authguard-web:1.0.1 \
+            https://github.com/wl4g/authguard.git#afafb6c801c0e1661a1753f4872a11d7b70d5ad5:web
+
       - name: Build console binary
         run: make build:core
 
       - name: Run complete Kubernetes E2E against dirty images
-        run: python -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer k8s --skip-build --clean-after-run
+        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer k8s --e2e-llm-provider official --skip-build --clean-after-run
 
       - name: Capture Kubernetes E2E summary
         id: summary
         if: always()
         run: |
-          summary=use-cases/security-autonomy-fixer/e2e/reports/00_summary.md
+          summary=use-cases/security-autonomy-fixer/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -288,7 +288,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: security-autonomy-fixer-kubernetes-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/security-autonomy-fixer/e2e/reports/
+          path: use-cases/security-autonomy-fixer/reports/
           if-no-files-found: warn
           retention-days: 14
 
@@ -298,7 +298,7 @@ jobs:
     # This job intentionally runs in parallel with e2e-kubernetes on a
     # separate VM, preventing databases, browsers, and image caches from
     # competing for one runner's CPU, memory, and disk.
-    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -306,6 +306,8 @@ jobs:
     outputs:
       summary_base64: ${{ steps.summary.outputs.base64 }}
     env:
+      IN_GFW: "false"
+      IN_CN_GFW: "false"
       FLOWGENT_PG_USER: test
       FLOWGENT_PG_PASSWORD: test
       FLOWGENT_PG_DATABASE: flowgent
@@ -331,6 +333,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
+          cache-dependency-path: |
+            go.work.sum
+            pkg/*/go.sum
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -347,7 +352,7 @@ jobs:
 
       - name: Install E2E Python dependencies
         run: |
-          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/e2e/requirements.txt
+          python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
           python -m playwright install --with-deps chromium
 
       - name: Pull dirty images for Docker Compose
@@ -362,17 +367,26 @@ jobs:
           docker tag "ghcr.io/flowgent-labs/flowgent-web:${DIRTY_TAG}" localhost/flowgent-web:latest
           docker logout ghcr.io
 
+      - name: Build pinned AuthGuard Web dependency
+        # Build the same release consumed by the formal AuthGuard chart.
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg NODE_IMAGE=docker.io/library/node:22-alpine \
+            --build-arg WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine \
+            --tag ghcr.io/wl4g/authguard-web:1.0.1 \
+            https://github.com/wl4g/authguard.git#afafb6c801c0e1661a1753f4872a11d7b70d5ad5:web
+
       - name: Build console binary
         run: make build:core
 
       - name: Run complete Docker Compose E2E against dirty images
-        run: python -u use-cases/security-autonomy-fixer/e2e/runner.py --deployer docker --skip-build --clean-after-run
+        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer docker --e2e-llm-provider official --skip-build --clean-after-run
 
       - name: Capture Docker Compose E2E summary
         id: summary
         if: always()
         run: |
-          summary=use-cases/security-autonomy-fixer/e2e/reports/00_summary.md
+          summary=use-cases/security-autonomy-fixer/reports/00_summary.md
           if [[ -s "${summary}" ]]; then
             echo "base64=$(base64 -w 0 "${summary}")" >> "$GITHUB_OUTPUT"
           fi
@@ -382,7 +396,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: security-autonomy-fixer-docker-${{ needs.build-and-test.outputs.dirty_tag }}
-          path: use-cases/security-autonomy-fixer/e2e/reports/
+          path: use-cases/security-autonomy-fixer/reports/
           if-no-files-found: warn
           retention-days: 14
 

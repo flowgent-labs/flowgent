@@ -11,7 +11,7 @@ import { EmptyState, ErrorState, LoadingState, PageHeader } from '../../shared/c
 export function MemoryPage() {
   const { scope = 'namespace' } = useParams()
   const memoryScope = (
-    ['namespace', 'flow', 'run'].includes(scope) ? scope : 'namespace'
+    ['namespace', 'graph', 'run'].includes(scope) ? scope : 'namespace'
   ) as MemoryScope
   const { t } = useTranslation()
   const namespace = useAppStore((state) => state.namespace)

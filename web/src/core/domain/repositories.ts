@@ -1,64 +1,69 @@
 import type {
   Agent,
-  Flow,
-  FlowRun,
+  AgentGraph,
+  GraphRun,
   HumanApproval,
   KnowledgeEntry,
   LlmProvider,
   McpServer,
   MemoryScope,
   Page,
-  RunFilters,
-  RunMetrics,
-  RunTrace,
+  GraphRunFilters,
+  GraphRunMetrics,
+  GraphRunTrace,
   SkillDefinition,
-  TaskRun,
+  NodeRun,
   NotificationChannel,
   NotificationDelivery,
   RuntimeConfigView,
   RuntimeSecretUpdate,
 } from './types'
 
-export interface FlowRepository {
-  list(namespace: string, signal?: AbortSignal): Promise<Flow[]>
-  get(namespace: string, id: string, signal?: AbortSignal): Promise<Flow>
-  save(namespace: string, flow: Flow, isNew: boolean): Promise<Flow>
+export interface AgentGraphRepository {
+  list(namespace: string, signal?: AbortSignal): Promise<AgentGraph[]>
+  get(namespace: string, id: string, signal?: AbortSignal): Promise<AgentGraph>
+  save(namespace: string, graph: AgentGraph, isNew: boolean): Promise<AgentGraph>
   remove(namespace: string, id: string): Promise<void>
   trigger(namespace: string, id: string, vars: Record<string, unknown>): Promise<string>
 }
 
-export interface RunRepository {
-  list(namespace: string, filters?: RunFilters, signal?: AbortSignal): Promise<Page<FlowRun>>
-  get(namespace: string, id: string, flowId?: string, signal?: AbortSignal): Promise<FlowRun>
-  tasks(namespace: string, id: string, flowId?: string, signal?: AbortSignal): Promise<TaskRun[]>
+export interface GraphRunRepository {
+  list(namespace: string, filters?: GraphRunFilters, signal?: AbortSignal): Promise<Page<GraphRun>>
+  get(namespace: string, id: string, graphId?: string, signal?: AbortSignal): Promise<GraphRun>
+  nodeRuns(
+    namespace: string,
+    id: string,
+    graphId?: string,
+    signal?: AbortSignal,
+  ): Promise<NodeRun[]>
   approvals(
     namespace: string,
     id: string,
-    flowId?: string,
+    graphId?: string,
     signal?: AbortSignal,
   ): Promise<HumanApproval[]>
   resolveApproval(
     namespace: string,
-    runId: string,
+    graphRunId: string,
     approvalId: string,
     decision: 'approve' | 'reject',
-    flowId?: string,
+    graphId?: string,
   ): Promise<void>
-  cancel(namespace: string, id: string, flowId?: string): Promise<void>
-  remove(namespace: string, id: string, flowId?: string): Promise<void>
+  cancel(namespace: string, id: string, graphId?: string): Promise<void>
+  remove(namespace: string, id: string, graphId?: string): Promise<void>
 }
 
 export interface TraceRepository {
-  getRunTrace(
+  getGraphRunTrace(
     namespace: string,
-    runId: string,
-    flowId?: string,
+    graphRunId: string,
+    graphId?: string,
     signal?: AbortSignal,
-  ): Promise<RunTrace>
+  ): Promise<GraphRunTrace>
 }
 
 export interface AnalyticsRepository {
-  metrics(namespace: string, hours: number, signal?: AbortSignal): Promise<RunMetrics>
+  metrics(namespace: string, hours: number, signal?: AbortSignal): Promise<GraphRunMetrics>
 }
 
 export interface KnowledgeRepository {
@@ -96,8 +101,8 @@ export interface NotificationRepository {
 }
 
 export interface RuntimeSkillRepository {
-  list(namespace: string, signal?: AbortSignal): Promise<Flow[]>
-  save(namespace: string, skill: Flow, isNew: boolean): Promise<Flow>
+  list(namespace: string, signal?: AbortSignal): Promise<AgentGraph[]>
+  save(namespace: string, skill: AgentGraph, isNew: boolean): Promise<AgentGraph>
   remove(namespace: string, id: string): Promise<void>
 }
 
@@ -125,22 +130,26 @@ export interface RuntimeConfigRepository {
     environment: Record<string, string>,
   ): Promise<RuntimeConfigView>
   updateNamespaceSecrets(namespace: string, update: RuntimeSecretUpdate): Promise<RuntimeConfigView>
-  getFlow(namespace: string, flowId: string, signal?: AbortSignal): Promise<RuntimeConfigView>
-  updateFlowEnvironment(
+  getAgentGraph(
     namespace: string,
-    flowId: string,
+    graphId: string,
+    signal?: AbortSignal,
+  ): Promise<RuntimeConfigView>
+  updateAgentGraphEnvironment(
+    namespace: string,
+    graphId: string,
     environment: Record<string, string>,
   ): Promise<RuntimeConfigView>
-  updateFlowSecrets(
+  updateAgentGraphSecrets(
     namespace: string,
-    flowId: string,
+    graphId: string,
     update: RuntimeSecretUpdate,
   ): Promise<RuntimeConfigView>
 }
 
 export interface Repositories {
-  flows: FlowRepository
-  runs: RunRepository
+  graphs: AgentGraphRepository
+  graphRuns: GraphRunRepository
   traces: TraceRepository
   analytics: AnalyticsRepository
   knowledge: KnowledgeRepository

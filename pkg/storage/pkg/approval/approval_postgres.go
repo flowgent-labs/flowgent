@@ -59,14 +59,14 @@ func (s *ApprovalPostgresStore) Select(ctx context.Context, req entities.PageReq
 	return entities.NewPage(items, total, req), rows.Err()
 }
 func (s *ApprovalPostgresStore) Save(ctx context.Context, item *entities.ApprovalInfo) error {
-	item.NormalizeAliases()
+	item.Normalize()
 	if item.CreatedAt.IsZero() {
 		return s.CreateApproval(ctx, item)
 	}
 	return s.UpdateApproval(ctx, item)
 }
 func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, item *entities.ApprovalInfo) error {
-	item.NormalizeAliases()
+	item.Normalize()
 	if item.ID == "" {
 		item.ID = uuid.NewString()
 		item.Token = item.ID
@@ -80,11 +80,11 @@ func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, item *entiti
 			item.SubjectID = item.NodeRunID
 		} else {
 			item.SubjectType = "run"
-			item.SubjectID = item.RunID
+			item.SubjectID = item.GraphRunID
 		}
 	}
 	if item.Request == nil {
-		item.Request = map[string]any{"run_id": item.RunID, "node_run_id": item.NodeRunID}
+		item.Request = map[string]any{"graph_run_id": item.GraphRunID, "node_run_id": item.NodeRunID}
 	}
 	item.RequestHash = approvalHash(item.Request)
 	if item.IdempotencyKey == "" {
@@ -96,7 +96,7 @@ func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, item *entiti
 		item.ExpiresAt = &value
 	}
 	var namespace string
-	if err := s.pool.QueryRow(ctx, `SELECT namespace_id FROM orh_run WHERE id=$1`, item.RunID).Scan(&namespace); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT namespace_id FROM orh_graph_run WHERE id=$1`, item.GraphRunID).Scan(&namespace); err != nil {
 		return err
 	}
 	if item.Namespace != "" && item.Namespace != namespace {
@@ -107,7 +107,7 @@ func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, item *entiti
 	if principal == "" {
 		principal = "system:flowgent"
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO orh_approval(id,namespace_id,run_id,node_run_id,type,subject_type,subject_id,request,request_hash,status,expires_at,idempotency_key,description,created_by,updated_by,metadata) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9,'pending',$10,$11,$12,$13,$13,$14)`, item.ID, item.Namespace, item.RunID, item.NodeRunID, item.Type, item.SubjectType, item.SubjectID, approvalJSON(item.Request), item.RequestHash, item.ExpiresAt, item.IdempotencyKey, item.Description, principal, approvalJSON(item.Metadata))
+	_, err := s.pool.Exec(ctx, `INSERT INTO orh_approval(id,namespace_id,graph_run_id,node_run_id,type,subject_type,subject_id,request,request_hash,status,expires_at,idempotency_key,description,created_by,updated_by,metadata) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9,'pending',$10,$11,$12,$13,$13,$14)`, item.ID, item.Namespace, item.GraphRunID, item.NodeRunID, item.Type, item.SubjectType, item.SubjectID, approvalJSON(item.Request), item.RequestHash, item.ExpiresAt, item.IdempotencyKey, item.Description, principal, approvalJSON(item.Metadata))
 	if err == nil {
 		now := time.Now().UTC()
 		item.CreatedAt = now
@@ -117,7 +117,7 @@ func (s *ApprovalPostgresStore) CreateApproval(ctx context.Context, item *entiti
 	return err
 }
 func (s *ApprovalPostgresStore) UpdateApproval(ctx context.Context, item *entities.ApprovalInfo) error {
-	item.NormalizeAliases()
+	item.Normalize()
 	if item.RequestHash == "" || approvalHash(item.Request) != item.RequestHash {
 		return fmt.Errorf("approval request hash mismatch")
 	}

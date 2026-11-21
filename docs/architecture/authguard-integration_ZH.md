@@ -8,8 +8,8 @@ Flowgent API 仅使用官方 AuthGuard Go adapters SDK 校验网关注入的签�
 Adapter 把
 `urn:iam:prod:flowgent:global:<tenant>:namespace/<namespace>/**` Grant 编译为
 嵌入官方 `model.SqlScope` 的 `FlowgentSqlScope`，由 Repository 附加到业务查询。每个
-Repository 声明自身的实体资源路径，例如 `flows/{flow_id}` 或
-`runs/{run_id}/node-runs/{node_run_id}`。Adapter 先根据签名请求中的 `resource_urn`
+Repository 声明自身的实体资源路径，例如 `graphs/{agent_graph_id}` 或
+`runs/{graph_run_id}/node-runs/{node_run_id}`。Adapter 先根据签名请求中的 `resource_urn`
 选择匹配映射，再由 SDK 编译 allow/deny Grant，避免共表别名互相越权。读取、更新、删除
 均附加该谓词；创建与 upsert 则通过候选行查询或事务校验授权范围。Helm 关闭集成时，
 `FlowgentSqlScope` 使用空实现，因此 Flowgent 不会强制依赖 AuthGuard 运行时。

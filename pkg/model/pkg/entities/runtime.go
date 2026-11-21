@@ -6,7 +6,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg"
 )
 
-// RuntimeMode selects the Flink-style runtime topology for a FlowRun.
+// RuntimeMode selects the Flink-style runtime topology for a GraphRun.
 type RuntimeMode string
 
 const (
@@ -29,7 +29,7 @@ func RuntimeModeValue(mode RuntimeMode) string {
 
 // RuntimeResources describes application-mode runtime pod resource overrides.
 // Session-mode runtime resources are deployment-level concerns and are supplied
-// by the Helm release instead of the Flow definition.
+// by the Helm release instead of the AgentGraph definition.
 type RuntimeResources struct {
 	JobManager  *model.SandboxResources `json:"jobmanager,omitempty" yaml:"jobmanager,omitempty"`
 	TaskManager *model.SandboxResources `json:"taskmanager,omitempty" yaml:"taskmanager,omitempty"`

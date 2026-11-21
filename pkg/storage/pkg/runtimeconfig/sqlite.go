@@ -15,24 +15,24 @@ import (
 type sqliteRepository struct{ db *sql.DB }
 
 func (s *sqliteRepository) Get(ctx context.Context, namespace, scope, scopeID string) (*entities.RuntimeConfiguration, error) {
-	flowID, flowName := "", ""
-	if scope == entities.RuntimeConfigScopeFlow {
-		if err := s.db.QueryRowContext(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=? AND (id=? OR name=?) AND status<>'DELETED'`, namespace, scopeID, scopeID).Scan(&flowID, &flowName); err != nil {
+	graphID, graphName := "", ""
+	if scope == entities.RuntimeConfigScopeAgentGraph {
+		if err := s.db.QueryRowContext(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=? AND (id=? OR name=?) AND status<>'DELETED'`, namespace, scopeID, scopeID).Scan(&graphID, &graphName); err != nil {
 			return nil, normalizeNotFound(err)
 		}
 	}
 	scopeWhere, scopeArgs := storage.FlowgentSqlScopeForTable(ctx, "orh_runtime_configuration").SQLiteWhere()
-	args := append([]any{namespace, scope, flowID}, scopeArgs...)
+	args := append([]any{namespace, scope, graphID}, scopeArgs...)
 	var item entities.RuntimeConfiguration
 	var environment, envelope, keys sql.NullString
 	var createdAt, updatedAt string
 	var metadata sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,scope,COALESCE(flow_id,''),environment,sealed_secrets,secret_keys,description,namespace_id,status,created_at,created_by,updated_at,updated_by,row_version,metadata FROM orh_runtime_configuration WHERE namespace_id=?1 AND scope=?2 AND flow_id IS NULLIF(?3,'') AND status<>'DELETED' AND (`+scopeWhere+`)`, args...).Scan(&item.ID, &item.Scope, &item.FlowID, &environment, &envelope, &keys, &item.Description, &item.Namespace, &item.Status, &createdAt, &item.CreatedBy, &updatedAt, &item.UpdatedBy, &item.RowVersion, &metadata)
+	err := s.db.QueryRowContext(ctx, `SELECT id,scope,COALESCE(agent_graph_id,''),environment,sealed_secrets,secret_keys,description,namespace_id,status,created_at,created_by,updated_at,updated_by,row_version,metadata FROM orh_runtime_configuration WHERE namespace_id=?1 AND scope=?2 AND agent_graph_id IS NULLIF(?3,'') AND status<>'DELETED' AND (`+scopeWhere+`)`, args...).Scan(&item.ID, &item.Scope, &item.AgentGraphID, &environment, &envelope, &keys, &item.Description, &item.Namespace, &item.Status, &createdAt, &item.CreatedBy, &updatedAt, &item.UpdatedBy, &item.RowVersion, &metadata)
 	if err != nil {
 		return nil, normalizeNotFound(err)
 	}
-	item.FlowName = flowName
-	item.NormalizeAliases()
+	item.AgentGraphName = graphName
+	item.Normalize()
 	if err = decodeRuntimeConfig(&item, []byte(environment.String), []byte(envelope.String), []byte(keys.String)); err != nil {
 		return nil, err
 	}
@@ -44,8 +44,8 @@ func (s *sqliteRepository) Get(ctx context.Context, namespace, scope, scopeID st
 	return &item, nil
 }
 func (s *sqliteRepository) Upsert(ctx context.Context, item *entities.RuntimeConfiguration) error {
-	item.NormalizeAliases()
-	flowKey := item.FlowKey()
+	item.Normalize()
+	graphKey := item.AgentGraphKey()
 	environment, envelope, keys, err := encodeRuntimeConfig(item)
 	if err != nil {
 		return err
@@ -62,19 +62,19 @@ func (s *sqliteRepository) Upsert(ctx context.Context, item *entities.RuntimeCon
 	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO orh_namespace(id,name,description,created_by,updated_by) VALUES(?,?,?, ?,?)`, item.Namespace, item.Namespace, "Flowgent namespace", item.CreatedBy, item.CreatedBy); err != nil {
 		return err
 	}
-	if item.Scope == entities.RuntimeConfigScopeFlow {
-		if err = tx.QueryRowContext(ctx, `SELECT id,name FROM orh_flow WHERE namespace_id=? AND (id=? OR name=?) AND status<>'DELETED'`, item.Namespace, flowKey, flowKey).Scan(&item.FlowID, &item.FlowName); err != nil {
-			return fmt.Errorf("resolve runtime configuration flow: %w", err)
+	if item.Scope == entities.RuntimeConfigScopeAgentGraph {
+		if err = tx.QueryRowContext(ctx, `SELECT id,name FROM orh_agent_graph WHERE namespace_id=? AND (id=? OR name=?) AND status<>'DELETED'`, item.Namespace, graphKey, graphKey).Scan(&item.AgentGraphID, &item.AgentGraphName); err != nil {
+			return fmt.Errorf("resolve runtime configuration graph: %w", err)
 		}
-		item.ScopeID = item.FlowName
+		item.ScopeID = item.AgentGraphName
 	} else {
-		item.FlowID, item.FlowName, item.ScopeID = "", "", ""
+		item.AgentGraphID, item.AgentGraphName, item.ScopeID = "", "", ""
 	}
 	var id string
 	var rowVersion int64
-	err = tx.QueryRowContext(ctx, `SELECT id,row_version FROM orh_runtime_configuration WHERE namespace_id=? AND scope=? AND flow_id IS NULLIF(?,'')`, item.Namespace, item.Scope, item.FlowID).Scan(&id, &rowVersion)
+	err = tx.QueryRowContext(ctx, `SELECT id,row_version FROM orh_runtime_configuration WHERE namespace_id=? AND scope=? AND agent_graph_id IS NULLIF(?,'')`, item.Namespace, item.Scope, item.AgentGraphID).Scan(&id, &rowVersion)
 	if err == sql.ErrNoRows {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO orh_runtime_configuration(id,namespace_id,scope,flow_id,environment,sealed_secrets,secret_keys,description,status,created_by,updated_by,metadata) VALUES(?,?,?,NULLIF(?,''),?,?,?,?, 'ACTIVE',?,?,?)`, item.ID, item.Namespace, item.Scope, item.FlowID, string(environment), string(envelope), string(keys), item.Description, item.CreatedBy, item.CreatedBy, string(jsonBytes(item.Metadata))); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO orh_runtime_configuration(id,namespace_id,scope,agent_graph_id,environment,sealed_secrets,secret_keys,description,status,created_by,updated_by,metadata) VALUES(?,?,?,NULLIF(?,''),?,?,?,?, 'ACTIVE',?,?,?)`, item.ID, item.Namespace, item.Scope, item.AgentGraphID, string(environment), string(envelope), string(keys), item.Description, item.CreatedBy, item.CreatedBy, string(jsonBytes(item.Metadata))); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -91,9 +91,9 @@ func (s *sqliteRepository) Upsert(ctx context.Context, item *entities.RuntimeCon
 	}
 	if scope.Where != "1=1" {
 		where, args0 := scope.SQLiteWhere()
-		args := append([]any{item.Namespace, item.Scope, item.FlowID}, args0...)
+		args := append([]any{item.Namespace, item.Scope, item.AgentGraphID}, args0...)
 		var visible int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM orh_runtime_configuration WHERE namespace_id=?1 AND scope=?2 AND flow_id IS NULLIF(?3,'') AND (`+where+`)`, args...).Scan(&visible); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM orh_runtime_configuration WHERE namespace_id=?1 AND scope=?2 AND agent_graph_id IS NULLIF(?3,'') AND (`+where+`)`, args...).Scan(&visible); err != nil {
 			return err
 		}
 		if visible != 1 {

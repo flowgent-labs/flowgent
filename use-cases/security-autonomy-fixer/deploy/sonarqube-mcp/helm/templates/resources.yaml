@@ -1,0 +1,79 @@
+{{- if .Values.runtime }}
+apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: {{ .Values.runtime.sonarqube_mcp_name | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.mcp_labels | toJson }}
+  type: Opaque
+  stringData:
+    token: {{ .Values.runtime.token | toJson }}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: {{ .Values.runtime.sonarqube_mcp_name | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.mcp_labels | toJson }}
+  spec:
+    type: NodePort
+    selector:
+      app.kubernetes.io/component: mcp
+      app.kubernetes.io/instance: {{ .Values.runtime.sonarqube_name | toJson }}
+    ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: {{ .Values.runtime.sonarqube_mcp_node_port | toJson }}
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: {{ .Values.runtime.sonarqube_mcp_name | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.mcp_labels | toJson }}
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app.kubernetes.io/component: mcp
+        app.kubernetes.io/instance: {{ .Values.runtime.sonarqube_name | toJson }}
+    template:
+      metadata:
+        labels: {{ .Values.runtime.mcp_labels | toJson }}
+        annotations:
+          flowgent.io/sonarqube-token-hash: {{ .Values.runtime.token_hash | toJson }}
+      spec:
+        containers:
+        - name: mcp
+          image: {{ .Values.runtime.sonarqube_mcp_image | toJson }}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: HOME
+            value: /tmp
+          - name: MCP__UPSTREAM__DEFAULT__ENDPOINT
+            value: {{ .Values.runtime.parameter_9 | toJson }}
+          - name: MCP__UPSTREAM__DEFAULT__AUTH__STATIC__WEB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.runtime.sonarqube_mcp_name | toJson }}
+                key: token
+          - name: MCP__NATIVE_TOOLS__EXPOSE__REGISTER_ALL_TOOLS_BY_DEFAULT
+            value: 'true'
+          ports:
+          - name: http
+            containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+{{- end }}

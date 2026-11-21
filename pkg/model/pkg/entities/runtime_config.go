@@ -3,18 +3,18 @@ package entities
 import "github.com/flowgent-labs/flowgent/common/pkg/secretbox"
 
 const (
-	RuntimeConfigScopeNamespace = "namespace"
-	RuntimeConfigScopeFlow      = "flow"
+	RuntimeConfigScopeNamespace  = "namespace"
+	RuntimeConfigScopeAgentGraph = "graph"
 )
 
 // RuntimeConfiguration is the durable local configuration for one namespace
-// or Flow. Secret values are stored only in SealedSecrets; management clients
+// or AgentGraph. Secret values are stored only in SealedSecrets; management clients
 // receive ConfiguredSecretKeys instead of plaintext or the encrypted envelope.
 type RuntimeConfiguration struct {
 	BaseEntity
 	Scope                string              `json:"scope"`
-	FlowID               string              `json:"flow_id,omitempty"`
-	FlowName             string              `json:"flow_name,omitempty" db:"-"`
+	AgentGraphID         string              `json:"agent_graph_id,omitempty"`
+	AgentGraphName       string              `json:"agent_graph_name,omitempty" db:"-"`
 	ScopeType            string              `json:"-" db:"-"`
 	ScopeID              string              `json:"-" db:"-"`
 	Environment          map[string]string   `json:"environment"`
@@ -22,33 +22,33 @@ type RuntimeConfiguration struct {
 	SealedSecrets        *secretbox.Envelope `json:"-"`
 }
 
-func (r *RuntimeConfiguration) NormalizeAliases() {
+func (r *RuntimeConfiguration) Normalize() {
 	if r.Scope == "" {
 		r.Scope = r.ScopeType
 	}
 	if r.ScopeType == "" {
 		r.ScopeType = r.Scope
 	}
-	if r.FlowName == "" && r.Scope == RuntimeConfigScopeFlow {
-		r.FlowName = r.ScopeID
+	if r.AgentGraphName == "" && r.Scope == RuntimeConfigScopeAgentGraph {
+		r.AgentGraphName = r.ScopeID
 	}
-	if r.ScopeID == "" && r.Scope == RuntimeConfigScopeFlow {
-		if r.FlowName != "" {
-			r.ScopeID = r.FlowName
+	if r.ScopeID == "" && r.Scope == RuntimeConfigScopeAgentGraph {
+		if r.AgentGraphName != "" {
+			r.ScopeID = r.AgentGraphName
 		} else {
-			r.ScopeID = r.FlowID
+			r.ScopeID = r.AgentGraphID
 		}
 	}
 }
 
-func (r *RuntimeConfiguration) FlowKey() string {
-	if r.FlowName != "" {
-		return r.FlowName
+func (r *RuntimeConfiguration) AgentGraphKey() string {
+	if r.AgentGraphName != "" {
+		return r.AgentGraphName
 	}
 	if r.ScopeID != "" {
 		return r.ScopeID
 	}
-	return r.FlowID
+	return r.AgentGraphID
 }
 
 // RuntimeConfigLayer is a redacted configuration layer returned to management
@@ -58,7 +58,7 @@ type RuntimeConfigLayer struct {
 	SecretKeys  []string          `json:"secret_keys"`
 }
 
-// RuntimeConfigView makes inheritance explicit. Local Flow values override
+// RuntimeConfigView makes inheritance explicit. Local AgentGraph values override
 // inherited namespace values; Effective is the resulting redacted contract.
 type RuntimeConfigView struct {
 	Local     RuntimeConfigLayer `json:"local"`
@@ -75,7 +75,7 @@ type RuntimeConfigUpdate struct {
 }
 
 // ResolvedRuntimeConfig is available only to the controller workload. It is
-// materialized into a per-Flow Kubernetes ConfigMap and Secret.
+// materialized into a per-AgentGraph Kubernetes ConfigMap and Secret.
 type ResolvedRuntimeConfig struct {
 	Environment map[string]string `json:"environment"`
 	Secrets     map[string]string `json:"secrets"`

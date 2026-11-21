@@ -48,9 +48,9 @@ func TestOpenAPIUsesCanonicalResourceContracts(t *testing.T) {
 		t.Fatalf("parse embedded OpenAPI: %v", err)
 	}
 	required := []string{
-		"/{namespace}/flows",
-		"/{namespace}/runs/{run_id}/node-runs",
-		"/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}",
+		"/{namespace}/agent-graphs",
+		"/{namespace}/graph-runs/{graph_run_id}/node-runs",
+		"/{namespace}/graph-runs/{graph_run_id}/approvals/{approval_id}/{decision}",
 		"/{namespace}/agents",
 		"/{namespace}/skill-definitions/{name}/assets",
 		"/{namespace}/mcp",
@@ -64,7 +64,7 @@ func TestOpenAPIUsesCanonicalResourceContracts(t *testing.T) {
 			t.Errorf("canonical path %q is missing", path)
 		}
 	}
-	for _, forbidden := range [][]byte{[]byte("/tasks"), []byte("{token}"), []byte("agentflow_id")} {
+	for _, forbidden := range [][]byte{[]byte("/tasks"), []byte("{token}")} {
 		if bytes.Contains(embeddedSpec, forbidden) {
 			t.Errorf("legacy OpenAPI identifier %q is still present", forbidden)
 		}

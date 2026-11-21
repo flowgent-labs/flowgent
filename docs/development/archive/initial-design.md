@@ -55,8 +55,8 @@ Nodes (agent/tool/map/workflow/vote/human/condition)
     - 仅允许：redirect / inject / retry / abort
     - 受限执行（max_injections / max_nodes / allowed_actions）
 3. 状态机（Temporal 风格）
-    - WorkflowRun / TaskRun 持久化
-    - 每个 node 执行 = 一个 TaskRun
+    - WorkgraphRun / NodeRun 持久化
+    - 每个 node 执行 = 一个 NodeRun
     - 所有状态可恢复（resume-safe）
 4. 调度模型
     - 拓扑调度（ready queue）
@@ -359,34 +359,34 @@ type LLMConfig struct {
 type OrchestrationConfig struct {
 	MCPs                 []MCPDef     `json:"mcps" yaml:"mcps"`
 	Agents               []AgentDef   `json:"agents" yaml:"agents"`
-	AgentFlows           AgentFlowCfg `json:"agentflows" yaml:"agentflows"`
-	MaxConcurrentFlows   int          `json:"max-concurrent-flows" yaml:"max-concurrent-flows"`
-	FlowExecutionTimeout string       `json:"flow-execution-timeout" yaml:"flow-execution-timeout"`
+	AgentGraphs           AgentGraphCfg `json:"agentgraphs" yaml:"agentgraphs"`
+	MaxConcurrentAgentGraphs   int          `json:"max-concurrent-graphs" yaml:"max-concurrent-graphs"`
+	AgentGraphExecutionTimeout string       `json:"graph-execution-timeout" yaml:"graph-execution-timeout"`
 	MaxNodeRetries       int          `json:"max-node-retries" yaml:"max-node-retries"`
 }
 
-// AgentFlowCfg configures agentflow discovery sources.
-type AgentFlowCfg struct {
-	Static   StaticAgentFlowCfg   `json:"static" yaml:"static"`
-	Standard StandardAgentFlowCfg `json:"standard" yaml:"standard"`
+// AgentGraphCfg configures agentgraph discovery sources.
+type AgentGraphCfg struct {
+	Static   StaticAgentGraphCfg   `json:"static" yaml:"static"`
+	Standard StandardAgentGraphCfg `json:"standard" yaml:"standard"`
 }
 
-// StaticAgentFlowCfg configures file-based agentflow discovery.
-type StaticAgentFlowCfg struct {
+// StaticAgentGraphCfg configures file-based agentgraph discovery.
+type StaticAgentGraphCfg struct {
 	Enabled bool     `json:"enabled" yaml:"enabled"`
 	Refresh string   `json:"refresh" yaml:"refresh"`
 	Paths   []string `json:"paths" yaml:"paths"`
 }
 
-// StandardAgentFlowCfg configures DB-backed agentflow discovery (UI drag-and-drop).
-type StandardAgentFlowCfg struct {
+// StandardAgentGraphCfg configures DB-backed agentgraph discovery (UI drag-and-drop).
+type StandardAgentGraphCfg struct {
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
 type AppConfig struct {
 	Service  ServiceConfig
-	Flows    []WorkflowSpec
-	SubFlows map[string]WorkflowSpec
+	AgentGraphs    []WorkflowSpec
+	SubGraphs map[string]WorkflowSpec
 }
 
 func (c *AppConfig) GetAgent(name string) *AgentDef {
@@ -409,13 +409,13 @@ func (c *AppConfig) GetMCP(name string) *MCPDef {
 	return nil
 }
 
-func (c *AppConfig) GetFlow(id string) *WorkflowSpec {
-	for i := range c.Flows {
-		if c.Flows[i].ID == id {
-			return &c.Flows[i]
+func (c *AppConfig) GetAgentGraph(id string) *WorkflowSpec {
+	for i := range c.AgentGraphs {
+		if c.AgentGraphs[i].ID == id {
+			return &c.AgentGraphs[i]
 		}
 	}
-	if sw, ok := c.SubFlows[id]; ok {
+	if sw, ok := c.SubGraphs[id]; ok {
 		return &sw
 	}
 	return nil
@@ -559,8 +559,8 @@ llm:
             budget-tokens: 8192
 
 orchestration:
-  max-concurrent-flows: 10
-  flow-execution-timeout: 30m
+  max-concurrent-graphs: 10
+  graph-execution-timeout: 30m
   max-node-retries: 3
   mcps:
     - name: github
@@ -607,7 +607,7 @@ orchestration:
         You must optimize workflow execution while ensuring safety, correctness, and auditability.
       instruction: |-
         You may:
-        - redirect flow
+        - redirect graph
         - request retry
         - inject additional review
         - abort unsafe execution
@@ -699,14 +699,14 @@ orchestration:
       soul: |-
         You handle git operations.
 
-  agentflows:
+  agentgraphs:
     static:
       enabled: true
       refresh: 1m
       paths:
         - sample-security-autonomy-fixer.yaml
     standard:
-      enabled: false  # DB-backed agentflows (UI drag-and-drop)
+      enabled: false  # DB-backed agentgraphs (UI drag-and-drop)
 ```
 
 ---
@@ -928,8 +928,8 @@ nodes:
     type: agent
     agent: issue-detector
     input:
-      workflow_id: "${vars.workflow_id}"
-      run_id: "${vars.run_id}"
+      workagent_graph_id: "${vars.workagent_graph_id}"
+      graph_run_id: "${vars.graph_run_id}"
       issues_found: "${aggregate-issues.results}"
       pr_links: "${create-pr.pr_url}"
       scan_results:
@@ -1124,7 +1124,7 @@ emqx1    | EMQX 5.5.0 is running now!
 
 13，企业级分布式追踪监控排障能力：请问是否可以使用google adk-go sdk 抽象的trace能力(或使用otel)，确保layer1 引擎层的任何node流转都可追踪，最终目标是企业级可靠性(任何节点执行路由错误或异常都应该可轻易debug troubleshooting)，确保最终能在如jasper ui上可看到完整的每一步node执行(且包含此时的上下文输入输出内部状态计算等详情哦)
 
-14，另外请将所有配置和代码里使用 workflow关键字的地方都改为 agentflow 以统一术语(保持与传统workflow见名知其区分)
+14，另外请将所有配置和代码里使用 workflow关键字的地方都改为 agentgraph 以统一术语(保持与传统workflow见名知其区分)
 
 15，请对照 layer2 sample-security-autonomy-fixer.yaml  再增加一个企业级内部 的auto test 代码生成 agents(可根据 confluence 上需求，分析/提炼/整理出高度结构化且详细的开发规划文档，然后基于在每个如 spring boot/flask/react js 等不同前后端类型项目下统一使用 cucumber 实现完整集成测试代码)
 

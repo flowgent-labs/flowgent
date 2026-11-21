@@ -1,0 +1,51 @@
+# Synthetic LDAP principals and groups used only by this use case.
+users:
+- - svc-authguard
+  - AuthGuard Directory Reader
+  - 5001
+  - 5500
+  - Platform Security
+- - platform-security-admin
+  - Global Platform Security Admin
+  - 1001
+  - 5501
+  - Global Security
+- - security-automation-owner
+  - Security Automation Owner
+  - 1005
+  - 5505
+  - Security Engineering
+- - emea-appsec-analyst
+  - EMEA Application Security Analyst
+  - 1002
+  - 5502
+  - EMEA AppSec
+- - model-risk-approver
+  - Global Model Risk Approver
+  - 1003
+  - 5503
+  - Model Risk
+- - regulatory-auditor
+  - Global Regulatory Auditor
+  - 1004
+  - 5504
+  - Internal Audit
+groups:
+- - Users
+  - 5500
+  - Directory service accounts
+- - global-platform-security
+  - 5501
+  - Global security platform administrators
+- - security-automation-owners
+  - 5505
+  - Security autonomy workflow owners
+- - emea-appsec
+  - 5502
+  - EMEA application security analysts
+- - global-model-risk
+  - 5503
+  - Independent model risk approvers
+- - global-regulatory-audit
+  - 5504
+  - Read-only regulatory auditors

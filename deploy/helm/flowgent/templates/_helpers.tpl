@@ -116,13 +116,27 @@ These use Spring Boot relaxed binding (__ → ., __N__ → [N]) parsed by config
 Components that get these: apiserver, jobmanager, taskmanager, sandbox, notifier, controller.
 */}}
 {{- define "flowgent.internalEnv" -}}
-{{- if .Values.postgresql.enabled }}
+{{- if .Values.postgresql.externalSecret }}
+- name: FLOWGENT__STORAGE__POSTGRES__DSN
+  valueFrom:
+    secretKeyRef: {name: {{ .Values.postgresql.externalSecret | quote }}, key: url}
+{{- else if or .Values.postgresql.enabled .Values.storage.postgres.dsn }}
 - name: FLOWGENT__STORAGE__POSTGRES__DSN
   value: {{ include "flowgent.databaseUrl" . | quote }}
 {{- end }}
-{{- if .Values.emqx.enabled }}
+{{- if .Values.emqx.externalSecret }}
+- name: FLOWGENT__MESSAGER__MQTT__BROKER
+  valueFrom:
+    secretKeyRef: {name: {{ .Values.emqx.externalSecret | quote }}, key: broker}
+{{- else if or .Values.emqx.enabled .Values.messaging.mqtt.broker }}
 - name: FLOWGENT__MESSAGER__MQTT__BROKER
   value: {{ include "flowgent.mqttBroker" . | quote }}
+{{- end }}
+{{- if eq .Values.cache.provider "Redis" }}
+{{- $redisSecret := .Values.redis.externalSecret | default (printf "%s-redis" (include "flowgent.fullname" .)) }}
+- name: FLOWGENT_REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef: {name: {{ $redisSecret | quote }}, key: password}
 {{- end }}
 {{- include "flowgent.extraSecretEnv" . }}
 {{- end }}
@@ -140,14 +154,22 @@ setting prevents a second credential configuration path.
 {{- end }}
 {{- end }}
 
-{{/* Database URL — only used when postgresql.enabled=true (internal) */}}
+{{/* Explicit external values take precedence over managed connection defaults. */}}
 {{- define "flowgent.databaseUrl" -}}
-{{- printf "postgres://%s:%s@%s-postgresql:%d/%s?sslmode=disable" "flowgent" "flowgent" (include "flowgent.fullname" .) 5432 "flowgent" }}
+{{- if .Values.storage.postgres.dsn -}}
+{{- .Values.storage.postgres.dsn -}}
+{{- else -}}
+{{- $name := .Values.postgresql.name | default (printf "%s-postgresql" (include "flowgent.fullname" .)) -}}
+{{- printf "postgres://%s:%s@%s.%s.svc.cluster.local:5432/%s?sslmode=disable" (.Values.postgresql.username | urlquery) (.Values.postgresql.password | urlquery) $name (.Values.postgresql.namespace | default .Release.Namespace) .Values.postgresql.database -}}
+{{- end -}}
 {{- end }}
 
-{{/* MQTT broker URL — only used when emqx.enabled=true (internal) */}}
 {{- define "flowgent.mqttBroker" -}}
-{{- printf "tcp://%s-emqx.%s.svc.cluster.local:1883" (include "flowgent.fullname" .) .Release.Namespace }}
+{{- if .Values.messaging.mqtt.broker -}}
+{{- .Values.messaging.mqtt.broker -}}
+{{- else -}}
+{{- printf "tcp://%s-emqx.%s.svc.cluster.local:1883" (include "flowgent.fullname" .) .Release.Namespace -}}
+{{- end -}}
 {{- end }}
 
 {{/* ── Runtime Secret Providers: CSI volumes (GCP / AWS) ── */}}

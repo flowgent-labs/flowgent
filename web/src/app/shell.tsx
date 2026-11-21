@@ -26,8 +26,8 @@ import { namespaceSettingsPath } from './paths'
 
 const globalNav = [
   { to: '/dashboard', label: 'nav.dashboard', icon: CircleGauge },
-  { to: '/runs', label: 'nav.runs', icon: Activity },
-  { to: '/flows', label: 'nav.flows', icon: Waypoints },
+  { to: '/graph-runs', label: 'nav.runs', icon: Activity },
+  { to: '/agent-graphs', label: 'nav.graphs', icon: Waypoints },
   { to: '/memory/namespace', label: 'nav.memory', icon: BrainCircuit },
   { to: '/agents', label: 'nav.agents', icon: Bot },
   { to: '/skills', label: 'nav.skills', icon: Sparkles },

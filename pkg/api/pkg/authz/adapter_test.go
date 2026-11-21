@@ -13,7 +13,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
-	flowstore "github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	flowstore "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
 )
 
 const testSigningKey = "0123456789abcdef0123456789abcdef"
@@ -34,7 +34,7 @@ func TestAdapterCompilesNamespaceScope(t *testing.T) {
 	}
 	accessContext := guardmodel.NewAccessContext(
 		"github:alice", ActionRead,
-		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flow/demo",
+		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/graph/demo",
 		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/**"},
 		nil, 7, time.Minute,
 	)
@@ -63,26 +63,26 @@ func TestAdapterCompilesExactRepositoryResourceScope(t *testing.T) {
 	}
 	accessContext := guardmodel.NewAccessContext(
 		"github:alice", ActionRead,
-		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows/flow-a",
-		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows/flow-a/**"},
+		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs/graph-a",
+		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs/graph-a/**"},
 		nil, 8, time.Minute,
 	)
 	encoded, err := guardutil.SignAccessContext(accessContext, testSigningKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/flows/flow-a", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/agent-graphs/graph-a", nil)
 	req.Header.Set(guardutil.AccessContextHeader, encoded)
 	recorder := httptest.NewRecorder()
 	adapter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scope := storage.FlowgentSqlScopeForResources(r.Context(), storage.ResourcePath(
-			storage.LiteralResource("flows"),
-			storage.ColumnResource(`"agentflow_id"`),
+			storage.LiteralResource("agent-graphs"),
+			storage.ColumnResource(`"agent_graph_name"`),
 		))
-		if scope.Where != `"namespace_id" = ? AND "agentflow_id" = ?` {
+		if scope.Where != `"namespace_id" = ? AND "agent_graph_name" = ?` {
 			t.Fatalf("where = %q", scope.Where)
 		}
-		if len(scope.Args) != 2 || scope.Args[0] != "security-fixer" || scope.Args[1] != "flow-a" {
+		if len(scope.Args) != 2 || scope.Args[0] != "security-fixer" || scope.Args[1] != "graph-a" {
 			t.Fatalf("args = %#v", scope.Args)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -100,15 +100,15 @@ func TestAdapterRepositoryResourceMismatchFailsClosed(t *testing.T) {
 	}
 	accessContext := guardmodel.NewAccessContext(
 		"github:alice", ActionRead,
-		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows/flow-a",
-		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows/flow-a/**"},
+		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs/graph-a",
+		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs/graph-a/**"},
 		nil, 9, time.Minute,
 	)
 	encoded, err := guardutil.SignAccessContext(accessContext, testSigningKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/flows/flow-a", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/agent-graphs/graph-a", nil)
 	req.Header.Set(guardutil.AccessContextHeader, encoded)
 	recorder := httptest.NewRecorder()
 	adapter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,11 +129,11 @@ func TestAdapterRepositoryResourceMismatchFailsClosed(t *testing.T) {
 func TestAdapterRepositoryScopeFiltersDeniedResource(t *testing.T) {
 	db := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	t.Cleanup(func() { _ = db.Close() })
-	repository := flowstore.NewFlowSQLiteStore(db)
-	for _, flowID := range []string{"flow-a", "flow-b"} {
-		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: flowID, Namespace: "security-fixer"}}
+	repository := flowstore.NewAgentGraphSQLiteStore(db)
+	for _, graphID := range []string{"graph-a", "graph-b"} {
+		spec := &entities.AgentGraph{Name: graphID, BaseEntity: entities.BaseEntity{ID: graphID, Namespace: "security-fixer"}}
 		if err := repository.CreateSpec(context.Background(), spec, "fixture", "authz fixture"); err != nil {
-			t.Fatalf("create %s: %v", flowID, err)
+			t.Fatalf("create %s: %v", graphID, err)
 		}
 	}
 
@@ -144,16 +144,16 @@ func TestAdapterRepositoryScopeFiltersDeniedResource(t *testing.T) {
 	}
 	accessContext := guardmodel.NewAccessContext(
 		"github:alice", ActionRead,
-		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows",
+		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs",
 		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/**"},
-		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows/flow-b/**"},
+		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs/graph-b/**"},
 		10, time.Minute,
 	)
 	encoded, err := guardutil.SignAccessContext(accessContext, testSigningKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/flows", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/agent-graphs", nil)
 	req.Header.Set(guardutil.AccessContextHeader, encoded)
 	recorder := httptest.NewRecorder()
 	adapter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -161,8 +161,8 @@ func TestAdapterRepositoryScopeFiltersDeniedResource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if page.TotalCount != 1 || len(page.Items) != 1 || page.Items[0].FlowName != "flow-a" || page.Items[0].FlowID == "flow-a" {
-			t.Fatalf("visible flows = %#v", page.Items)
+		if page.TotalCount != 1 || len(page.Items) != 1 || page.Items[0].AgentGraphName != "graph-a" || page.Items[0].AgentGraphID == "graph-a" {
+			t.Fatalf("visible graphs = %#v", page.Items)
 		}
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(recorder, req)
@@ -180,7 +180,7 @@ func TestEnabledAdapterRejectsMissingContext(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	adapter.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("missing AuthGuard context reached protected handler")
-	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/flows", nil))
+	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/security-fixer/agent-graphs", nil))
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
@@ -194,7 +194,7 @@ func TestAdapterRejectsActionMismatch(t *testing.T) {
 	}
 	accessContext := guardmodel.NewAccessContext(
 		"github:alice", ActionRead,
-		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/flows/demo",
+		"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/agent-graphs/demo",
 		[]string{"urn:iam:prod:flowgent:global:example-corp:namespace/security-fixer/**"},
 		nil, 7, time.Minute,
 	)
@@ -202,7 +202,7 @@ func TestAdapterRejectsActionMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/security-fixer/flows/demo", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/security-fixer/agent-graphs/demo", nil)
 	req.Header.Set(guardutil.AccessContextHeader, encoded)
 	recorder := httptest.NewRecorder()
 	adapter.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -219,7 +219,7 @@ func TestInternalMiddlewareUsesDummySDKScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter.InternalMiddleware(scopeRecorder(t, "1=1", nil)).ServeHTTP(
-		httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/security-fixer/runs", nil),
+		httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/security-fixer/graph-runs", nil),
 	)
 }
 

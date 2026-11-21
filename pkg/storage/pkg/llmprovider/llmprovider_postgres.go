@@ -28,7 +28,7 @@ func NewLlmProviderPostgresStore(pool *pgxpool.Pool) *LlmProviderPostgresStore {
 func (s *LlmProviderPostgresStore) Get(ctx context.Context, namespace, id string) (*entities.LlmProviderInfo, error) {
 	item, err := s.inner.GetScoped(ctx, namespace, id)
 	if err == nil {
-		item.NormalizeAliases()
+		item.Normalize()
 		item.ApiKey = item.CredentialRef
 	}
 	return item, err
@@ -37,14 +37,14 @@ func (s *LlmProviderPostgresStore) List(ctx context.Context, namespace string, r
 	page, err := s.inner.SelectScoped(ctx, namespace, req)
 	if err == nil {
 		for _, item := range page.Items {
-			item.NormalizeAliases()
+			item.Normalize()
 			item.ApiKey = item.CredentialRef
 		}
 	}
 	return page, err
 }
 func (s *LlmProviderPostgresStore) Save(ctx context.Context, e *entities.LlmProviderInfo) error {
-	e.NormalizeAliases()
+	e.Normalize()
 	if e.CredentialRef == "" {
 		e.CredentialRef = e.ApiKey
 	}

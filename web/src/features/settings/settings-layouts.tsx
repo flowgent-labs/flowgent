@@ -1,6 +1,6 @@
 import { Braces, KeyRound } from 'lucide-react'
 import { NavLink, Outlet, useParams } from 'react-router-dom'
-import { flowSettingsPath, namespaceSettingsPath } from '../../app/paths'
+import { graphSettingsPath, namespaceSettingsPath } from '../../app/paths'
 import { useAppStore } from '../../app/store'
 
 export function NamespaceSettingsLayout() {
@@ -29,19 +29,19 @@ export function NamespaceSettingsLayout() {
   )
 }
 
-export function FlowSettingsLayout() {
-  const { namespaceId = '', flowId = '' } = useParams()
+export function AgentGraphSettingsLayout() {
+  const { namespaceId = '', graphId = '' } = useParams()
   const locale = useAppStore((state) => state.locale)
   return (
     <div className="settings-layout">
-      <aside className="settings-sidebar" aria-label="Flow settings">
-        <strong>{locale === 'zh' ? 'Flow 设置' : 'Flow settings'}</strong>
+      <aside className="settings-sidebar" aria-label="AgentGraph settings">
+        <strong>{locale === 'zh' ? 'AgentGraph 设置' : 'AgentGraph settings'}</strong>
         <nav>
-          <NavLink to={flowSettingsPath(namespaceId, flowId, 'environment')}>
+          <NavLink to={graphSettingsPath(namespaceId, graphId, 'environment')}>
             <Braces size={16} />
             {locale === 'zh' ? '环境变量' : 'Environment'}
           </NavLink>
-          <NavLink to={flowSettingsPath(namespaceId, flowId, 'secrets')}>
+          <NavLink to={graphSettingsPath(namespaceId, graphId, 'secrets')}>
             <KeyRound size={16} />
             {locale === 'zh' ? '密钥' : 'Secrets'}
           </NavLink>

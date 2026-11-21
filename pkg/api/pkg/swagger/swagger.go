@@ -83,6 +83,6 @@ func OASInfo() map[string]any {
 		"spec_url": "/_/openapi.yaml",
 		"ui_url":   "/_/swagger-ui",
 		"version":  "3.1.0",
-		"title":    "Flowgent AgentFlow Orchestration API",
+		"title":    "Flowgent AgentGraph Orchestration API",
 	}
 }

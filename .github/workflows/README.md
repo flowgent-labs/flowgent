@@ -18,7 +18,42 @@ recipe is `deploy/docker/Dockerfile.web`.
    upload its reports and screenshots.
 
 The workflow maintains one CI status comment on the PR rather than adding a new
-comment for every revision.
+comment for every revision. E2E summary tables are embedded as Markdown, not
+wrapped in a text code block. Reports share a bounded comment budget so the
+final status and artifact links remain visible.
+
+GitHub-hosted E2E jobs explicitly use `IN_GFW=false` / `IN_CN_GFW=false`:
+runtime images come from their declared upstream registries and do not require
+a developer's jump-host loader. Local CN environments retain their existing
+mirror-pull policy. E2E jobs use Ubuntu 24.04 LTS by default, matching the locally
+verified Kubernetes environment; `FLOWGENT_E2E_RUNNER` can select another runner.
+The disposable k3s cluster disables its default Traefik ingress; the application
+uses its isolated Envoy Gateway and does not need a second host-port ingress.
+SonarQube Compose startup first starts PostgreSQL, SonarQube
+and its credential initializer, generates a real API token, then starts MCP.
+The interpolation placeholder is never used to start the MCP service.
+AuthGuard Web's published package is private, so both E2E jobs build its public
+1.0.1 release source at the pinned commit, matching the vendored chart. Kubernetes
+persistence is owned by the verifier's pgvector StatefulSet; CI does not start a
+second, unused PostgreSQL container. Failed storage startup captures pod, PVC,
+event and provisioner logs before cleanup.
+The E2E Compose override requires Compose 2.24.4 or newer: `!override` replaces
+published ports instead of inheriting production bindings. The formal stack's
+EMQX dashboard uses port 18084, leaving 18083 for AuthGuard management. PostgreSQL
+uses a startup probe so initialization and recovery are not interrupted by its
+liveness probe.
+All three CI jobs share the Go workspace dependency key (`go.work.sum` and
+`pkg/*/go.sum`), so E2E console builds can reuse the validated build cache.
+PostgreSQL starts as UID/GID 999 with kubelet-managed volume ownership; custom
+images can override `postgresql.podSecurityContext`. Hosted runners use direct
+outbound access when no proxy is configured. The isolated Gateway permits only
+same-origin framing of AuthGuard's account-security page.
+
+Complete remediation E2E explicitly selects the official DeepSeek provider and
+requires the `DEEPSEEK_API_KEY` Actions Secret. The deterministic provider remains
+available for orchestration scenarios; it cannot establish repair of real Sonar
+findings. GitHub delivery uses the declared real GitHub MCP and requires
+`FLOWGENT_E2E_GITHUB_TOKEN` with write access to the configured acceptance repository.
 
 ## Merged PR releases
 

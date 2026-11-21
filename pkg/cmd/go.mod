@@ -142,7 +142,6 @@ replace (
 	github.com/flowgent-labs/flowgent/controller => ../controller
 	github.com/flowgent-labs/flowgent/core => ../core
 	github.com/flowgent-labs/flowgent/messager => ../messager
-	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/notifier => ../notifier
 	github.com/flowgent-labs/flowgent/sandbox => ../sandbox

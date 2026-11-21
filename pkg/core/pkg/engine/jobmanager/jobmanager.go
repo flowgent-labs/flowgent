@@ -18,24 +18,26 @@ const runLockTTL = 2 * time.Minute
 // JobManagerConfig is the startup configuration for a JobManager, extracted
 // from the full FlowgentConfig to decouple JM from YAML layout changes.
 type JobManagerConfig struct {
-	FlowExecutionTimeout time.Duration
-	MaxNodeRetries       int
-	MaxConcurrentFlows   int
-	RuntimeClusterID     string
+	AgentGraphExecutionTimeout time.Duration
+	MaxNodeRetries             int
+	MaxConcurrentNodes         int
+	MaxConcurrentAgentGraphs   int
+	RuntimeClusterID           string
 }
 
-// JobManager receives one flow's run submissions and spawns a JobMaster per run.
+// JobManager receives one graph's run submissions and spawns a JobMaster per run.
 type JobManager struct {
-	state           RunStateStore
+	state           GraphRunStateStore
 	rm              resourcemanager.ResourceManager
 	logger          *utils.Logger
 	cfg             *JobManagerConfig
 	knowledgeClient *client.FlowgentClient
 	runLock         lock.DistributedLock
+	activeRuns      sync.Map
 }
 
 // NewJobManager creates the shared JobManager singleton.
-func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
+func NewJobManager(state GraphRunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) (*JobManager, error) {
 	if cfg == nil {
 		cfg = &JobManagerConfig{}
 	}
@@ -51,11 +53,11 @@ func NewJobManager(state RunStateStore, rm resourcemanager.ResourceManager, logg
 // SetKnowledgeClient wires the knowledge client for post-run knowledge extraction.
 func (m *JobManager) SetKnowledgeClient(c *client.FlowgentClient) { m.knowledgeClient = c }
 
-// SetRunLock wires the distributed run claim lock used by StartRunPoller.
+// SetRunLock wires the distributed run claim lock used by StartGraphRunPoller.
 func (m *JobManager) SetRunLock(l lock.DistributedLock) { m.runLock = l }
 
 // Submit spawns a new JobMaster for the given run and blocks until completion.
-func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
+func (m *JobManager) Submit(ctx context.Context, run *entities.GraphRun, spec *entities.AgentGraph) error {
 	mode := run.RuntimeMode
 	if mode == "" {
 		mode = spec.RuntimeMode
@@ -72,8 +74,8 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 	}
 
 	m.logger.Info("jobmanager submit",
-		"run_id", run.ID,
-		"agentflow_id", spec.ResourceName(),
+		"graph_run_id", run.ID,
+		"agent_graph_name", spec.ResourceName(),
 		"runtime_mode", mode,
 		"runtime_cluster_id", m.cfg.RuntimeClusterID,
 		"namespace_id", run.Namespace,
@@ -81,7 +83,7 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 	)
 
 	// Scheduling metadata is immutable for a run. Work from a shallow copy so
-	// a later Flow update cannot retarget already-created execution plans.
+	// a later AgentGraph update cannot retarget already-created execution plans.
 	runSpec := *spec
 	runSpec.RuntimeMode = mode
 	runSpec.Namespace = run.Namespace
@@ -94,17 +96,17 @@ func (m *JobManager) Submit(ctx context.Context, run *entities.FlowRunInfo, spec
 	return master.Execute(ctx, run, &runSpec)
 }
 
-type RunPollerConfig struct {
+type GraphRunPollerConfig struct {
 	RuntimeNamespace string
-	AgentFlowID      string
-	AgentFlowRunID   string
+	AgentGraphName   string
+	GraphRunID       string
 	RuntimeMode      entities.RuntimeMode
 }
 
-// StartRunPoller polls for pending AgentFlowRuns via the apiserver API and
+// StartGraphRunPoller polls for pending GraphRuns via the apiserver API and
 // dispatches only the runs matching this JobManager's runtime boundary.
-func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace string,
-	jm *JobManager, flows map[string]*entities.FlowInfo, cfg RunPollerConfig) {
+func StartGraphRunPoller(ctx context.Context, api *client.FlowgentClient, namespace string,
+	jm *JobManager, graphs map[string]*entities.AgentGraph, cfg GraphRunPollerConfig) {
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -119,42 +121,54 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 		case <-ticker.C:
 			// The physical Kubernetes namespace is a deployment concern and is
 			// deliberately absent from the durable Run schema. Runtime mode plus
-			// Flow/Run identity selects the work; the owning JM then injects its
+			// AgentGraph/Run identity selects the work; the owning JM then injects its
 			// configured namespace before dispatch.
-			page, err := api.ListRuns(ctx, namespace, string(entities.RunPending), string(cfg.RuntimeMode), "", cfg.AgentFlowID, 1, 50)
+			page, err := api.ListGraphRuns(ctx, namespace, "PENDING,RUNNING", string(cfg.RuntimeMode), "", cfg.AgentGraphName, 1, 50)
 			if err != nil {
-				slog.Warn("poller ListRuns failed", "err", err)
+				slog.Warn("poller ListGraphRuns failed", "err", err)
 				continue
 			}
 			for _, run := range page.Items {
-				if !preparePolledRun(run, cfg) {
+				candidate := *run
+				if candidate.Status == entities.GraphRunRunning {
+					candidate.Status = entities.GraphRunPending
+				}
+				if !preparePolledRun(&candidate, cfg) {
 					continue
 				}
 				// Resolve the durable definition for every new run. The initial map is
 				// only a startup fallback; keeping it authoritative would make local
-				// all-in-one execution ignore Flow edits made through the API/UI.
-				spec := flows[run.AgentFlowID]
-				if apiSpec, err := api.GetFlow(ctx, namespace, run.AgentFlowID); err == nil && apiSpec != nil {
+				// all-in-one execution ignore AgentGraph edits made through the API/UI.
+				spec := graphs[run.AgentGraphName]
+				if apiSpec, err := api.GetGraphSnapshot(ctx, namespace, run.ID); err == nil && apiSpec != nil {
 					spec = apiSpec
-					slog.Debug("poller loaded current flow spec via apiserver", "agentFlowID", run.AgentFlowID, "nodes", len(spec.Nodes))
-				} else if spec == nil {
-					slog.Warn("poller flow spec unavailable", "agentFlowID", run.AgentFlowID, "err", err)
+					slog.Debug("poller loaded current graph spec via apiserver", "agentGraphID", run.AgentGraphName, "nodes", len(spec.Nodes))
+				} else {
+					if run.AgentGraphRevisionID != "" {
+						spec = nil
+					}
+					slog.Warn("poller graph spec unavailable", "agentGraphID", run.AgentGraphName, "err", err)
 				}
 				if spec == nil {
 					continue
 				}
-				slog.Debug("poller dispatch run", "run", run.ID[:8], "flow", run.AgentFlowID, "runtime_mode", run.RuntimeMode)
+				slog.Debug("poller dispatch run", "run", run.ID[:8], "graph", run.AgentGraphName, "runtime_mode", run.RuntimeMode)
 				runCtx, release, claimed, err := jm.claimRun(ctx, run.ID)
 				if err != nil {
 					slog.Warn("poller run lock failed", "run", run.ID, "err", err)
 					continue
 				}
 				if !claimed {
-					slog.Debug("poller skip run already claimed", "run", run.ID, "flow", run.AgentFlowID)
+					slog.Debug("poller skip run already claimed", "run", run.ID, "graph", run.AgentGraphName)
 					continue
 				}
-				go func(r *entities.FlowRunInfo, sp *entities.FlowInfo, runCtx context.Context, release func()) {
+				if _, loaded := jm.activeRuns.LoadOrStore(run.ID, true); loaded {
+					release()
+					continue
+				}
+				go func(r *entities.GraphRun, sp *entities.AgentGraph, runCtx context.Context, release func()) {
 					defer release()
+					defer jm.activeRuns.Delete(r.ID)
 					_ = jm.Submit(runCtx, r, sp)
 				}(run, spec, runCtx, release)
 			}
@@ -162,11 +176,11 @@ func StartRunPoller(ctx context.Context, api *client.FlowgentClient, namespace s
 	}
 }
 
-func preparePolledRun(run *entities.FlowRunInfo, cfg RunPollerConfig) bool {
-	if run == nil || run.Status != entities.RunPending {
+func preparePolledRun(run *entities.GraphRun, cfg GraphRunPollerConfig) bool {
+	if run == nil || run.Status != entities.GraphRunPending {
 		return false
 	}
-	if cfg.AgentFlowRunID != "" && run.ID != cfg.AgentFlowRunID {
+	if cfg.GraphRunID != "" && run.ID != cfg.GraphRunID {
 		return false
 	}
 	if run.RuntimeMode != cfg.RuntimeMode {
@@ -224,5 +238,5 @@ func (m *JobManager) claimRun(ctx context.Context, runID string) (context.Contex
 }
 
 func runLockKey(runID string) string {
-	return "flow-run:" + runID
+	return "graph-run:" + runID
 }

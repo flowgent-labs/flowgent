@@ -18,7 +18,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestValidateNamespaceRejectsRouteConflictsCaseInsensitively(t *testing.T) {
-	for _, name := range []string{"flows", "Settings", "NAMESPACES"} {
+	for _, name := range []string{"graphs", "Settings", "NAMESPACES"} {
 		if err := ValidateNamespace(name); err == nil {
 			t.Errorf("ValidateNamespace(%q) unexpectedly succeeded", name)
 		}
@@ -40,7 +40,7 @@ func TestKubernetesName(t *testing.T) {
 	if underscore == hyphen {
 		t.Fatalf("physical-name collision: %q", underscore)
 	}
-	if len(KubernetesName("flowgent-jobmanager", "namespace-with-32-characters-aa", "flow-with-32-characters-long-aaaa")) > 63 {
+	if len(KubernetesName("flowgent-jobmanager", "namespace-with-32-characters-aa", "graph-with-32-characters-long-aaaa")) > 63 {
 		t.Fatal("Kubernetes name exceeds 63 characters")
 	}
 }

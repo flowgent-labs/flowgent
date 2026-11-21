@@ -58,20 +58,20 @@ func startJobManager(cfgPath string) error {
 		namespace = "default"
 	}
 
-	agentFlowID := svcCfg.Runtime.AgentFlowID
-	agentFlowRunID := svcCfg.Runtime.AgentFlowRunID
+	agentGraphID := svcCfg.Runtime.AgentGraphName
+	agentGraphRunID := svcCfg.Runtime.GraphRunID
 	runtimeMode, err := runtimeModeFromConfig(svcCfg)
 	if err != nil {
 		return err
 	}
-	clusterID := runtimeClusterID(svcCfg, runtimeMode, agentFlowRunID)
+	clusterID := runtimeClusterID(svcCfg, runtimeMode, agentGraphRunID)
 	if clusterID == "" {
 		return fmt.Errorf("runtime.runtime_cluster_id is required")
 	}
 	svcCfg.Runtime.RuntimeClusterID = clusterID
 
-	stateClient := &client.RunStateClient{Client: apiClient, Namespace: namespace}
-	taskClient := &client.TaskStateClient{Client: apiClient, Namespace: namespace}
+	stateClient := &client.GraphRunStateClient{Client: apiClient, Namespace: namespace}
+	taskClient := &client.NodeRunStateClient{Client: apiClient, Namespace: namespace}
 	humanClient := &client.HumanApprovalClient{Client: apiClient, Namespace: namespace}
 
 	runtimeNamespace := os.Getenv("POD_NAMESPACE")
@@ -122,10 +122,10 @@ func startJobManager(cfgPath string) error {
 			CredentialEnvSecret:      svcCfg.Runtime.CredentialEnvSecret,
 			OwnerNamespaceID:         namespace,
 			RuntimeClusterID:         clusterID,
-			OwnerFlowID:              agentFlowID,
-			OwnerRunID:               agentFlowRunID,
+			OwnerAgentGraphID:        agentGraphID,
+			OwnerGraphRunID:          agentGraphRunID,
 			RuntimeMode:              runtimeMode,
-			OwnerJobManagerName:      jobManagerDeploymentName(namespace, agentFlowID, agentFlowRunID),
+			OwnerJobManagerName:      jobManagerDeploymentName(namespace, agentGraphID, agentGraphRunID),
 			OwnerJobManagerNamespace: runtimeNamespace,
 			ResourceOwner:            svcCfg.Runtime.ResourceOwner,
 			DeleteOnShutdown:         runtimeMode == entities.RuntimeModeApplication,
@@ -172,32 +172,32 @@ func startJobManager(cfgPath string) error {
 	}
 	jm.SetRunLock(runLock)
 
-	flows := make(map[string]*entities.FlowInfo)
-	if agentFlowID != "" {
-		apiFlows, err := apiClient.ListFlows(context.Background(), namespace)
+	graphs := make(map[string]*entities.AgentGraph)
+	if agentGraphID != "" {
+		apiAgentGraphs, err := apiClient.ListAgentGraphs(context.Background(), namespace)
 		if err == nil {
-			for i := range apiFlows {
-				if apiFlows[i].ID == agentFlowID {
-					flows[apiFlows[i].ID] = &apiFlows[i]
+			for i := range apiAgentGraphs {
+				if apiAgentGraphs[i].ID == agentGraphID {
+					graphs[apiAgentGraphs[i].ID] = &apiAgentGraphs[i]
 				}
 			}
 		}
 	}
 
-	slog.Debug("jobmanager loaded flows", "count", len(flows), "agentFlowID", agentFlowID)
+	slog.Debug("jobmanager loaded graphs", "count", len(graphs), "agentGraphID", agentGraphID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go jobmanager.StartRunPoller(ctx, apiClient, namespace, jm, flows, jobmanager.RunPollerConfig{
+	go jobmanager.StartGraphRunPoller(ctx, apiClient, namespace, jm, graphs, jobmanager.GraphRunPollerConfig{
 		RuntimeNamespace: runtimeNamespace,
-		AgentFlowID:      agentFlowID,
-		AgentFlowRunID:   agentFlowRunID,
+		AgentGraphName:   agentGraphID,
+		GraphRunID:       agentGraphRunID,
 		RuntimeMode:      runtimeMode,
 	})
 	slog.Info("JobManager started",
 		"scheduler", rm.Provider(),
 		"namespace", runtimeNamespace,
-		"agentFlow", agentFlowID,
-		"run", agentFlowRunID,
+		"agentGraph", agentGraphID,
+		"run", agentGraphRunID,
 		"runtime_mode", runtimeMode,
 		"runtime_cluster_id", clusterID,
 	)
@@ -321,17 +321,17 @@ func runtimeSandboxConfig(cfg *config.FlowgentConfig, mode entities.RuntimeMode)
 	return minReplicas, maxReplicas, slots, resources
 }
 
-func jobManagerDeploymentName(namespaceID, flowID, runID string) string {
-	if flowID == "" {
+func jobManagerDeploymentName(namespaceID, graphID, runID string) string {
+	if graphID == "" {
 		return ""
 	}
 	if namespaceID == "" {
 		namespaceID = "default"
 	}
 	if runID == "" {
-		return resourceid.KubernetesName("flowgent-jobmanager", namespaceID, flowID)
+		return resourceid.KubernetesName("flowgent-jobmanager", namespaceID, graphID)
 	}
-	return resourceid.KubernetesName("flowgent-jobmanager", namespaceID, flowID, runID)
+	return resourceid.KubernetesName("flowgent-jobmanager", namespaceID, graphID, runID)
 }
 
 func postgresDSNFromConfig(cfg *config.FlowgentConfig) string {
@@ -369,14 +369,14 @@ func newRunLock(cfg *config.FlowgentConfig, postgresDSN string) (lock.Distribute
 }
 
 func newJobManagerConfig(cfg *config.FlowgentConfig) *jobmanager.JobManagerConfig {
-	timeout, _ := time.ParseDuration(cfg.Orchestration.FlowExecutionTimeout)
+	timeout, _ := time.ParseDuration(cfg.Orchestration.AgentGraphExecutionTimeout)
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
 	return &jobmanager.JobManagerConfig{
-		FlowExecutionTimeout: timeout,
-		MaxNodeRetries:       cfg.Orchestration.MaxNodeRetries,
-		MaxConcurrentFlows:   cfg.Orchestration.MaxConcurrentFlows,
-		RuntimeClusterID:     cfg.Runtime.RuntimeClusterID,
+		AgentGraphExecutionTimeout: timeout,
+		MaxNodeRetries:             cfg.Orchestration.MaxNodeRetries,
+		MaxConcurrentAgentGraphs:   cfg.Orchestration.MaxConcurrentAgentGraphs,
+		RuntimeClusterID:           cfg.Runtime.RuntimeClusterID,
 	}
 }

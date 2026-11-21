@@ -70,7 +70,7 @@ func TestEnsureRuntimeConfigMapReconcilesExistingCopy(t *testing.T) {
 		},
 	})
 
-	checksum, ok := c.ensureRuntimeConfigMap(ctx, clientset, "flowgent-acme", "acme", "flow-a")
+	checksum, ok := c.ensureRuntimeConfigMap(ctx, clientset, "flowgent-acme", "acme", "graph-a")
 	if !ok || checksum == "" {
 		t.Fatalf("ensureRuntimeConfigMap() = %q, %v; want non-empty checksum and success", checksum, ok)
 	}
@@ -125,22 +125,26 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		},
 	})
 
-	spec := &entities.FlowInfo{
-		BaseEntity:  entities.BaseEntity{ID: "my-flow"},
+	spec := &entities.AgentGraph{Name: "my-graph",
+		BaseEntity:  entities.BaseEntity{ID: "my-graph"},
 		RuntimeMode: entities.RuntimeModeApplication,
 	}
-	run := &entities.FlowRunInfo{
-		BaseEntity:  entities.BaseEntity{ID: "run-1", Namespace: "default"},
-		AgentFlowID: spec.ID,
-		RuntimeMode: entities.RuntimeModeApplication,
+	run := &entities.GraphRun{
+		BaseEntity:     entities.BaseEntity{ID: "run-1", Namespace: "default"},
+		AgentGraphName: spec.ID,
+		RuntimeMode:    entities.RuntimeModeApplication,
 	}
 
-	dep := c.buildJMDeployment("flowgent-jobmanager-default-my-flow-run-1", "flowgent-default", "default", spec, run, "app-run-1", "runtime-env", "runtime-secret", "checksum")
+	dep := c.buildJMDeployment("flowgent-jobmanager-default-my-graph-run-1", "flowgent-default", "default", spec, run, "app-run-1", "runtime-env", "runtime-secret", "checksum")
 
 	if len(dep.Spec.Template.Spec.Containers) != 1 {
 		t.Fatalf("expected 1 container, got %d", len(dep.Spec.Template.Spec.Containers))
 	}
 	container := dep.Spec.Template.Spec.Containers[0]
+	wantArgs := []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--agent-graph-name", "my-graph", "--graph-run-id", "run-1"}
+	if !reflect.DeepEqual(container.Args, wantArgs) {
+		t.Fatalf("application JM args = %v, want %v", container.Args, wantArgs)
+	}
 
 	foundMount := false
 	for _, vm := range container.VolumeMounts {
@@ -167,8 +171,8 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		env[e.Name] = e.Value
 	}
 	wantEnv := map[string]string{
-		"FLOWGENT__RUNTIME__AGENT_FLOW_ID":                "my-flow",
-		"FLOWGENT__RUNTIME__AGENT_FLOW_RUN_ID":            "run-1",
+		"FLOWGENT__RUNTIME__AGENT_GRAPH_NAME":             "my-graph",
+		"FLOWGENT__RUNTIME__GRAPH_RUN_ID":                 "run-1",
 		"FLOWGENT__RUNTIME__MODE":                         "application",
 		"FLOWGENT__RUNTIME__RUNTIME_CLUSTER_ID":           "app-run-1",
 		"FLOWGENT__RUNTIME__NAMESPACE__DEFAULT_NAMESPACE": "default",
@@ -183,7 +187,7 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		}
 	}
 	if len(container.EnvFrom) != 3 || container.EnvFrom[0].SecretRef == nil || container.EnvFrom[1].ConfigMapRef == nil || container.EnvFrom[2].SecretRef == nil {
-		t.Fatalf("expected credential, Flow environment and Flow secret envFrom refs, got %#v", container.EnvFrom)
+		t.Fatalf("expected credential, AgentGraph environment and AgentGraph secret envFrom refs, got %#v", container.EnvFrom)
 	}
 	if got := container.EnvFrom[0].SecretRef.Name; got != "flowgent-runtime-env" {
 		t.Fatalf("JM credential secret = %q, want flowgent-runtime-env", got)
@@ -192,10 +196,10 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		t.Fatal("JM credential secret ref should be optional")
 	}
 	if got := container.EnvFrom[1].ConfigMapRef.Name; got != "runtime-env" {
-		t.Fatalf("JM Flow environment ConfigMap = %q", got)
+		t.Fatalf("JM AgentGraph environment ConfigMap = %q", got)
 	}
 	if got := container.EnvFrom[2].SecretRef.Name; got != "runtime-secret" {
-		t.Fatalf("JM Flow secret = %q", got)
+		t.Fatalf("JM AgentGraph secret = %q", got)
 	}
 	if got := dep.Spec.Template.Annotations["flowgent.io/runtime-config-checksum"]; got != "checksum" {
 		t.Fatalf("runtime configuration checksum = %q", got)
@@ -207,7 +211,7 @@ func TestEnsureRuntimeRBACAllowsDeploymentReconciliation(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	c := testController(&config.FlowgentConfig{})
 
-	c.ensureRuntimeRBAC(ctx, clientset, "flowgent-acme", "acme", "flow-a")
+	c.ensureRuntimeRBAC(ctx, clientset, "flowgent-acme", "acme", "graph-a")
 	role, err := clientset.RbacV1().Roles("flowgent-acme").Get(ctx, "flowgent-runtime", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get runtime Role: %v", err)
@@ -231,25 +235,25 @@ func containsString(values []string, target string) bool {
 
 func TestDeleteOrphanedRuntimeConfiguration(t *testing.T) {
 	ctx := context.Background()
-	managedLabels := func(namespaceID, flowID string) map[string]string {
+	managedLabels := func(namespaceID, graphID string) map[string]string {
 		return map[string]string{
-			"flowgent.io/runtime-boundary": "flow-config",
+			"flowgent.io/runtime-boundary": "graph-config",
 			"flowgent.io/managed-by":       runtimeConfigurationManagedBy,
 			"flowgent.io/namespace":        namespaceID,
-			"flowgent.io/flow":             flowID,
+			"flowgent.io/graph":            graphID,
 		}
 	}
 	clientset := fake.NewSimpleClientset(
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "orphan-env", Namespace: "flowgent-default", Labels: managedLabels("default", "deleted-flow")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "orphan-secrets", Namespace: "flowgent-default", Labels: managedLabels("default", "deleted-flow")}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "live-env", Namespace: "flowgent-default", Labels: managedLabels("default", "live-flow")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "live-secrets", Namespace: "flowgent-default", Labels: managedLabels("default", "live-flow")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "other-namespace", Namespace: "flowgent-other", Labels: managedLabels("other", "deleted-flow")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unmanaged", Namespace: "flowgent-default", Labels: map[string]string{"flowgent.io/flow": "deleted-flow"}}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "orphan-env", Namespace: "flowgent-default", Labels: managedLabels("default", "deleted-graph")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "orphan-secrets", Namespace: "flowgent-default", Labels: managedLabels("default", "deleted-graph")}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "live-env", Namespace: "flowgent-default", Labels: managedLabels("default", "live-graph")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "live-secrets", Namespace: "flowgent-default", Labels: managedLabels("default", "live-graph")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "other-namespace", Namespace: "flowgent-other", Labels: managedLabels("other", "deleted-graph")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unmanaged", Namespace: "flowgent-default", Labels: map[string]string{"flowgent.io/graph": "deleted-graph"}}},
 	)
 	c := testController(&config.FlowgentConfig{})
-	c.deleteOrphanedRuntimeConfiguration(ctx, clientset, map[string]*entities.FlowInfo{
-		"live-flow": {BaseEntity: entities.BaseEntity{ID: "live-flow"}},
+	c.deleteOrphanedRuntimeConfiguration(ctx, clientset, map[string]*entities.AgentGraph{
+		"live-graph": {BaseEntity: entities.BaseEntity{ID: "live-graph"}},
 	}, nil)
 
 	if _, err := clientset.CoreV1().ConfigMaps("flowgent-default").Get(ctx, "orphan-env", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -280,11 +284,11 @@ func TestDeleteOrphanedRuntimeConfiguration(t *testing.T) {
 }
 
 // TestRuntimeNamespace verifies namespace is derived per-NAMESPACE (not
-// per-flow), per docs/01-L1-Engine-Architecture.md §1.3 ("each namespace gets
-// its own namespace") / §4.3 ("namespace={namespace}") — flows belonging to the
-// same namespace must resolve to the same namespace, since each flow's
+// per-graph), per docs/01-L1-Engine-Architecture.md §1.3 ("each namespace gets
+// its own namespace") / §4.3 ("namespace={namespace}") — graphs belonging to the
+// same namespace must resolve to the same namespace, since each graph's
 // dedicated JM Deployment is only disambiguated by name
-// (flowgent-jobmanager-{namespaceId}-{flowId}), not by a separate namespace.
+// (flowgent-jobmanager-{namespaceId}-{graphId}), not by a separate namespace.
 // It also mirrors pkg/api/pkg/handler.TestRuntimeNamespace, which must
 // never diverge from this one (see runtimeNamespace doc comment).
 func TestRuntimeNamespace(t *testing.T) {
@@ -293,56 +297,56 @@ func TestRuntimeNamespace(t *testing.T) {
 	})
 
 	t.Run("uses explicit namespace when set", func(t *testing.T) {
-		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}, K8sNamespace: "custom-ns"}
+		spec := &entities.AgentGraph{Name: "my-graph", BaseEntity: entities.BaseEntity{ID: "my-graph"}, K8sNamespace: "custom-ns"}
 		if got := c.runtimeNamespace(spec); got != "custom-ns" {
 			t.Errorf("runtimeNamespace() = %q, want %q", got, "custom-ns")
 		}
 	})
 
 	t.Run("derives from namespacePrefix + namespace ID without double dash", func(t *testing.T) {
-		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow", Namespace: "acme"}}
+		spec := &entities.AgentGraph{Name: "my-graph", BaseEntity: entities.BaseEntity{ID: "my-graph", Namespace: "acme"}}
 		if got := c.runtimeNamespace(spec); got != "flowgent-acme" {
 			t.Errorf("runtimeNamespace() = %q, want %q", got, "flowgent-acme")
 		}
 	})
 
-	t.Run("two flows of the same namespace share one namespace", func(t *testing.T) {
-		spec1 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-a", Namespace: "acme"}}
-		spec2 := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "flow-b", Namespace: "acme"}}
+	t.Run("two graphs of the same namespace share one namespace", func(t *testing.T) {
+		spec1 := &entities.AgentGraph{Name: "graph-a", BaseEntity: entities.BaseEntity{ID: "graph-a", Namespace: "acme"}}
+		spec2 := &entities.AgentGraph{Name: "graph-b", BaseEntity: entities.BaseEntity{ID: "graph-b", Namespace: "acme"}}
 		if ns1, ns2 := c.runtimeNamespace(spec1), c.runtimeNamespace(spec2); ns1 != ns2 {
-			t.Errorf("expected same-namespace flows to share a namespace, got %q vs %q", ns1, ns2)
+			t.Errorf("expected same-namespace graphs to share a namespace, got %q vs %q", ns1, ns2)
 		}
 	})
 
 	t.Run("falls back to controller's default namespace when spec.Namespace is unset", func(t *testing.T) {
-		spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "my-flow"}}
+		spec := &entities.AgentGraph{Name: "my-graph", BaseEntity: entities.BaseEntity{ID: "my-graph"}}
 		if got := c.runtimeNamespace(spec); got != "flowgent-default" {
 			t.Errorf("runtimeNamespace() = %q, want %q", got, "flowgent-default")
 		}
 	})
 }
 
-// TestOwnsFlowUsesPassedPeerSnapshot verifies ownsFlow shards purely off the
+// TestOwnsAgentGraphUsesPassedPeerSnapshot verifies ownsAgentGraph shards purely off the
 // peer slice the caller passes in (see reconcile's single per-tick
 // getPeers() snapshot) rather than re-querying discovery itself — this is
 // what lets one reconcile tick fetch the live K8s pod list exactly once and
-// reuse it for every flow's ownership check and for GC, instead of issuing
-// one API List() call per flow.
-func TestOwnsFlowUsesPassedPeerSnapshot(t *testing.T) {
+// reuse it for every graph's ownership check and for GC, instead of issuing
+// one API List() call per graph.
+func TestOwnsAgentGraphUsesPassedPeerSnapshot(t *testing.T) {
 	c := testController(&config.FlowgentConfig{})
 	c.discovery = fakeDiscovery{self: discovery.Peer{Name: "controller-0"}}
 
 	// No peers discovered (e.g. transient discovery error) → fail open and
-	// own everything, so flows still get dispatched by a lone pod.
-	if !c.ownsFlow(nil, "flow-a") {
-		t.Fatal("ownsFlow(nil peers, ...) should fail open (own everything)")
+	// own everything, so graphs still get dispatched by a lone pod.
+	if !c.ownsAgentGraph(nil, "graph-a") {
+		t.Fatal("ownsAgentGraph(nil peers, ...) should fail open (own everything)")
 	}
 
 	peers := []discovery.Peer{{Name: "controller-0"}, {Name: "controller-1"}}
-	got0 := c.ownsFlow(peers, "flow-a")
-	got1 := discovery.ShardIndex("flow-a", len(peers)) == 0
+	got0 := c.ownsAgentGraph(peers, "graph-a")
+	got1 := discovery.ShardIndex("graph-a", len(peers)) == 0
 	if got0 != got1 {
-		t.Errorf("ownsFlow(peers, %q) = %v, want %v (shard index consistency)", "flow-a", got0, got1)
+		t.Errorf("ownsAgentGraph(peers, %q) = %v, want %v (shard index consistency)", "graph-a", got0, got1)
 	}
 }
 

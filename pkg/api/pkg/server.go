@@ -11,10 +11,10 @@ import (
 // Namespace-scoped paths use {namespace} for multi-namespace isolation.
 func RegisterRESTRoutes(
 	health *handler.HealthHandler,
-	flowDef *handler.FlowDefHandler,
+	graphDef *handler.AgentGraphHandler,
 	agentDef *handler.AgentDefHandler,
 	skillDef *handler.SkillHandler,
-	flowRun *handler.FlowRunHandler,
+	graphRun *handler.GraphRunHandler,
 	human *handler.HumanHandler,
 	notif *handler.NotifierHandler,
 	ws *handler.NotifierWSBridge,
@@ -23,7 +23,7 @@ func RegisterRESTRoutes(
 	webhook *handler.WebhookHandler,
 	knowledgeHandler *handler.KnowledgeHandler,
 	traceHandler *handler.TraceHandler,
-	flowRelease *handler.FlowReleaseHandler,
+	graphRelease *handler.AgentGraphReleaseHandler,
 	runtimeConfig *handler.RuntimeConfigHandler,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -50,62 +50,62 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions/{name}/assets", skillDef.UploadAsset)
 	mux.HandleFunc("POST /api/v1/{namespace}/skill-definitions/{name}/scripts", skillDef.UploadScript)
 
-	// ── AgentFlows (namespace-scoped) ─────────────────────────
-	mux.HandleFunc("GET /api/v1/{namespace}/flows", flowDef.List)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/watch", flowDef.Watch)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows", flowDef.Create)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{id}", flowDef.Get)
-	mux.HandleFunc("PUT /api/v1/{namespace}/flows/{id}", flowDef.Update)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{id}", flowDef.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{id}/trigger", flowDef.TriggerByID)
+	// ── AgentGraphs (namespace-scoped) ─────────────────────────
+	mux.HandleFunc("GET /api/v1/{namespace}/agent-graphs", graphDef.List)
+	mux.HandleFunc("GET /api/v1/{namespace}/agent-graphs/watch", graphDef.Watch)
+	mux.HandleFunc("POST /api/v1/{namespace}/agent-graphs", graphDef.Create)
+	mux.HandleFunc("GET /api/v1/{namespace}/agent-graphs/{id}", graphDef.Get)
+	mux.HandleFunc("PUT /api/v1/{namespace}/agent-graphs/{id}", graphDef.Update)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/agent-graphs/{id}", graphDef.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/agent-graphs/{id}/trigger", graphDef.TriggerByID)
 
-	// Flow-scoped run aliases make exact-Flow grants cover its complete run,
-	// task, approval, and trace surface without trusting query parameters.
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs", flowRun.List)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Get)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}", flowRun.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/cancel", flowRun.Cancel)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/node-runs", flowRun.ListTasks)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/node-runs/{node_run_id}", flowRun.GetTask)
-	mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.ListRunApprovals)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals", human.CreateRunApproval)
-	mux.HandleFunc("POST /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
+	// GraphRun has one canonical REST resource; ownership is enforced in SQL.
 	if traceHandler != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runs/{run_id}/trace", traceHandler.GetRunTrace)
 	}
 	if runtimeConfig != nil {
 		mux.HandleFunc("GET /api/v1/{namespace}/runtime-config", runtimeConfig.GetNamespace)
 		mux.HandleFunc("PUT /api/v1/{namespace}/runtime-config/environment", runtimeConfig.UpdateNamespaceEnvironment)
 		mux.HandleFunc("PUT /api/v1/{namespace}/runtime-config/secrets", runtimeConfig.UpdateNamespaceSecrets)
-		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config", runtimeConfig.GetFlow)
-		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/environment", runtimeConfig.UpdateFlowEnvironment)
-		mux.HandleFunc("PUT /api/v1/{namespace}/flows/{flow_id}/runtime-config/secrets", runtimeConfig.UpdateFlowSecrets)
-		mux.HandleFunc("GET /api/v1/{namespace}/flows/{flow_id}/runtime-config/resolved", runtimeConfig.ResolveFlow)
+		mux.HandleFunc("GET /api/v1/{namespace}/agent-graphs/{agent_graph_id}/runtime-config", runtimeConfig.GetAgentGraph)
+		mux.HandleFunc("PUT /api/v1/{namespace}/agent-graphs/{agent_graph_id}/runtime-config/environment", runtimeConfig.UpdateAgentGraphEnvironment)
+		mux.HandleFunc("PUT /api/v1/{namespace}/agent-graphs/{agent_graph_id}/runtime-config/secrets", runtimeConfig.UpdateAgentGraphSecrets)
+		mux.HandleFunc("GET /api/v1/{namespace}/agent-graphs/{agent_graph_id}/runtime-config/resolved", runtimeConfig.ResolveAgentGraph)
 	}
-	// ── Runtime Skills (kind=skill Flow definitions) ───────────
-	mux.HandleFunc("GET /api/v1/{namespace}/skills", flowDef.ListSkills)
-	mux.HandleFunc("POST /api/v1/{namespace}/skills", flowDef.CreateSkill)
-	mux.HandleFunc("GET /api/v1/{namespace}/skills/{id}", flowDef.GetSkill)
-	mux.HandleFunc("PUT /api/v1/{namespace}/skills/{id}", flowDef.UpdateSkill)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/skills/{id}", flowDef.DeleteSkill)
+	// ── Runtime Skills (kind=skill AgentGraph definitions) ───────────
+	mux.HandleFunc("GET /api/v1/{namespace}/skills", graphDef.ListSkills)
+	mux.HandleFunc("POST /api/v1/{namespace}/skills", graphDef.CreateSkill)
+	mux.HandleFunc("GET /api/v1/{namespace}/skills/{id}", graphDef.GetSkill)
+	mux.HandleFunc("PUT /api/v1/{namespace}/skills/{id}", graphDef.UpdateSkill)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/skills/{id}", graphDef.DeleteSkill)
 
 	// ── Runs (namespace-scoped) ───────────────────────────────
-	mux.HandleFunc("POST /api/v1/{namespace}/runs", flowRun.Create)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs", flowRun.List)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/metrics", flowRun.Metrics)
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}", flowRun.Update)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}", flowRun.Get)
-	mux.HandleFunc("DELETE /api/v1/{namespace}/runs/{run_id}", flowRun.Delete)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/cancel", flowRun.Cancel)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/node-runs", flowRun.CreateTask)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs", flowRun.ListTasks)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", flowRun.GetTask)
-	mux.HandleFunc("PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}", flowRun.UpdateTask)
-	mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/approvals", human.ListRunApprovals)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/approvals", human.CreateRunApproval)
-	mux.HandleFunc("POST /api/v1/{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs", graphRun.Create)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs", graphRun.List)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/metrics", graphRun.Metrics)
+	mux.HandleFunc("PUT /api/v1/{namespace}/graph-runs/{graph_run_id}", graphRun.Update)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}", graphRun.Get)
+	mux.HandleFunc("DELETE /api/v1/{namespace}/graph-runs/{graph_run_id}", graphRun.Delete)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/cancel", graphRun.Cancel)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/claim", graphRun.ClaimNodeRun)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/agents/{agent_name}", graphRun.AgentSnapshot)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/snapshot", graphRun.GraphSnapshot)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/dispatch", graphRun.DispatchNodeRun)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/checkpoints", graphRun.CreateCheckpoint)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/recovery", graphRun.Recovery)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/sandbox-dispatch", graphRun.DispatchSandbox)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/sandbox-result", graphRun.CommitSandboxResult)
+	mux.HandleFunc("PUT /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/checkpoint", graphRun.CommitNodeCheckpoint)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/subgraphs/initialize", graphRun.InitializeSubGraph)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/graph-patches", graphRun.ApplyGraphPatch)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs", graphRun.CreateNodeRun)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs", graphRun.ListNodeRuns)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}", graphRun.GetNodeRun)
+	mux.HandleFunc("PUT /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}", graphRun.UpdateNodeRun)
+	mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/approvals", human.ListRunApprovals)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/approvals", human.CreateRunApproval)
+	mux.HandleFunc("POST /api/v1/{namespace}/graph-runs/{graph_run_id}/approvals/{approval_id}/{decision}", human.ResolveRunApproval)
 	if traceHandler != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/runs/{run_id}/trace", traceHandler.GetRunTrace)
+		mux.HandleFunc("GET /api/v1/{namespace}/graph-runs/{graph_run_id}/trace", traceHandler.GetRunTrace)
 	}
 
 	// ── Namespace approval feed for the notifier ───────────
@@ -141,17 +141,17 @@ func RegisterRESTRoutes(
 	mux.HandleFunc("GET /api/v1/{namespace}/knowledge/{id}", knowledgeHandler.Get)
 	mux.HandleFunc("POST /api/v1/{namespace}/knowledge/search", knowledgeHandler.Search)
 
-	// ── Immutable Flow releases and consumer installations ───
-	if flowRelease != nil {
-		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases", flowRelease.List)
-		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases", flowRelease.Publish)
-		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases/{id}", flowRelease.Get)
-		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/revoke", flowRelease.Revoke)
-		mux.HandleFunc("GET /api/v1/{namespace}/flow-releases/{id}/grants", flowRelease.ListGrants)
-		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/grants", flowRelease.CreateGrant)
-		mux.HandleFunc("DELETE /api/v1/{namespace}/flow-releases/{id}/grants/{grant_id}", flowRelease.DeleteGrant)
-		mux.HandleFunc("POST /api/v1/{namespace}/flow-releases/{id}/install", flowRelease.Install)
-		mux.HandleFunc("GET /api/v1/{namespace}/flow-installations", flowRelease.ListInstallations)
+	// ── Immutable AgentGraph releases and consumer installations ───
+	if graphRelease != nil {
+		mux.HandleFunc("GET /api/v1/{namespace}/graph-releases", graphRelease.List)
+		mux.HandleFunc("POST /api/v1/{namespace}/graph-releases", graphRelease.Publish)
+		mux.HandleFunc("GET /api/v1/{namespace}/graph-releases/{id}", graphRelease.Get)
+		mux.HandleFunc("POST /api/v1/{namespace}/graph-releases/{id}/revoke", graphRelease.Revoke)
+		mux.HandleFunc("GET /api/v1/{namespace}/graph-releases/{id}/grants", graphRelease.ListGrants)
+		mux.HandleFunc("POST /api/v1/{namespace}/graph-releases/{id}/grants", graphRelease.CreateGrant)
+		mux.HandleFunc("DELETE /api/v1/{namespace}/graph-releases/{id}/grants/{grant_id}", graphRelease.DeleteGrant)
+		mux.HandleFunc("POST /api/v1/{namespace}/graph-releases/{id}/install", graphRelease.Install)
+		mux.HandleFunc("GET /api/v1/{namespace}/graph-installations", graphRelease.ListInstallations)
 	}
 	// ── WebSocket (namespace-scoped) ──────────────────────────
 	if ws != nil {
@@ -161,7 +161,7 @@ func RegisterRESTRoutes(
 	// ── SCM Webhooks (GitHub / GitLab / Gitea) ─────────────
 	// Global (not namespace-scoped in the URL): SCM providers cannot include a
 	// namespace path segment. The provider is the last path segment and the
-	// per-provider body adapter normalizes the payload; the matched flow's
+	// per-provider body adapter normalizes the payload; the matched graph's
 	// own namespace_id scopes the created run. See handler/webhook.go.
 	//
 	// The route MUST be registered on a separate, composed mux: on the shared

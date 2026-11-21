@@ -1,0 +1,24 @@
+services:
+  sonar-scanner:
+    image: ${E2E_IMAGE_SONAR_SCANNER}
+    platform: ${E2E_PLATFORM_SONAR_SCANNER}
+    entrypoint: [python3, -u, /opt/e2e/server.py]
+    environment:
+      SONAR_HOST_URL: http://host.docker.internal:9000
+      SONAR_TOKEN: ${SONARQUBE_TOKEN}
+      SONAR_SCANNER_API_TOKEN: ${SONAR_SCANNER_API_TOKEN}
+      SONAR_SCANNER_JAVA_OPTS: -Xms64m -Xmx512m
+      SONAR_USER_HOME: /tmp/.sonar
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-${GH_TOKEN:-}}
+      HTTPS_PROXY: ${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY-http://host.docker.internal:8800}
+      NO_PROXY: localhost,127.0.0.1,host.docker.internal
+    extra_hosts: [host.docker.internal:host-gateway]
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/deploy/sonar-scanner-service/source/server.py:/opt/e2e/server.py:ro
+    - sonar-scanner-cache:/tmp
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_SCANNER_PORT:-39093}:8080
+    mem_limit: 3g
+    cpus: 1
+volumes:
+  sonar-scanner-cache: {}

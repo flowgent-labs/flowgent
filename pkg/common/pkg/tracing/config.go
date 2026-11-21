@@ -22,7 +22,7 @@ type MetricsConfig struct {
 
 // MetricsBoundaries defines histogram bucket boundaries.
 type MetricsBoundaries struct {
-	Task  []float64 `json:"task" yaml:"task"`
+	Task  []float64 `json:"noderun" yaml:"noderun"`
 	LLM   []float64 `json:"llm" yaml:"llm"`
 	Queue []float64 `json:"queue" yaml:"queue"`
 }

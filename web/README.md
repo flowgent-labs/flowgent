@@ -1,8 +1,8 @@
 # Flowgent Web
 
-Enterprise web console for the Flowgent distributed AgentFlow orchestration
+Enterprise web console for the Flowgent distributed AgentGraph orchestration
 engine. The application provides an operational dashboard, a visual 12-node DAG
-editor, run details and OpenTelemetry-correlated TaskRun tracking, scoped
+editor, run details and OpenTelemetry-correlated NodeRun tracking, scoped
 knowledge, runtime Skills, MCP and LLM configuration, and scoped runtime
 configuration. Authentication and authorization are provided by AuthGuard.
 
@@ -57,7 +57,7 @@ context to Flowgent.
 ## Data and secret safety
 
 - Namespace is application state and the first segment of every query key.
-- Flow definitions use the canonical JSON API shape directly.
+- AgentGraph definitions use the canonical JSON API shape directly.
 - Plain-text HTTP errors become a normalized, redacted `ApiError`.
 - LLM, MCP, notification, API key and IAM secret material is handled only by
   backend write-only contracts; masking after download is not a security

@@ -111,7 +111,7 @@ Given that feature description, do this:
 
 4. Load `.specify/templates/spec-template.md` to understand required sections.
 
-5. Follow this execution flow:
+5. Follow this execution graph:
     1. Parse user description from arguments
        If empty: ERROR "No feature description provided"
     2. Extract key concepts from description
@@ -125,7 +125,7 @@ Given that feature description, do this:
        - **LIMIT: Maximum 3 [NEEDS CLARIFICATION] markers total**
        - Prioritize clarifications by impact: scope > security/privacy > user experience > technical details
     4. Fill User Scenarios & Testing section
-       If no clear user flow: ERROR "Cannot determine user scenarios"
+       If no clear user graph: ERROR "Cannot determine user scenarios"
     5. Generate Functional Requirements
        Each requirement must be testable
        Use reasonable defaults for unspecified details (document assumptions in Assumptions section)
@@ -170,7 +170,7 @@ Given that feature description, do this:
       ## Feature Readiness
       
       - [ ] All functional requirements have clear acceptance criteria
-      - [ ] User scenarios cover primary flows
+      - [ ] User scenarios cover primary graphs
       - [ ] Feature meets measurable outcomes defined in Success Criteria
       - [ ] No implementation details leak into specification
       

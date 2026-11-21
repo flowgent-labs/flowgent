@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sonar-scanner-service
+version: 0.1.0
+type: application
+description: Shared deployment template for use-case service fixtures

@@ -88,7 +88,7 @@ api/
 └── [same as backend above]
 
 ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
+└── [platform-specific structure: feature modules, UI graphs, platform tests]
 ```
 
 **Structure Decision**: [Document the selected structure and reference the real

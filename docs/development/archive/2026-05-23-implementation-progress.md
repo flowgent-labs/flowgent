@@ -83,13 +83,13 @@ sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
 | `wallet` | standalone | x402 key management (9901) |
 | `taskmanager` | standalone | SlotWorker pool, MQTT consumer |
 | `jobmanager` | standalone | Control plane, run poller |
-| `controller` | standalone | Sharded flow driver, K8s-aware |
+| `controller` | standalone | Sharded graph driver, K8s-aware |
 | `notification` | standalone | WS push + multi-channel |
 | **`sandbox`** | **standalone** | **Secure script execution (python3/bash/node) with network isolation** |
 | `console` | interactive | REPL for store queries |
 | `version` | info | Print build version |
 | `jobmanager` | standalone | Control plane, run poller |
-| `controller` | standalone | Sharded flow driver, K8s-aware |
+| `controller` | standalone | Sharded graph driver, K8s-aware |
 | `notification` | standalone | WS push + multi-channel |
 | `console` | interactive | REPL for store queries |
 | `version` | info | Print build version |
@@ -104,7 +104,7 @@ sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
 
 **Model definitions** (`src/model/`):
 
-| NodeType (11) | TaskType (12) | Executor file | Wired in router? |
+| NodeType (11) | NodeKind (12) | Executor file | Wired in router? |
 |--------------|---------------|---------------|:---:|
 | `agent` | `agent` | `agent.go` | yes |
 | `tool` | `tool` | `tool.go` | yes |
@@ -113,7 +113,7 @@ sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
 | `committee` | `committee` | `committee.go` | yes |
 | `human` | `human` | `human.go` | yes |
 | `map` | `map` | `map.go` | yes |
-| `agentflow` | `subflow` | `subflow.go` | yes |
+| `subgraph` | `subgraph` | `subgraph.go` | yes |
 | `noop` | `noop` | `noop.go` | yes |
 | `sandbox` | `sandbox` | `sandbox.go` | yes (2026-05-23) |
 | `skill` | `skill` | `skill.go` | yes (2026-05-23) |
@@ -123,7 +123,7 @@ sudo podman save registry.cn-shenzhen.aliyuncs.com/wl4g/flowgent:latest | \
 
 **Gap 2 (FIXED):** `docs/01` section 6.1 updated to "12 Node Types".
 
-**Gap 3 (OPEN):** TaskType is `"subflow"` but NodeType is `"agentflow"` — naming inconsistency.
+**Gap 3 (OPEN):** NodeKind is `"subgraph"` but NodeType is `"subgraph"` — naming inconsistency.
 
 ### 2.2 Scheduler / ResourceManager (2 implementations)
 
@@ -148,7 +148,7 @@ Matches docs. Lock has 3 implementations (richer than documented).
 
 ### 2.4 Wallet / x402 (`pkg/core/pkg/client`, `pkg/wallet/pkg`)
 
-x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pkg/client`, with wallet key management and MQTT signing in `pkg/wallet/pkg`. Matches `docs/02`.
+x402 economic layer: TM-side 402 parsing/policy/facilitator graph in `pkg/core/pkg/client`, with wallet key management and MQTT signing in `pkg/wallet/pkg`. Matches `docs/02`.
 
 ### 2.5 Sandbox (`src/engine/sandbox/`) — NEW 2026-05-23
 
@@ -157,7 +157,7 @@ x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pk
 | `worker.go` | SandboxWorker — consumes plans from queue, executes in isolated env |
 | `inline.go` | InlineWorker — synchronous execution for all-in-one mode |
 
-**Security model:** 3-level policy override (global → flow → node):
+**Security model:** 3-level policy override (global → graph → node):
 - Network: `none` (default), `allowlist`, `denylist`
 - Runtime allowlists (python3, bash, node)
 - Banned command patterns (curl, wget, etc.)
@@ -184,11 +184,11 @@ x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pk
 
 | # | Issue | Where |
 |---|-------|-------|
-| 5 | `docs/00` uses old terminology: `WorkflowSpec`, `WorkflowRun`, `workflow` node type, `vote` node type | ~20+ occurrences |
+| 5 | `docs/00` uses old terminology: `WorkflowSpec`, `WorkgraphRun`, `workflow` node type, `vote` node type | ~20+ occurrences |
 | 6 | `docs/01` §6.1 says "10 Node Types" but code has 12 | Table missing `skill` and `join` |
-| 7 | `docs/01` §6.1 calls it `agentflow` executor; code file is `subflow.go`, TaskType is `"subflow"` | Naming drift |
-| 8 | `docs/01` §16.2 references `etc/flows/`, `etc/agents/`, `etc/skills/` — these directories don't exist | Actual files are in `usecase/` |
-| 9 | `docs/20` references `etc/flows/` for flow YAMLs — doesn't exist | Should be `usecase/flows/` |
+| 7 | `docs/01` §6.1 calls it `agentgraph` executor; code file is `subgraph.go`, NodeKind is `"subgraph"` | Naming drift |
+| 8 | `docs/01` §16.2 references `etc/agent-graphs/`, `etc/agents/`, `etc/skills/` — these directories don't exist | Actual files are in `usecase/` |
+| 9 | `docs/20` references `etc/agent-graphs/` for graph YAMLs — doesn't exist | Should be `usecase/agent-graphs/` |
 
 ### 3.3 Low Priority (stale references)
 
@@ -218,14 +218,14 @@ x402 economic layer: TM-side 402 parsing/policy/facilitator flow in `pkg/core/pk
 ```
 src/
 ├── cmd/flowgent/       # CLI (main.go, launch.go, wallet.go, console.go)
-├── api/                # REST handlers (agentflow, human, health, trigger, openapi)
+├── api/                # REST handlers (agentgraph, human, health, trigger, openapi)
 ├── engine/
 │   ├── jobmanager/     # JobManager + JobMaster (DAG orchestrator)
 │   ├── taskmanager/    # TaskManager + SlotWorker pool + router
 │   ├── scheduler/      # LocalResourceManager + KubernetesResourceManager
 │   ├── executor/       # 12 executor files (2 not wired)
 │   └── discovery/      # IDiscoveryClient (K8s + static)
-├── model/              # AgentFlowSpec, Node, Edge, Run, Task, Memory, Config
+├── model/              # AgentGraphSpec, Node, Edge, Run, Task, Memory, Config
 ├── store/              # Store + MemoryStore (SQLite + PG for each)
 ├── queue/              # Queue (memory + MQTT)
 ├── cache/              # ICache (memory + Redis)
@@ -244,7 +244,7 @@ src/
 ## 6. Test State
 
 ### Unit Tests
-- `tests/e2e/` — E2E tests for engine flow (basic, supervisor, map, retry, DAG, condition, human, webhook, security fixer pipeline, MQTT)
+- `tests/e2e/` — E2E tests for engine graph (basic, supervisor, map, retry, DAG, condition, human, webhook, security fixer pipeline, MQTT)
 - Engine unit tests in `src/engine/jobmanager/*_test.go`
 
 ### Build Status
@@ -256,6 +256,6 @@ src/
 
 1. **Wire `skill` and `sandbox` executors** into the TaskManager router, or remove them if intentionally deferred
 2. **Drop or implement `flowgent sandbox` CLI**, align with docs
-3. **Fix `docs/01` §6.1** — add `skill` and `join` to node type table; rename `agentflow` → `subflow` or vice versa for consistency
-4. **Fix `docs/20`** — DeepSeek env var, stale file references (`etc/flows/` → `usecase/flows/`)
+3. **Fix `docs/01` §6.1** — add `skill` and `join` to node type table; rename `agentgraph` → `subgraph` or vice versa for consistency
+4. **Fix `docs/20`** — DeepSeek env var, stale file references (`etc/agent-graphs/` → `usecase/agent-graphs/`)
 5. **Decide on `etc/` vs `usecase/`** — if `etc/` is runtime config and `usecase/` is sample configs, document the distinction clearly

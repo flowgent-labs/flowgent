@@ -1,0 +1,8 @@
+*
+!Makefile
+!use-cases/
+!use-cases/autotest-generator/
+!use-cases/autotest-generator/deploy/
+!use-cases/autotest-generator/deploy/sonarqube-mcp/
+!use-cases/autotest-generator/deploy/sonarqube-mcp/source/
+!use-cases/autotest-generator/deploy/sonarqube-mcp/source/**

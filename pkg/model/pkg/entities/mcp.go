@@ -21,7 +21,7 @@ type McpInfo struct {
 	Labels     map[string]string `json:"labels,omitempty" yaml:"labels,omitempty" db:"-"`
 }
 
-func (m *McpInfo) NormalizeAliases() {
+func (m *McpInfo) Normalize() {
 	if m.Transport == "" {
 		m.Transport = m.Type
 	}

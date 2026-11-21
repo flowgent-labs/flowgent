@@ -12,7 +12,7 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 	"github.com/flowgent-labs/flowgent/storage/pkg/approval"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 	"github.com/flowgent-labs/flowgent/storage/pkg/knowledge"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,7 +20,7 @@ import (
 // HumanHandler manages human approval endpoints.
 type HumanHandler struct {
 	store       approval.IApprovalStore
-	runs        flowrun.IFlowRunStore
+	runs        graphrun.IGraphRunStore
 	publication knowledge.IKnowledgeStore
 	mqtt        MQTTPublisher
 	logger      *utils.Logger
@@ -34,16 +34,16 @@ type MQTTPublisher interface {
 // NewHumanHandler creates a human approval HTTP handler.
 func NewHumanHandler(s storage.IStorage, mqtt MQTTPublisher, logger *utils.Logger) *HumanHandler {
 	var apStore approval.IApprovalStore
-	var runStore flowrun.IFlowRunStore
+	var runStore graphrun.IGraphRunStore
 	var publicationStore knowledge.IKnowledgeStore
 	switch db := s.DB().(type) {
 	case *pgxpool.Pool:
 		apStore = approval.NewApprovalPostgresStore(db)
-		runStore = flowrun.NewFlowRunPostgresStore(db)
+		runStore = graphrun.NewGraphRunPostgresStore(db)
 		publicationStore = knowledge.NewKnowledgePostgresStore(db)
 	case *sql.DB:
 		apStore = approval.NewApprovalSQLiteStore(db)
-		runStore = flowrun.NewFlowRunSQLiteStore(db)
+		runStore = graphrun.NewGraphRunSQLiteStore(db)
 		publicationStore = knowledge.NewKnowledgeSQLiteStore(db)
 	}
 	return &HumanHandler{store: apStore, runs: runStore, publication: publicationStore, mqtt: mqtt, logger: logger}
@@ -63,8 +63,8 @@ func (h *HumanHandler) ListRunApprovals(w http.ResponseWriter, r *http.Request) 
 	}
 	filtered := make([]*entities.ApprovalInfo, 0)
 	for _, item := range items {
-		item.NormalizeAliases()
-		if item.RunID == run.ID {
+		item.Normalize()
+		if item.GraphRunID == run.ID {
 			filtered = append(filtered, item)
 		}
 	}
@@ -84,10 +84,10 @@ func (h *HumanHandler) CreateRunApproval(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	approval.RunID = run.ID
+	approval.GraphRunID = run.ID
 	approval.Namespace = run.Namespace
 	approval.Status = "PENDING"
-	approval.NormalizeAliases()
+	approval.Normalize()
 	if err := h.store.CreateApproval(r.Context(), &approval); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -124,9 +124,9 @@ func (h *HumanHandler) resolveRunApproval(w http.ResponseWriter, r *http.Request
 	}
 	item, err := h.store.Get(r.Context(), r.PathValue("approval_id"))
 	if item != nil {
-		item.NormalizeAliases()
+		item.Normalize()
 	}
-	if err != nil || item == nil || item.RunID != run.ID {
+	if err != nil || item == nil || item.GraphRunID != run.ID {
 		http.Error(w, "approval not found", http.StatusNotFound)
 		return
 	}
@@ -178,18 +178,18 @@ func (h *HumanHandler) resolveRunApproval(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]any{"status": strings.ToLower(item.Status)})
 }
 
-func (h *HumanHandler) authorizedRun(w http.ResponseWriter, r *http.Request) (*entities.FlowRunInfo, bool) {
+func (h *HumanHandler) authorizedRun(w http.ResponseWriter, r *http.Request) (*entities.GraphRun, bool) {
 	if h.runs == nil {
 		http.Error(w, "run store is not configured", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	run, err := h.runs.Get(r.Context(), requestRunID(r))
+	run, err := h.runs.Get(r.Context(), requestGraphRunID(r))
 	if err != nil || run == nil || run.Namespace != r.PathValue("namespace") {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return nil, false
 	}
-	run.NormalizeAliases()
-	if flowID := r.PathValue("flow_id"); flowID != "" && run.FlowName != flowID && run.AgentFlowID != flowID {
+	run.Normalize()
+	if graphID := r.PathValue("agent_graph_id"); graphID != "" && run.AgentGraphName != graphID && run.AgentGraphID != graphID {
 		http.Error(w, "run not found", http.StatusNotFound)
 		return nil, false
 	}

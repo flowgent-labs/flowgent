@@ -20,7 +20,7 @@ const maxJaegerResponseBytes = 16 << 20
 
 // RunTraceQuery is the narrow backend contract required by the HTTP handler.
 type RunTraceQuery interface {
-	QueryRun(ctx context.Context, runID string) (*entities.RunTrace, error)
+	QueryRun(ctx context.Context, runID string) (*entities.GraphRunTrace, error)
 }
 
 // JaegerClient queries the Jaeger Query API and normalizes its storage-specific
@@ -66,11 +66,11 @@ func NewJaegerClient(endpoint string, timeout time.Duration, lookback string, li
 	}, nil
 }
 
-func (c *JaegerClient) QueryRun(ctx context.Context, runID string) (*entities.RunTrace, error) {
+func (c *JaegerClient) QueryRun(ctx context.Context, runID string) (*entities.GraphRunTrace, error) {
 	queryURL := *c.baseURL
 	queryURL.Path = strings.TrimRight(queryURL.Path, "/") + "/api/traces"
 	queryURL.RawQuery = ""
-	tags, _ := json.Marshal(map[string]string{"run.id": runID})
+	tags, _ := json.Marshal(map[string]string{"graph_run.id": runID})
 	params := queryURL.Query()
 	params.Set("service", c.service)
 	params.Set("lookback", c.lookback)
@@ -99,11 +99,11 @@ func (c *JaegerClient) QueryRun(ctx context.Context, runID string) (*entities.Ru
 		return nil, fmt.Errorf("decode Jaeger traces: %w", err)
 	}
 
-	result := &entities.RunTrace{
-		RunID:     runID,
-		Source:    "jaeger",
-		FetchedAt: time.Now().UTC(),
-		Traces:    make([]entities.TraceInfo, 0, len(payload.Data)),
+	result := &entities.GraphRunTrace{
+		GraphRunID: runID,
+		Source:     "jaeger",
+		FetchedAt:  time.Now().UTC(),
+		Traces:     make([]entities.TraceInfo, 0, len(payload.Data)),
 	}
 	for _, raw := range payload.Data {
 		traceInfo, matches := normalizeTrace(raw, runID)
@@ -172,7 +172,7 @@ func normalizeTrace(raw jaegerTrace, runID string) (entities.TraceInfo, bool) {
 	matches := false
 	for _, rawSpan := range raw.Spans {
 		attributes := tagsToMap(rawSpan.Tags)
-		if fmt.Sprint(attributes["run.id"]) == runID || fmt.Sprint(attributes["flowgent.run_id"]) == runID {
+		if fmt.Sprint(attributes["graph_run.id"]) == runID || fmt.Sprint(attributes["flowgent.graph_run_id"]) == runID {
 			matches = true
 		}
 		process := raw.Processes[rawSpan.ProcessID]

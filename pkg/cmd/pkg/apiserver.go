@@ -33,6 +33,7 @@ func startAPIServer(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer startOTELTracing(cfg, "flowgent-apiserver")()
 
 	slog.Info(fmt.Sprintf("Flowgent API Server starting (pid=%d)", os.Getpid()))
 

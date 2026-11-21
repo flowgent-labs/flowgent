@@ -11,12 +11,12 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
-// fakeTaskState is a no-op TaskStateStore for unit tests that don't
-// exercise persistence (TM calls SaveTask unconditionally — see
+// fakeTaskState is a no-op NodeRunStateStore for unit tests that don't
+// exercise persistence (TM calls SaveNodeRun unconditionally — see
 // taskmanager.go/taskworker.go — so a nil interface would panic).
 type fakeTaskState struct{}
 
-func (fakeTaskState) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error { return nil }
+func (fakeTaskState) SaveNodeRun(ctx context.Context, noderun *entities.NodeRun) error { return nil }
 
 func TestNewTaskManager_Defaults(t *testing.T) {
 	tm, err := NewTaskManager(&TaskManagerConfig{

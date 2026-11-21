@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 )
 
 // ExportAll collects all Flowgent-owned resources from the database.
@@ -14,7 +14,7 @@ func (fc *FlowgentConsole) ExportAll() (*ExportData, error) {
 
 // ExportKinds exports only the specified resource kinds. An empty or nil
 // kinds slice exports all supported kinds.
-// Valid kinds: llm, channel, mcp, skill, agent, flow, flowrun.
+// Valid kinds: llm, channel, mcp, skill, agent, graph, graphrun.
 func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 	ls := fc.getStores()
 	data := &ExportData{}
@@ -62,13 +62,13 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 			}
 		}
 	}
-	if include("flow") || include("skill") {
-		if page, err := ls.flows.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
+	if include("graph") || include("skill") {
+		if page, err := ls.graphs.Select(fc.ctx, fc.namespace, entities.PageRequest{Page: 1, Size: 10000}); err == nil {
 			for _, fv := range page.Items {
 				if fv == nil {
 					continue
 				}
-				spec, _ := ls.flows.GetSpec(fc.ctx, fc.namespace, fv.FlowID)
+				spec, _ := ls.graphs.GetSpec(fc.ctx, fc.namespace, fv.AgentGraphID)
 				if spec == nil {
 					continue
 				}
@@ -77,21 +77,21 @@ func (fc *FlowgentConsole) ExportKinds(kinds []string) (*ExportData, error) {
 						data.Skills = append(data.Skills, *spec)
 					}
 				} else {
-					if include("flow") {
-						data.AgentFlows = append(data.AgentFlows, *spec)
+					if include("graph") {
+						data.AgentGraphs = append(data.AgentGraphs, *spec)
 					}
 				}
 			}
 		}
 	}
-	if include("flowrun") {
-		if page, err := ls.runs.List(fc.ctx, flowrun.ListFilter{
+	if include("graphrun") {
+		if page, err := ls.runs.List(fc.ctx, graphrun.ListFilter{
 			Namespace: fc.namespace,
 			Page:      entities.PageRequest{Page: 1, Size: 10000},
 		}); err == nil {
 			for _, r := range page.Items {
 				if r != nil {
-					data.FlowRuns = append(data.FlowRuns, *r)
+					data.GraphRuns = append(data.GraphRuns, *r)
 				}
 			}
 		}

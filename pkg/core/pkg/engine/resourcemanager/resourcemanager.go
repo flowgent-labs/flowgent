@@ -17,7 +17,7 @@ import (
 
 // ─── ResourceManager interface ─────────────────────────────────
 
-// ResourceManager is the single entry point for task dispatch. The JM calls
+// ResourceManager is the single entry point for noderun dispatch. The JM calls
 // Schedule() and the RM internally handles capacity, TM selection via placement
 // strategy, and deployment to a physical TM slot. Analogous to Flink's SchedulerNG.
 //
@@ -27,7 +27,7 @@ import (
 type ResourceManager interface {
 	Provider() engine.Provider
 	Validate(ctx context.Context) error
-	Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error)
+	Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.NodeResult, error)
 	Shutdown(ctx context.Context) error
 }
 
@@ -43,7 +43,7 @@ type ResourceManagerConfig struct {
 
 	Messager     messager.IMessager
 	Cache        cache.ICache
-	TaskState    taskmanager.TaskStateStore
+	TaskState    taskmanager.NodeRunStateStore
 	ApprovalInfo executor.HumanApprovalStore
 	Logger       *utils.Logger
 
@@ -58,8 +58,8 @@ type ResourceManagerConfig struct {
 	PlanTimeout              time.Duration
 	OwnerNamespaceID         string
 	RuntimeClusterID         string
-	OwnerFlowID              string
-	OwnerRunID               string
+	OwnerAgentGraphID        string
+	OwnerGraphRunID          string
 	RuntimeMode              entities.RuntimeMode
 	OwnerJobManagerName      string
 	OwnerJobManagerNamespace string

@@ -18,7 +18,6 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1 // indirect
 	github.com/flowgent-labs/flowgent/common v0.0.0 // indirect
 	github.com/flowgent-labs/flowgent/messager v0.0.0 // indirect
-	github.com/flowgent-labs/flowgent/migration v0.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -72,7 +71,6 @@ replace (
 	github.com/flowgent-labs/flowgent/common => ../common
 	github.com/flowgent-labs/flowgent/config => ../config
 	github.com/flowgent-labs/flowgent/messager => ../messager
-	github.com/flowgent-labs/flowgent/migration => ../../migration
 	github.com/flowgent-labs/flowgent/model => ../model
 	github.com/flowgent-labs/flowgent/storage => ../storage
 )

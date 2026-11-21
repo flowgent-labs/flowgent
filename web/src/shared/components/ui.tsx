@@ -3,7 +3,7 @@ import { AlertTriangle, Check, Database, LoaderCircle, X } from 'lucide-react'
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import type { RunStatus, TaskStatus } from '../../core/domain/types'
+import type { GraphRunStatus, NodeRunStatus } from '../../core/domain/types'
 
 export function Button({
   variant = 'primary',
@@ -84,7 +84,7 @@ export function PageHeader({
   )
 }
 
-export function StatusBadge({ status }: { status: RunStatus | TaskStatus | string }) {
+export function StatusBadge({ status }: { status: GraphRunStatus | NodeRunStatus | string }) {
   const { t } = useTranslation()
   const normalized = status.toLowerCase()
   return (

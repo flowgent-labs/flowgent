@@ -31,7 +31,7 @@ func TestFlowgentSqlScopeForTableUsesCentralRegistry(t *testing.T) {
 	var resolvedPath FlowgentResourcePath
 	ctx := WithFlowgentSqlScopeResolver(
 		context.Background(),
-		[]string{"flows", "payment-reconciliation"},
+		[]string{"agent-graphs", "payment-reconciliation"},
 		func(path FlowgentResourcePath) (guardmodel.SqlScope, error) {
 			resolvedPath = append(FlowgentResourcePath(nil), path...)
 			return guardmodel.SqlScope{
@@ -41,13 +41,13 @@ func TestFlowgentSqlScopeForTableUsesCentralRegistry(t *testing.T) {
 		},
 	)
 
-	scope := FlowgentSqlScopeForTable(ctx, "orh_flow")
+	scope := FlowgentSqlScopeForTable(ctx, "orh_agent_graph")
 	where, args := scope.SQLiteWhere()
 	if where != `"name" = ?` || !reflect.DeepEqual(args, []any{"payment-reconciliation"}) {
 		t.Fatalf("scope = (%q, %#v)", where, args)
 	}
-	if len(resolvedPath) != 2 || resolvedPath[0].Kind != guardmodel.PathLiteral || resolvedPath[0].Value != "flows" || resolvedPath[1].Kind != guardmodel.PathColumn || resolvedPath[1].Value != `"name"` {
-		t.Fatalf("resolved path = %#v, want flows/{name}", resolvedPath)
+	if len(resolvedPath) != 2 || resolvedPath[0].Kind != guardmodel.PathLiteral || resolvedPath[0].Value != "agent-graphs" || resolvedPath[1].Kind != guardmodel.PathColumn || resolvedPath[1].Value != `"name"` {
+		t.Fatalf("resolved path = %#v, want graphs/{name}", resolvedPath)
 	}
 }
 
@@ -78,8 +78,8 @@ func TestRuntimeSkillAndNodeRunScopesMatchCanonicalAPIRoutes(t *testing.T) {
 		requestPath []string
 		wantLiteral string
 	}{
-		{table: "orh_flow", requestPath: []string{"skills"}, wantLiteral: "skills"},
-		{table: "orh_node_run", requestPath: []string{"runs", "run-a", "node-runs"}, wantLiteral: "node-runs"},
+		{table: "orh_agent_graph", requestPath: []string{"skills"}, wantLiteral: "skills"},
+		{table: "orh_node_run", requestPath: []string{"graph-runs", "run-a", "node-runs"}, wantLiteral: "node-runs"},
 	}
 	for _, test := range tests {
 		t.Run(test.table, func(t *testing.T) {
@@ -113,7 +113,7 @@ func TestFlowgentSqlScopeForUnknownTableFailsClosedWithResolver(t *testing.T) {
 	resolverCalled := false
 	ctx := WithFlowgentSqlScopeResolver(
 		context.Background(),
-		[]string{"flows", "payment-reconciliation"},
+		[]string{"agent-graphs", "payment-reconciliation"},
 		func(FlowgentResourcePath) (guardmodel.SqlScope, error) {
 			resolverCalled = true
 			return guardmodel.SqlScope{Where: "1=1"}, nil

@@ -1,37 +1,41 @@
 # AutoTest Generator
 
-[English](README.md) · [AgentFlow 架构](../../docs/architecture/agent-flow_ZH.md)
+[English](README.md) · [AgentGraph 架构](../../docs/architecture/agent-graph_ZH.md)
 
-AutoTest Generator 是一个 L2 AgentFlow 应用定义，目标是把 Confluence 需求转换为
+AutoTest Generator 是一个 L2 AgentGraph 应用定义，目标是把 Confluence 需求转换为
 结构化测试计划与 Cucumber 测试资产，经评审后通过 GitHub 交付。它目前仍是早期
-应用定义：DAG 已存在，但若干被引用的 Agent、MCP Resource Manifest 和可执行
-E2E 断言尚不存在。
+应用定义：DAG 已存在，但若干被引用的 Agent、MCP Resource Manifest 和完整业务
+E2E 验收尚不存在。
 
 ## 应用边界
 
 ```text
 autotest-generator/
-├── README.md / README_ZH.md
-├── config/
-│   ├── flows/       # 可执行 DAG 定义
-│   ├── agents/      # 当前已有的三个应用 Agent
-│   ├── mcps/        # MCP Server 源码；Resource Manifest 尚不完整
-│   └── skills/      # 预留，目前为空
-└── e2e/             # Runner 脚手架；Verification Guide 当前为空
+├── runner.py
+├── config/                       # application manifests
+├── deploy/
+│   ├── flowgent/                 # official links + config/ + Compose override
+│   ├── sonarqube/                # shared middleware image/chart + existing scaffold
+│   ├── sonarqube_postgres/        # shared middleware deployment
+│   ├── github/                    # complete packaging; optional manual stdio profile
+│   └── sonarqube_mcp/             # complete packaging; optional manual stdio profile
+├── util/                         # shared runtime/report helper entry points
+├── verifier/context.py
+└── VERIFICATION.md               # coverage gaps and confirmation boundary
 ```
 
 | Resource | 规范位置 | 当前职责 |
 |---|---|---|
-| Flow | [`autotest-generation-v1.yaml`](config/flows/autotest-generation-v1.yaml) | 18 Nodes、22 Edges 的应用 DAG |
-| Requirement analyst | [`01-requirement-analyst.yaml`](config/agents/01-requirement-analyst.yaml) | 将 Confluence 内容转换为严格的需求 JSON |
-| Test planner | [`02-test-planner.yaml`](config/agents/02-test-planner.yaml) | 按项目类型生成测试计划 |
-| Test generator | [`03-test-generator.yaml`](config/agents/03-test-generator.yaml) | 生成 Cucumber 与 Step Definition 文件 |
-| Verification | [`e2e/VERIFICATION.md`](e2e/VERIFICATION.md) | 空 Placeholder，不是验收证据 |
+| AgentGraph | [`autotest-generation-v1.yaml`](deploy/flowgent/config/agent-graphs/autotest-generation-v1.yaml) | 18 Nodes、22 Edges 的应用 DAG |
+| Requirement analyst | [`01-requirement-analyst.yaml`](deploy/flowgent/config/agents/01-requirement-analyst.yaml) | 将 Confluence 内容转换为严格的需求 JSON |
+| Test planner | [`02-test-planner.yaml`](deploy/flowgent/config/agents/02-test-planner.yaml) | 按项目类型生成测试计划 |
+| Test generator | [`03-test-generator.yaml`](deploy/flowgent/config/agents/03-test-generator.yaml) | 生成 Cucumber 与 Step Definition 文件 |
+| Verification | [`VERIFICATION.md`](VERIFICATION.md) | 覆盖缺口，不是验收证据 |
 
 YAML Manifest 是可执行事实源。本 README 同时说明预期 Pipeline 和当前阻止其
 自包含运行的缺口。
 
-## Flow 契约
+## AgentGraph 契约
 
 ```mermaid
 flowchart TD
@@ -53,30 +57,30 @@ flowchart TD
     N --> E[end]
 ```
 
-Flow 声明工作日 Cron Trigger 和 GitHub Pull-request Webhook。
+AgentGraph 声明工作日 Cron Trigger 和 GitHub Pull-request Webhook。
 `generate-tests` Map 以并发度 `3` 处理 `spring-boot`、`flask` 与 `react`。
 Manifest 包含 7 个 Tool Nodes、6 个 Agent Nodes，以及各一个 `map`、
 `committee`、`supervisor`、`condition` 和 `noop`。
 
-当前只存在上表中的三个 Agent Resource。Flow 还引用 `security-reviewer`、
+当前只存在上表中的三个 Agent Resource。AgentGraph 还引用 `security-reviewer`、
 `quality-reviewer`、`arch-reviewer` 和 `supervisor`。它调用 `confluence` 与
 `github`，但本目录尚无对应这两个 MCP Identity 的可导入 Resource Manifest。
 
 ## 当前限制
 
-1. Flow 引用的四个 Review/Control Agent Resource 缺失。
+1. AgentGraph 引用的四个 Review/Control Agent Resource 缺失。
 2. 可导入的 Confluence 与 GitHub MCP Resource Definition 缺失；已有 MCP Go
-   源码目录本身不能满足 Flow 的 Resource Reference。
+   源码目录本身不能满足 AgentGraph 的 Resource Reference。
 3. GitHub 交付 Nodes 在 `generate-tests` Map Child Scope 之外使用 `${item}`。
    Manifest 在可执行前需要明确的 Repository Source 与 Map/Join Data Contract。
 4. `approved=false` Edge 指回 `generate-plan`，但当前 Node State 是 One-shot，
    不会产生新一轮 Planning。
 5. Email 与 Teams Action 被路由到 `github` Tool Identity，但本目录未定义提供
    这些 Action 的 MCP Contract。
-6. [`e2e/VERIFICATION.md`](e2e/VERIFICATION.md) 为空；该应用目前没有文档化的
+6. [`VERIFICATION.md`](VERIFICATION.md) 记录了五组可执行基础校验及业务契约缺口；该应用目前没有文档化的
    E2E 验收证据。
 
-运行凭据 **MUST** 通过部署 Secret 或环境契约注入，**MUST NOT** 写入 Flow、
+运行凭据 **MUST** 通过部署 Secret 或环境契约注入，**MUST NOT** 写入 AgentGraph、
 Agent 文件或 README。
 
 ## 预期行为

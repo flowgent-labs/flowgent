@@ -1,0 +1,82 @@
+{{- if .Values.runtime }}
+{{- $r := .Values.runtime }}
+{{- range $volume, $size := dict "data" "4Gi" "extensions" "1Gi" "logs" "1Gi" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $r.name }}-{{ $volume }}
+  namespace: {{ $r.namespace }}
+  labels: {{ toYaml $r.labels | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: {{ $size }}}}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $r.name }}
+  namespace: {{ $r.namespace }}
+  labels: {{ toYaml $r.labels | nindent 4 }}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/instance: {{ $r.name }}
+  ports: [{name: http, port: 9000, targetPort: http, nodePort: {{ $r.nodePort }}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $r.name }}
+  namespace: {{ $r.namespace }}
+  labels: {{ toYaml $r.labels | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      app.kubernetes.io/instance: {{ $r.name }}
+  template:
+    metadata:
+      labels: {{ toYaml $r.labels | nindent 8 }}
+    spec:
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: sonarqube
+          image: {{ $r.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: SONAR_JDBC_URL, value: "jdbc:postgresql://{{ $r.postgresName }}:5432/sonarqube"}
+            - name: SONAR_JDBC_USERNAME
+              valueFrom:
+                secretKeyRef: {name: {{ $r.name }}, key: database-username}
+            - name: SONAR_JDBC_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ $r.name }}, key: database-password}
+            - {name: SONAR_WEB_PORT, value: "9000"}
+            - {name: SONAR_SEARCH_JAVAOPTS, value: {{ $r.javaOptions | default "-Xms128m -Xmx256m" | quote }}}
+            - {name: SONAR_WEB_JAVAOPTS, value: {{ $r.javaOptions | default "-Xms128m -Xmx256m" | quote }}}
+            - {name: SONAR_CE_JAVAOPTS, value: {{ $r.javaOptions | default "-Xms128m -Xmx256m" | quote }}}
+            - {name: SONAR_FORCE_AUTHENTICATION, value: "false"}
+            - {name: SONAR_ES_BOOTSTRAP_CHECKS_DISABLE, value: "true"}
+          ports: [{name: http, containerPort: 9000}]
+          readinessProbe:
+            httpGet: {path: /api/system/status, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: {cpu: 250m, memory: 768Mi}
+            limits: {cpu: 1500m, memory: 2Gi}
+          volumeMounts:
+            {{- range $volume := list "data" "extensions" "logs" }}
+            - {name: {{ $volume }}, mountPath: "/opt/sonarqube/{{ $volume }}"}
+            {{- end }}
+      volumes:
+        {{- range $volume := list "data" "extensions" "logs" }}
+        - name: {{ $volume }}
+          persistentVolumeClaim: {claimName: "{{ $r.name }}-{{ $volume }}"}
+        {{- end }}
+{{- end }}

@@ -1,0 +1,13 @@
+services:
+  mock-llm:
+    image: ${E2E_IMAGE_PYTHON}
+    networks:
+      default:
+        aliases:
+        - mock-llm.e2e-flowgent-mock-llm.svc.cluster.local
+    entrypoint:
+    - python3
+    - /opt/e2e/server.py
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/deploy/mock-llm-service/source/server.py:/opt/e2e/server.py:ro
+    platform: ${E2E_PLATFORM_PYTHON}

@@ -10,14 +10,14 @@ import (
 )
 
 func TestPreparePolledRunUsesRuntimeBoundaryNamespace(t *testing.T) {
-	run := &entities.FlowRunInfo{
+	run := &entities.GraphRun{
 		BaseEntity:  entities.BaseEntity{ID: "run-1"},
-		Status:      entities.RunPending,
+		Status:      entities.GraphRunPending,
 		RuntimeMode: entities.RuntimeModeApplication,
 	}
-	cfg := RunPollerConfig{
+	cfg := GraphRunPollerConfig{
 		RuntimeNamespace: "flowgent-tenant-a",
-		AgentFlowRunID:   "run-1",
+		GraphRunID:       "run-1",
 		RuntimeMode:      entities.RuntimeModeApplication,
 	}
 	if !preparePolledRun(run, cfg) {
@@ -31,14 +31,14 @@ func TestPreparePolledRunUsesRuntimeBoundaryNamespace(t *testing.T) {
 func TestPreparePolledRunRejectsDifferentRuntimeBoundary(t *testing.T) {
 	tests := []struct {
 		name string
-		run  *entities.FlowRunInfo
+		run  *entities.GraphRun
 	}{
 		{name: "nil", run: nil},
-		{name: "completed", run: &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "run-1"}, Status: entities.RunCompleted, RuntimeMode: entities.RuntimeModeApplication}},
-		{name: "other run", run: &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "run-2"}, Status: entities.RunPending, RuntimeMode: entities.RuntimeModeApplication}},
-		{name: "other mode", run: &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "run-1"}, Status: entities.RunPending, RuntimeMode: entities.RuntimeModeSession}},
+		{name: "completed", run: &entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "run-1"}, Status: entities.GraphRunCompleted, RuntimeMode: entities.RuntimeModeApplication}},
+		{name: "other run", run: &entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "run-2"}, Status: entities.GraphRunPending, RuntimeMode: entities.RuntimeModeApplication}},
+		{name: "other mode", run: &entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "run-1"}, Status: entities.GraphRunPending, RuntimeMode: entities.RuntimeModeSession}},
 	}
-	cfg := RunPollerConfig{AgentFlowRunID: "run-1", RuntimeMode: entities.RuntimeModeApplication}
+	cfg := GraphRunPollerConfig{GraphRunID: "run-1", RuntimeMode: entities.RuntimeModeApplication}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if preparePolledRun(test.run, cfg) {

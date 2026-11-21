@@ -5,6 +5,7 @@ package seccomp
 import (
 	"errors"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/flowgent-labs/flowgent/model/pkg"
 )
@@ -20,8 +21,17 @@ func BuildFilter(policy *model.NetworkPolicy) (*Filter, error) { return &Filter{
 
 // ScriptCmd runs a script without seccomp isolation on non-Linux.
 func (f *Filter) ScriptCmd(scriptPath, runtimeName, workspace string) (*exec.Cmd, <-chan *Notifier, error) {
-	cmd := exec.Command("bash", scriptPath)
-	cmd.Dir = workspace
+	extension := "sh"
+	if runtimeName == "python3" {
+		extension = "py"
+	} else if runtimeName == "node" {
+		extension = "js"
+	}
+	if runtimeName == "" {
+		runtimeName = "bash"
+	}
+	cmd := exec.Command(runtimeName, filepath.Join(scriptPath, "script."+extension))
+	cmd.Dir = scriptPath
 	return cmd, nil, nil
 }
 

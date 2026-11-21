@@ -14,7 +14,7 @@ import (
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storage "github.com/flowgent-labs/flowgent/storage/pkg"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
+	graph "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
 	runtimeconfig "github.com/flowgent-labs/flowgent/storage/pkg/runtimeconfig"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,10 +29,10 @@ const (
 var runtimeEnvironmentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // RuntimeConfigHandler owns inheritance, validation, redaction, and encryption
-// for namespace/Flow runtime settings. The repository stores only local layers.
+// for namespace/AgentGraph runtime settings. The repository stores only local layers.
 type RuntimeConfigHandler struct {
 	repo      runtimeconfig.IRepository
-	flows     flow.IFlowInfoStore
+	graphs    graph.IAgentGraphStore
 	secretBox secretbox.ISecretCipher
 }
 
@@ -41,12 +41,12 @@ func NewRuntimeConfigHandler(s storage.IStorage, encryption config.NotifierSecre
 	if err != nil {
 		return nil, err
 	}
-	var flows flow.IFlowInfoStore
+	var graphs graph.IAgentGraphStore
 	switch db := s.DB().(type) {
 	case *sql.DB:
-		flows = flow.NewFlowSQLiteStore(db)
+		graphs = graph.NewAgentGraphSQLiteStore(db)
 	case *pgxpool.Pool:
-		flows = flow.NewFlowPostgresStore(db)
+		graphs = graph.NewAgentGraphPostgresStore(db)
 	default:
 		return nil, fmt.Errorf("runtime configuration: unsupported store %T", s.DB())
 	}
@@ -54,7 +54,7 @@ func NewRuntimeConfigHandler(s storage.IStorage, encryption config.NotifierSecre
 	if err != nil {
 		return nil, err
 	}
-	return &RuntimeConfigHandler{repo: repo, flows: flows, secretBox: cipher}, nil
+	return &RuntimeConfigHandler{repo: repo, graphs: graphs, secretBox: cipher}, nil
 }
 
 func (h *RuntimeConfigHandler) GetNamespace(w http.ResponseWriter, r *http.Request) {
@@ -73,47 +73,47 @@ func (h *RuntimeConfigHandler) UpdateNamespaceSecrets(w http.ResponseWriter, r *
 	h.updateSecrets(w, r, entities.RuntimeConfigScopeNamespace, r.PathValue("namespace"))
 }
 
-func (h *RuntimeConfigHandler) GetFlow(w http.ResponseWriter, r *http.Request) {
-	if !h.requireFlow(w, r) {
+func (h *RuntimeConfigHandler) GetAgentGraph(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAgentGraph(w, r) {
 		return
 	}
-	h.get(w, r, entities.RuntimeConfigScopeFlow, r.PathValue("flow_id"))
+	h.get(w, r, entities.RuntimeConfigScopeAgentGraph, r.PathValue("agent_graph_id"))
 }
 
-func (h *RuntimeConfigHandler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
-	if !h.requireFlow(w, r) {
+func (h *RuntimeConfigHandler) UpdateAgentGraph(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAgentGraph(w, r) {
 		return
 	}
-	h.update(w, r, entities.RuntimeConfigScopeFlow, r.PathValue("flow_id"))
+	h.update(w, r, entities.RuntimeConfigScopeAgentGraph, r.PathValue("agent_graph_id"))
 }
 
-func (h *RuntimeConfigHandler) UpdateFlowEnvironment(w http.ResponseWriter, r *http.Request) {
-	if !h.requireFlow(w, r) {
+func (h *RuntimeConfigHandler) UpdateAgentGraphEnvironment(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAgentGraph(w, r) {
 		return
 	}
-	h.updateEnvironment(w, r, entities.RuntimeConfigScopeFlow, r.PathValue("flow_id"))
+	h.updateEnvironment(w, r, entities.RuntimeConfigScopeAgentGraph, r.PathValue("agent_graph_id"))
 }
 
-func (h *RuntimeConfigHandler) UpdateFlowSecrets(w http.ResponseWriter, r *http.Request) {
-	if !h.requireFlow(w, r) {
+func (h *RuntimeConfigHandler) UpdateAgentGraphSecrets(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAgentGraph(w, r) {
 		return
 	}
-	h.updateSecrets(w, r, entities.RuntimeConfigScopeFlow, r.PathValue("flow_id"))
+	h.updateSecrets(w, r, entities.RuntimeConfigScopeAgentGraph, r.PathValue("agent_graph_id"))
 }
 
-// ResolveFlow is a workload-only endpoint. Authorization grants it solely to
-// the controller, which materializes the result into the Flow runtime boundary.
-func (h *RuntimeConfigHandler) ResolveFlow(w http.ResponseWriter, r *http.Request) {
-	if !h.requireFlow(w, r) {
+// ResolveAgentGraph is a workload-only endpoint. Authorization grants it solely to
+// the controller, which materializes the result into the AgentGraph runtime boundary.
+func (h *RuntimeConfigHandler) ResolveAgentGraph(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAgentGraph(w, r) {
 		return
 	}
-	namespace, flowID := r.PathValue("namespace"), r.PathValue("flow_id")
+	namespace, graphID := r.PathValue("namespace"), r.PathValue("agent_graph_id")
 	ns, err := h.load(r.Context(), namespace, entities.RuntimeConfigScopeNamespace, namespace)
 	if err != nil {
 		h.writeRuntimeError(w, err)
 		return
 	}
-	local, err := h.load(r.Context(), namespace, entities.RuntimeConfigScopeFlow, flowID)
+	local, err := h.load(r.Context(), namespace, entities.RuntimeConfigScopeAgentGraph, graphID)
 	if err != nil {
 		h.writeRuntimeError(w, err)
 		return
@@ -140,14 +140,14 @@ func (h *RuntimeConfigHandler) get(w http.ResponseWriter, r *http.Request, scope
 		return
 	}
 	inherited := emptyRuntimeConfiguration(namespace, entities.RuntimeConfigScopeNamespace, namespace)
-	if scopeType == entities.RuntimeConfigScopeFlow {
+	if scopeType == entities.RuntimeConfigScopeAgentGraph {
 		inherited, err = h.load(r.Context(), namespace, entities.RuntimeConfigScopeNamespace, namespace)
 		if err != nil {
 			h.writeRuntimeError(w, err)
 			return
 		}
 	}
-	writeRuntimeJSON(w, http.StatusOK, runtimeConfigView(local, inherited, scopeType == entities.RuntimeConfigScopeFlow))
+	writeRuntimeJSON(w, http.StatusOK, runtimeConfigView(local, inherited, scopeType == entities.RuntimeConfigScopeAgentGraph))
 }
 
 func (h *RuntimeConfigHandler) update(w http.ResponseWriter, r *http.Request, scopeType, scopeID string) {
@@ -243,9 +243,9 @@ func decodeRuntimeConfigBody(w http.ResponseWriter, r *http.Request, target any)
 	return true
 }
 
-func (h *RuntimeConfigHandler) requireFlow(w http.ResponseWriter, r *http.Request) bool {
-	flowID := r.PathValue("flow_id")
-	spec, err := h.flows.GetSpec(r.Context(), r.PathValue("namespace"), flowID)
+func (h *RuntimeConfigHandler) requireAgentGraph(w http.ResponseWriter, r *http.Request) bool {
+	graphID := r.PathValue("agent_graph_id")
+	spec, err := h.graphs.GetSpec(r.Context(), r.PathValue("namespace"), graphID)
 	if err != nil || spec == nil {
 		http.NotFound(w, r)
 		return false

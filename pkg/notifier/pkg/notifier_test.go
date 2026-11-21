@@ -43,9 +43,9 @@ func notifierTestCipher(t *testing.T) secretbox.ISecretCipher {
 }
 
 func TestParseNotifyEventTopic(t *testing.T) {
-	namespace, flow, run, ok := parseNotifyEventTopic("flowgent/v1/team-a/flows/flow-a/runs/run-a/notify/event")
-	if !ok || namespace != "team-a" || flow != "flow-a" || run != "run-a" {
-		t.Fatalf("parsed = %q %q %q %v", namespace, flow, run, ok)
+	namespace, graph, run, ok := parseNotifyEventTopic("flowgent/v1/team-a/agent-graphs/graph-a/graph-runs/run-a/notify/event")
+	if !ok || namespace != "team-a" || graph != "graph-a" || run != "run-a" {
+		t.Fatalf("parsed = %q %q %q %v", namespace, graph, run, ok)
 	}
 	if _, _, _, ok := parseNotifyEventTopic("flowgent/v1/team-a/notify/event"); ok {
 		t.Fatal("accepted malformed topic")
@@ -91,14 +91,14 @@ func TestQueueMessageDecryptsAndDeliversWebhook(t *testing.T) {
 	)
 	message, _ := json.Marshal(model.NotifierMessage{
 		ChannelID: "channel-a", DeliveryID: "delivery-a", Namespace: "team-a",
-		AgentFlowID: "flow-a", Title: "test", Body: "body",
+		AgentGraphName: "graph-a", Title: "test", Body: "body",
 	})
-	manager.onQueueMessage("flowgent/v1/team-a/flows/flow-a/runs/delivery-a/notify/event", message)
+	manager.onQueueMessage("flowgent/v1/team-a/agent-graphs/graph-a/graph-runs/delivery-a/notify/event", message)
 
 	if receivedAuthorization != "Bearer runtime-secret" {
 		t.Fatalf("authorization = %q", receivedAuthorization)
 	}
-	resultTopic := "flowgent/v1/team-a/flows/flow-a/runs/delivery-a/notify/result"
+	resultTopic := "flowgent/v1/team-a/agent-graphs/graph-a/graph-runs/delivery-a/notify/result"
 	var result model.NotifierDeliveryResult
 	if err := json.Unmarshal(queue.published[resultTopic], &result); err != nil {
 		t.Fatalf("decode result: %v", err)

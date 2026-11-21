@@ -10,7 +10,7 @@ import (
 
 // PayloadAttributes returns bounded, non-content metadata for a JSON payload.
 //
-// Runtime input and output belong in the TaskRun persistence layer. Keeping
+// Runtime input and output belong in the NodeRun persistence layer. Keeping
 // their content out of span attributes avoids leaking secrets and prevents
 // high-cardinality payloads from overwhelming the tracing backend. The hash
 // and byte count are sufficient to correlate and verify the persisted value.

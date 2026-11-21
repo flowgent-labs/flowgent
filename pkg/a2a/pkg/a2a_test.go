@@ -14,8 +14,31 @@ import (
 	guardmodel "authguard/adapters/golang/model"
 	protocol "github.com/a2aproject/a2a-go/a2a"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 )
+
+func TestCreateAgentGraphReportsBusinessName(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/team/agent-graphs" {
+			t.Errorf("unexpected API call: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(api.Close)
+	h := &adminAgentHandler{apiServerURL: api.URL}
+	result, err := h.dispatch(t.Context(), &adminRequest{
+		Action: "create_agent_graph", Namespace: "team",
+		Spec: &entities.AgentGraph{BaseEntity: entities.BaseEntity{ID: "stable-identity"}, Name: "repair"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]string
+	if err := json.Unmarshal([]byte(result), &response); err != nil || response["agent_graph_name"] != "repair" {
+		t.Fatalf("create result confused identity and name: %s, %v", result, err)
+	}
+}
 
 type sqliteTestStore struct{ db *sql.DB }
 
@@ -41,23 +64,23 @@ func TestPersistentTaskStoreIsolationAndVersioning(t *testing.T) {
 	store := newSQLiteTaskStore(t)
 	owner := callerContext("owner-token")
 	other := callerContext("other-token")
-	task := &protocol.Task{
-		ID: "task-1", ContextID: "context-1",
+	noderun := &protocol.Task{
+		ID: "noderun-1", ContextID: "context-1",
 		Status: protocol.TaskStatus{State: protocol.TaskStateSubmitted},
 	}
-	version, err := store.Save(owner, task, task, nil, protocol.TaskVersionMissing)
+	version, err := store.Save(owner, noderun, noderun, nil, protocol.TaskVersionMissing)
 	if err != nil || version != 1 {
 		t.Fatalf("first Save = %d, %v", version, err)
 	}
-	if _, _, err := store.Get(other, task.ID); err != protocol.ErrTaskNotFound {
+	if _, _, err := store.Get(other, noderun.ID); err != protocol.ErrTaskNotFound {
 		t.Fatalf("cross-caller Get err = %v, want ErrTaskNotFound", err)
 	}
-	task.Status.State = protocol.TaskStateCompleted
-	version, err = store.Save(owner, task, task, task, version)
+	noderun.Status.State = protocol.TaskStateCompleted
+	version, err = store.Save(owner, noderun, noderun, noderun, version)
 	if err != nil || version != 2 {
 		t.Fatalf("second Save = %d, %v", version, err)
 	}
-	if _, err := store.Save(owner, task, task, task, 1); err != protocol.ErrConcurrentTaskModification {
+	if _, err := store.Save(owner, noderun, noderun, noderun, 1); err != protocol.ErrConcurrentTaskModification {
 		t.Fatalf("stale Save err = %v, want ErrConcurrentTaskModification", err)
 	}
 	page, err := store.List(owner, &protocol.ListTasksRequest{Status: protocol.TaskStateCompleted})
@@ -74,7 +97,7 @@ func TestHTTPServerStandardProtocolUsesPrivateAPIServerChannel(t *testing.T) {
 	var propagatedAuthorization string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		propagatedAuthorization = r.Header.Get("Authorization")
-		if r.URL.Path != "/api/v1/team-a/flows" {
+		if r.URL.Path != "/api/v1/team-a/agent-graphs" {
 			http.NotFound(w, r)
 			return
 		}
@@ -109,7 +132,7 @@ func TestHTTPServerStandardProtocolUsesPrivateAPIServerChannel(t *testing.T) {
 		"params": map[string]any{"message": map[string]any{
 			"kind": "message", "messageId": "message-1", "role": "user",
 			"parts": []any{map[string]any{"kind": "data", "data": map[string]any{
-				"action": "list_flows", "namespace": "team-a",
+				"action": "list_agent_graphs", "namespace": "team-a",
 			}}},
 		}},
 	}

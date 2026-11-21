@@ -8,8 +8,8 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storage "github.com/flowgent-labs/flowgent/storage/pkg"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
+	graph "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
 	"github.com/flowgent-labs/flowgent/storage/pkg/knowledge"
 	"github.com/google/uuid"
 )
@@ -19,26 +19,26 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 	db := storage.NewSQLiteConn(ctx, t.TempDir())
 	defer db.Close()
 
-	flowStore := flow.NewFlowSQLiteStore(db)
-	flowSpec := &entities.FlowInfo{
+	graphStore := graph.NewAgentGraphSQLiteStore(db)
+	graphSpec := &entities.AgentGraph{Name: "summarizer",
 		BaseEntity:       entities.BaseEntity{ID: "summarizer", Namespace: "team-summary"},
-		Kind:             "flow",
+		Kind:             "graph",
 		SummarizeEnabled: true,
 	}
-	if err := flowStore.SaveSpec(ctx, flowSpec, "tester", "enable reviewed summaries"); err != nil {
+	if err := graphStore.SaveSpec(ctx, graphSpec, "tester", "enable reviewed summaries"); err != nil {
 		t.Fatal(err)
 	}
-	otherFlow := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "other", Namespace: "team-summary"}, Kind: "flow",
+	otherAgentGraph := &entities.AgentGraph{Name: "other",
+		BaseEntity: entities.BaseEntity{ID: "other", Namespace: "team-summary"}, Kind: "graph",
 	}
-	if err := flowStore.SaveSpec(ctx, otherFlow, "tester", "scope fixture"); err != nil {
+	if err := graphStore.SaveSpec(ctx, otherAgentGraph, "tester", "scope fixture"); err != nil {
 		t.Fatal(err)
 	}
-	run := &entities.FlowRunInfo{
-		BaseEntity: entities.BaseEntity{Namespace: "team-summary"}, AgentFlowID: "summarizer",
-		Version: 1, Status: entities.RunCompleted,
+	run := &entities.GraphRun{
+		BaseEntity: entities.BaseEntity{Namespace: "team-summary"}, AgentGraphName: "summarizer",
+		AgentGraphRevision: 1, Status: entities.GraphRunCompleted,
 	}
-	if err := flowrun.NewFlowRunSQLiteStore(db).Create(ctx, run); err != nil {
+	if err := graphrun.NewGraphRunSQLiteStore(db).Create(ctx, run); err != nil {
 		t.Fatal(err)
 	}
 	if !run.SummarizeEnabled {
@@ -47,8 +47,8 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 
 	store := knowledge.NewKnowledgeSQLiteStore(db)
 	candidate := &entities.KnowledgeCandidate{
-		BaseEntity:  entities.BaseEntity{Namespace: "team-summary", CreatedBy: "service:jobmaster"},
-		SourceRunID: run.ID, TargetScope: "flow", TargetFlowName: "summarizer",
+		BaseEntity:       entities.BaseEntity{Namespace: "team-summary", CreatedBy: "service:jobmaster"},
+		SourceGraphRunID: run.ID, TargetScope: "graph", TargetAgentGraphName: "summarizer",
 		Type: "knowledge", Content: "alpha reviewed operational fact",
 		Provenance: map[string]any{"origin": "built_in_summarizer"}, ExpectedRevision: 0,
 		IdempotencyKey: "summary:test:alpha",
@@ -60,8 +60,8 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 	if approval.Type != "knowledge_publish" || approval.RequestHash == "" {
 		t.Fatalf("unexpected approval: %+v", approval)
 	}
-	if candidate.TargetFlowID == "" || candidate.TargetFlowID == "summarizer" {
-		t.Fatalf("target flow was not resolved to stable identity: %+v", candidate)
+	if candidate.TargetAgentGraphID == "" || candidate.TargetAgentGraphID == "summarizer" {
+		t.Fatalf("target graph was not resolved to stable identity: %+v", candidate)
 	}
 
 	immutable := *candidate
@@ -87,16 +87,16 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 		t.Fatalf("published knowledge = %+v, err=%v", entry, err)
 	}
 	results, err := store.Search(ctx, "team-summary", entities.KnowledgeSearchRequest{
-		Query: "alpha", Scope: "flow", FlowName: "summarizer", TopK: 5,
+		Query: "alpha", Scope: "graph", AgentGraphName: "summarizer", TopK: 5,
 	})
 	if err != nil || len(results) != 1 {
-		t.Fatalf("flow FTS results=%d err=%v", len(results), err)
+		t.Fatalf("graph FTS results=%d err=%v", len(results), err)
 	}
 	otherResults, err := store.Search(ctx, "team-summary", entities.KnowledgeSearchRequest{
-		Query: "alpha", Scope: "flow", FlowName: "other", TopK: 5,
+		Query: "alpha", Scope: "graph", AgentGraphName: "other", TopK: 5,
 	})
 	if err != nil || len(otherResults) != 0 {
-		t.Fatalf("cross-flow knowledge leaked: results=%d err=%v", len(otherResults), err)
+		t.Fatalf("cross-graph knowledge leaked: results=%d err=%v", len(otherResults), err)
 	}
 
 	profile := &entities.EmbeddingProfile{BaseEntity: entities.BaseEntity{Namespace: "team-summary"},
@@ -112,8 +112,8 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 		t.Fatalf("PutEmbedding: %v", err)
 	}
 	vectorResults, err := store.Search(ctx, "team-summary", entities.KnowledgeSearchRequest{
-		Embedding: []float32{0.9, 0.1, 0}, ProfileKey: "tiny-v1", Scope: "flow",
-		FlowName: "summarizer", TopK: 5,
+		Embedding: []float32{0.9, 0.1, 0}, ProfileKey: "tiny-v1", Scope: "graph",
+		AgentGraphName: "summarizer", TopK: 5,
 	})
 	if err != nil || len(vectorResults) != 1 {
 		t.Fatalf("sqlite-vec results=%d err=%v", len(vectorResults), err)
@@ -126,8 +126,8 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 	}
 
 	instruction := &entities.KnowledgeCandidate{
-		BaseEntity: entities.BaseEntity{Namespace: "team-summary"}, SourceRunID: run.ID,
-		TargetScope: "flow", TargetFlowName: "summarizer", Type: "instruction",
+		BaseEntity: entities.BaseEntity{Namespace: "team-summary"}, SourceGraphRunID: run.ID,
+		TargetScope: "graph", TargetAgentGraphName: "summarizer", Type: "instruction",
 		Content: "Always cite the verified source.", Provenance: map[string]any{"origin": "reviewer"},
 		ExpectedRevision: 0, IdempotencyKey: "summary:test:instruction",
 	}
@@ -140,8 +140,8 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 	}
 	var instructionRevision int64
 	var instructionContent string
-	if err = db.QueryRowContext(ctx, `SELECT i.revision,i.content FROM orh_flow f
-		JOIN llm_instruction i ON i.id=f.instruction_id WHERE f.id=?`, run.FlowID).
+	if err = db.QueryRowContext(ctx, `SELECT i.revision,i.content FROM orh_agent_graph f
+		JOIN llm_instruction i ON i.id=f.instruction_id WHERE f.id=?`, run.AgentGraphID).
 		Scan(&instructionRevision, &instructionContent); err != nil {
 		t.Fatal(err)
 	}
@@ -176,10 +176,10 @@ func TestSQLiteCandidateApprovalPublicationAndVectorIsolation(t *testing.T) {
 	}
 }
 
-func newCandidateForDocument(run *entities.FlowRunInfo, documentID, content, key string) *entities.KnowledgeCandidate {
+func newCandidateForDocument(run *entities.GraphRun, documentID, content, key string) *entities.KnowledgeCandidate {
 	return &entities.KnowledgeCandidate{
-		BaseEntity: entities.BaseEntity{Namespace: run.Namespace}, SourceRunID: run.ID,
-		TargetScope: "flow", TargetFlowID: run.FlowID, TargetDocumentID: documentID,
+		BaseEntity: entities.BaseEntity{Namespace: run.Namespace}, SourceGraphRunID: run.ID,
+		TargetScope: "graph", TargetAgentGraphID: run.AgentGraphID, TargetDocumentID: documentID,
 		Type: "knowledge", Content: content, Provenance: map[string]any{"origin": "reviewer"},
 		ExpectedRevision: 1, IdempotencyKey: key,
 	}
@@ -194,22 +194,22 @@ func TestPostgresCandidateApprovalPublicationAndNativeVector(t *testing.T) {
 	pool := storage.NewPostgresPool(ctx, dsn, "public")
 	defer pool.Close()
 	suffix := uuid.NewString()[:8]
-	namespace, flowName := "pg-summary-"+suffix, "summarizer-"+suffix
-	flowSpec := &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: flowName, Namespace: namespace}, Kind: "flow", SummarizeEnabled: true,
+	namespace, graphName := "pg-summary-"+suffix, "summarizer-"+suffix
+	graphSpec := &entities.AgentGraph{Name: graphName,
+		BaseEntity: entities.BaseEntity{ID: graphName, Namespace: namespace}, Kind: "graph", SummarizeEnabled: true,
 	}
-	if err := flow.NewFlowPostgresStore(pool).SaveSpec(ctx, flowSpec, "tester", "pgvector fixture"); err != nil {
+	if err := graph.NewAgentGraphPostgresStore(pool).SaveSpec(ctx, graphSpec, "tester", "pgvector fixture"); err != nil {
 		t.Fatal(err)
 	}
-	run := &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{Namespace: namespace},
-		AgentFlowID: flowName, Version: 1, Status: entities.RunCompleted}
-	if err := flowrun.NewFlowRunPostgresStore(pool).Create(ctx, run); err != nil {
+	run := &entities.GraphRun{BaseEntity: entities.BaseEntity{Namespace: namespace},
+		AgentGraphName: graphName, AgentGraphRevision: 1, Status: entities.GraphRunCompleted}
+	if err := graphrun.NewGraphRunPostgresStore(pool).Create(ctx, run); err != nil {
 		t.Fatal(err)
 	}
 	store := knowledge.NewKnowledgePostgresStore(pool)
 	candidate := &entities.KnowledgeCandidate{
-		BaseEntity: entities.BaseEntity{Namespace: namespace}, SourceRunID: run.ID,
-		TargetScope: "flow", TargetFlowName: flowName, Type: "knowledge",
+		BaseEntity: entities.BaseEntity{Namespace: namespace}, SourceGraphRunID: run.ID,
+		TargetScope: "graph", TargetAgentGraphName: graphName, Type: "knowledge",
 		Content: "native pgvector verified fact", Provenance: map[string]any{"origin": "built_in_summarizer"},
 		ExpectedRevision: 0, IdempotencyKey: "summary:" + suffix,
 	}
@@ -241,8 +241,8 @@ func TestPostgresCandidateApprovalPublicationAndNativeVector(t *testing.T) {
 		t.Fatalf("native vector insert: %v", err)
 	}
 	results, err := store.Search(ctx, namespace, entities.KnowledgeSearchRequest{
-		Embedding: []float32{0.8, 0.2, 0}, ProfileKey: profileKey, Scope: "flow",
-		FlowName: flowName, TopK: 5,
+		Embedding: []float32{0.8, 0.2, 0}, ProfileKey: profileKey, Scope: "graph",
+		AgentGraphName: graphName, TopK: 5,
 	})
 	if err != nil || len(results) != 1 {
 		t.Fatalf("native vector search results=%d err=%v", len(results), err)

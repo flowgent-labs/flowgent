@@ -105,6 +105,11 @@ func (f *McpManager) CallTool(ctx context.Context, clientName, toolName string, 
 	if err != nil {
 		return nil, fmt.Errorf("call tool %s: %w", toolName, err)
 	}
+	if result.IsError {
+		// MCP application errors arrive in successful JSON-RPC responses. They
+		// must fail the NodeRun, not advance dependants with a false success.
+		return nil, fmt.Errorf("MCP tool %s/%s returned an execution error", clientName, toolName)
+	}
 
 	output := make(map[string]any)
 	for _, content := range result.Content {

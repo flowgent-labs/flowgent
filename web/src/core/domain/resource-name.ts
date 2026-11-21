@@ -5,7 +5,7 @@ export const RESOURCE_NAME_PATTERN = new RegExp(RESOURCE_NAME_PATTERN_SOURCE)
 const reservedNamespaces = new Set([
   'agents',
   'dashboard',
-  'flows',
+  'graphs',
   'llms',
   'mcps',
   'memory',

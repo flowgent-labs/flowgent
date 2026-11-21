@@ -1,0 +1,10 @@
+services:
+  sonarqube-mcp:
+    extends:
+      file: ${FLOWGENT_REPO_DIR}/deploy/docker/sonarqube/docker-compose.yml
+      service: sonarqube-mcp
+    image: ${E2E_IMAGE_SONARQUBE_MCP}
+    container_name: ${COMPOSE_PROJECT_NAME}-sonarqube-mcp
+    platform: ${E2E_PLATFORM_SONARQUBE_MCP}
+networks:
+  sonarqube-net: {}

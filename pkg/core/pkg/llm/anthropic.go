@@ -19,7 +19,7 @@ type AnthropicProvider struct {
 }
 
 func newAnthropicProvider(p *entities.LlmProviderInfo) *AnthropicProvider {
-	p.NormalizeAliases()
+	p.Normalize()
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {

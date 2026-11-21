@@ -56,10 +56,10 @@ type WSConn interface {
 }
 
 type wsConn struct {
-	ID          string
-	AgentFlowID string
-	MsgCh       chan []byte
-	done        chan struct{}
+	ID             string
+	AgentGraphName string
+	MsgCh          chan []byte
+	done           chan struct{}
 }
 
 // ReadMessages returns a receive-only channel for incoming WS messages.
@@ -154,7 +154,7 @@ func (s *FlowgentNotifierManager) RegisterSenderFactory(name string, factory fun
 func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 	s.logger.Debug("queue message received", "topic", topic)
 
-	namespaceID, flowID, runID, ok := parseNotifyEventTopic(topic)
+	namespaceID, graphID, runID, ok := parseNotifyEventTopic(topic)
 	if !ok {
 		s.logger.Warn("invalid queue topic format", "topic", topic)
 		return
@@ -168,8 +168,8 @@ func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 	if msg.Namespace == "" {
 		msg.Namespace = namespaceID
 	}
-	if msg.AgentFlowID == "" {
-		msg.AgentFlowID = flowID
+	if msg.AgentGraphName == "" {
+		msg.AgentGraphName = graphID
 	}
 	if msg.DeliveryID == "" {
 		msg.DeliveryID = runID
@@ -177,7 +177,7 @@ func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 
 	s.logger.Info("processing queue notification",
 		"namespace", namespaceID,
-		"flow", flowID,
+		"graph", graphID,
 		"title", msg.Title)
 
 	results := s.notifyChannels(context.Background(), msg.Namespace, msg.ChannelID, msg.Recipient, msg.Title, msg.Body, msg.DeliveryID)
@@ -186,17 +186,17 @@ func (s *FlowgentNotifierManager) onQueueMessage(topic string, payload []byte) {
 			continue
 		}
 		encoded, _ := json.Marshal(result)
-		resultTopic := messager.NotifyResultTopic(msg.Namespace, msg.AgentFlowID, msg.DeliveryID)
+		resultTopic := messager.NotifyResultTopic(msg.Namespace, msg.AgentGraphName, msg.DeliveryID)
 		if err := s.mqtt.Publish(context.Background(), resultTopic, encoded); err != nil {
 			s.logger.Error("publish notification result", "topic", resultTopic, "error", err)
 		}
 	}
 }
 
-func parseNotifyEventTopic(topic string) (namespaceID, flowID, runID string, ok bool) {
+func parseNotifyEventTopic(topic string) (namespaceID, graphID, runID string, ok bool) {
 	parts := strings.Split(topic, "/")
 	if len(parts) != 9 || parts[0] != "flowgent" || parts[1] != "v1" ||
-		parts[3] != "flows" || parts[5] != "runs" || parts[7] != "notify" || parts[8] != "event" {
+		parts[3] != "agent-graphs" || parts[5] != "graph-runs" || parts[7] != "notify" || parts[8] != "event" {
 		return "", "", "", false
 	}
 	if parts[2] == "" || parts[4] == "" || parts[6] == "" {
@@ -206,19 +206,19 @@ func parseNotifyEventTopic(topic string) (namespaceID, flowID, runID string, ok 
 }
 
 // PublishNotification enqueues a notification to the MQTT queue.
-func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, namespaceID, agentflowID, title, body string) error {
+func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, namespaceID, agentGraphName, title, body string) error {
 	if s.mqtt == nil {
 		return fmt.Errorf("notification: mqtt not configured")
 	}
 
 	deliveryID := uuid.NewString()
 	msg := model.NotifierMessage{
-		DeliveryID:  deliveryID,
-		Title:       title,
-		Body:        body,
-		Namespace:   namespaceID,
-		AgentFlowID: agentflowID,
-		Timestamp:   time.Now(),
+		DeliveryID:     deliveryID,
+		Title:          title,
+		Body:           body,
+		Namespace:      namespaceID,
+		AgentGraphName: agentGraphName,
+		Timestamp:      time.Now(),
 	}
 
 	payload, err := json.Marshal(msg)
@@ -226,7 +226,7 @@ func (s *FlowgentNotifierManager) PublishNotification(ctx context.Context, names
 		return fmt.Errorf("marshal notification: %w", err)
 	}
 
-	topic := messager.NotifyEventTopic(namespaceID, agentflowID, deliveryID)
+	topic := messager.NotifyEventTopic(namespaceID, agentGraphName, deliveryID)
 	return s.mqtt.Publish(ctx, topic, payload)
 }
 
@@ -238,7 +238,7 @@ func (s *FlowgentNotifierManager) onMQTTMessage(topic string, payload []byte) {
 	}
 
 	s.mu.RLock()
-	conn, ok := s.wsClients[msg.TaskID]
+	conn, ok := s.wsClients[msg.NodeRunID]
 	s.mu.RUnlock()
 
 	if ok {
@@ -252,19 +252,19 @@ func (s *FlowgentNotifierManager) onMQTTMessage(topic string, payload []byte) {
 }
 
 // RegisterWS adds a WebSocket client and creates a subscription route.
-func (s *FlowgentNotifierManager) RegisterWS(ctx context.Context, agentFlowID string) (WSConn, error) {
+func (s *FlowgentNotifierManager) RegisterWS(ctx context.Context, agentGraphID string) (WSConn, error) {
 	conn := &wsConn{
-		ID:          uuid.New().String(),
-		AgentFlowID: agentFlowID,
-		MsgCh:       make(chan []byte, 64),
-		done:        make(chan struct{}),
+		ID:             uuid.New().String(),
+		AgentGraphName: agentGraphID,
+		MsgCh:          make(chan []byte, 64),
+		done:           make(chan struct{}),
 	}
 
 	route := &model.SubscriptionRoute{
-		ID:          uuid.New().String(),
-		AgentFlowID: agentFlowID,
-		WSID:        conn.ID,
-		PodID:       s.podID,
+		ID:             uuid.New().String(),
+		AgentGraphName: agentGraphID,
+		WSID:           conn.ID,
+		PodID:          s.podID,
 	}
 	if err := s.client.SaveRoute(ctx, route); err != nil {
 		return nil, fmt.Errorf("save subscription route: %w", err)
@@ -274,7 +274,7 @@ func (s *FlowgentNotifierManager) RegisterWS(ctx context.Context, agentFlowID st
 	s.wsClients[conn.ID] = conn
 	s.mu.Unlock()
 
-	s.logger.Info("ws client registered", "ws_id", conn.ID, "agentflow_id", agentFlowID)
+	s.logger.Info("ws client registered", "ws_id", conn.ID, "agent_graph_name", agentGraphID)
 	return conn, nil
 }
 
@@ -308,15 +308,15 @@ func (s *FlowgentNotifierManager) scanHumanApprovals(ctx context.Context) {
 				}
 				seen[a.Token] = true
 
-				afRunID := a.AgentFlowRunID
-				if afRunID == "" {
-					afRunID = a.TaskRunID
+				afGraphRunID := a.GraphRunID
+				if afGraphRunID == "" {
+					afGraphRunID = a.NodeRunID
 				}
 
 				msg := model.WSMessage{
-					Type:   model.WSHumanApprovalCreated,
-					RunID:  afRunID,
-					TaskID: a.TaskRunID,
+					Type:       model.WSHumanApprovalCreated,
+					GraphRunID: afGraphRunID,
+					NodeRunID:  a.NodeRunID,
 					Payload: map[string]any{
 						"token":  a.Token,
 						"status": a.Status,
@@ -324,11 +324,11 @@ func (s *FlowgentNotifierManager) scanHumanApprovals(ctx context.Context) {
 				}
 
 				if s.mqtt != nil {
-					s.pushToSubscribers(ctx, afRunID, &msg)
+					s.pushToSubscribers(ctx, afGraphRunID, &msg)
 				}
 
 				s.notifyChannels(ctx, a.Namespace, "", a.Token, "Human Approval Required",
-					fmt.Sprintf("A human approval is pending for task %s. Token: %s", a.TaskRunID, a.Token), uuid.NewString())
+					fmt.Sprintf("A human approval is pending for noderun %s. Token: %s", a.NodeRunID, a.Token), uuid.NewString())
 			}
 		case <-ctx.Done():
 			return
@@ -336,8 +336,8 @@ func (s *FlowgentNotifierManager) scanHumanApprovals(ctx context.Context) {
 	}
 }
 
-func (s *FlowgentNotifierManager) pushToSubscribers(ctx context.Context, agentFlowID string, msg *model.WSMessage) {
-	routes, err := s.client.GetRoutesByFlow(ctx, agentFlowID)
+func (s *FlowgentNotifierManager) pushToSubscribers(ctx context.Context, agentGraphID string, msg *model.WSMessage) {
+	routes, err := s.client.GetRoutesByAgentGraph(ctx, agentGraphID)
 	if err != nil {
 		s.logger.Error("lookup subscription routes", "error", err)
 		return

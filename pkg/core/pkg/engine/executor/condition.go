@@ -10,10 +10,10 @@ import (
 
 type ConditionExecutor struct{}
 
-func (e *ConditionExecutor) TaskType() entities.TaskType { return entities.TaskCondition }
+func (e *ConditionExecutor) NodeKind() entities.NodeKind { return entities.ConditionNode }
 
-func (e *ConditionExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	expr := plan.NodeSpec.Expression
+func (e *ConditionExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
+	expr := plan.Node.Expression
 	if expr == "" {
 		expr = "${input.result == true}"
 	}
@@ -33,5 +33,5 @@ func (e *ConditionExecutor) Execute(ctx context.Context, plan *entities.Executio
 		}
 	}
 	result := utils.EvalCondition(expr, merged)
-	return &entities.TaskResult{Output: map[string]any{"result": result}}, nil
+	return &entities.NodeResult{Output: map[string]any{"result": result}}, nil
 }

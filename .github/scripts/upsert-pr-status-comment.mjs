@@ -37,10 +37,21 @@ const decodeSummary = (encoded) => {
   if (!encoded) return "E2E summary was not generated; see the evidence artifact.";
   const summary = Buffer.from(encoded, "base64").toString("utf8").trim();
   if (!summary) return "E2E summary was empty; see the evidence artifact.";
-  if (summary.length > 48_000) {
-    return `${summary.slice(0, 48_000)}\n\n[Summary truncated; see the evidence artifact for the complete report.]`;
+  // Both reports share GitHub's comment-size limit. Reserve room for links,
+  // status and the final result instead of allowing 48k for each report.
+  if (summary.length <= 24_000) return summary;
+  let excerpt = summary.slice(0, 24_000);
+  const lastLine = excerpt.lastIndexOf("\n");
+  if (lastLine > 0) excerpt = excerpt.slice(0, lastLine);
+  let fence;
+  for (const line of excerpt.split("\n")) {
+    const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!match) continue;
+    if (!fence) fence = match[1];
+    else if (match[1][0] === fence[0] && match[1].length >= fence.length && !match[2].trim()) fence = undefined;
   }
-  return summary;
+  if (fence) excerpt += `\n${fence}`;
+  return `${excerpt}\n\n[Summary truncated; see the evidence artifact for the complete report.]`;
 };
 
 const renderCi = () => {
@@ -80,10 +91,10 @@ const renderCi = () => {
   } else {
     details.push(`- Evidence: [reports and screenshots](${artifactUrl})`);
     details.push(
-      "", "### Kubernetes E2E summary", "", "```text",
-      decodeSummary(process.env.FLOWGENT_E2E_KUBERNETES_SUMMARY_BASE64).replaceAll("```", "``\\`"), "```",
-      "", "### Docker Compose E2E summary", "", "```text",
-      decodeSummary(process.env.FLOWGENT_E2E_DOCKER_SUMMARY_BASE64).replaceAll("```", "``\\`"), "```",
+      "", "### Kubernetes E2E summary", "",
+      decodeSummary(process.env.FLOWGENT_E2E_KUBERNETES_SUMMARY_BASE64),
+      "", "### Docker Compose E2E summary", "",
+      decodeSummary(process.env.FLOWGENT_E2E_DOCKER_SUMMARY_BASE64),
     );
   }
   const passed = buildResult === "success" && e2eKubernetesResult === "success" && e2eDockerResult === "success";

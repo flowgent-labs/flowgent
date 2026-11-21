@@ -70,7 +70,7 @@ func startTaskManager(cfgPath string) error {
 
 	tm, err := taskmanager.NewTaskManager(&taskmanager.TaskManagerConfig{
 		ID: tmID, SlotCount: slotCount, Messager: q,
-		State:                    &client.TaskStateClient{Client: apiClient, Namespace: namespace},
+		State:                    &client.NodeRunStateClient{Client: apiClient, Namespace: namespace},
 		ApprovalInfo:             &client.HumanApprovalClient{Client: apiClient, Namespace: namespace},
 		APIServerURL:             svcCfg.Runtime.APIServerURL,
 		Namespace:                namespace,

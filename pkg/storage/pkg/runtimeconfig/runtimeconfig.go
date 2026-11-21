@@ -1,4 +1,4 @@
-// Package runtimeconfig persists namespace and Flow runtime configuration.
+// Package runtimeconfig persists namespace and AgentGraph runtime configuration.
 // Inheritance and encryption remain API-domain responsibilities.
 package runtimeconfig
 
