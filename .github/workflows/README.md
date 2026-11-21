@@ -33,6 +33,11 @@ AuthGuard Web's published package is private, so both E2E jobs build its public
 persistence is owned by the verifier's pgvector StatefulSet; CI does not start a
 second, unused PostgreSQL container. Failed storage startup captures pod, PVC,
 event and provisioner logs before cleanup.
+The E2E Compose override requires Compose 2.24.4 or newer: `!override` replaces
+published ports instead of inheriting production bindings. The formal stack's
+EMQX dashboard uses port 18084, leaving 18083 for AuthGuard management. PostgreSQL
+uses a startup probe so initialization and recovery are not interrupted by its
+liveness probe.
 
 ## Merged PR releases
 

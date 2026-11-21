@@ -89,18 +89,22 @@ class PgvectorRuntime:
                 f"statefulset/{PGVECTOR_NAME}",
                 "-n",
                 namespace,
-                "--timeout=240s",
+                "--timeout=360s",
             ],
             capture_output=True,
             text=True,
-            timeout=270,
+            timeout=390,
         )
         if result.returncode != 0:
             # Capture evidence before --clean-after-run removes failed pods/PVCs.
             for command in (
                 ("get", "pods,pvc", "-n", namespace, "-o", "wide"),
+                ("describe", "pod", f"{PGVECTOR_NAME}-0", "-n", namespace),
                 ("get", "events", "-n", namespace, "--sort-by=.metadata.creationTimestamp"),
                 ("logs", f"statefulset/{PGVECTOR_NAME}", "-n", namespace, "--tail=80"),
+                ("logs", f"statefulset/{PGVECTOR_NAME}", "-n", namespace, "--previous", "--tail=80"),
+                ("exec", f"{PGVECTOR_NAME}-0", "-n", namespace, "--", "sh", "-c",
+                 'for p in /proc/[0-9]*/comm; do cat "$p"; done'),
                 ("logs", "deployment/local-path-provisioner", "-n", "kube-system", "--tail=80"),
             ):
                 E2EProcessHelper.run(("kubectl", *command), timeout_seconds=30)

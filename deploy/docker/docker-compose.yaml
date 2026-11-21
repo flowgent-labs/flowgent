@@ -32,7 +32,7 @@ services:
     cpus: 1
     ports:
     - 127.0.0.1:${MQTT_PORT:-1883}:1883
-    - 127.0.0.1:${EMQX_DASHBOARD_PORT:-18083}:18083
+    - 127.0.0.1:${EMQX_DASHBOARD_PORT:-18084}:18083
     healthcheck:
       test:
       - CMD

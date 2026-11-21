@@ -479,6 +479,11 @@ class ComponentRenderingTests(unittest.TestCase):
             "containers"
         ][0]
         self.assertTrue(pg_container["readinessProbe"])
+        self.assertIn("-h 127.0.0.1", pg_container["startupProbe"]["exec"]["command"][-1])
+        self.assertGreaterEqual(
+            pg_container["startupProbe"]["failureThreshold"] * pg_container["startupProbe"]["periodSeconds"],
+            300,
+        )
         sonar_pvcs = [
             r
             for r in resources
@@ -1103,6 +1108,51 @@ class DeploymentStandardTests(unittest.TestCase):
                     )
                     self.assertEqual(service["platform"], architecture)
 
+    def test_compose_inheritance_keeps_only_isolated_e2e_ports(self):
+        from verifier.infra._docker import COMPOSE_FILES
+
+        with patch.dict(os.environ, {"IN_GFW": "false"}, clear=True):
+            images = E2EImagesDefinitions.environment()
+        result = subprocess.run(
+            [
+                "docker", "compose", "-p", "e2e-contract",
+                *(part for path in COMPOSE_FILES for part in ("-f", str(path))),
+                "config", "--format", "json",
+            ],
+            env={
+                **{key: os.environ[key] for key in
+                   ("PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "TEMP", "TMP")
+                   if key in os.environ},
+                **images,
+                "FLOWGENT_REPO_DIR": str(ROOT),
+                "FLOWGENT_E2E_CASE_DIR": str(CASE),
+                "AUTHGUARD_ACCESS_CONTEXT_HMAC_KEY": "fixture-only",
+                "AUTHGUARD_REDIS_PASSWORD": "fixture-only",
+                "FLOWGENT_NOTIFICATION_KEY_V1": "fixture-only",
+                "SONAR_SCANNER_API_TOKEN": "fixture-only",
+            },
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        services = json.loads(result.stdout)["services"]
+        for name, expected in {
+            "flowgent": {29999, 29998, 19992}, "web": {21080},
+            "postgres": {25432}, "emqx": {11883, 18084},
+            "jaeger": {16688}, "prometheus": {19092}, "envoy": {18089},
+            "authguard-authn": {18082, 18083},
+            "authguard-authz": {19090, 19091},
+        }.items():
+            self.assertEqual(
+                {int(port["published"]) for port in services[name].get("ports", [])},
+                expected, name,
+            )
+        bindings = [
+            (port.get("protocol", "tcp"), port["published"])
+            for service in services.values() for port in service.get("ports", [])
+        ]
+        self.assertEqual(len(bindings), len(set(bindings)), "services publish conflicting host ports")
+
     def test_all_components_and_self_project_links_follow_the_contract(self):
         for case in (ROOT / "use-cases").iterdir():
             if not case.is_dir():
@@ -1214,7 +1264,7 @@ class DeploymentStandardTests(unittest.TestCase):
 
         for path in (ROOT / "use-cases").glob("*/deploy/*/docker-compose.yaml"):
             for service in (
-                yaml.safe_load(path.read_text()).get("services", {}).values()
+                yaml.load(path.read_text(), Loader=yaml.BaseLoader).get("services", {}).values()
             ):
                 self.assertRegex(
                     service["image"], r"^\$\{E2E_IMAGE_[A-Z0-9_]+\}$", str(path)

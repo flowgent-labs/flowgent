@@ -151,7 +151,8 @@ class E2ES01StructureVerifier(BaseVerifier):
     def _verify_parity(self) -> None:
         services = set()
         for compose_path in (E2E_DIR / "deploy").glob("*/docker-compose.yaml"):
-            compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+            # Inspect service names without interpreting Compose-specific tags.
+            compose = yaml.load(compose_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
             services.update(compose.get("services", {}))
         required = {
             "flowgent",

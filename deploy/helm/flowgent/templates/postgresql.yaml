@@ -63,12 +63,22 @@ spec:
         ports:
         - name: postgres
           containerPort: 5432
+        # Initdb and crash recovery must finish before liveness can restart PG.
+        startupProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
+          periodSeconds: 3
+          timeoutSeconds: 2
+          failureThreshold: 100
         readinessProbe:
           exec:
             command:
             - sh
             - -c
-            - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            - pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
           initialDelaySeconds: 5
           periodSeconds: 3
         livenessProbe:
@@ -76,7 +86,7 @@ spec:
             command:
             - sh
             - -c
-            - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            - pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
           initialDelaySeconds: 20
           periodSeconds: 10
         resources:
