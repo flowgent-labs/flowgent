@@ -38,6 +38,8 @@ published ports instead of inheriting production bindings. The formal stack's
 EMQX dashboard uses port 18084, leaving 18083 for AuthGuard management. PostgreSQL
 uses a startup probe so initialization and recovery are not interrupted by its
 liveness probe.
+All three CI jobs share the Go workspace dependency key (`go.work.sum` and
+`pkg/*/go.sum`), so E2E console builds can reuse the validated build cache.
 
 ## Merged PR releases
 
