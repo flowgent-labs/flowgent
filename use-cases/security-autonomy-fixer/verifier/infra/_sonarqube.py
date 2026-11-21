@@ -243,12 +243,20 @@ class SonarQubeRuntime:
                 )
             )
         )
-        environment = E2EDockerDeployer.detect()
+        environment = {
+            **E2EDockerDeployer.detect(),
+            # Compose interpolates extends files before merging overrides. The
+            # MCP service is not started until a real token has been generated.
+            "SONARQUBE_TOKEN": os.getenv("SONARQUBE_TOKEN") or "bootstrap-pending",
+        }
         result = E2EDockerDeployer.compose(
             files,
             "e2e-flowgent-sonarqube",
             "up",
             "-d",
+            "sonarqube-postgres",
+            "sonarqube",
+            "sonarqube-init",
             environment=environment,
             timeout=timeout,
         )

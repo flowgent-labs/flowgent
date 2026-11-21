@@ -23,6 +23,20 @@ CASE = ROOT / "use-cases/security-autonomy-fixer"
 
 
 class GitHubWorkflowContractTests(unittest.TestCase):
+    def test_hosted_e2e_jobs_use_direct_registry_access(self):
+        import yaml
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        for job_name in ("e2e-kubernetes", "e2e-docker"):
+            with self.subTest(job=job_name):
+                environment = workflow["jobs"][job_name]["env"]
+                with patch.dict(os.environ, environment, clear=True):
+                    self.assertFalse(E2EImagesDefinitions.in_gfw())
+                    self.assertEqual(
+                        E2EImagesDefinitions.get("helper"),
+                        E2EImagesDefinitions.K3S_HELPER_REFERENCE,
+                    )
+
     def test_status_links_use_github_actions_run_identity(self):
         import yaml
 
@@ -46,6 +60,49 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_kubernetes_image_acquisition_respects_registry_region(self):
+        for region, jump_host in (("false", False), ("true", True)):
+            with (
+                self.subTest(region=region),
+                patch.dict(os.environ, {"IN_GFW": region}, clear=True),
+                patch("e2e_util.images.sys.platform", "linux"),
+                patch.object(E2EImagesDefinitions, "inspect", return_value=None),
+                patch.object(E2EImagesDefinitions, "_pull") as pull,
+            ):
+                image = E2EImagesDefinitions.get("helper")
+                E2EKubernetesDeployer.ensure_image(image)
+                pull.assert_called_once_with(image, jump_host=jump_host)
+
+    def test_sonarqube_bootstrap_starts_mcp_only_after_token_creation(self):
+        sonar = importlib.import_module("verifier.infra._sonarqube")
+        from e2e_util.docker import E2EDockerDeployer
+
+        with (
+            patch.dict(os.environ, {"SONARQUBE_TOKEN": ""}),
+            patch.object(sonar.SonarQubeRuntime, "url", return_value="http://localhost:9000"),
+            patch.object(sonar.SonarQubeRuntime, "wait_for_sonarqube", return_value=True),
+            patch.object(sonar.SonarQubeRuntime, "_ensure_api_token", return_value="generated-token"),
+            patch.object(E2EDockerDeployer, "detect", return_value={}),
+            patch.object(E2EDockerDeployer, "compose", return_value=SimpleNamespace(passed=True)) as compose,
+        ):
+            self.assertTrue(sonar.SonarQubeRuntime.compose_up(timeout=10))
+        self.assertEqual(compose.call_count, 2)
+        first, second = compose.call_args_list
+        self.assertEqual(first.args[2:], ("up", "-d", "sonarqube-postgres", "sonarqube", "sonarqube-init"))
+        self.assertEqual(first.kwargs["environment"]["SONARQUBE_TOKEN"], "bootstrap-pending")
+        self.assertEqual(second.args[2:], ("up", "-d", "--force-recreate", "sonarqube-mcp"))
+        self.assertEqual(second.kwargs["environment"]["SONARQUBE_TOKEN"], "generated-token")
+
+    def test_compose_validation_failure_preserves_diagnostics(self):
+        from e2e_util.docker import E2EDockerDeployer
+
+        with (
+            patch.object(E2EDockerDeployer, "compose_command", return_value=("docker", "compose")),
+            patch.object(E2EProcessHelper, "run", return_value=SimpleNamespace(passed=False, output="required token is missing")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "required token is missing"):
+                E2EDockerDeployer.compose((Path("compose.yaml"),), "fixture", "up", "-d")
+
     def test_sonarqube_uses_the_approved_native_arm_exception(self):
         for engine, expected in (
             ("linux/arm64", "linux/arm64"),

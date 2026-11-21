@@ -195,6 +195,8 @@ jobs:
     outputs:
       summary_base64: ${{ steps.summary.outputs.base64 }}
     env:
+      IN_GFW: "false"
+      IN_CN_GFW: "false"
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       FLOWGENT_E2E_PG_CONTAINER: sigbot_e2e_164364_postgres
       FLOWGENT_PG_USER: test
@@ -309,6 +311,8 @@ jobs:
     outputs:
       summary_base64: ${{ steps.summary.outputs.base64 }}
     env:
+      IN_GFW: "false"
+      IN_CN_GFW: "false"
       FLOWGENT_PG_USER: test
       FLOWGENT_PG_PASSWORD: test
       FLOWGENT_PG_DATABASE: flowgent

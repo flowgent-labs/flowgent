@@ -94,7 +94,9 @@ class E2EDockerDeployer:
                 stream=False,
             )
             if not rendered.passed:
-                raise RuntimeError("Compose configuration validation failed")
+                raise RuntimeError(
+                    "Compose configuration validation failed:\n" + rendered.output
+                )
             document, _ = json.JSONDecoder().raw_decode(rendered.output.lstrip())
             profiles = set(
                 deployment_environment.get(

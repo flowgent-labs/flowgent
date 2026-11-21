@@ -130,7 +130,7 @@ build-core: bootstrap-go
 
 # ── Utils ─────────────────────────────────────────────────────────
 
-test: test-ut test-x402 test-web test-e2e-runner
+test: test-ut test-x402 test-web test-e2e-runner test-ci-comments
 
 clean:
 	rm -rf $(BIN_DIR)/
@@ -312,3 +312,7 @@ test-recovery-race:
 	cd pkg/sandbox && CGO_ENABLED=1 $(GOENV) $(GO) test -race -count=1 -timeout 180s -run 'WorkspaceSnapshot' ./pkg
 	cd pkg/storage && CGO_ENABLED=1 $(GOENV) $(GO) test -race -count=1 -timeout 180s -run 'GraphCheckpoint|Snapshot|GraphCAS|OldReady|ExecutionClaim|Outbox' ./...
 	cd pkg/core && CGO_ENABLED=1 $(GOENV) $(GO) test -race -count=1 -timeout 180s -run 'BoundedParallel|AdaptiveSubGraph' ./pkg/engine/jobmanager
+
+.PHONY: test-ci-comments
+test-ci-comments:
+	node --test .github/scripts/upsert-pr-status-comment.test.mjs

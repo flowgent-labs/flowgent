@@ -415,7 +415,7 @@ class E2EImagesDefinitions:
         metadata = cls.inspect(image)
         if metadata and metadata["platform"] == cls.platform(image):
             return
-        cls._pull(image, jump_host=True)
+        cls._pull(image, jump_host=cls.in_gfw() and sys.platform != "win32")
 
     @classmethod
     def _pull(cls, image: str, *, jump_host: bool) -> None:

@@ -18,7 +18,16 @@ recipe is `deploy/docker/Dockerfile.web`.
    upload its reports and screenshots.
 
 The workflow maintains one CI status comment on the PR rather than adding a new
-comment for every revision.
+comment for every revision. E2E summary tables are embedded as Markdown, not
+wrapped in a text code block. Reports share a bounded comment budget so the
+final status and artifact links remain visible.
+
+GitHub-hosted E2E jobs explicitly use `IN_GFW=false` / `IN_CN_GFW=false`:
+runtime images come from their declared upstream registries and do not require
+a developer's jump-host loader. Local CN environments retain their existing
+mirror-pull policy. SonarQube Compose startup first starts PostgreSQL, SonarQube
+and its credential initializer, generates a real API token, then starts MCP.
+The interpolation placeholder is never used to start the MCP service.
 
 ## Merged PR releases
 
