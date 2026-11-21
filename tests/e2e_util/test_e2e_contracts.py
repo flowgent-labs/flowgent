@@ -72,6 +72,45 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_docker_proxy_is_optional_and_host_loopback_is_translated(self):
+        docker = importlib.import_module("verifier.infra._docker")
+        auth = importlib.import_module("verifier.infra._authguard")
+        for environment, expected in (
+            ({"IN_GFW": "false"}, ""),
+            ({"IN_GFW": "true"}, "http://host.docker.internal:8800"),
+            ({"IN_GFW": "false", "HTTPS_PROXY": "http://localhost:9900"}, "http://host.docker.internal:9900"),
+            ({"IN_GFW": "false", "HTTPS_PROXY": "http://user-localhost:test@127.0.0.1:9900"}, "http://user-localhost:test@host.docker.internal:9900"),
+        ):
+            with (
+                self.subTest(environment=environment), tempfile.TemporaryDirectory() as state,
+                patch.dict(os.environ, environment, clear=True),
+                patch.object(docker, "STATE_DIR", Path(state)),
+                patch.object(auth.AuthGuardRuntime, "_session_key_and_jwks", return_value=("fixture", {})),
+            ):
+                deployer = object.__new__(docker.FlowgentDockerDeployment)
+                values = deployer._compose_environment()
+                self.assertEqual(values["FLOWGENT_E2E_CONTAINER_HTTPS_PROXY"], expected)
+
+    def test_only_account_security_can_be_embedded_by_the_same_origin(self):
+        import yaml
+        from verifier.infra._gateway_post_renderer import EnvoyGatewayManifestNormalizer
+
+        rules = [{"matches": [{"path": {"type": "Exact", "value": path}}]}
+                 for path in ("/auth/login", "/auth/account/security", "/auth/assets/")]
+        document = {"kind": "HTTPRoute", "spec": {"rules": rules}}
+        rendered = yaml.safe_load(EnvoyGatewayManifestNormalizer().render(yaml.safe_dump(document)))
+        rules = rendered["spec"]["rules"]
+        self.assertNotIn("filters", rules[0])
+        self.assertNotIn("filters", rules[2])
+        policy = rules[1]["filters"][0]["responseHeaderModifier"]["set"]
+        self.assertEqual({item["name"]: item["value"] for item in policy}, {
+            "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'",
+        })
+        envoy = yaml.safe_load((CASE / "deploy/flowgent/config/envoy/envoy.yaml").read_text())
+        routes = envoy["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][0]["typed_config"]["route_config"]["virtual_hosts"][0]["routes"]
+        account = next(route for route in routes if route["match"].get("path") == "/auth/account/security")
+        self.assertEqual({item["header"]["key"]: item["header"]["value"] for item in account["response_headers_to_add"]}, {item["name"]: item["value"] for item in policy})
+
     def test_failed_pgvector_rollout_captures_evidence_before_cleanup(self):
         pg = importlib.import_module("verifier.infra._postgres")
         failed = SimpleNamespace(returncode=1, stdout="not ready", stderr="timeout")
@@ -479,6 +518,9 @@ class ComponentRenderingTests(unittest.TestCase):
             "containers"
         ][0]
         self.assertTrue(pg_container["readinessProbe"])
+        pg_pod = by_name[("StatefulSet", "pgvector")]["spec"]["template"]["spec"]
+        self.assertEqual(pg_pod["securityContext"]["runAsUser"], 999)
+        self.assertEqual(pg_pod["securityContext"]["fsGroup"], 999)
         self.assertIn("-h 127.0.0.1", pg_container["startupProbe"]["exec"]["command"][-1])
         self.assertGreaterEqual(
             pg_container["startupProbe"]["failureThreshold"] * pg_container["startupProbe"]["periodSeconds"],
@@ -1130,12 +1172,14 @@ class DeploymentStandardTests(unittest.TestCase):
                 "AUTHGUARD_REDIS_PASSWORD": "fixture-only",
                 "FLOWGENT_NOTIFICATION_KEY_V1": "fixture-only",
                 "SONAR_SCANNER_API_TOKEN": "fixture-only",
+                "FLOWGENT_E2E_CONTAINER_HTTPS_PROXY": "",
             },
             capture_output=True,
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         services = json.loads(result.stdout)["services"]
+        self.assertEqual(services["sonar-scanner"]["environment"]["HTTPS_PROXY"], "")
         for name, expected in {
             "flowgent": {29999, 29998, 19992}, "web": {21080},
             "postgres": {25432}, "emqx": {11883, 18084},

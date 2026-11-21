@@ -40,6 +40,10 @@ uses a startup probe so initialization and recovery are not interrupted by its
 liveness probe.
 All three CI jobs share the Go workspace dependency key (`go.work.sum` and
 `pkg/*/go.sum`), so E2E console builds can reuse the validated build cache.
+PostgreSQL starts as UID/GID 999 with kubelet-managed volume ownership; custom
+images can override `postgresql.podSecurityContext`. Hosted runners use direct
+outbound access when no proxy is configured. The isolated Gateway permits only
+same-origin framing of AuthGuard's account-security page.
 
 ## Merged PR releases
 

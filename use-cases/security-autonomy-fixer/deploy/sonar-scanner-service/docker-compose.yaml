@@ -10,7 +10,7 @@ services:
       SONAR_SCANNER_JAVA_OPTS: -Xms64m -Xmx512m
       SONAR_USER_HOME: /tmp/.sonar
       GITHUB_TOKEN: ${GITHUB_TOKEN:-${GH_TOKEN:-}}
-      HTTPS_PROXY: ${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY:-http://host.docker.internal:8800}
+      HTTPS_PROXY: ${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY-http://host.docker.internal:8800}
       NO_PROXY: localhost,127.0.0.1,host.docker.internal
     extra_hosts: [host.docker.internal:host-gateway]
     volumes:

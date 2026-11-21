@@ -648,7 +648,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
             # Step 7: Cancel the active Run before deleting the AgentGraph.
             print("    • Step 7: Cancelling GraphRun and deleting AgentGraph...")
             resp = FLOWGENT_SESSION.post(
-                f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/cancel",
+                f"{API_BASE}/api/v1/{NAMESPACE}/graph-runs/{graph_run_id}/cancel",
                 json={},
                 timeout=10,
             )
@@ -721,7 +721,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
             if graph_run_id:
                 try:
                     FLOWGENT_SESSION.post(
-                        f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/cancel",
+                        f"{API_BASE}/api/v1/{NAMESPACE}/graph-runs/{graph_run_id}/cancel",
                         json={},
                         timeout=5,
                     )
@@ -799,7 +799,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
 
         try:
             payload = {
-                "id": agent_graph_id,
+                "name": agent_graph_id,
                 "kind": "graph",
                 "runtime_mode": "application",
                 "nodes": [{"id": "n1", "kind": "noop"}],
@@ -915,7 +915,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
         agent_graph_id = f"test-graph-docker-{E2ES23ControllerVerifier.rand_id()}"
         graph_run_id = ""
         payload = {
-            "id": agent_graph_id,
+            "name": agent_graph_id,
             "kind": "graph",
             "runtime_mode": "session",
             "nodes": [
@@ -951,7 +951,7 @@ class E2ES23ControllerVerifier(BaseVerifier):
             last_status = ""
             while time.time() < deadline:
                 current = FLOWGENT_SESSION.get(
-                    f"{API_BASE}/api/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}",
+                    f"{API_BASE}/api/v1/{NAMESPACE}/graph-runs/{graph_run_id}",
                     timeout=10,
                 )
                 if current.status_code == 200:

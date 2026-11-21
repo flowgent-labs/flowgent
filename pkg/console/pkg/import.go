@@ -356,14 +356,14 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		fmt.Printf("  OK LLMProvider: %s\n", p.Name)
 
-	case "graph":
+	case "agentgraph":
 		var spec entities.AgentGraph
 		if err := parseSpec(ri.Data, &spec); err != nil {
 			fmt.Printf("Error parsing AgentGraph spec in %s: %v\n", filePath, err)
 			return false
 		}
-		if spec.ID == "" && ri.metadataName() != "" {
-			spec.ID = ri.metadataName()
+		if spec.Name == "" {
+			spec.Name = ri.metadataName()
 		}
 		if spec.Kind == "" {
 			spec.Kind = "graph"
@@ -403,8 +403,8 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			fmt.Printf("Error parsing Skill spec in %s: %v\n", filePath, err)
 			return false
 		}
-		if spec.ID == "" && ri.metadataName() != "" {
-			spec.ID = ri.metadataName()
+		if spec.Name == "" {
+			spec.Name = ri.metadataName()
 		}
 		spec.Kind = "skill"
 		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)

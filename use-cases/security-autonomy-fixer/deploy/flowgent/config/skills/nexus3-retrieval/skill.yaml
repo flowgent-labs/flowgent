@@ -10,7 +10,7 @@ metadata:
   description: Query Nexus3 and SonatypeIQ to fetch top-N non-quarantined Maven dependency versions with firewall status
 
 data:
-  id: nexus3-retrieval
+  name: nexus3-retrieval
   vars:
     nexus3_url: "http://nexus3:8081"
     sonatypeiq_url: "http://sonatypeiq:8070"

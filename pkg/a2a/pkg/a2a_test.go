@@ -14,8 +14,31 @@ import (
 	guardmodel "authguard/adapters/golang/model"
 	protocol "github.com/a2aproject/a2a-go/a2a"
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"github.com/flowgent-labs/flowgent/storage/pkg"
 )
+
+func TestCreateAgentGraphReportsBusinessName(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/team/agent-graphs" {
+			t.Errorf("unexpected API call: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(api.Close)
+	h := &adminAgentHandler{apiServerURL: api.URL}
+	result, err := h.dispatch(t.Context(), &adminRequest{
+		Action: "create_agent_graph", Namespace: "team",
+		Spec: &entities.AgentGraph{BaseEntity: entities.BaseEntity{ID: "stable-identity"}, Name: "repair"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]string
+	if err := json.Unmarshal([]byte(result), &response); err != nil || response["agent_graph_name"] != "repair" {
+		t.Fatalf("create result confused identity and name: %s, %v", result, err)
+	}
+}
 
 type sqliteTestStore struct{ db *sql.DB }
 

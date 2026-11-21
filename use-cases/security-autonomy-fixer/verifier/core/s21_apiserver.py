@@ -208,7 +208,7 @@ class E2ES21ApiserverVerifier(BaseVerifier):
             mqtt.subscribe("flowgent/v1/+/agent-graphs/+/ctrl/graph/updated")
             mqtt.subscribe("flowgent/v1/+/agent-graphs/+/ctrl/graph/deleted")
             time.sleep(0.5)
-            self.request(
+            created = self.request(
                 "POST",
                 f"/api/v1/{NAMESPACE}/agent-graphs",
                 self.graph_body(temporary, "event evidence", False),
@@ -219,7 +219,8 @@ class E2ES21ApiserverVerifier(BaseVerifier):
                 raise AssertionError("AgentGraph create lifecycle event was not received")
             created_payload = event.get("payload", {})
             if (
-                created_payload.get("agent_graph_id") != temporary
+                created_payload.get("agent_graph_id") != created["id"]
+                or created_payload.get("agent_graph_name") != temporary
                 or created_payload.get("event_type") != "CREATED"
             ):
                 raise AssertionError(
@@ -233,7 +234,8 @@ class E2ES21ApiserverVerifier(BaseVerifier):
                 raise AssertionError("AgentGraph delete lifecycle event was not received")
             deleted_payload = deleted.get("payload", {})
             if (
-                deleted_payload.get("agent_graph_id") != temporary
+                deleted_payload.get("agent_graph_id") != created["id"]
+                or deleted_payload.get("agent_graph_name") != temporary
                 or deleted_payload.get("event_type") != "DELETED"
             ):
                 raise AssertionError(

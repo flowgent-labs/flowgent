@@ -502,6 +502,21 @@ class FlowgentDockerDeployment(BaseDeployer):
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         secret_file = STATE_DIR / "secrets.json"
         compose_environment = dict(os.environ)
+        # An unset hosted-runner proxy means direct access; loopback proxies
+        # configured on a developer host must be reachable from the containers.
+        proxy = os.getenv("HTTPS_PROXY", "http://127.0.0.1:8800" if E2EImagesDefinitions.in_gfw() else "")
+        container_proxy = proxy
+        parsed_proxy = parse.urlsplit(proxy)
+        if parsed_proxy.hostname in {"localhost", "127.0.0.1", "::1"}:
+            authority = "host.docker.internal" + (f":{parsed_proxy.port}" if parsed_proxy.port else "")
+            credentials, separator, _ = parsed_proxy.netloc.rpartition("@")
+            container_proxy = parse.urlunsplit(parsed_proxy._replace(
+                netloc=(credentials + separator if separator else "") + authority,
+            ))
+        compose_environment.setdefault(
+            "FLOWGENT_E2E_CONTAINER_HTTPS_PROXY",
+            container_proxy,
+        )
         # Keep the use-case fixtures backend-neutral: local developer shells
         # commonly expose GH_TOKEN while the MCP secret reference uses the
         # canonical GITHUB_TOKEN name.  Never persist either credential.
@@ -544,7 +559,7 @@ class FlowgentDockerDeployment(BaseDeployer):
             "FLOWGENT_NOTIFICATION_KEY_V1": base64.b64encode(os.urandom(32)).decode(),
             "FLOWGENT_E2E_NOTIFICATION_TOKEN": secrets.token_urlsafe(32),
             "SONAR_SCANNER_API_TOKEN": secrets.token_urlsafe(32),
-            "HTTPS_PROXY": os.getenv("HTTPS_PROXY", "http://127.0.0.1:8800"),
+            "HTTPS_PROXY": proxy,
         }
         secret_file.write_text(json.dumps(persisted, indent=2) + "\n", encoding="utf-8")
         secret_file.chmod(0o600)

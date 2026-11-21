@@ -26,6 +26,11 @@ static_resources:
                               disabled: true
                         - match: {path: "/auth/account/security"}
                           route: {cluster: authguard_web}
+                          response_headers_to_add:
+                            - header: {key: X-Frame-Options, value: SAMEORIGIN}
+                              append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                            - header: {key: Content-Security-Policy, value: "frame-ancestors 'self'"}
+                              append_action: OVERWRITE_IF_EXISTS_OR_ADD
                           typed_per_filter_config:
                             envoy.filters.http.jwt_authn:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig

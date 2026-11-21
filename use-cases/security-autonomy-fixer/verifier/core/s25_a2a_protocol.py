@@ -138,7 +138,7 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
         )
         state = (task.get("status") or {}).get("state")
         assert state == "completed", (
-            f"A2A action {action} task={task.get('id', '<unknown>')} state={state}"
+            f"A2A action {action} task={task.get('id', '<unknown>')} status={task.get('status')}"
         )
         node_run_id = task.get("id")
         assert node_run_id, f"A2A action {action} did not return a protocol task id"
@@ -196,7 +196,7 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
             f"A2A list_agent_graphs returned {type(graphs).__name__}, want list"
         )
         graph_spec = {
-            "id": AGENT_GRAPH_NAME,
+            "name": AGENT_GRAPH_NAME,
             "kind": "graph",
             "description": "Real A2A protocol execution verifier",
             "runtime_mode": "session",
@@ -213,7 +213,7 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
         }
         try:
             _, created = E2ES25A2AProtocolVerifier._action(
-                "create_graph", spec=graph_spec
+                "create_agent_graph", spec=graph_spec
             )
             assert created.get("agent_graph_name") == AGENT_GRAPH_NAME, created
 
@@ -237,7 +237,7 @@ class E2ES25A2AProtocolVerifier(BaseVerifier):
             assert any(item.get("id") == graph_run_id for item in (items or [])), runs
         finally:
             try:
-                E2ES25A2AProtocolVerifier._action("delete_graph", agent_graph_name=AGENT_GRAPH_NAME)
+                E2ES25A2AProtocolVerifier._action("delete_agent_graph", agent_graph_name=AGENT_GRAPH_NAME)
             except Exception as exc:
                 print(f"  WARN: A2A verifier cleanup failed: {exc}")
 

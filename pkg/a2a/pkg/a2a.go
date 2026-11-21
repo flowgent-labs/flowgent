@@ -236,7 +236,7 @@ func (h *adminAgentHandler) dispatch(ctx context.Context, req *adminRequest) (st
 		if err := apiClient.CreateAgentGraph(ctx, req.Namespace, req.Spec); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"status":"created","agent_graph_name":"%s"}`, req.Spec.ID), nil
+		return fmt.Sprintf(`{"status":"created","agent_graph_name":"%s"}`, req.Spec.Name), nil
 
 	case "update_agent_graph":
 		if req.Spec == nil {

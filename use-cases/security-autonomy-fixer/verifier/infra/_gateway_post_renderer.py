@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Give the isolated Flowgent Envoy control/data planes stable E2E names."""
+"""Normalize isolated Gateway identities and same-origin account framing."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ UPSTREAM_CONTROL_PLANE_NAME = "envoy-gateway"
 
 
 class EnvoyGatewayManifestNormalizer:
-    """Normalize only the E2E controller and generated data-plane identities."""
+    """Keep Gateway identity and application integration policy in one place."""
 
     NAMESPACED_KINDS = {
         "ConfigMap",
@@ -87,6 +87,19 @@ class EnvoyGatewayManifestNormalizer:
                     self.data_plane_name
                 )
                 kubernetes.setdefault("envoyService", {})["name"] = self.data_plane_name
+            if document.get("kind") == "HTTPRoute":
+                # The account panel is embedded by the same-origin Flowgent
+                # shell. Keep login/assets framing unchanged.
+                for rule in document.get("spec", {}).get("rules", []):
+                    if any(match.get("path") == {"type": "Exact", "value": "/auth/account/security"}
+                           for match in rule.get("matches", [])):
+                        rule.setdefault("filters", []).append({
+                            "type": "ResponseHeaderModifier",
+                            "responseHeaderModifier": {"set": [
+                                {"name": "X-Frame-Options", "value": "SAMEORIGIN"},
+                                {"name": "Content-Security-Policy", "value": "frame-ancestors 'self'"},
+                            ]},
+                        })
             self._normalize_namespaced_names(document)
             self._normalize_cluster_rbac(document)
             rendered.append(yaml.safe_dump(document, sort_keys=False).rstrip())

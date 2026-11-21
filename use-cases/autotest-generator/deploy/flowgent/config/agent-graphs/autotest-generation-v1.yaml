@@ -1,7 +1,7 @@
 name: autotest-generation
 kind: AgentGraph
 data:
-  id: autotest-generation
+  name: autotest-generation
   runtime_mode: application
   resources:
     jobmanager:

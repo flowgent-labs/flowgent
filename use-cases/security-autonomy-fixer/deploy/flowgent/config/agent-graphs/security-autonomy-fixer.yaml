@@ -8,7 +8,7 @@ metadata:
   description: End-to-end SonarQube SAST security remediation pipeline — discovery, analyze, fix, review,
     vote, approve, commit
 data:
-  id: security-autonomy-fixer
+  name: security-autonomy-fixer
   runtime_mode: application
   resources:
     jobmanager:

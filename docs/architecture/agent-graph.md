@@ -57,7 +57,7 @@ metadata:
   namespace: default
   status: active
 data:
-  id: example-graph
+  name: example-graph
   runtime_mode: application
   resources:
     jobmanager: { cpu: "500m", memory: "512Mi" }
@@ -267,7 +267,7 @@ kind: AgentGraph
 metadata:
   name: dependency-scan
 data:
-  id: dependency-scan
+  name: dependency-scan
   kind: skill
   summary: "Scan project dependencies for known CVEs"
   nodes:

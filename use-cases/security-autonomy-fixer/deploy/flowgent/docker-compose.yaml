@@ -18,7 +18,7 @@ services:
       SONARQUBE_MCP_URL: ${SONARQUBE_MCP_URL:-http://host.docker.internal:18080/mcp}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GH_TOKEN: ${GH_TOKEN:-}
-      HTTPS_PROXY: ${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY:-http://host.docker.internal:8800}
+      HTTPS_PROXY: ${FLOWGENT_E2E_CONTAINER_HTTPS_PROXY-http://host.docker.internal:8800}
       NO_PROXY: localhost,127.0.0.1,postgres,emqx,jaeger,authguard-authn,authguard-authz,ldap,mock-github,notification-receiver,sonar-scanner,mock-llm,mock-llm.e2e-flowgent-mock-llm.svc.cluster.local
       FLOWGENT__STORAGE__POSTGRES__DSN: postgres://test:test@postgres:5432/flowgent?sslmode=disable&options=-csearch_path%3De2e_flowgent
     extra_hosts:

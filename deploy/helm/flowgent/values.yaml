@@ -34,6 +34,13 @@ postgresql:
   service: {type: ClusterIP, nodePort: 32432}
   persistence: {size: 4Gi, storageClass: ""}
   externalSecret: ""
+  # Official Debian PostgreSQL/pgvector images use UID/GID 999. Start as the
+  # database user; kubelet manages volume ownership without a root/gosu hop.
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
 
 emqx:
   enabled: true
