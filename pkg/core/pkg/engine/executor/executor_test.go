@@ -157,6 +157,29 @@ func TestCommitteeExecutor_EmptyVotes(t *testing.T) {
 	}
 }
 
+func TestCommitteeExecutorBooleanVotesAndEmptyUnanimous(t *testing.T) {
+	for _, test := range []struct {
+		name, strategy string
+		votes          []any
+		approved       bool
+		count          int
+	}{
+		{"boolean majority", "majority", []any{true, false, true}, true, 2},
+		{"mixed votes", "majority", []any{true, map[string]any{"decision": true}, false}, true, 2},
+		{"empty unanimous", "unanimous", nil, false, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := (&CommitteeExecutor{}).Execute(t.Context(), &entities.ExecutionPlan{
+				Node:  &entities.GraphNode{Strategy: map[string]any{"type": test.strategy}},
+				Input: map[string]any{"votes": test.votes},
+			}, nil)
+			if err != nil || result.Output["decision"] != test.approved || result.Output["approve"] != test.count || result.Output["total"] != len(test.votes) {
+				t.Fatalf("committee result = %+v, %v", result, err)
+			}
+		})
+	}
+}
+
 // ── Human ────────────────────────────────────────────
 
 type mockHumanStore struct{}

@@ -14,6 +14,7 @@ from verifier.context import BaseVerifier, FlowgentRunEvidence, VerificationCont
 class E2ES52LogsVerifier(BaseVerifier):
     scenario_id = "52"
     title = "OTEL — UI Execution Lifecycle Logs"
+    SUCCESS_EVENTS = {"slot worker noderun succeeded", "taskmanager noderun succeeded"}
 
     def deploy(self, context: VerificationContext) -> None:
         """Logs are captured while the producing workload still exists."""
@@ -60,11 +61,13 @@ class E2ES52LogsVerifier(BaseVerifier):
         required = {
             "sandbox trigger received",
             "sandbox result published",
-            "slot worker noderun succeeded",
         }
-        if required - messages:
+        missing = required - messages
+        if not self.SUCCESS_EVENTS & messages:
+            missing.add("TaskManager noderun succeeded")
+        if missing:
             raise AssertionError(
-                f"Missing correlated execution log events: {sorted(required - messages)}"
+                f"Missing correlated execution log events: {sorted(missing)}"
             )
         if any(
             event.get("level", "").upper() in {"ERROR", "FATAL"} for event in events
@@ -129,9 +132,7 @@ class E2ES52LogsVerifier(BaseVerifier):
                 )
         for node in active:
             plan = re.sub(r"-attempt-\d+$", "", tasks[node]["execution_id"])
-            if not {
-                "slot worker noderun succeeded",
-            } <= events.get(plan, set()):
+            if not self.SUCCESS_EVENTS & events.get(plan, set()):
                 raise AssertionError(
                     f"Missing producing lifecycle events for remediation node {node}"
                 )

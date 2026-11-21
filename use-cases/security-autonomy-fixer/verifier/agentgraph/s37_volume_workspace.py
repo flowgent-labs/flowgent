@@ -15,7 +15,7 @@ Steps:
   L2 — TM Pod container: verify /var/flowgent volume is mounted inside container
   L3 — TM Pod container: verify /var/flowgent is writable without writing
   L4 — TM Pod container: verify current run workspace hierarchy:
-        /var/flowgent/{namespaceId}/{graphId}/{runId}/{taskId}
+        /var/flowgent/{namespace}/{agentGraphName}/{graphRunId}/{nodeRunId}
   L5 — TM Pod container: verify rengine .git under the git-clone task dir
 """
 
@@ -25,7 +25,9 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
+from pathlib import PurePosixPath
 
 from util.constant import E2EOtherDefinitions as config
 from util.report import VerificationResult
@@ -159,12 +161,16 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
             return []
 
     @staticmethod
-    def workspace_plan_id(tasks_by_node: dict, graph_run_id: str, node_instance_id: str) -> str:
-        """Resolve the stable plan workspace from an attempt-scoped exec_id."""
+    def workspace_path(tasks_by_node: dict, graph_run_id: str, node_instance_id: str) -> str:
+        """Use the completed attempt's checkpoint, never guess from a dispatch ID."""
         task = tasks_by_node.get(node_instance_id) or {}
-        exec_id = task.get("exec_id") or ""
-        match = re.fullmatch(r"(.+)-attempt-\d+", exec_id)
-        return match.group(1) if match else (exec_id or f"plan-{graph_run_id}-{node_instance_id}")
+        checkpoint = task.get("checkpoint") or {}
+        path = PurePosixPath(checkpoint.get("script_path", ""))
+        root = PurePosixPath(CONTAINER_WORKSPACE, NAMESPACE, AGENT_GRAPH_NAME, graph_run_id)
+        if (task.get("status") not in {"SUCCESS", "COMPLETED"}
+                or ".." in path.parts or not path.is_relative_to(root) or path == root):
+            raise AssertionError(f"No valid completed workspace checkpoint for {node_instance_id}")
+        return str(path)
 
     @staticmethod
     def _verify_scenario():
@@ -329,7 +335,7 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
         # ═══════════════════════════════════════════════════════════════
         # L4: Find DAG run workspace subdirectories inside container.
         #     Created by sandbox executor at path:
-        #       /var/flowgent/{namespaceId}/{graphId}/{runId}/{taskId}/
+        #       /var/flowgent/{namespace}/{agentGraphName}/{graphRunId}/{nodeRunId}/
         # ═══════════════════════════════════════════════════════════════
         print("\n── L4: DAG run workspace subdirectories (inside container) ──")
         tasks = E2ES37VolumeWorkspaceVerifier.load_tasks(graph_run_id)
@@ -362,20 +368,19 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
 
         expected_plan_paths = {}
         for node_instance_id in SANDBOX_NODE_IDS:
-            plan_id = E2ES37VolumeWorkspaceVerifier.workspace_plan_id(
+            plan_path = E2ES37VolumeWorkspaceVerifier.workspace_path(
                 tasks_by_node, graph_run_id, node_instance_id
             )
-            plan_path = f"{run_workspace}/{plan_id}"
             expected_plan_paths[node_instance_id] = plan_path
             rc, out, err = E2ES37VolumeWorkspaceVerifier.exec_in_pod(
                 ns,
                 pod_name,
                 container,
-                f"test -d '{plan_path}' && "
-                f"test -f '{plan_path}/input.json' && "
-                f"test -f '{plan_path}/result.json' && "
-                f"test -f '{plan_path}/status' && "
-                f"find '{plan_path}' -maxdepth 1 -name 'script.*' -type f | grep -q . && "
+                f"test -d {shlex.quote(plan_path)} && "
+                f"test -f {shlex.quote(plan_path + '/input.json')} && "
+                f"test -f {shlex.quote(plan_path + '/result.json')} && "
+                f"test -f {shlex.quote(plan_path + '/status')} && "
+                f"find {shlex.quote(plan_path)} -maxdepth 1 -name 'script.*' -type f | grep -q . && "
                 f"echo 'TASK_READY' || echo 'TASK_MISSING'",
             )
             if "TASK_READY" not in out:
@@ -411,7 +416,7 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
             ns,
             pod_name,
             container,
-            f"test -d '{expected_repo}/.git' && echo '{expected_repo}/.git' || true",
+            f"test -d {shlex.quote(expected_repo + '/.git')} && echo {shlex.quote(expected_repo + '/.git')} || true",
         )
         git_dirs = [d for d in out.split("\n") if d.strip()]
         if not git_dirs:
@@ -446,7 +451,7 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
                     ns,
                     pod_name,
                     container,
-                    f"cd '{repo_dir}' && echo '--- files ---' && ls | head -15 && "
+                    f"cd {shlex.quote(repo_dir)} && echo '--- files ---' && ls | head -15 && "
                     f"echo '--- git log ---' && git log --oneline -3 2>/dev/null",
                 )
                 print(f"  [L5] Content preview: {out2[:500]}")
@@ -455,7 +460,7 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
                     ns,
                     pod_name,
                     container,
-                    f"find '{repo_dir}' -type f -not -path '*/.git/*' | wc -l",
+                    f"find {shlex.quote(repo_dir)} -type f -not -path '*/.git/*' | wc -l",
                 )
                 print(f"  [L5] Total source files: {out3.strip()}")
 
@@ -463,8 +468,8 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
                     ns,
                     pod_name,
                     container,
-                    f"test -f '{repo_dir}/pom.xml' && echo 'pom.xml: EXISTS' || echo 'pom.xml: MISSING'; "
-                    f"find '{repo_dir}' -name 'pom.xml' -maxdepth 1 2>/dev/null | head -1",
+                    f"test -f {shlex.quote(repo_dir + '/pom.xml')} && echo 'pom.xml: EXISTS' || echo 'pom.xml: MISSING'; "
+                    f"find {shlex.quote(repo_dir)} -maxdepth 1 -name 'pom.xml' 2>/dev/null | head -1",
                 )
                 print(f"  [L5] Build file: {out4.strip()}")
                 if "pom.xml: EXISTS" not in out4:

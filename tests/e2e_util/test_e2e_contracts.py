@@ -143,6 +143,20 @@ class RuntimeDetectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 FlowgentRunEvidence.workspace(SimpleNamespace(deployer="docker"), evidence, "../outside")
 
+    def test_volume_workspace_uses_checkpoint_and_rejects_uncommitted_or_other_runs(self):
+        from verifier.agentgraph.s37_volume_workspace import E2ES37VolumeWorkspaceVerifier as verifier
+        from verifier.agentgraph.s37_volume_workspace import NAMESPACE, AGENT_GRAPH_NAME
+
+        path = f"/var/flowgent/{NAMESPACE}/{AGENT_GRAPH_NAME}/run/node-run-uuid"
+        task = {"status": "SUCCESS", "execution_id": "plan-dispatch-attempt-1",
+                "checkpoint": {"script_path": path}}
+        self.assertEqual(verifier.workspace_path({"clone": task}, "run", "clone"), path)
+        for update in ({"checkpoint": {}}, {"status": "RUNNING"},
+                       {"checkpoint": {"script_path": path.replace("/run/", "/other-run/")}},
+                       {"checkpoint": {"script_path": path + "/../outside"}}):
+            with self.subTest(update=update), self.assertRaisesRegex(AssertionError, "checkpoint"):
+                verifier.workspace_path({"clone": {**task, **update}}, "run", "clone")
+
     def test_mqtt_audit_resolves_graph_id_and_waits_for_subscription_ack(self):
         import verifier.agentgraph as graph
 
@@ -865,10 +879,23 @@ class VerticalScenarioContractTests(unittest.TestCase):
                 verifier, "evidence_path", return_value=Path(directory) / "events.json"
             ),
         ):
-            verifier._verify_logs()
-            verifier.execution["logs"] = verifier.execution["logs"][:-1]
-            with self.assertRaisesRegex(AssertionError, "slot worker noderun succeeded"):
+            for success in E2ES52LogsVerifier.SUCCESS_EVENTS:
+                events[-1]["msg"] = success
+                verifier.execution["logs"] = [json.dumps(event) for event in events]
                 verifier._verify_logs()
+                verifier.execution["logs"] = verifier.execution["logs"][:-1]
+                with self.assertRaisesRegex(AssertionError, "noderun succeeded"):
+                    verifier._verify_logs()
+
+    def test_active_path_uses_the_canonical_application_manifest(self):
+        from verifier.agentgraph import SecurityAutonomyFixture
+
+        manifest = SecurityAutonomyFixture.load_graph_from_yaml()
+        tasks = {node["id"]: self.completed({"result": True})
+                 for node in manifest["nodes"] if node["kind"] == "condition"}
+        active = SecurityAutonomyFixture.active_path(tasks)
+        self.assertIn("commit-to-existing", active)
+        self.assertNotIn("create-branch", active)
 
     def test_missing_human_gate_cannot_pass_a_false_condition(self):
         from verifier.agentgraph.s33_remediation import E2ES33RemediationVerifier

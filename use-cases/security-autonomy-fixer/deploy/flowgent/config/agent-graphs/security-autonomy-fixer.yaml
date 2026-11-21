@@ -68,6 +68,8 @@ data:
     kind: agent
     instruction: |
       Parse the SonarQube scan results. For each issue extract:
+      - Set id to the exact original Sonar issue key; never use the rule ID as id.
+      - Copy repo from the input. Return only findings present in the supplied scan.
       - Source (sonarqube), rule ID, severity
       - File path, line number, message
       - Deduplicate by file+rule (keep highest severity)

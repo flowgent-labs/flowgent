@@ -14,8 +14,8 @@ Missing execution evidence must fail validation.
   is inconsistent. Barrier alignment/safepoints, quiescence, in-flight messages,
   snapshot completion, resume and fencing semantics remain under discussion.
   Keep revision/recovery/fencing scenarios out of this change until specified.
-- **Committee/human routing:** the manifest supplies Boolean votes while the
-  CommitteeExecutor currently counts only objects containing `decision`.
+- **Committee/human routing:** CommitteeExecutor accepts both Boolean votes and
+  objects containing `decision`; an empty committee cannot approve.
   Both condition branches converge on the human gate. Missing gate execution or
   absent durable approval is a failure, even when other DAG nodes completed.
 - **Knowledge:** approval/published hierarchy and text retrieval can be verified.
@@ -56,8 +56,9 @@ Actual local validation on 2026-11-13 also exposed two constraints:
   logger emits JSON. The E2E reader supports both. The DEBUG plan-start event
   still is not emitted by the global logger despite the configured DEBUG level;
   the user approved INFO lifecycle assertions, which are now implemented. Local
-  dispatch still lacks distributed SlotWorker success events and remains an
-  explicit logging gap.
+  dispatch emits its own success event after the NodeRun result is persisted;
+  distributed execution emits the SlotWorker event. Both must correlate with
+  the persisted plan, and neither a missing event nor another plan can pass.
 
 The approved real-analysis fixture now initializes a fresh Sonar project using
 the pinned official SonarSource scanner image and an exact source commit. A real

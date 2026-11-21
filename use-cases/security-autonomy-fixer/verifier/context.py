@@ -372,7 +372,7 @@ class FlowgentE2EProject:
                 "COALESCE(error->>'message','') AS error, attempt, "
                 "COALESCE((metadata->>'max_retries')::int,0) AS max_retries, "
                 "execution_id, COALESCE((metadata->>'sequence')::int,attempt) AS sequence, "
-                "started_at, finished_at FROM orh_node_run "
+                "started_at, finished_at, checkpoint FROM orh_node_run "
                 "WHERE graph_run_id=%s AND status<>'DELETED' ORDER BY node_instance_id,attempt",
                 (graph_run_id,),
             )

@@ -18,6 +18,8 @@ data:
     - Normalize issues
     - Deduplicate
     - Assign severity
+    - Preserve each Sonar finding's key verbatim as its normalized id. A rule ID
+      identifies a rule, not an individual finding. Never invent or renumber ids.
 
     You MUST NOT:
     - Generate fixes

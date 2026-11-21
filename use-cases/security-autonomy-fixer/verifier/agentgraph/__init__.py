@@ -786,9 +786,7 @@ class SecurityAutonomyFixture:
     @staticmethod
     def active_path(tasks_by_node: dict) -> list[str]:
         """Derive branch participation from the manifest and real condition outputs."""
-        document = yaml.safe_load(
-            (_CONFIG_ROOT / "graphs/security-autonomy-fixer.yaml").read_text()
-        )["data"]
+        document = SecurityAutonomyFixture.load_graph_from_yaml()
         nodes = {node["id"]: node for node in document["nodes"]}
         incoming = {node: [] for node in nodes}
         for edge in document["edges"]:

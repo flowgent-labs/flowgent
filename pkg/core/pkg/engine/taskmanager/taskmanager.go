@@ -296,6 +296,10 @@ func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.Execution
 			return nil, fmt.Errorf("persist noderun result: %w", saveErr)
 		}
 	}
+	if noderun.Status == entities.NodeRunSucceeded {
+		slog.Info("taskmanager noderun succeeded", "tm_id", tm.ID, "plan_id", plan.PlanID,
+			"node_run_id", noderun.ID, "node_instance_id", plan.NodeInstanceID)
+	}
 	return result, nil
 }
 

@@ -24,8 +24,13 @@ func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.Executio
 	approveCount := 0
 	totalCount := len(votes)
 	for _, v := range votes {
-		if m, ok := v.(map[string]any); ok {
-			if dec, ok := m["decision"].(bool); ok && dec {
+		switch vote := v.(type) {
+		case bool:
+			if vote {
+				approveCount++
+			}
+		case map[string]any:
+			if dec, ok := vote["decision"].(bool); ok && dec {
 				approveCount++
 			}
 		}
@@ -44,6 +49,7 @@ func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.Executio
 	default:
 		approved = approveCount > totalCount/2
 	}
+	approved = totalCount > 0 && approved
 
 	confidence := 0.0
 	if totalCount > 0 {
