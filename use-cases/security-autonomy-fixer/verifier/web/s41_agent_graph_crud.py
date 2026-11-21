@@ -321,7 +321,7 @@ class E2ES41AgentGraphCrudVerifier(BrowserConsoleVerifier, BaseVerifier):
             self.graph_run_id, self.web_namespace, self.node_instance_id
         )
         if (
-            evidence["agent_graph_id"] != self.agent_graph_id
+            evidence["agent_graph_name"] != self.agent_graph_id
             or evidence["node_run_id"] != self.focused_node_run_id
         ):
             raise AssertionError("UI selected a different persisted AgentGraph/NodeRun")

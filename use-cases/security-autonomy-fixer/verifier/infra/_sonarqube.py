@@ -100,6 +100,13 @@ class SonarQubeRuntime:
                 E2EProcessHelper.run(
                     ("kubectl", "-n", config.SONARQUBE_NAMESPACE, *command), timeout_seconds=30,
                 )
+            if resource.startswith("statefulset/"):
+                E2EProcessHelper.run(
+                    ("kubectl", "-n", config.SONARQUBE_NAMESPACE, "exec",
+                     resource.split("/", 1)[1] + "-0", "--", "sh", "-c",
+                     'for p in /proc/[0-9]*; do cat "$p/comm" "$p/wchan" 2>/dev/null; done'),
+                    timeout_seconds=30,
+                )
             detail = (result.stdout + result.stderr).strip()[-800:]
             raise RuntimeError(f"SonarQube resource not ready: {resource}: {detail}")
 

@@ -187,7 +187,7 @@ jobs:
     needs: build-and-test
     # A dedicated runner variable lets heavy E2E use a larger worker without
     # serializing it with Docker Compose on the same host.
-    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -298,7 +298,7 @@ jobs:
     # This job intentionally runs in parallel with e2e-kubernetes on a
     # separate VM, preventing databases, browsers, and image caches from
     # competing for one runner's CPU, memory, and disk.
-    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.FLOWGENT_E2E_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 120
     permissions:
       contents: read

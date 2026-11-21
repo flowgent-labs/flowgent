@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 
 import requests
@@ -897,19 +898,24 @@ class MQTTAudit:
     def _graph_run_id_from_topic(topic):
         parts = topic.split("/")
         try:
-            idx = parts.index("runs")
+            idx = parts.index("graph-runs")
             return parts[idx + 1]
         except (ValueError, IndexError):
             return None
 
     def start(self):
+        response = FlowgentE2EProject.session().get(
+            f"{API}/api/v1/{NAMESPACE}/agent-graphs/{AGENT_GRAPH_NAME}", timeout=10,
+        )
+        response.raise_for_status()
+        agent_graph_id = response.json()["id"]
         topics = [
-            f"flowgent/v1/{NAMESPACE}/agent-graphs/{AGENT_GRAPH_NAME}/graph-runs/+/ctrl/graph-run/created",
-            f"flowgent/v1/{NAMESPACE}/agent-graphs/{AGENT_GRAPH_NAME}/graph-runs/+/ctrl/graph-run/status",
-            f"flowgent/v1/{NAMESPACE}/clusters/+/agent-graphs/{AGENT_GRAPH_NAME}/graph-runs/+/exec/plans",
-            f"flowgent/v1/{NAMESPACE}/agent-graphs/{AGENT_GRAPH_NAME}/graph-runs/+/exec/results",
-            f"flowgent/v1/{NAMESPACE}/clusters/+/agent-graphs/{AGENT_GRAPH_NAME}/graph-runs/+/sandbox/trigger",
-            f"flowgent/v1/{NAMESPACE}/agent-graphs/{AGENT_GRAPH_NAME}/graph-runs/+/sandbox/result",
+            f"flowgent/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/+/ctrl/graph-run/created",
+            f"flowgent/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/+/ctrl/graph-run/status",
+            f"flowgent/v1/{NAMESPACE}/clusters/+/agent-graphs/{agent_graph_id}/graph-runs/+/exec/plans",
+            f"flowgent/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/+/exec/results",
+            f"flowgent/v1/{NAMESPACE}/clusters/+/agent-graphs/{agent_graph_id}/graph-runs/+/sandbox/trigger",
+            f"flowgent/v1/{NAMESPACE}/agent-graphs/{agent_graph_id}/graph-runs/+/sandbox/result",
             "flowgent/v1/heartbeat/+",
         ]
         for topic in topics:
@@ -917,12 +923,29 @@ class MQTTAudit:
                 raise AssertionError(
                     f"Verifier MQTT audit must not use shared subscriptions: {topic}"
                 )
+        subscribed = threading.Event()
+        subscription_mid = None
+
+        def on_connect(client, userdata, flags, reason_code, properties):
+            nonlocal subscription_mid
+            if reason_code == 0:
+                _, subscription_mid = client.subscribe([(topic, 1) for topic in topics])
+
+        def on_subscribe(client, userdata, mid, reason_codes, properties):
+            if mid == subscription_mid and len(reason_codes) == len(topics) and not any(
+                getattr(code, "is_failure", False) for code in reason_codes
+            ):
+                subscribed.set()
+
+        self.client.on_connect = on_connect
+        self.client.on_subscribe = on_subscribe
         self.client.connect(config.EMQX_HOST, config.EMQX_PORT, 20)
         self.client.loop_start()
+        if not subscribed.wait(10):
+            self.stop()
+            raise AssertionError("MQTT audit subscriptions were not acknowledged")
         for topic in topics:
-            self.client.subscribe(topic, qos=1)
             print(f"     audit subscribe: {topic}")
-        time.sleep(0.5)
         return self
 
     def stop(self):

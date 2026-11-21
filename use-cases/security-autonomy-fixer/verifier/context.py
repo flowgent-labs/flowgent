@@ -601,7 +601,7 @@ class FlowgentRunEvidence:
         ) as connection:
             rows = E2EPostgresChecker.query(
                 connection,
-                "SELECT r.status,r.agent_graph_revision_id,f.name,n.id,n.status,n.attempt,n.execution_id,n.output,r.runtime_mode,r.runtime_cluster_id "
+                "SELECT r.status,r.agent_graph_revision_id,f.id,f.name,n.id,n.status,n.attempt,n.execution_id,n.output,r.runtime_mode,r.runtime_cluster_id,n.checkpoint "
                 "FROM orh_graph_run r JOIN orh_agent_graph f ON f.id=r.agent_graph_id AND f.namespace_id=r.namespace_id "
                 "JOIN orh_node_run n ON n.graph_run_id=r.id AND n.namespace_id=r.namespace_id "
                 "WHERE r.id=%s AND r.namespace_id=%s AND n.node_instance_id=%s ORDER BY n.attempt DESC LIMIT 1",
@@ -613,6 +613,7 @@ class FlowgentRunEvidence:
             status,
             revision,
             agent_graph_id,
+            agent_graph_name,
             node_run_id,
             task_status,
             attempt,
@@ -620,6 +621,7 @@ class FlowgentRunEvidence:
             output,
             runtime_mode,
             runtime_cluster_id,
+            checkpoint,
         ) = rows[0]
         if (
             status != "COMPLETED"
@@ -633,6 +635,7 @@ class FlowgentRunEvidence:
             "graph_run_id": graph_run_id,
             "namespace": namespace,
             "agent_graph_id": agent_graph_id,
+            "agent_graph_name": agent_graph_name,
             "node_instance_id": node_instance_id,
             "node_run_id": node_run_id,
             "attempt": attempt,
@@ -641,6 +644,7 @@ class FlowgentRunEvidence:
             "output": output,
             "runtime_cluster_id": runtime_cluster_id,
             "runtime_mode": runtime_mode,
+            "workspace_path": (checkpoint or {}).get("script_path", ""),
         }
 
     @staticmethod
@@ -710,16 +714,10 @@ class FlowgentRunEvidence:
         path = PurePosixPath(relative_path)
         if path.is_absolute() or ".." in path.parts:
             raise ValueError("Workspace evidence must use a relative file path")
-        absolute = str(
-            PurePosixPath(
-                "/var/flowgent",
-                evidence["namespace"],
-                evidence["agent_graph_id"],
-                evidence["graph_run_id"],
-                evidence["plan_id"],
-                path,
-            )
-        )
+        workspace = PurePosixPath(evidence.get("workspace_path", ""))
+        if not workspace.is_absolute() or ".." in workspace.parts or not workspace.is_relative_to("/var/flowgent"):
+            raise ValueError("Persisted workspace checkpoint must identify an E2E workspace")
+        absolute = str(workspace / path)
         program = (
             "import hashlib,pathlib; p=pathlib.Path("
             + repr(absolute)

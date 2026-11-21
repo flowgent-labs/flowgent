@@ -72,6 +72,69 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_run_evidence_uses_persisted_checkpoint_and_distinct_graph_identity(self):
+        from util.postgres import E2EPostgresChecker
+        from verifier.context import E2EDeployerFactory, FlowgentRunEvidence
+
+        checkpoint_path = "/var/flowgent/custom-layout/attempt-2"
+        row = ("COMPLETED", "revision", "stable-graph-id", "readable-name", "attempt-2",
+               "SUCCESS", 2, "plan-edit-attempt-2", {}, "session", "cluster",
+               {"script_path": checkpoint_path})
+        with (
+            patch.object(E2EPostgresChecker, "connect", return_value=SimpleNamespace(close=lambda: None)),
+            patch.object(E2EPostgresChecker, "query", return_value=[row]),
+        ):
+            evidence = FlowgentRunEvidence.persisted("run", "team", "edit")
+        self.assertEqual(evidence["agent_graph_id"], "stable-graph-id")
+        self.assertEqual(evidence["agent_graph_name"], "readable-name")
+        commands = []
+        deployment = SimpleNamespace(runtime_exec=lambda command: (
+            commands.append(command) or SimpleNamespace(passed=True, output="file-hash\n")
+        ))
+        with patch.object(E2EDeployerFactory, "create", return_value=deployment):
+            workspace = FlowgentRunEvidence.workspace(SimpleNamespace(deployer="docker"), evidence, "src/file.py")
+            self.assertEqual(workspace["path"], checkpoint_path + "/src/file.py")
+            self.assertIn(checkpoint_path, commands[0][-1])
+            with self.assertRaises(ValueError):
+                FlowgentRunEvidence.workspace(SimpleNamespace(deployer="docker"), evidence, "../outside")
+
+    def test_mqtt_audit_resolves_graph_id_and_waits_for_subscription_ack(self):
+        import verifier.agentgraph as graph
+
+        subscriptions = []
+        closed = []
+        client = SimpleNamespace(
+            connect=lambda *args: None,
+            subscribe=lambda topics: (subscriptions.extend(topics) or (0, 7)),
+            loop_stop=lambda: None, disconnect=lambda: closed.append(True),
+        )
+
+        def connect_and_ack():
+            client.on_connect(client, None, None, 0, None)
+            client.on_subscribe(client, None, 7,
+                                [SimpleNamespace(is_failure=False)] * len(subscriptions), None)
+
+        client.loop_start = connect_and_ack
+        response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "stable-graph-id"})
+        session = SimpleNamespace(get=lambda *args, **kwargs: response)
+        audit = graph.MQTTAudit("wanted-run")
+        audit.client = client
+        with patch.object(graph.FlowgentE2EProject, "session", return_value=session):
+            audit.start()
+            self.assertTrue(all("/agent-graphs/stable-graph-id/" in topic
+                                for topic, _ in subscriptions if "/agent-graphs/" in topic))
+            for run_id in ("wanted-run", "other-run"):
+                audit._on_message(client, None, SimpleNamespace(
+                    topic=f"flowgent/v1/team/agent-graphs/stable-graph-id/graph-runs/{run_id}/exec/results",
+                    payload=b'{}',
+                ))
+            self.assertEqual([message["graph_run_id"] for message in audit.messages], ["wanted-run"])
+            client.loop_start = lambda: client.on_connect(client, None, None, 0, None)
+            with patch.object(graph.threading.Event, "wait", return_value=False):
+                with self.assertRaisesRegex(AssertionError, "not acknowledged"):
+                    audit.start()
+            self.assertTrue(closed)
+
     def test_security_fixer_uses_the_canonical_graph_manifest_and_name(self):
         from verifier.agentgraph import SecurityAutonomyFixture
 
