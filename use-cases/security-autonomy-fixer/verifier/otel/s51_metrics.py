@@ -44,7 +44,7 @@ class E2ES51MetricsVerifier(BaseVerifier):
             self.prometheus.stop()
 
     def _verify_metrics(self) -> None:
-        label = json.dumps(self.execution["agent_graph_id"])
+        label = json.dumps(self.execution["agent_graph_name"])
         expected = {
             f'flowgent_jm_runs_total{{agent_graph_name={label},status="RUNNING"}}': 1,
             f'flowgent_jm_runs_total{{agent_graph_name={label},status="COMPLETED"}}': 1,

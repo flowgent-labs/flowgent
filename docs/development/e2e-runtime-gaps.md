@@ -1,13 +1,14 @@
 # Runtime gaps exposed by use-case E2E review
 
-This change is limited to use-case E2E code and fixtures. Runtime fixes require
-separate design/implementation work; missing evidence must fail validation.
+This document tracks acceptance limits found by the real use-case verifiers.
+Missing execution evidence must fail validation.
 
-- **Metrics:** `pkg/common/pkg/tracing/otel.go` creates a MeterProvider without
-  a reader/exporter. Configuration declares Prometheus but no management
-  `/metrics` handler is registered. JobManager metric recording methods are
-  declared but currently have no call sites. A real Prometheus scrape and per-AgentGraph
-  counter assertion cannot succeed yet. Do not substitute a mock exporter.
+- **Metrics plumbing implemented:** the existing OTel MeterProvider uses the
+  official Prometheus reader/exporter, and daemon management listeners expose
+  `/metrics` when enabled. JobMaster records actual run transitions and persisted
+  attempt results through its existing instruments. Unit tests exercise the
+  real exporter and management listener; E2E still requires exact execution-derived
+  counters from the deployed Prometheus service.
 - **Checkpoint/recovery:** snapshot capture exists, but execution can still
   resolve the latest Agent and Knowledge revisions, and checkpoint restoration
   is inconsistent. Barrier alignment/safepoints, quiescence, in-flight messages,

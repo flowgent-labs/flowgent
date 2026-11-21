@@ -15,8 +15,8 @@ Topic Coverage (14 topics, all prefixed flowgent/v1/):
 9.  heartbeat/{tmId}     - TM → JM
 10. ctrl/graph/updated    - API Server → Controller
 11. ctrl/graph/deleted    - API Server → Controller
-12. ctrl/run/created     - API Server → Controller
-13. ctrl/run/status      - API Server → Controller
+12. ctrl/graph-run/created     - API Server → Controller
+13. ctrl/graph-run/status      - API Server → Controller
 14. notify/pod/{}/ws/{}  - Notifier → Notifier (cross-pod WS)
 
 Test Strategy:
@@ -342,7 +342,7 @@ class E2ES24MessagerVerifier(BaseVerifier):
                 },
             },
             {
-                "name": "ctrl/run/created (API → Controller)",
+                "name": "ctrl/graph-run/created (API → Controller)",
                 "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/ctrl/graph-run/created",
                 "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/ctrl/graph-run/created",
                 "payload": {
@@ -353,7 +353,7 @@ class E2ES24MessagerVerifier(BaseVerifier):
                 },
             },
             {
-                "name": "ctrl/run/status (API → Controller)",
+                "name": "ctrl/graph-run/status (API → Controller)",
                 "publish": f"flowgent/v1/{namespace}/agent-graphs/{agent_graph_id}/graph-runs/{graph_run_id}/ctrl/graph-run/status",
                 "subscribe": "flowgent/v1/+/agent-graphs/+/graph-runs/+/ctrl/graph-run/status",
                 "payload": {

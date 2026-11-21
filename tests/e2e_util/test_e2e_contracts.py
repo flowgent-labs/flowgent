@@ -72,6 +72,38 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_worker_provider_registry_reloads_after_metadata_import(self):
+        kube = importlib.import_module("verifier.infra._kubernetes")
+        deployment = object.__new__(kube.FlowgentKubernetesDeployment)
+        deployment.context = SimpleNamespace(namespace="fixture-system")
+        order = []
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(deployment, "_run", side_effect=lambda *a, **k: order.append("import")),
+            patch.object(E2EKubernetesDeployer, "resource", return_value={"items": [{"metadata": {"name": "session-tm"}}]}),
+            patch.object(E2EKubernetesDeployer, "rollout", side_effect=lambda *a, **k: order.append("restart")) as rollout,
+        ):
+            deployment.import_config()
+        self.assertEqual(order, ["import", "restart"])
+        rollout.assert_called_once_with("fixture-system", "session-tm", restart=True)
+
+    def test_trace_evidence_queries_the_canonical_graph_run_attribute(self):
+        from verifier.context import FlowgentRunEvidence
+        import requests
+
+        trace = {"traceID": "trace", "spans": [{"tags": [{"key": "graph_run.id", "value": "run"}]}]}
+
+        def get(url, **kwargs):
+            if url.endswith("/api/services"):
+                body = {"data": ["flowgent-jobmanager"]}
+            else:
+                self.assertEqual(json.loads(kwargs["params"]["tags"]), {"graph_run.id": "run"})
+                body = {"data": [trace]}
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
+
+        with patch.object(requests, "Session", return_value=SimpleNamespace(get=get)):
+            self.assertEqual(FlowgentRunEvidence.traces("run"), [trace])
+
     def test_run_evidence_uses_persisted_checkpoint_and_distinct_graph_identity(self):
         from util.postgres import E2EPostgresChecker
         from verifier.context import E2EDeployerFactory, FlowgentRunEvidence
@@ -895,7 +927,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
         from verifier.otel.s51_metrics import E2ES51MetricsVerifier
 
         verifier = object.__new__(E2ES51MetricsVerifier)
-        verifier.execution = {"agent_graph_id": "unique-ui-graph"}
+        verifier.execution = {"agent_graph_id": "stable-graph-id", "agent_graph_name": "unique-ui-graph"}
         verifier.context = SimpleNamespace(deployer="k8s")
         verifier.details = []
         verifier.prometheus = SimpleNamespace(

@@ -150,10 +150,10 @@ class E2ES31SeedTriggerVerifier(BaseVerifier):
             graph_run_id = self._trigger(session, connection)
             audit.set_graph_run_id(graph_run_id)
             graph.wait_for_workload_components(graph.AGENT_GRAPH_NAME, graph_run_id=graph_run_id, timeout=240)
-            audit.wait_for("ctrl/run/created", timeout=20)
+            audit.wait_for("ctrl/graph-run/created", timeout=20)
             audit.wait_for(graph.execution_audit_wakeup_suffix(), timeout=45)
             graph.save_mqtt_audit(graph_run_id, graph.snapshot_global_mqtt_audit(graph_run_id))
-            graph.assert_mqtt_suffixes(graph_run_id, ["ctrl/run/created"])
+            graph.assert_mqtt_suffixes(graph_run_id, ["ctrl/graph-run/created"])
             with open(RUN_ID_PATH, "w", encoding="utf-8") as output:
                 output.write(graph_run_id)
             SonarScannerRuntime.bind_run(graph_run_id)

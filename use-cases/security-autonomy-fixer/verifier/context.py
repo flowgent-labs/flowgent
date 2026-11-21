@@ -667,7 +667,7 @@ class FlowgentRunEvidence:
                     config.JAEGER_UI_URL.rstrip("/") + "/api/traces",
                     params={
                         "service": service,
-                        "tags": json.dumps({"run.id": graph_run_id}),
+                        "tags": json.dumps({"graph_run.id": graph_run_id}),
                         "lookback": "24h",
                         "limit": 100,
                     },
@@ -676,7 +676,7 @@ class FlowgentRunEvidence:
                 response.raise_for_status()
                 for trace in response.json().get("data", []):
                     if any(
-                        FlowgentRunEvidence.tags(span).get("run.id") == graph_run_id
+                        FlowgentRunEvidence.tags(span).get("graph_run.id") == graph_run_id
                         for span in trace.get("spans", [])
                     ):
                         matches[trace["traceID"]] = trace

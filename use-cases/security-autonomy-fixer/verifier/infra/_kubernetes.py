@@ -598,6 +598,18 @@ class FlowgentKubernetesDeployment(BaseDeployer):
             ),
             timeout_seconds=60,
         )
+        # Shared TMs start with the API server, before bootstrap metadata exists.
+        # Reload their existing provider/MCP registries only after import commits.
+        workers = E2EKubernetesDeployer.resource(
+            "deployments", self.context.namespace,
+            selector="app.kubernetes.io/component=taskmanager",
+        ).get("items", [])
+        if not workers:
+            raise RuntimeError("shared TaskManager deployment is missing after bootstrap")
+        for worker in workers:
+            E2EKubernetesDeployer.rollout(
+                self.context.namespace, worker["metadata"]["name"], restart=True,
+            )
 
     def cleanup(self) -> None:
         self.flowgent.cleanup()

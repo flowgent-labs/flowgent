@@ -56,6 +56,7 @@ func startSandboxService() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer startOTELTracing(svcCfg, "flowgent-sandbox")()
 
 	podName := os.Getenv("POD_NAME")
 	if podName == "" {

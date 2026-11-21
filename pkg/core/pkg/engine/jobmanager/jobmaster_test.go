@@ -10,7 +10,90 @@ import (
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"go.opentelemetry.io/otel"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func TestExecuteRecordsActualRunAndAttemptCounters(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	otel.SetMeterProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetMeterProvider(metricnoop.NewMeterProvider())
+	})
+	state := &retryRecordingState{}
+	jm := NewJobMaster(state, &retryResourceManager{}, utils.NewLogger("TEXT", "ERROR"), nil)
+	graph := &entities.AgentGraph{Name: "metered", BaseEntity: entities.BaseEntity{ID: "definition", Namespace: "test"},
+		Nodes: []entities.GraphNode{{ID: "first", Kind: entities.NoopNode}, {ID: "second", Kind: entities.NoopNode}},
+		Edges: []entities.GraphEdge{{From: "first", To: "second"}},
+	}
+	run := &entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "metered-run", Namespace: "test"}}
+	if err := jm.Execute(t.Context(), run, graph); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, scope := range snapshot.ScopeMetrics {
+		for _, measurement := range scope.Metrics {
+			if sum, ok := measurement.Data.(metricdata.Sum[int64]); ok {
+				for _, point := range sum.DataPoints {
+					status, _ := point.Attributes.Value("status")
+					counts[measurement.Name+"/"+status.AsString()] += point.Value
+				}
+			}
+		}
+	}
+	for name, want := range map[string]int64{
+		"flowgent.jm.runs.total/RUNNING": 1, "flowgent.jm.runs.total/COMPLETED": 1,
+		"flowgent.jm.plans.dispatched/":       int64(len(state.tasks)),
+		"flowgent.jm.plans.completed/SUCCESS": int64(len(state.tasks)),
+		"flowgent.jm.runs.active/":            0,
+	} {
+		if got, found := counts[name]; !found || got != want {
+			t.Errorf("%s = %d (present=%v), want %d", name, got, found, want)
+		}
+	}
+}
+
+type pauseRecordingState struct {
+	retryRecordingState
+	paused bool
+}
+
+func (s *pauseRecordingState) UpdateGraphRun(ctx context.Context, run *entities.GraphRun) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.paused = run.Status == entities.GraphRunPaused
+	return nil
+}
+
+type waitingResourceManager struct{ retryResourceManager }
+
+func (*waitingResourceManager) Schedule(context.Context, *entities.ExecutionPlan) (*entities.NodeResult, error) {
+	return &entities.NodeResult{State: entities.NodeRunWaiting}, nil
+}
+
+func TestRecoveryPausePersistsAfterExecutionContextIsCancelled(t *testing.T) {
+	state := &pauseRecordingState{}
+	jm := NewJobMaster(state, &waitingResourceManager{}, utils.NewLogger("TEXT", "ERROR"), nil)
+	graph := &entities.AgentGraph{Name: "waiting", BaseEntity: entities.BaseEntity{ID: "definition", Namespace: "test"},
+		Nodes: []entities.GraphNode{{ID: "wait", Kind: entities.NoopNode}},
+	}
+	run := &entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "waiting-run", Namespace: "test"}}
+	if err := jm.Execute(t.Context(), run, graph); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Fatalf("Execute = %v, want recovery reconciliation", err)
+	}
+	if !state.paused || run.Status != entities.GraphRunPaused {
+		t.Fatalf("pause was not durably written: %+v", run)
+	}
+}
 
 func TestJobManager_BasicTopology(t *testing.T) {
 	jm := NewJobMaster(nil, nil, nil, &JobManagerConfig{AgentGraphExecutionTimeout: 30 * time.Minute})

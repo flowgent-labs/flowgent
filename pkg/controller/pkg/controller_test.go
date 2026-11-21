@@ -141,6 +141,10 @@ func TestBuildJMDeploymentMountsConfigAndEnv(t *testing.T) {
 		t.Fatalf("expected 1 container, got %d", len(dep.Spec.Template.Spec.Containers))
 	}
 	container := dep.Spec.Template.Spec.Containers[0]
+	wantArgs := []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--agent-graph-name", "my-graph", "--graph-run-id", "run-1"}
+	if !reflect.DeepEqual(container.Args, wantArgs) {
+		t.Fatalf("application JM args = %v, want %v", container.Args, wantArgs)
+	}
 
 	foundMount := false
 	for _, vm := range container.VolumeMounts {

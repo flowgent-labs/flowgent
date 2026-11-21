@@ -826,7 +826,7 @@ func (c *FlowgentController) buildJMDeployment(name, namespace, namespaceID stri
 						Name:            "jobmanager",
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Image:           image,
-						Args:            []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--graph-id", graphName, "--run-id", run.ID},
+						Args:            []string{"jobmanager", "start", "-c", "/etc/flowgent/flowgent.yaml", "--agent-graph-name", graphName, "--graph-run-id", run.ID},
 						EnvFrom:         runtimeEnvFrom(c.cfg.Runtime.CredentialEnvSecret, runtimeConfigMap, runtimeSecret),
 						Resources:       buildResourceRequirements(applicationResources.JobManager),
 						Env: []corev1.EnvVar{

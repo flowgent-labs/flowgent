@@ -51,6 +51,7 @@ type JobMaster struct {
 	rm             resourcemanager.ResourceManager
 	logger         *utils.Logger
 	tracer         trace.Tracer
+	metrics        *JobManagerMetrics
 	timeout        time.Duration
 	nodeLimit      int
 	maxNodes       int
@@ -99,6 +100,7 @@ func NewJobMaster(state GraphRunStateStore, rm resourcemanager.ResourceManager, 
 	}
 	return &JobMaster{maxParallelism: parallelism,
 		state: state, rm: rm, logger: logger,
+		metrics: NewJobMasterMetrics(),
 		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
 		clusterID:   cfg.RuntimeClusterID,
 		nodeOutputs: make(map[string]map[string]any),
@@ -425,17 +427,34 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.AgentGraph, runID string
 // ─── Execute ─────────────────────────────────────────────
 
 func (jm *JobMaster) Execute(ctx context.Context, run *entities.GraphRun, spec *entities.AgentGraph) (executeErr error) {
+	metricsStarted := false
 	defer func() {
 		if !jm.child && errors.Is(executeErr, ErrRecoveryBlocked) {
 			run.Status = entities.GraphRunPaused
 			run.Error = executeErr.Error()
-			if err := jm.state.UpdateGraphRun(ctx, run); err != nil {
+			// Timeout cancellation must not discard the durable pause decision.
+			pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := jm.state.UpdateGraphRun(pauseCtx, run); err != nil {
 				executeErr = fmt.Errorf("%w; persist pause: %v", executeErr, err)
 			}
+		}
+		if metricsStarted {
+			status := run.Status
+			if executeErr != nil && status == entities.GraphRunRunning {
+				status = entities.GraphRunFailed
+				if errors.Is(executeErr, context.Canceled) {
+					status = entities.GraphRunCancelled
+				}
+			}
+			jm.metrics.RecordRunCompleted(ctx, spec.ResourceName(), string(status))
 		}
 	}()
 	if jm.tracer == nil {
 		jm.tracer = tracing.Tracer("flowgent/jobmaster")
+	}
+	if jm.metrics == nil {
+		jm.metrics = NewJobMasterMetrics()
 	}
 
 	if jm.slots == nil {
@@ -457,9 +476,11 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.GraphRun, spec *
 	if jm.rootGraphID == "" {
 		jm.rootGraphID = spec.ID
 	}
+	buildStarted := time.Now()
 	if err := jm.buildExecutionGraph(spec, run.ID); err != nil {
 		return fmt.Errorf("build execution graph: %w", err)
 	}
+	jm.metrics.RecordDAGBuild(ctx, spec.ResourceName(), time.Since(buildStarted))
 	jm.applySupervisorConfig(spec)
 
 	// Merge graph vars with run vars and inject built-in variables.
@@ -493,6 +514,8 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.GraphRun, spec *
 		if err := jm.state.UpdateGraphRun(ctx, run); err != nil {
 			return err
 		}
+		jm.metrics.RecordRunStarted(ctx, spec.ResourceName())
+		metricsStarted = true
 	}
 
 	if jm.timeout > 0 {
@@ -754,6 +777,7 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 				return nil, attemptCtx.Err()
 			}
 		}
+		jm.metrics.RecordPlanDispatched(attemptCtx, plan.AgentGraphName)
 		result, scheduleErr = jm.rm.Schedule(attemptCtx, plan)
 		if jm.slots != nil {
 			<-jm.slots
@@ -796,6 +820,7 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 				attemptSpan.End()
 				return nil, fmt.Errorf("persist noderun result: %w", err)
 			}
+			jm.metrics.RecordPlanCompleted(attemptCtx, plan.AgentGraphName, string(noderun.Status))
 			attemptSpan.SetStatus(codes.Ok, "done")
 			attemptSpan.End()
 			return result, nil
@@ -809,6 +834,7 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 			attemptSpan.End()
 			return nil, fmt.Errorf("persist failed attempt: %w", err)
 		}
+		jm.metrics.RecordPlanCompleted(attemptCtx, plan.AgentGraphName, string(noderun.Status))
 		attemptSpan.RecordError(lastErr)
 		attemptSpan.SetStatus(codes.Error, "attempt failed")
 		attemptSpan.End()

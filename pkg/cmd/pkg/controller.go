@@ -49,6 +49,7 @@ func startController(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer startOTELTracing(svcCfg, "flowgent-controller")()
 	logMode, logLevel := "JSON", "DEBUG"
 	if svcCfg != nil {
 		logMode, logLevel = svcCfg.Logging.Mode, svcCfg.Logging.Level
