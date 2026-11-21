@@ -239,7 +239,7 @@ jobs:
 
       - name: Install k3s
         run: |
-          curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+          curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --disable traefik
           kubectl wait --for=condition=Ready node --all --timeout=180s
 
       - name: Install E2E Python dependencies

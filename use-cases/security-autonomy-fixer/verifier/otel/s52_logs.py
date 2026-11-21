@@ -60,7 +60,7 @@ class E2ES52LogsVerifier(BaseVerifier):
         required = {
             "sandbox trigger received",
             "sandbox result published",
-            "slot worker task succeeded",
+            "slot worker noderun succeeded",
         }
         if required - messages:
             raise AssertionError(
@@ -130,7 +130,7 @@ class E2ES52LogsVerifier(BaseVerifier):
         for node in active:
             plan = re.sub(r"-attempt-\d+$", "", tasks[node]["execution_id"])
             if not {
-                "slot worker task succeeded",
+                "slot worker noderun succeeded",
             } <= events.get(plan, set()):
                 raise AssertionError(
                     f"Missing producing lifecycle events for remediation node {node}"

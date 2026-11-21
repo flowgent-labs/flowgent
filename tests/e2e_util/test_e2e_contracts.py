@@ -818,10 +818,10 @@ class VerticalScenarioContractTests(unittest.TestCase):
 
         event = {
             "level": "INFO",
-            "msg": "slot worker task succeeded",
+            "msg": "slot worker noderun succeeded",
             "plan_id": "plan-ui",
         }
-        text_line = "[pod/taskmanager] 2026/11/13 14:25:51 INFO slot worker task succeeded slot_id=tm-1 plan_id=plan-ui node_instance_id=console-sandbox"
+        text_line = "[pod/taskmanager] 2026/11/13 14:25:51 INFO slot worker noderun succeeded slot_id=tm-1 plan_id=plan-ui node_instance_id=console-sandbox"
         for line in (text_line, "[pod/taskmanager] " + json.dumps(event)):
             parsed = E2ES52LogsVerifier.parse_event(line)
             for key, value in event.items():
@@ -844,7 +844,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
             },
             {
                 "level": "INFO",
-                "msg": "slot worker task succeeded",
+                "msg": "slot worker noderun succeeded",
                 "plan_id": "plan-ui",
             },
         ]
@@ -867,7 +867,7 @@ class VerticalScenarioContractTests(unittest.TestCase):
         ):
             verifier._verify_logs()
             verifier.execution["logs"] = verifier.execution["logs"][:-1]
-            with self.assertRaisesRegex(AssertionError, "slot worker task succeeded"):
+            with self.assertRaisesRegex(AssertionError, "slot worker noderun succeeded"):
                 verifier._verify_logs()
 
     def test_missing_human_gate_cannot_pass_a_false_condition(self):

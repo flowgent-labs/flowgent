@@ -27,6 +27,8 @@ runtime images come from their declared upstream registries and do not require
 a developer's jump-host loader. Local CN environments retain their existing
 mirror-pull policy. E2E jobs use Ubuntu 24.04 LTS by default, matching the locally
 verified Kubernetes environment; `FLOWGENT_E2E_RUNNER` can select another runner.
+The disposable k3s cluster disables its default Traefik ingress; the application
+uses its isolated Envoy Gateway and does not need a second host-port ingress.
 SonarQube Compose startup first starts PostgreSQL, SonarQube
 and its credential initializer, generates a real API token, then starts MCP.
 The interpolation placeholder is never used to start the MCP service.
