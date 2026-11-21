@@ -22,6 +22,12 @@ Full semantic remediation acceptance selects `--e2e-llm-provider official`;
 the default mock is intended for orchestration checks. CI selects the official
 provider and retains the deterministic provider for architecture scenarios.
 
+Real PR delivery also needs a GitHub token with Contents and Pull requests write
+access to the target test repository (`wl4g/rengine`). Locally provide
+`GITHUB_TOKEN`; in Actions configure `FLOWGENT_E2E_GITHUB_TOKEN`. The default
+Actions token is scoped to the Flowgent repository and cannot deliver changes
+to that separate repository. Missing write access fails delivery acceptance.
+
 Run the production-shaped K8s deployment and real verification with one command:
 
 ```bash

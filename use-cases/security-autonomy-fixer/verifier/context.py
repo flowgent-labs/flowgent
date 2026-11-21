@@ -593,7 +593,11 @@ class FlowgentRunEvidence:
         return evidence
 
     @staticmethod
-    def persisted(graph_run_id: str, namespace: str, node_instance_id: str) -> dict:
+    def persisted(
+        graph_run_id: str, namespace: str, node_instance_id: str,
+        *, require_completed_run: bool = True,
+    ) -> dict:
+        """Require committed attempt success; failed-run diagnostics may keep its scope."""
         from util.postgres import E2EPostgresChecker
 
         with contextlib.closing(
@@ -624,7 +628,7 @@ class FlowgentRunEvidence:
             checkpoint,
         ) = rows[0]
         if (
-            status != "COMPLETED"
+            (require_completed_run and status != "COMPLETED")
             or task_status not in {"COMPLETED", "SUCCESS"}
             or not revision
         ):

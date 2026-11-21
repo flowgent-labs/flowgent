@@ -450,15 +450,21 @@ data:
   - id: supervisor-check
     kind: supervisor
     agent: supervisor
+    args:
+      committee: ${committee}
+      reviews:
+        security: ${review-security}
+        quality: ${review-quality}
+        architecture: ${review-arch}
+      patches: ${generate-fixes.patches}
     supervisor_config:
       max_retries: 3
       max_nodes: 50
       max_injections: 5
+      # This static delivery path has no retry/injection branch. Other
+      # decisions must stop execution rather than silently advance to a write.
       allowed_actions:
       - continue
-      - retry
-      - inject
-      - abort
   - id: is-approved
     kind: condition
     expression: ${committee.decision} == true

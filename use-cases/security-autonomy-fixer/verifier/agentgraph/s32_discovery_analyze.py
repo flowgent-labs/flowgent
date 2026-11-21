@@ -192,19 +192,23 @@ class E2ES32DiscoveryAnalyzeVerifier(BaseVerifier):
         import json
         import re
 
-        E2ES32DiscoveryAnalyzeVerifier._verify_scenario()
-        graph_run_id = RUN_ID_PATH.read_text().strip()
-        tasks = c.get_tasks(common_api.FlowgentE2EProject.session(), graph_run_id)
-        plans = [
-            re.sub(r"-attempt-\d+$", "", task["execution_id"])
-            for task in tasks
-            if task.get("execution_id")
-        ]
-        scope = FlowgentRunEvidence.persisted(graph_run_id, c.NAMESPACE, "get-commit")
-        scope["plan_ids"] = plans
-        scope["logs"] = FlowgentRunEvidence.logs(self.context, scope)
-        scope["deployer"] = self.context.deployer
-        MAIN_LOG_PATH.write_text(json.dumps(scope, indent=2) + "\n")
+        try:
+            E2ES32DiscoveryAnalyzeVerifier._verify_scenario()
+        finally:
+            graph_run_id = RUN_ID_PATH.read_text().strip()
+            tasks = c.get_tasks(common_api.FlowgentE2EProject.session(), graph_run_id)
+            plans = [
+                re.sub(r"-attempt-\d+$", "", task["execution_id"])
+                for task in tasks
+                if task.get("execution_id")
+            ]
+            scope = FlowgentRunEvidence.persisted(
+                graph_run_id, c.NAMESPACE, "get-commit", require_completed_run=False
+            )
+            scope["plan_ids"] = plans
+            scope["logs"] = FlowgentRunEvidence.logs(self.context, scope)
+            scope["deployer"] = self.context.deployer
+            MAIN_LOG_PATH.write_text(json.dumps(scope, indent=2) + "\n")
 
     # ── Phase: ANALYZE ──
 

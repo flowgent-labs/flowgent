@@ -325,7 +325,7 @@ class E2ES37VolumeWorkspaceVerifier(BaseVerifier):
             container,
             f"test -w '{CONTAINER_WORKSPACE}' && echo 'WRITABLE' || echo 'NOT_WRITABLE'",
         )
-        if "WRITABLE" in out:
+        if out.strip() == "WRITABLE":
             print(f"  [L3] OK: {CONTAINER_WORKSPACE} is writable inside container")
         else:
             raise AssertionError(

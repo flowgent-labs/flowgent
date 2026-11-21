@@ -11,6 +11,13 @@ Agents、Integrations 与验证资产属于本应用；引擎不包含 Security 
 
 ## 一键真实 E2E 与企业鉴权预设
 
+本地 runner 静默加载 `~/.secret.env` 等现有环境配置，显式导出的变量优先。
+完整修复验收使用 `--e2e-llm-provider official`，需要 `DEEPSEEK_API_KEY`；
+CI 从同名仓库 Secret 注入。真实 PR 交付还需要对目标测试仓库
+`wl4g/rengine` 具有 Contents、Pull requests 写权限的令牌：本地使用
+`GITHUB_TOKEN`，CI 配置 `FLOWGENT_E2E_GITHUB_TOKEN` Secret。
+Actions 默认令牌仅限 Flowgent 仓库，无法向另一个仓库交付修改；缺少写权限时交付验收失败。
+
 ```bash
 cd /home/agent/flowgent
 HTTPS_PROXY=http://127.0.0.1:8800 make e2e-security-autonomy-fixer-with-helm

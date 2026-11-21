@@ -157,6 +157,50 @@ class RuntimeDetectionTests(unittest.TestCase):
             with self.subTest(update=update), self.assertRaisesRegex(AssertionError, "checkpoint"):
                 verifier.workspace_path({"clone": {**task, **update}}, "run", "clone")
 
+    def test_failed_run_logs_require_a_successful_persisted_attempt(self):
+        from util.postgres import E2EPostgresChecker
+        from verifier.context import FlowgentRunEvidence
+
+        row = ("FAILED", "revision", "graph-id", "graph-name", "node-run-id",
+               "SUCCESS", 1, "plan-attempt-1", {}, "application", "cluster", {})
+        with (
+            patch.object(E2EPostgresChecker, "connect", return_value=SimpleNamespace(close=lambda: None)),
+            patch.object(E2EPostgresChecker, "query", return_value=[row]) as query,
+        ):
+            with self.assertRaisesRegex(AssertionError, "durably completed"):
+                FlowgentRunEvidence.persisted("run", "namespace", "get-commit")
+            scope = FlowgentRunEvidence.persisted(
+                "run", "namespace", "get-commit", require_completed_run=False
+            )
+            self.assertEqual(scope["node_run_id"], "node-run-id")
+            query.return_value = [row[:5] + ("FAILED",) + row[6:]]
+            with self.assertRaisesRegex(AssertionError, "durably completed"):
+                FlowgentRunEvidence.persisted(
+                    "run", "namespace", "get-commit", require_completed_run=False
+                )
+
+    def test_discovery_failure_preserves_correlated_runtime_logs(self):
+        import verifier.agentgraph.s32_discovery_analyze as discovery
+
+        verifier = object.__new__(discovery.E2ES32DiscoveryAnalyzeVerifier)
+        verifier.context = SimpleNamespace(deployer="k8s")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(discovery, "MAIN_LOG_PATH", Path(directory) / "logs.json"),
+            patch.object(discovery, "RUN_ID_PATH", SimpleNamespace(read_text=lambda: "run")),
+            patch.object(discovery.E2ES32DiscoveryAnalyzeVerifier, "_verify_scenario", side_effect=AssertionError("finding provenance")),
+            patch.object(discovery.common_api.FlowgentE2EProject, "session"),
+            patch.object(discovery.c, "get_tasks", return_value=[{"execution_id": "plan-attempt-1"}]),
+            patch.object(discovery.FlowgentRunEvidence, "persisted", return_value={"graph_run_id": "run"}),
+            patch.object(discovery.FlowgentRunEvidence, "logs", return_value=["plan failure log"]),
+        ):
+            with self.assertRaisesRegex(AssertionError, "finding provenance"):
+                verifier._verify_execution()
+            evidence = json.loads(discovery.MAIN_LOG_PATH.read_text())
+            self.assertEqual(evidence["graph_run_id"], "run")
+            self.assertEqual(evidence["plan_ids"], ["plan"])
+            self.assertEqual(evidence["logs"], ["plan failure log"])
+
     def test_mqtt_audit_resolves_graph_id_and_waits_for_subscription_ack(self):
         import verifier.agentgraph as graph
 
@@ -896,6 +940,17 @@ class VerticalScenarioContractTests(unittest.TestCase):
         active = SecurityAutonomyFixture.active_path(tasks)
         self.assertIn("commit-to-existing", active)
         self.assertNotIn("create-branch", active)
+
+    def test_supervisor_receives_the_actual_committee_and_review_evidence(self):
+        from verifier.agentgraph import SecurityAutonomyFixture
+
+        nodes = SecurityAutonomyFixture.load_graph_from_yaml()["nodes"]
+        supervisor = next(node for node in nodes if node["id"] == "supervisor-check")
+        self.assertEqual(supervisor["args"]["committee"], "${committee}")
+        self.assertEqual(set(supervisor["args"]["reviews"].values()),
+                         {"${review-security}", "${review-quality}", "${review-arch}"})
+        self.assertEqual(supervisor["args"]["patches"], "${generate-fixes.patches}")
+        self.assertEqual(supervisor["supervisor_config"]["allowed_actions"], ["continue"])
 
     def test_missing_human_gate_cannot_pass_a_false_condition(self):
         from verifier.agentgraph.s33_remediation import E2ES33RemediationVerifier
