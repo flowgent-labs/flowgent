@@ -86,7 +86,8 @@ class E2ES41AgentGraphCrudVerifier(BrowserConsoleVerifier, BaseVerifier):
         expect(page.get_by_test_id("graph-id")).to_have_value(
             self.fixture_agent_graph_id, timeout=20_000
         )
-        page.goto(f"{self.origin}/agent-graphs/new", wait_until="domcontentloaded")
+        page.get_by_role("link", name="AgentGraphs", exact=True).click()
+        page.get_by_role("button", name="New graph", exact=True).first.click()
         expect(page.get_by_test_id("graph-id")).to_be_visible(timeout=20_000)
         page.get_by_test_id("graph-id").fill(self.agent_graph_id)
         page.get_by_test_id("graph-summary").fill("Chromium console lifecycle proof")

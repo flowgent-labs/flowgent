@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/providers'
-import { graphPath, namespacePathname } from '../../app/paths'
+import { graphPath } from '../../app/paths'
 import {
   Button,
   EmptyState,
@@ -78,7 +78,7 @@ export function AgentGraphsPage() {
         title={t('graphs.title')}
         description={t('graphs.subtitle')}
         actions={
-          <Button onClick={() => navigate(namespacePathname(namespace, '/agent-graphs/new'))}>
+          <Button onClick={() => navigate('/agent-graphs/new')}>
             <Plus size={16} />
             {t('graphs.new')}
           </Button>
@@ -106,7 +106,7 @@ export function AgentGraphsPage() {
           title={search ? t('common.noData') : t('graphs.createFirst')}
           action={
             !search && (
-              <Button onClick={() => navigate(namespacePathname(namespace, '/agent-graphs/new'))}>
+              <Button onClick={() => navigate('/agent-graphs/new')}>
                 <Plus size={16} />
                 {t('graphs.new')}
               </Button>
