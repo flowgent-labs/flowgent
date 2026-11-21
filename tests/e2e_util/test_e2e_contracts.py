@@ -23,6 +23,19 @@ CASE = ROOT / "use-cases/security-autonomy-fixer"
 
 
 class GitHubWorkflowContractTests(unittest.TestCase):
+    def test_complete_remediation_uses_the_official_llm_provider(self):
+        import shlex
+        import yaml
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        for name in ("e2e-kubernetes", "e2e-docker"):
+            job = workflow["jobs"][name]
+            command = next(step["run"] for step in job["steps"]
+                           if step.get("name", "").startswith("Run complete"))
+            arguments = shlex.split(command)
+            self.assertEqual(arguments[arguments.index("--e2e-llm-provider") + 1], "official")
+            self.assertEqual(job["env"]["DEEPSEEK_API_KEY"], "${{ secrets.DEEPSEEK_API_KEY }}")
+
     def test_authguard_web_is_built_from_the_pinned_public_release(self):
         import yaml
 

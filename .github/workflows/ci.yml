@@ -272,7 +272,7 @@ jobs:
         run: make build:core
 
       - name: Run complete Kubernetes E2E against dirty images
-        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer k8s --skip-build --clean-after-run
+        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer k8s --e2e-llm-provider official --skip-build --clean-after-run
 
       - name: Capture Kubernetes E2E summary
         id: summary
@@ -380,7 +380,7 @@ jobs:
         run: make build:core
 
       - name: Run complete Docker Compose E2E against dirty images
-        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer docker --skip-build --clean-after-run
+        run: python -u use-cases/security-autonomy-fixer/runner.py --deployer docker --e2e-llm-provider official --skip-build --clean-after-run
 
       - name: Capture Docker Compose E2E summary
         id: summary

@@ -47,6 +47,12 @@ images can override `postgresql.podSecurityContext`. Hosted runners use direct
 outbound access when no proxy is configured. The isolated Gateway permits only
 same-origin framing of AuthGuard's account-security page.
 
+Complete remediation E2E explicitly selects the official DeepSeek provider and
+requires the `DEEPSEEK_API_KEY` Actions Secret. The deterministic provider remains
+available for orchestration scenarios; it cannot establish repair of real Sonar
+findings. GitHub delivery uses the declared real GitHub MCP and requires
+`FLOWGENT_E2E_GITHUB_TOKEN` with write access to the configured acceptance repository.
+
 ## Merged PR releases
 
 `.github/workflows/release.yml` runs only for merged PRs. The PR title selects
