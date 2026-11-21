@@ -1,5 +1,6 @@
 """Subprocess execution with deterministic output and command evidence."""
 
+import json
 import os
 import shlex
 import signal
@@ -27,6 +28,40 @@ class CommandResult:
 
 class E2EProcessHelper:
     """Single command-execution boundary for deployers and verifiers."""
+
+    SHELL_ENV_FILES = ("~/.bashrc", "~/.bash_profile", "~/.wl4gshrc.sec", "~/.secret.env")
+
+    @staticmethod
+    def load_shell_environment(files: tuple[str, ...] | None = None) -> None:
+        """Source local credentials quietly, preserving the caller's environment."""
+        paths = E2EProcessHelper.SHELL_ENV_FILES if files is None else files
+        script = """
+set +x
+e2e_environment_python="$1"
+shift
+set -a
+for e2e_environment_file in "$@"; do
+  [ -f "$e2e_environment_file" ] && . "$e2e_environment_file" >/dev/null 2>&1 || true
+  set +x
+done
+set +a
+unset e2e_environment_file
+exec "$e2e_environment_python" -c 'import json, os; print(json.dumps(dict(os.environ)))'
+"""
+        try:
+            completed = subprocess.run(
+                ["bash", "-c", script, "flowgent-e2e-env", sys.executable,
+                 *(str(Path(path).expanduser()) for path in paths)],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            if completed.returncode:
+                return
+            environment = json.loads(completed.stdout)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return
+        for key, value in environment.items():
+            if isinstance(key, str) and isinstance(value, str):
+                os.environ.setdefault(key, value)
 
     @staticmethod
     def run(

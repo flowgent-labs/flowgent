@@ -14,6 +14,11 @@ logic.
 
 ## Enterprise Authorization Preset
 
+Local E2E runners quietly source `~/.secret.env` after the existing shell
+profiles. Set `DEEPSEEK_API_KEY` there for `--e2e-llm-provider official`;
+explicitly exported environment variables take precedence. GitHub Actions
+receives the key from the repository's `DEEPSEEK_API_KEY` Secret.
+
 Run the production-shaped K8s deployment and real verification with one command:
 
 ```bash

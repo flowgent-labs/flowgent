@@ -72,6 +72,30 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_local_credentials_are_sourced_quietly_and_preserve_caller_values(self):
+        import contextlib
+        import io
+
+        self.assertIn("~/.secret.env", E2EProcessHelper.SHELL_ENV_FILES)
+        with tempfile.TemporaryDirectory(prefix="e2e env ") as directory:
+            source = Path(directory) / "credentials'local.env"
+            source.write_text(
+                "set -x\nDEEPSEEK_API_KEY='fixture-only'\n"
+                "printf 'private stdout'\nprintf 'private stderr' >&2\n"
+            )
+            output, errors = io.StringIO(), io.StringIO()
+            with (
+                patch.dict(os.environ, {"DEEPSEEK_API_KEY": "caller-value"}, clear=True),
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors),
+            ):
+                E2EProcessHelper.load_shell_environment((str(source), str(source.parent / "missing.env")))
+                self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "caller-value")
+                del os.environ["DEEPSEEK_API_KEY"]
+                E2EProcessHelper.load_shell_environment((str(source),))
+                self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "fixture-only")
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(errors.getvalue(), "")
+
     def test_docker_proxy_is_optional_and_host_loopback_is_translated(self):
         docker = importlib.import_module("verifier.infra._docker")
         auth = importlib.import_module("verifier.infra._authguard")

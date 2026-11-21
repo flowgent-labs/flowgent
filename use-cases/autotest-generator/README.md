@@ -8,6 +8,10 @@ assets, reviewing them, and delivering them through GitHub. It is an early
 application definition: the DAG is present, while several referenced agents,
 MCP resource manifests, and complete business E2E acceptance are not yet present.
 
+The local runner quietly sources `~/.secret.env` after the existing shell
+profiles, making `DEEPSEEK_API_KEY` available to the use case. Explicitly
+exported environment variables take precedence.
+
 ## Application Boundary
 
 ```text

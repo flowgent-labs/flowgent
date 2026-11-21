@@ -33,6 +33,10 @@ import sys
 import time
 import traceback
 
+from util.process import E2EProcessHelper
+
+E2EProcessHelper.load_shell_environment()
+
 from util.constant import E2EOtherDefinitions as config
 
 E2E_DIR = os.path.dirname(os.path.abspath(__file__))

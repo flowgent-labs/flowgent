@@ -4,15 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import subprocess
 import sys
-import textwrap
 import time
 import traceback
 
-SHELL_ENV_FILES = ("~/.bashrc", "~/.bash_profile", "~/.wl4gshrc.sec")
 LLM_PROVIDER_FILES = {
     "mock": "e2e-deterministic.yaml",
     "official": "deepseek.yaml",
@@ -21,37 +17,6 @@ LLM_PROVIDER_FILES = {
 
 class E2ERunner:
     """Class-owned operations for runner."""
-
-    @staticmethod
-    def _load_shell_environment() -> None:
-        """Load exported local E2E credentials without ever printing their values."""
-        files = " ".join(f'"{path}"' for path in SHELL_ENV_FILES)
-        script = textwrap.dedent(f"""
-    set -a
-    for f in {files}; do
-      f="${{f/#\\~/$HOME}}"
-      [ -f "$f" ] && . "$f" >/dev/null 2>&1 || true
-    done
-    set +a
-    python3 - <<'PY'
-    import json, os
-    print(json.dumps(dict(os.environ), separators=(",", ":")))
-    PY
-    """)
-        try:
-            completed = subprocess.run(
-                ["bash", "-lc", script],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
-            environment = json.loads(completed.stdout.strip().splitlines()[-1])
-        except Exception:
-            return
-        for key, value in environment.items():
-            if isinstance(key, str) and isinstance(value, str):
-                os.environ.setdefault(key, value)
 
     @staticmethod
     def _deployer_name(value: str) -> str:
@@ -367,7 +332,9 @@ class E2ERunner:
         return exit_code
 
 
-E2ERunner._load_shell_environment()
+from util.process import E2EProcessHelper
+
+E2EProcessHelper.load_shell_environment()
 os.environ.setdefault("FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY", "github.com")
 
 from util.constant import E2EOtherDefinitions as config
