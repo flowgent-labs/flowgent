@@ -31,7 +31,7 @@ FLOW_TIMEOUT_S = config.FLOW_TIMEOUT_S
 POLL_INTERVAL_S = config.POLL_INTERVAL_S
 
 _CONFIG_ROOT = CONFIG_DIR
-_FLOW_YAML_PATH = os.path.join(_CONFIG_ROOT, "graphs", "security-autonomy-fixer.yaml")
+_FLOW_YAML_PATH = os.path.join(_CONFIG_ROOT, "agent-graphs", "security-autonomy-fixer.yaml")
 _AGENTS_DIR = os.path.join(_CONFIG_ROOT, "agents")
 GITHUB_API = "https://api.github.com"
 PR_REPO = "wl4g/rengine"
@@ -267,8 +267,7 @@ class SecurityAutonomyFixture:
             data = FlowgentE2EProject.resolve_env_vars(
                 FlowgentE2EProject.unwrap_k8s(yaml.safe_load(f))
             )
-        for key in ("name", "triggers"):
-            data.pop(key, None)
+        data.pop("triggers", None)
         data["kind"] = "graph"
         return data
 

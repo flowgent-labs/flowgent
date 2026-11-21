@@ -72,6 +72,15 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_security_fixer_uses_the_canonical_graph_manifest_and_name(self):
+        from verifier.agentgraph import SecurityAutonomyFixture
+
+        graph = SecurityAutonomyFixture.load_graph_from_yaml()
+        self.assertEqual(graph["name"], SecurityAutonomyFixture.AGENT_GRAPH_NAME)
+        self.assertEqual(graph["kind"], "graph")
+        self.assertTrue(graph["nodes"])
+        self.assertTrue(graph["edges"])
+
     def test_local_credentials_are_sourced_quietly_and_preserve_caller_values(self):
         import contextlib
         import io
@@ -545,6 +554,9 @@ class ComponentRenderingTests(unittest.TestCase):
         pg_pod = by_name[("StatefulSet", "pgvector")]["spec"]["template"]["spec"]
         self.assertEqual(pg_pod["securityContext"]["runAsUser"], 999)
         self.assertEqual(pg_pod["securityContext"]["fsGroup"], 999)
+        sonar_pg = by_name[("StatefulSet", "sonarqube-postgres")]["spec"]["template"]["spec"]
+        self.assertEqual(sonar_pg["securityContext"]["runAsUser"], 999)
+        self.assertEqual(sonar_pg["securityContext"]["fsGroup"], 999)
         self.assertIn("-h 127.0.0.1", pg_container["startupProbe"]["exec"]["command"][-1])
         self.assertGreaterEqual(
             pg_container["startupProbe"]["failureThreshold"] * pg_container["startupProbe"]["periodSeconds"],

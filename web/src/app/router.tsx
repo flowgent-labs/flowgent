@@ -74,8 +74,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: page(<DashboardPage />) },
-      { path: 'graphs', element: page(<AgentGraphsPage />) },
-      { path: 'graphs/new', element: page(<AgentGraphEditorPage />) },
+      { path: 'agent-graphs', element: page(<AgentGraphsPage />) },
+      { path: 'agent-graphs/new', element: page(<AgentGraphEditorPage />) },
       { path: 'graph-runs', element: page(<GraphRunsPage />) },
       { path: 'memory', element: <Navigate to="/memory/namespace" replace /> },
       { path: 'memory/:scope', element: page(<MemoryPage />) },

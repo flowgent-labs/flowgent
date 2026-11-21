@@ -40,6 +40,11 @@ spec:
     metadata:
       labels: {{ toYaml $r.postgresLabels | nindent 8 }}
     spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: postgresql
           image: {{ $r.postgresImage | quote }}
@@ -53,7 +58,7 @@ spec:
             {{- end }}
           ports: [{name: postgres, containerPort: 5432}]
           readinessProbe:
-            exec: {command: [sh, -c, 'pg_isready -U $POSTGRES_USER -d $POSTGRES_DB']}
+            exec: {command: [sh, -c, 'pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB']}
             periodSeconds: 5
           resources:
             requests: {cpu: 50m, memory: 256Mi}

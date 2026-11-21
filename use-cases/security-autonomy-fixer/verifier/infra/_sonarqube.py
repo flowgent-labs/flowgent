@@ -15,6 +15,7 @@ import requests
 from util.constant import E2EOtherDefinitions as config
 from util.images import E2EImagesDefinitions
 from util.kubernetes import E2EKubernetesDeployer
+from util.process import E2EProcessHelper
 from verifier.context import BaseDeployer
 
 DEFAULT_TIMEOUT = 240
@@ -91,6 +92,14 @@ class SonarQubeRuntime:
             timeout=timeout + 30,
         )
         if result.returncode != 0:
+            for command in (
+                ("get", "pods,pvc", "-o", "wide"),
+                ("get", "events", "--sort-by=.metadata.creationTimestamp"),
+                ("logs", resource, "--all-containers=true", "--tail=80"),
+            ):
+                E2EProcessHelper.run(
+                    ("kubectl", "-n", config.SONARQUBE_NAMESPACE, *command), timeout_seconds=30,
+                )
             detail = (result.stdout + result.stderr).strip()[-800:]
             raise RuntimeError(f"SonarQube resource not ready: {resource}: {detail}")
 
