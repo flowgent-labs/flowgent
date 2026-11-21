@@ -23,6 +23,18 @@ CASE = ROOT / "use-cases/security-autonomy-fixer"
 
 
 class GitHubWorkflowContractTests(unittest.TestCase):
+    def test_authguard_web_is_built_from_the_pinned_public_release(self):
+        import yaml
+
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        for job_name in ("e2e-kubernetes", "e2e-docker"):
+            with self.subTest(job=job_name):
+                steps = workflow["jobs"][job_name]["steps"]
+                build = next(step["run"] for step in steps if step.get("name") == "Build pinned AuthGuard Web dependency")
+                self.assertIn("--tag ghcr.io/wl4g/authguard-web:1.0.1", build)
+                self.assertIn("https://github.com/wl4g/authguard.git#afafb6c801c0e1661a1753f4872a11d7b70d5ad5:web", build)
+                self.assertNotIn("Start isolated PostgreSQL", [step.get("name") for step in steps])
+
     def test_hosted_e2e_jobs_use_direct_registry_access(self):
         import yaml
 
@@ -60,6 +72,21 @@ class GitHubWorkflowContractTests(unittest.TestCase):
 
 
 class RuntimeDetectionTests(unittest.TestCase):
+    def test_failed_pgvector_rollout_captures_evidence_before_cleanup(self):
+        pg = importlib.import_module("verifier.infra._postgres")
+        failed = SimpleNamespace(returncode=1, stdout="not ready", stderr="timeout")
+        with (
+            patch.object(pg.PgvectorRuntime, "_apply"),
+            patch.object(E2EKubernetesDeployer, "helm_template", return_value={}),
+            patch.object(pg.subprocess, "run", return_value=failed),
+            patch.object(E2EProcessHelper, "run") as run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not readytimeout"):
+                pg.PgvectorRuntime.deploy(namespace="fixture-storage")
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(("kubectl", "get", "pods,pvc", "-n", "fixture-storage", "-o", "wide"), commands)
+        self.assertIn(("kubectl", "logs", "deployment/local-path-provisioner", "-n", "kube-system", "--tail=80"), commands)
+
     def test_kubernetes_image_acquisition_respects_registry_region(self):
         for region, jump_host in (("false", False), ("true", True)):
             with (

@@ -10,6 +10,7 @@ import psycopg2
 from util.constant import E2EOtherDefinitions as config
 from util.images import E2EImagesDefinitions
 from util.kubernetes import E2EKubernetesDeployer
+from util.process import E2EProcessHelper
 from verifier.context import BaseDeployer
 
 PGVECTOR_NAME = "pgvector"
@@ -95,6 +96,14 @@ class PgvectorRuntime:
             timeout=270,
         )
         if result.returncode != 0:
+            # Capture evidence before --clean-after-run removes failed pods/PVCs.
+            for command in (
+                ("get", "pods,pvc", "-n", namespace, "-o", "wide"),
+                ("get", "events", "-n", namespace, "--sort-by=.metadata.creationTimestamp"),
+                ("logs", f"statefulset/{PGVECTOR_NAME}", "-n", namespace, "--tail=80"),
+                ("logs", "deployment/local-path-provisioner", "-n", "kube-system", "--tail=80"),
+            ):
+                E2EProcessHelper.run(("kubectl", *command), timeout_seconds=30)
             raise RuntimeError(
                 f"pgvector StatefulSet not ready: {(result.stdout + result.stderr)[-600:]}"
             )

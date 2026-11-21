@@ -28,6 +28,11 @@ a developer's jump-host loader. Local CN environments retain their existing
 mirror-pull policy. SonarQube Compose startup first starts PostgreSQL, SonarQube
 and its credential initializer, generates a real API token, then starts MCP.
 The interpolation placeholder is never used to start the MCP service.
+AuthGuard Web's published package is private, so both E2E jobs build its public
+1.0.1 release source at the pinned commit, matching the vendored chart. Kubernetes
+persistence is owned by the verifier's pgvector StatefulSet; CI does not start a
+second, unused PostgreSQL container. Failed storage startup captures pod, PVC,
+event and provisioner logs before cleanup.
 
 ## Merged PR releases
 

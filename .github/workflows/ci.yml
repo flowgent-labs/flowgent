@@ -198,7 +198,6 @@ jobs:
       IN_GFW: "false"
       IN_CN_GFW: "false"
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-      FLOWGENT_E2E_PG_CONTAINER: sigbot_e2e_164364_postgres
       FLOWGENT_PG_USER: test
       FLOWGENT_PG_PASSWORD: test
       FLOWGENT_PG_DATABASE: flowgent
@@ -245,22 +244,6 @@ jobs:
           python -m pip install --disable-pip-version-check -r use-cases/security-autonomy-fixer/requirements.txt
           python -m playwright install --with-deps chromium
 
-      - name: Start isolated PostgreSQL
-        run: |
-          docker run -d --name "${FLOWGENT_E2E_PG_CONTAINER}" \
-            -e POSTGRES_USER="${FLOWGENT_PG_USER}" \
-            -e POSTGRES_PASSWORD="${FLOWGENT_PG_PASSWORD}" \
-            -e POSTGRES_DB="${FLOWGENT_PG_DATABASE}" \
-            registry.cn-shenzhen.aliyuncs.com/wl4g/pgvector_pgvector:pg16
-          for attempt in $(seq 1 60); do
-            if docker exec "${FLOWGENT_E2E_PG_CONTAINER}" pg_isready -U "${FLOWGENT_PG_USER}" -d "${FLOWGENT_PG_DATABASE}"; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs "${FLOWGENT_E2E_PG_CONTAINER}"
-          exit 1
-
       - name: Pull dirty images for k3s import
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -272,6 +255,15 @@ jobs:
           docker tag "ghcr.io/flowgent-labs/flowgent:${DIRTY_TAG}" localhost/flowgent:latest
           docker tag "ghcr.io/flowgent-labs/flowgent-web:${DIRTY_TAG}" localhost/flowgent-web:latest
           docker logout ghcr.io
+
+      - name: Build pinned AuthGuard Web dependency
+        # The upstream 1.0.1 web package is private; its release source is public.
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg NODE_IMAGE=docker.io/library/node:22-alpine \
+            --build-arg WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine \
+            --tag ghcr.io/wl4g/authguard-web:1.0.1 \
+            https://github.com/wl4g/authguard.git#afafb6c801c0e1661a1753f4872a11d7b70d5ad5:web
 
       - name: Build console binary
         run: make build:core
@@ -368,6 +360,15 @@ jobs:
           docker tag "ghcr.io/flowgent-labs/flowgent:${DIRTY_TAG}" localhost/flowgent:latest
           docker tag "ghcr.io/flowgent-labs/flowgent-web:${DIRTY_TAG}" localhost/flowgent-web:latest
           docker logout ghcr.io
+
+      - name: Build pinned AuthGuard Web dependency
+        # Build the same release consumed by the formal AuthGuard chart.
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg NODE_IMAGE=docker.io/library/node:22-alpine \
+            --build-arg WEB_IMAGE=docker.io/nginxinc/nginx-unprivileged:1.27-alpine \
+            --tag ghcr.io/wl4g/authguard-web:1.0.1 \
+            https://github.com/wl4g/authguard.git#afafb6c801c0e1661a1753f4872a11d7b70d5ad5:web
 
       - name: Build console binary
         run: make build:core
