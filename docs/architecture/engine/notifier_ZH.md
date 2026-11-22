@@ -14,7 +14,7 @@ Notifier 是出站投递服务。它从 MQTT 共享订阅消费通知事件，�
 
 ## 投递与发现
 
-Notifier 将内部 AgentFlow 事件桥接到外部通信 Channel。
+Notifier 将内部 AgentGraph 事件桥接到外部通信 Channel。
 
 ### 架构
 
@@ -26,7 +26,7 @@ Notifier 将内部 AgentFlow 事件桥接到外部通信 Channel。
   │  │ Consumer         │  │ Scanner（5s）   │  │
   │  │ Topic: /flowgent/│  │ GET /approvals │  │
   │  │ notify/queue/    │  │ 经 API Server  │  │
-  │  │ {namespace}/{flow}  │  └───────┬────────┘  │
+  │  │ {namespace}/{graph}  │  └───────┬────────┘  │
   │  └────────┬─────────┘          │           │
   │           └──────────┬─────────┘           │
   │                      ▼                     │
@@ -41,8 +41,8 @@ Notifier 将内部 AgentFlow 事件桥接到外部通信 Channel。
 
 ### Queue Consumer
 
-每个 Namespace+Flow 使用 MQTT 共享订阅：
-`flowgent/v1/{namespace}/flows/{flow}/runs/{run}/notify/event`。消息通过
+每个 Namespace+AgentGraph 使用 MQTT 共享订阅：
+`flowgent/v1/{namespace}/agent-graphs/{graph}/graph-runs/{run}/notify/event`。消息通过
 `$share/notify-pool` 在 Notifier Pod 间负载均衡，并分发到该 Namespace 配置的 Channel。
 
 ### 动态 Channel Secret

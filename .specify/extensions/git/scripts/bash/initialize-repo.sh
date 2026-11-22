@@ -2,7 +2,7 @@
 # Git extension: initialize-repo.sh
 # Initialize a Git repository with an initial commit.
 # Customizable — replace this script to add .gitignore templates,
-# default branch config, git-flow, LFS, signing, etc.
+# default branch config, git-graph, LFS, signing, etc.
 
 set -e
 

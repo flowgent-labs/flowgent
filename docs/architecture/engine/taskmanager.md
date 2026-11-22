@@ -1,6 +1,11 @@
 # TaskManager
 
-[System overview](../overview.md) · [AgentFlow application layer](../agent-flow.md) · [Sandbox](sandbox.md)
+[System overview](../overview.md) · [AgentGraph application layer](../agent-graph.md) · [Sandbox](sandbox.md)
+
+**Sandbox target (2026-11-14):** TM dispatches using the Run-bound
+`sandbox_id` and correlates results by NodeRun attempt. It does not choose
+pool policies or create workers. The [fixed-pool contract](sandbox.md) is
+approved; cluster-routed Sandbox behavior is still the current implementation.
 
 TaskManager is the execution worker. MQTT shared subscriptions distribute plans
 across pods and slots; each slot routes one plan to the matching executor,
@@ -8,14 +13,14 @@ persists task state through the API Server, and returns routing/status data to
 JobManager. TaskManager has no direct database access.
 
 The canonical public and persistence term for one node attempt is **NodeRun**.
-`TaskRunInfo`, `TaskStateStore`, and `task_id` remain internal Go/wire
+`NodeRun`, `TaskStateStore`, and `node_run_id` remain internal Go/wire
 compatibility names and do not define a second external resource.
 
 ```text
 JobManager ──ExecutionPlan/MQTT──► SlotWorker ──► TaskExecutorRouter
      ▲                                  │                 │
      └──────exec/result/MQTT────────────┘                 ├── LLM / MCP
-                                                         ├── subflow / skill (registered stubs)
+                                                         ├── subgraph / skill (registered stubs)
                                                          └── Sandbox via MQTT
 ```
 
@@ -27,7 +32,7 @@ topic and rejects mismatched namespace or `runtime_cluster_id` metadata.
 Each TM pod runs N `SlotWorker` goroutines (default 4). Each slot independently dequeues one
 `ExecutionPlan` from the MQTT queue (or channel), executes it via the
 `TaskExecutorRouter`, persists task status via the apiserver REST API
-(`TaskStateStore.SaveTask`), and reports the result back to JM via MQTT.
+(`TaskStateStore.SaveNodeRun`), and reports the result back to JM via MQTT.
 
 The execution relationship is **1 Slot = 1 ExecutionPlan attempt**. JobManager
 retains one logical plan per DAG node but may dispatch it repeatedly under an
@@ -42,7 +47,7 @@ content type, byte count, SHA-256 and capture metadata.
 
 ### Executor Router Boundary
 
-TaskManager owns the `TaskExecutorRouter`, but node semantics and composition rules are an L2 concern. See the [AgentFlow node catalog](../agent-flow.md#supported-node-types) for the canonical 12-node matrix.
+TaskManager owns the `TaskExecutorRouter`, but node semantics and composition rules are an L2 concern. See the [AgentGraph node catalog](../agent-graph.md#supported-node-types) for the canonical 12-node matrix.
 
 ### MCP Transport — HTTP-Only (Streamable HTTP)
 

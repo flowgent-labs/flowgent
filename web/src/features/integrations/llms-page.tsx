@@ -298,7 +298,7 @@ function LlmDrawer({
             />
           </label>
           <label className="field">
-            <span className="field__label">{t('flows.timeout')}</span>
+            <span className="field__label">{t('graphs.timeout')}</span>
             <input
               value={current?.timeout ?? '90s'}
               onChange={(event) => update({ timeout: event.target.value })}

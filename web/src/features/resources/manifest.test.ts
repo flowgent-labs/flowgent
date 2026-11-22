@@ -1,36 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { validateFlow } from '../flows/flow-validation'
-import { manifestToFlow, manifestToLlm, manifestToMcp } from './manifest'
+import { validateAgentGraph } from '../agent-graphs/graph-validation'
+import { manifestToAgentGraph, manifestToLlm, manifestToMcp } from './manifest'
 
 describe('resource manifest adapters', () => {
   it('rejects envelopes without the canonical console version and data field', () => {
     expect(() =>
-      manifestToFlow(
-        `apiVersion: core.flowgent.io/v1\nkind: Flow\nmetadata: { name: old }\ndata: { nodes: [], edges: [] }`,
-        'Flow',
+      manifestToAgentGraph(
+        `apiVersion: core.flowgent.io/v1\nkind: AgentGraph\nmetadata: { name: old }\ndata: { nodes: [], edges: [] }`,
+        'AgentGraph',
       ),
     ).toThrow('canonical envelope')
     expect(() =>
-      manifestToFlow(
-        `consoleVersion: core.flowgent.io/v1\nkind: Flow\nmetadata: { name: old }\nspec: { nodes: [], edges: [] }`,
-        'Flow',
+      manifestToAgentGraph(
+        `consoleVersion: core.flowgent.io/v1\nkind: AgentGraph\nmetadata: { name: old }\nspec: { nodes: [], edges: [] }`,
+        'AgentGraph',
       ),
     ).toThrow('canonical envelope')
     expect(() =>
-      manifestToFlow(
-        `consoleVersion: core.flowgent.io/v1\nkind: Flow\nmetadata: { name: old }\ndata: { runtime_mode: application, nodes: [], edges: [] }\nspec: {}`,
-        'Flow',
+      manifestToAgentGraph(
+        `consoleVersion: core.flowgent.io/v1\nkind: AgentGraph\nmetadata: { name: old }\ndata: { runtime_mode: application, nodes: [], edges: [] }\nspec: {}`,
+        'AgentGraph',
       ),
     ).toThrow('canonical envelope')
   })
 
-  it('requires an explicit runtime mode for flows', () => {
+  it('requires an explicit runtime mode for graphs', () => {
     expect(() =>
-      manifestToFlow(
-        `consoleVersion: core.flowgent.io/v1\nkind: Flow\nmetadata: { name: no-runtime }\ndata: { nodes: [], edges: [] }`,
-        'Flow',
+      manifestToAgentGraph(
+        `consoleVersion: core.flowgent.io/v1\nkind: AgentGraph\nmetadata: { name: no-runtime }\ndata: { nodes: [], edges: [] }`,
+        'AgentGraph',
       ),
     ).toThrow('runtime_mode')
   })
@@ -66,7 +66,7 @@ data:
   })
 
   it('keeps canonical flat skill nodes unchanged', () => {
-    const skill = manifestToFlow(
+    const skill = manifestToAgentGraph(
       `
 consoleVersion: core.flowgent.io/v1
 kind: Skill
@@ -88,9 +88,9 @@ data:
 
   it('rejects nested and type-based node shapes', () => {
     expect(() =>
-      manifestToFlow(
+      manifestToAgentGraph(
         `consoleVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata: { name: old-node }
 data:
   runtime_mode: application
@@ -98,7 +98,7 @@ data:
     - id: end
       type: noop
   edges: []`,
-        'Flow',
+        'AgentGraph',
       ),
     ).toThrow('canonical node contract')
   })
@@ -107,12 +107,12 @@ data:
     const source = readFileSync(
       resolve(
         process.cwd(),
-        '../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml',
+        '../use-cases/security-autonomy-fixer/deploy/flowgent/config/agent-graphs/security-autonomy-fixer.yaml',
       ),
       'utf8',
     ).replaceAll('${FLOWGENT_E2E_PROXY_ALLOWLIST_ENTRY}', 'github.com')
-    const flow = manifestToFlow(source, 'Flow')
-    expect(flow.nodes).toHaveLength(29)
-    expect(validateFlow(flow).filter((issue) => issue.code !== 'cycle')).toEqual([])
+    const graph = manifestToAgentGraph(source, 'AgentGraph')
+    expect(graph.nodes).toHaveLength(29)
+    expect(validateAgentGraph(graph).filter((issue) => issue.code !== 'cycle')).toEqual([])
   })
 })

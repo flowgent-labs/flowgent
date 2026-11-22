@@ -1,0 +1,11 @@
+services:
+  mock-github:
+    image: ${E2E_IMAGE_PYTHON}
+    ports:
+    - 127.0.0.1:${FLOWGENT_E2E_MOCK_GITHUB_PORT:-18087}:8080
+    entrypoint:
+    - python3
+    - /opt/e2e/server.py
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/deploy/mock-github-service/source/server.py:/opt/e2e/server.py:ro
+    platform: ${E2E_PLATFORM_PYTHON}

@@ -27,12 +27,12 @@ func TestPostHandleRequiresSuccessfulEffectiveSummarization(t *testing.T) {
 	jm := NewJobMaster(nil, nil, nil, nil)
 	jm.SetKnowledgeWriter(recorder)
 	jm.nodeOutputs = map[string]map[string]any{"node": {"result": "safe"}}
-	spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "stable-flow", Namespace: "team"}, Name: "fixer"}
+	spec := &entities.AgentGraph{BaseEntity: entities.BaseEntity{ID: "stable-graph", Namespace: "team"}, Name: "fixer"}
 
-	jm.postHandle(&entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "disabled"},
-		Status: entities.RunCompleted, SummarizeEnabled: false}, spec)
-	jm.postHandle(&entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "failed"},
-		Status: entities.RunFailed, SummarizeEnabled: true}, spec)
+	jm.postHandle(&entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "disabled"},
+		Status: entities.GraphRunCompleted, SummarizeEnabled: false}, spec)
+	jm.postHandle(&entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "failed"},
+		Status: entities.GraphRunFailed, SummarizeEnabled: true}, spec)
 	select {
 	case candidate := <-recorder.items:
 		t.Fatalf("disabled or failed run created candidate: %+v", candidate)
@@ -51,14 +51,14 @@ func TestPostHandleCreatesSanitizedApprovalCandidate(t *testing.T) {
 			"nested":  map[string]any{"authorization": "Bearer abcdefghijklmnop", "count": 2},
 		},
 	}
-	spec := &entities.FlowInfo{BaseEntity: entities.BaseEntity{ID: "stable-flow", Namespace: "team"}, Name: "fixer"}
-	run := &entities.FlowRunInfo{BaseEntity: entities.BaseEntity{ID: "run-1", Namespace: "team"},
-		FlowID: "stable-flow", Status: entities.RunCompleted, SummarizeEnabled: true}
+	spec := &entities.AgentGraph{BaseEntity: entities.BaseEntity{ID: "stable-graph", Namespace: "team"}, Name: "fixer"}
+	run := &entities.GraphRun{BaseEntity: entities.BaseEntity{ID: "run-1", Namespace: "team"},
+		AgentGraphID: "stable-graph", Status: entities.GraphRunCompleted, SummarizeEnabled: true}
 	jm.postHandle(run, spec)
 	select {
 	case candidate := <-recorder.items:
-		if candidate.TargetScope != "flow" || candidate.TargetFlowID != "stable-flow" ||
-			candidate.TargetFlowName != "fixer" || candidate.Type != "knowledge" {
+		if candidate.TargetScope != "graph" || candidate.TargetAgentGraphID != "stable-graph" ||
+			candidate.TargetAgentGraphName != "fixer" || candidate.Type != "knowledge" {
 			t.Fatalf("candidate target = %+v", candidate)
 		}
 		if strings.Contains(candidate.Content, "must-never-leak") ||

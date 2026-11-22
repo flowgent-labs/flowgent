@@ -2,11 +2,49 @@
 
 **日期：** 2026-06-08
 
-**状态：** 已实现——Flink 风格 application/session runtime cluster，并以 `runtime_cluster_id` 隔离
+**状态：** 已实现 application/session Runtime Cluster；2026-11-14 确认的 Sandbox 固定池尚待代码迁移
 
 [English](overview.md)
 
-Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义跨组件契约：物理服务如何调用、持久状态位于何处、工作如何经 MQTT 流转，以及一次流程如何从触发走到完成。组件内部设计与 L2 DAG 语义由各自文档负责。
+**Sandbox 边界更新：** 目标由 Controller 按 `sandbox_id` 管理固定池，AgentGraph 显式引用，
+JM 继续管理 TM。下文 JM 管理 Sandbox、Cluster Topic 与逐脚本 seccomp 的段落
+记录当前旧实现，不是新的目标边界；待迁移契约统一见
+[Sandbox 固定池](engine/sandbox_ZH.md)。
+
+Flowgent 是一个分布式、多命名空间的 AgentGraph 引擎。本文定义跨组件契约：物理服务如何调用、持久状态位于何处、工作如何经 MQTT 流转，以及一次流程如何从触发走到完成。组件内部设计与 L2 DAG 语义由各自文档负责。
+
+## 架构视图
+
+两张图使用相同的四个职责区：Browser/Application UI、AuthGuard、Flowgent 核心服务
+及 AgentVault 支付集成。基础设施与外部服务位于控制区之外。图中文字全部为英文，
+缩略语在图底部解释。
+
+### 物理调用
+
+![Flowgent 物理调用架构](assets/flowgent—physical-architecture.svg)
+
+Envoy Gateway 统一路由受保护的资源、A2A、生成的 MCP 和 AgentVault API；AuthGuard
+负责访问决策。UI 管理 AgentGraphs、GraphRuns、Agents、MCPs、Skills 和 Notifications。
+Flowgent Worker 用 REST 维护业务状态，用 MQTT 分发任务；Controller 管 JM 生命周期，
+JM 管 TM 容量。
+
+支付区表示 SDK 接入位置，不表示同一个部署进程：Payee SDK 在 Flowgent A2A Server
+及 mcpfather 根据 Flowgent OpenAPI/Swagger 生成的独立 MCP Server 上拦截收款请求；
+Payer SDK 在 Flowgent 客户端调用外部 A2A/MCP 时拦截付款请求。受保护的 SDK 后端
+调用也经过 Envoy；支付依赖线省略这一重复的网关跳转。AgentVault 拥有支付策略、私钥
+及结算。
+
+### 逻辑调用
+
+![Flowgent 逻辑调用架构](assets/flowgent-logical-architecture.svg)
+
+定义生成 Run，JM 调度节点，TM 执行。结果先经 API 落库，再返回 JM；审批和重试
+回到调度器。目标收款、付款路径与 AuthGuard 访问检查、Flowgent 编排职责分开。
+
+† 表示 Payee/Payer SDK、生成的 MCP 端点和 Sandbox 固定池尚待接入或迁移。A2A
+Server 已存在，但尚未集成 Payee SDK；当前支付代码仍使用旧 Signer，Sandbox 仍由
+JM 按 Cluster 管理。版本快照约束与自动 Checkpoint 恢复也未完整实现。
+SDK 契约归属[支付边界](engine/wallet_ZH.md#sdk-接入位置目标)。
 
 ## 架构地图
 
@@ -15,14 +53,14 @@ Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义
 | Security | [AuthGuard 集成](authguard-integration_ZH.md) | Gateway 信任边界、adapters SDK 与 Repository SQL Scope |
 | 数据 | [持久数据生命周期](data-lifecycle_ZH.md) | 身份/版本、快照、Knowledge/向量、Execution Memory 与审批契约 |
 | L1 Engine | [API Server](engine/apiserver_ZH.md) | 外部 REST/A2A 网关及规范业务状态客户端 |
-| L1 Engine | [Controller](engine/controller_ZH.md) | Flow 发现与活跃 Run 的 JobManager 生命周期 |
+| L1 Engine | [Controller](engine/controller_ZH.md) | AgentGraph 发现与活跃 Run 的 JobManager 生命周期 |
 | L1 Engine | [Runtime Clusters](engine/runtime-clusters_ZH.md) | application/session 运行时生命周期与隔离 |
 | L1 Engine | [JobManager](engine/jobmanager_ZH.md) | 单次运行的 DAG 就绪判断、计划创建与运行时容量 |
 | L1 Engine | [TaskManager](engine/taskmanager_ZH.md) | Slot worker 与执行器路由 |
 | L1 Engine | [Sandbox](engine/sandbox_ZH.md) | 隔离脚本执行与共享工作区 |
 | L1 Engine | [Notifier](engine/notifier_ZH.md) | 多渠道投递与 WebSocket UI 推送 |
 | L1 Engine | [AgentVault 与 x402](engine/wallet_ZH.md) | 外部托管边界及旧 x402 Client 迁移状态 |
-| L2 AgentFlow | [AgentFlow 应用架构](agent-flow_ZH.md) | DAG 配置、节点语义、限制与最佳实践 |
+| L2 AgentGraph | [AgentGraph 应用架构](agent-graph_ZH.md) | DAG 配置、节点语义、限制与最佳实践 |
 
 ## 跨组件调用契约
 
@@ -30,13 +68,13 @@ Flowgent 是一个分布式、多命名空间的 AgentFlow 引擎。本文定义
 flowchart LR
     Client[UI / REST / A2A / Webhook] --> API[API Server]
     API --> DB[(PostgreSQL / SQLite)]
-    API -->|flow lifecycle| MQ[(MQTT)]
+    API -->|graph lifecycle| MQ[(MQTT)]
 
-    API -->|flow/run REST| CTRL[Controller]
+    API -->|graph/run REST| CTRL[Controller]
     MQ -->|lifecycle events| CTRL
     CTRL -->|create / delete| JM[JobManager]
 
-    API -->|run + flow REST| JM
+    API -->|run + graph REST| JM
     JM -->|ExecutionPlan| MQ
     MQ --> TM[TaskManager]
     TM -->|task state REST| API
@@ -59,7 +97,7 @@ flowchart LR
 
 | 契约 | 用途 | 禁止的捷径 |
 |---|---|---|
-| API Server REST | 持久 Flow、Run、NodeRun、Approval 与资源状态 | 执行组件 MUST NOT 直连业务表 |
+| API Server REST | 持久 AgentGraph、Run、NodeRun、Approval 与资源状态 | 执行组件 MUST NOT 直连业务表 |
 | Flowgent MQTT | 生命周期事件、执行计划/结果、沙箱工作与通知 | 内部引擎协作 MUST NOT 使用 WebSocket/SSE |
 | Wallet protocol | 通过独立 MQTT topics 或 Unix socket 执行有界 digest 签名 | Private key 与 Wallet server 配置 MUST NOT 进入 Flowgent |
 | 共享工作区 | 大型脚本、仓库与沙箱结果文件 | 大型产物 MUST NOT 经任务状态 JSON 搬运 |
@@ -84,10 +122,10 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
   ┌──────────────────────────────────────────┼──────────────────────────┐
   │                           API Server                               │
   │                                                                    │
-  │  • Flow/Agent CRUD → PG（业务状态网关）            port 9999       │
+  │  • AgentGraph/Agent CRUD → PG（业务状态网关）            port 9999       │
   │  • Trigger → 创建 PENDING run                     port 9992 (A2A) │
-  │  • Flow lifecycle → MQTT create/update/delete 事件                 │
-  │  • Flow cache + 热加载（静态 YAML 目录）                            │
+  │  • AgentGraph lifecycle → MQTT create/update/delete 事件                 │
+  │  • AgentGraph cache + 热加载（静态 YAML 目录）                            │
   │  • 通过 REST handler 读写状态                                      │
   └──────────┬─────────────────────────────────┬───────────────────────┘
              │                                 │
@@ -102,10 +140,10 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
 ═══════════════════════════════════════════════════╪═══════════════════════
                                                    │
   Controller                                       │
-  • FlowgentClient.ListFlows（apiserver REST）      │
+  • FlowgentClient.ListAgentGraphs（apiserver REST）      │
   • MQTT：订阅生命周期事件                          │
-  • hash(flow_id) % N → N 路分片                    │
-  • MQTT: ctrl.jm.create/{namespace}/{flow} ──────────┤ → 专属 JM
+  • hash(agent_graph_id) % N → N 路分片                    │
+  • MQTT: ctrl.jm.create/{namespace}/{graph} ──────────┤ → 专属 JM
                                                    │
 ═══════════════════════════════════════════════════╪═══════════════════════
 阶段 3 — 执行（异步）                              │
@@ -116,7 +154,7 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
   • 构建 DAG → ExecutionPlan                        │
   • MQTT: .../exec/plans ──────────────────────────┤ → 分派到 TM
   • MQTT: .../exec/results ← consume ──────────────┤ ← TM 结果
-  • State: UpdateRun/SaveTask via apiserver REST   │
+  • State: UpdateRun/SaveNodeRun via apiserver REST   │
        │                                           │
        ▼                                           │
   TaskManager（N pods × M slots）                  │
@@ -124,7 +162,7 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
   • ExecutorRouter：12 种节点类型                    │
   • Skill/sandbox 节点经 MQTT 分派给 SB              │
   • MQTT: .../exec/results ────────────────────────┤ → JM 状态
-  • State: SaveTask via apiserver REST             │
+  • State: SaveNodeRun via apiserver REST             │
        │                                           │
        ▼                                           │
   Sandbox（N pods，独立 Deployment）                │
@@ -136,7 +174,7 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
   Notifier                                         │
   • $share/notify-pool：消费事件                    │
   • → Slack / Telegram / DingTalk / Email / Webhook│
-  • MQTT: notify.result.{namespace}.{flow} ───────────┤ → 投递确认
+  • MQTT: notify.result.{namespace}.{graph} ───────────┤ → 投递确认
   • WS → 仅 UI 客户端（人工审批推送）                │
                                                    │
   业务状态写入：FlowgentClient REST → apiserver → PG
@@ -147,7 +185,7 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
 
 | 约束 | 说明 |
 |---|---|
-| **API Server 拥有业务表** | PostgreSQL/SQLite 网关与 Flow Cache；独立 A2A 只拥有自身 Task 表 |
+| **API Server 拥有业务表** | PostgreSQL/SQLite 网关与 AgentGraph Cache；独立 A2A 只拥有自身 Task 表 |
 | **执行组件只用 MQTT 或 API REST** | Controller、JM、TM、Sandbox、Notifier 均不直连业务表 |
 | **管理链** | controller → JM → TM + Sandbox，后两者由 JM 的 K8sRM 管理 |
 | **状态经 API Server 写入** | Run/NodeRun 状态使用 POST/PUT REST API |
@@ -158,7 +196,7 @@ API Server REST 更新状态。独立 A2A 只拥有 `orh_a2a_task`，JobManager 
 
 分布式执行使用 Flink 风格两种生命周期模式：Helm 部署 API Server、Controller、
 Notifier、可选 A2A，以及可选 session JobManager。`runtime_mode=application`
-时，Controller 为每个活跃 FlowRun 创建一个 JobManager，该 JM 的 RM 创建以
+时，Controller 为每个活跃 GraphRun 创建一个 JobManager，该 JM 的 RM 创建以
 `runtime_cluster_id` 隔离的 TM/Sandbox Deployment。`runtime_mode=session` 时，
 Helm 部署的 session JM 消费 session Run，并只管理相同 cluster id 的 Worker。
 
@@ -166,10 +204,10 @@ Helm 部署的 session JM 消费 session Run，并只管理相同 cluster id 的
 |---|---|---|
 | API Server / Controller / Notifier / A2A | Helm | 平台 |
 | Session JobManager | Helm | namespace + session runtime cluster |
-| Application JobManager | Controller | namespace + Flow + Run；仅活跃 application Run |
+| Application JobManager | Controller | namespace + AgentGraph + Run；仅活跃 application Run |
 | TaskManager / Sandbox | JobManager ResourceManager | namespace + runtime_cluster_id |
 
-每个 Flow 必须指定 `runtime_mode`。Application 模式可在顶层
+每个 AgentGraph 必须指定 `runtime_mode`。Application 模式可在顶层
 `resources.jobmanager/taskmanager/sandbox` 覆盖 Pod size；副本数和 slot 保持平台
 默认值。ExecutionPlan 与 SandboxTrigger topic 均包含 namespace/cluster，Worker
 只订阅并校验自己的范围。详见 [Runtime Clusters](engine/runtime-clusters_ZH.md)。
@@ -178,16 +216,16 @@ Helm 部署的 session JM 消费 session Run，并只管理相同 cluster id 的
 
 | Flink Operator | Flowgent Controller |
 |---|---|
-| 监听 K8s `FlinkDeployment` CRD | 轮询 apiserver REST `FlowgentClient.ListFlows` |
+| 监听 K8s `FlinkDeployment` CRD | 轮询 apiserver REST `FlowgentClient.ListAgentGraphs` |
 | 单活并进行 leader election | 按 pod 做 hash-mod N 路分片 |
 | CRD 驱动 reconciliation | API 扫描式 reconciliation |
 
-API 轮询避免 CRD 复杂度，并让 Flow 目录始终位于规范业务状态网关 API Server 之后。
+API 轮询避免 CRD 复杂度，并让 AgentGraph 目录始终位于规范业务状态网关 API Server 之后。
 
 ### 部署命名空间与 Pod 命名
 
 - **系统命名空间：** 默认 `flowgent-system`，可用 `runtime.system_namespace` 或 `FLOWGENT__RUNTIME__SYSTEM_NAMESPACE` 配置。Helm 部署的 apiserver、controller、notifier、a2a 与中间件长期驻留于此。
-- **工作负载命名空间：** `{runtime.namespace.namespace_prefix}{namespaceId}`，默认 `flowgent-{namespaceId}`。JobManager、TaskManager 与 Sandbox 位于此处。同一业务 Namespace 的 Flow 共享 K8s namespace；运行时隔离由 `runtime_cluster_id` 表达。
+- **工作负载命名空间：** `{runtime.namespace.namespace_prefix}{namespaceId}`，默认 `flowgent-{namespaceId}`。JobManager、TaskManager 与 Sandbox 位于此处。同一业务 Namespace 的 AgentGraph 共享 K8s namespace；运行时隔离由 `runtime_cluster_id` 表达。
 
 | 组件 | 必需 | K8s namespace | 职责 |
 |---|---|---|---|
@@ -208,8 +246,8 @@ custody。
 系统服务（flowgent-system 中的 Helm release，{hash}=K8s 后缀）：
   flowgent-{component}-{hash}
 
-Application FlowRun JM（{hash}=K8s 后缀）：
-  flowgent-jobmanager-{namespaceId}-{flowId}-{runId}-{hash}
+Application GraphRun JM（{hash}=K8s 后缀）：
+  flowgent-jobmanager-{namespaceId}-{graphId}-{runId}-{hash}
 
 Runtime Cluster Worker（{hash}=K8s 后缀）：
   flowgent-{taskmanager|sandbox}-{namespaceId}-{clusterId}-{hash}
@@ -226,15 +264,15 @@ flowgent-taskmanager-default-app-run123-xyz002
 flowgent-sandbox-default-app-run123-xyz003
 ```
 
-Flow JobManager 的关键 labels：
+AgentGraph JobManager 的关键 labels：
 
 ```yaml
 flowgent.io/namespace:       "default"
-flowgent.io/flow:            "security-autonomy-fixer"
+flowgent.io/graph:            "security-autonomy-fixer"
 flowgent.io/run:             "run123"
 flowgent.io/runtime-cluster: "app-run123"
 flowgent.io/runtime-mode:    "application"
-flowgent.io/runtime-boundary: "flow-jobmanager"
+flowgent.io/runtime-boundary: "graph-jobmanager"
 ```
 
 Runtime Worker 的关键 labels：
@@ -251,45 +289,45 @@ flowgent.io/managed-by:      "runtime-cluster"
 | 决策 | 理由 |
 |---|---|
 | **API Server 拥有业务表访问权** | Controller、JM、TM、Sandbox、Notifier 使用 MQTT 或 API REST。独立 A2A 只拥有 Task Store 表，协调锁不属于业务状态访问。 |
-| **Controller 经 REST 取流程，而非扫描 PG** | `ListFlows()` 配合 MQTT 生命周期事件实现实时更新，仍保留 hash-mod 分片。 |
-| **每个 Flow 声明 `runtime_mode`** | `application` 为每次 Run 创建独立 runtime cluster；`session` 使用 Helm 部署的共享 session cluster；Run 快照保证调度确定性。 |
+| **Controller 经 REST 取流程，而非扫描 PG** | `ListAgentGraphs()` 配合 MQTT 生命周期事件实现实时更新，仍保留 hash-mod 分片。 |
+| **每个 AgentGraph 声明 `runtime_mode`** | `application` 为每次 Run 创建独立 runtime cluster；`session` 使用 Helm 部署的共享 session cluster；Run 快照保证调度确定性。 |
 | **JM 通过 `runtime_cluster_id` 管理 TM/Sandbox** | 仅 `PENDING`/`RUNNING`/`PAUSED` 的 application 运行令 Controller 保留 JM；导入流程/skill 仅登记元数据。JM 只管理匹配 cluster id 的 TM/Sandbox；无活动运行或流程删除时回收。活动运行期间 JM 意外消失时，先观察 `runtime.tm_orphan_timeout`（默认 `3m`）再清理。 |
 | **运行时凭据通过 K8s Secret `envFrom` 进入 pod** | 主机 shell 环境只作为部署器/console import 输入；`runtime.credential_env_secret` 指定的 Secret 由 Controller 注入 JM，再由 JM K8sRM 可选注入 TM/Sandbox。 |
 | **资源定义只保存凭据引用，不保存值** | LLM/MCP API 接受环境变量引用名、读取时脱敏，并只在运行时 Pod 内解析；Notification Secret 使用 AES-256-GCM 加密并保持只写。值不得进入浏览器状态、NodeRun Payload、OTel Attribute、日志或截图。 |
 | **Instruction、Knowledge 与 Execution Memory 分离** | 不可变 Instruction 控制行为；带 Scope 的 Knowledge 保存可检索事实；NodeRun Checkpoint/Message/Tool State 只属于该 Run 与 Attempt。见[持久数据生命周期](data-lifecycle_ZH.md)。 |
-| **一个 JobManager 控制线** | Session JM 轮询 session Run；application JM 轮询单个 FlowRun。两者使用同一 DAG 引擎，并按 `runtime_cluster_id` 路由计划。 |
+| **一个 JobManager 控制线** | Session JM 轮询 session Run；application JM 轮询单个 GraphRun。两者使用同一 DAG 引擎，并按 `runtime_cluster_id` 路由计划。 |
 | **A2A 直接使用 `a2aproject/a2a-go` 类型** | ADK `adka2a` 绑定其 session、genai 与内部类型，不兼容 Flowgent DAG；官方 SDK 提供无框架耦合的协议类型。 |
-| **Sandbox 是 JM 管理的独立 pod** | K8s NetworkPolicy + RuntimeDefault 提供 pod 级边界，seccomp-bpf + userspace notifier 提供每流程/节点动态 allowlist；独立资源限制避免 TM 与 Sandbox 相互干扰；二者通过按 flowId 组织的 ReadWriteMany PVC 交换脚本与结果。 |
+| **Sandbox 是 JM 管理的独立 pod** | K8s NetworkPolicy + RuntimeDefault 提供 pod 级边界，seccomp-bpf + userspace notifier 提供每流程/节点动态 allowlist；独立资源限制避免 TM 与 Sandbox 相互干扰；二者通过按 graphId 组织的 ReadWriteMany PVC 交换脚本与结果。 |
 | **网络隔离使用 seccomp-bpf + userspace notifier，而非 iptables** | iptables/Istio 只能给出 pod 级静态策略；`SECCOMP_RET_USER_NOTIF` 可在每次执行前动态安装、随子进程销毁。notifier 解析 host/IP，并通过 `/proc/<pid>/mem` 检查 `connect()`/`sendto()`/`sendmsg()` 目标。BPF 无条件允许 DNS 53 端口、无条件阻止 `SOCK_RAW`。详见 [Sandbox](engine/sandbox_ZH.md)。 |
 | **MCP 只支持 HTTP Streamable HTTP，不启动 stdio 子进程** | TM 是无桌面的 K8s 后端 agent；HTTP 让 MCP server 独立部署、伸缩和升级。`McpInfo` 保存 URL 与 headers，而非命令向量。详见 [TaskManager](engine/taskmanager_ZH.md)。 |
 
 ## MQTT 事件总线
 
 组件间消息通信位于 `flowgent/v1/` 统一层级下，以
-`{namespaceId}/flows/{flowId}/runs/{runId}` 提供可观测性和多命名空间隔离。持久业务
+`{namespaceId}/agent-graphs/{graphId}/graph-runs/{runId}` 提供可观测性和多命名空间隔离。持久业务
 状态经 API Server 写入；A2A Task Store 与协调锁例外不属于该消息总线。
 
 ```text
 # ExecutionPlan：JM → TM
-flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/exec/plans
+flowgent/v1/{namespace}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/exec/plans
   JM 发布序列化 ExecutionPlan；TM 只在同一 namespace/cluster 共享订阅中负载均衡消费
 
 # 执行结果：TM → JM
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/exec/results
-  TM 发布 TaskResult；JM 按 run 订阅
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/exec/results
+  TM 发布 NodeResult；JM 按 run 订阅
 
 # 沙箱触发与结果
-flowgent/v1/{namespace}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/sandbox/trigger
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/sandbox/result
+flowgent/v1/{namespace}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/trigger
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/sandbox/result
   TM 发布 SandboxTrigger；Sandbox 只在同一 namespace/cluster 共享订阅中竞争消费
   Sandbox 发布 stdout/stderr/exit_code；发起任务的 TM slot 订阅结果
 
 # Controller → JM 创建请求
-flowgent/v1/{namespace}/flows/{flowId}/ctrl/jm/create
+flowgent/v1/{namespace}/agent-graphs/{graphId}/ctrl/jm/create
 
 # 通知事件与结果
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/event
-flowgent/v1/{namespace}/flows/{flowId}/runs/{runId}/notify/result
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/notify/event
+flowgent/v1/{namespace}/agent-graphs/{graphId}/graph-runs/{runId}/notify/result
 
 # TM heartbeat
 flowgent/v1/heartbeat/{tmId}
@@ -299,7 +337,7 @@ flowgent/v1/heartbeat/{tmId}
 flowgent/v1/notify/pod/{podId}/ws/{wsId}
 
 # 状态写入使用 apiserver，不走 MQTT
-PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}
+PUT /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}
 ```
 
 | 发布者 | Topic | 消费者 | 机制 |
@@ -326,13 +364,13 @@ for iteration=1,2,...:
     │                     Publish exec/plans ──────►  ───────────────────►  $share/tm-{namespace}-{cluster}
     │                                                                       Executor.Execute()
     │                                                                       PUT /node-runs (REST)
-    │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_id,state}
-    │                     Route er.NodeID → chan[nodeID]
-    ◄── TaskResult ──────
+    │                     ◄── Publish exec/results ──  ◄───────────────────  {plan_id,node_instance_id,state}
+    │                     Route er.NodeInstanceID → chan[nodeID]
+    ◄── NodeResult ──────
     Done(nodeID)          // 下一轮释放子节点
 ```
 
-`K8sRM.Schedule()` MUST 在发布 `exec/plans` 前注册 `exec/results` 的节点 channel，否则快速 TM 可能先返回结果，令调用一直等待到 `planTimeout`。结果 topic 只携带 `{plan_id,node_id,state}`；TM MUST 先通过 `PUT /api/v1/{namespace}/runs/{run_id}/node-runs/{node_run_id}` 持久化实际输出，再发布状态。JM 之后从 NodeRun record 或 `Schedule` 返回值填充的 `nodeOutputs` 读取数据，供后继节点解析变量。
+`K8sRM.Schedule()` MUST 在发布 `exec/plans` 前注册 `exec/results` 的节点 channel，否则快速 TM 可能先返回结果，令调用一直等待到 `planTimeout`。结果 topic 只携带 `{plan_id,node_instance_id,state}`；TM MUST 先通过 `PUT /api/v1/{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}` 持久化实际输出，再发布状态。JM 之后从 NodeRun record 或 `Schedule` 返回值填充的 `nodeOutputs` 读取数据，供后继节点解析变量。
 
 ### Runtime Cluster 标识与队列配置
 
@@ -351,12 +389,12 @@ messager:
     broker: "tcp://<host>:1883"
 ```
 
-`flowgent/v1/` 是 messager 包中的常量；`messager.ExecPlansTopic(namespace, cluster, flow, run)` 等 builder 用路由键生成完整路径。分布式部署 MUST 配置 `messager.mqtt.broker` 或 `FLOWGENT_MQTT_BROKER`，连接失败或未配置均立即失败。本地 All-in-One 可使用 `StandaloneMessager`。
+`flowgent/v1/` 是 messager 包中的常量；`messager.ExecPlansTopic(namespace, cluster, graph, run)` 等 builder 用路由键生成完整路径。分布式部署 MUST 配置 `messager.mqtt.broker` 或 `FLOWGENT_MQTT_BROKER`，连接失败或未配置均立即失败。本地 All-in-One 可使用 `StandaloneMessager`。
 
 ## ExecutionPlan 与 Checkpoint 契约
 
 ```
-Flow Revision（定义 Nodes + Edges）
+AgentGraph Revision（定义 Nodes + Edges）
   └── Run（一次调用，PENDING→RUNNING→COMPLETED/FAILED）
         ├── execution_plan（plan-node-A，与节点 A 1:1）
         ├── execution_plan（plan-node-B，与节点 B 1:1）
@@ -365,9 +403,9 @@ Flow Revision（定义 Nodes + Edges）
 
 每个 DAG 节点对应一个逻辑 `ExecutionPlan`，每个 Plan 只属于一个 Run；Retry 分派会创建
 独立 NodeRun Attempt。Plan 序列化后用于分派，其持久表示是 NodeRun、Checkpoint 与
-Dispatch 状态，而不是独立 Plan JSON 表。字段包括 PlanID、NodeID、AgentFlowRunID
+Dispatch 状态，而不是独立 Plan JSON 表。字段包括 PlanID、NodeInstanceID、GraphRunID
 （Run ID 的旧 Wire 名称）、
-TaskType、Input、RetryPolicy 与 Agent/Tool 引用。
+NodeKind、Input、RetryPolicy 与 Agent/Tool 引用。
 
 Schema 会保存每 Attempt 的 Checkpoint、Execution Memory、Message、Workspace Version、
 Lease 与 Fencing 状态；Runtime 可在 ExecutionPlan 携带 Checkpoint，但并非所有 Crash Path
@@ -385,13 +423,13 @@ flowgent all-in-one start -c etc/flowgent.yaml
 
 ### 分布式 Kubernetes
 
-Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run 后，
+Controller 发现 application AgentGraph 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run 后，
 在工作负载命名空间 `{namespace_prefix}{namespaceId}` 中确保专用
-`flowgent-jobmanager-{namespaceId}-{flowId}-{runId}` Deployment。JM 读取该 Run
+`flowgent-jobmanager-{namespaceId}-{graphId}-{runId}` Deployment。JM 读取该 Run
 快照的 runtime mode/cluster id，通过 K8sRM 协调
 `flowgent-taskmanager-{namespaceId}-{clusterId}` 与
 `flowgent-sandbox-{namespaceId}-{clusterId}` 的副本、Slot 和资源。Session Run
-由 Helm 部署的 session JM 消费。导入或更新 Flow/Skill 不创建 application 运行资源；
+由 Helm 部署的 session JM 消费。导入或更新 AgentGraph/Skill 不创建 application 运行资源；
 没有活跃 Run 时 Controller GC 删除 application JM/TM/Sandbox。
 
 ## 端到端执行路径
@@ -400,19 +438,19 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
 
 ```
 1. TRIGGER（同步）
-   → REST:    POST /api/v1/{namespace}/flows/{flow_id}/trigger {input}
-   → A2A 0.3: POST /  JSON-RPC message/send          {action:start_run, agentflow_id, vars}
+   → REST:    POST /api/v1/{namespace}/agent-graphs/{agent_graph_id}/trigger {input}
+   → A2A 0.3: POST /  JSON-RPC message/send          {action:start_graph_run, agent_graph_name, vars}
    → Webhook: POST /api/v1/webhook/{provider}
        → provider adapter 规范化为 WebhookEvent
-       → 每个匹配 {provider,event} 的 flow 各创建一个 run
-   → 全部进入 FlowDefHandler.CreateRunFromTrigger：
+       → 每个匹配 {provider,event} 的 graph 各创建一个 run
+   → 全部进入 AgentGraphHandler.CreateRunFromTrigger：
        → 校验 spec
        → 持久化 PENDING run
        → MQTT 发布 ctrl/run/created
-       → 返回 run_id；同步阶段结束
+       → 返回 graph_run_id；同步阶段结束
 
-   A2A 管理 Payload 当前仍以 `agentflow_id`/`vars` 作为外部协议契约，并在 API 边界
-   归一化到规范 Flow/Run 字段。
+   A2A 管理 Payload 当前仍以 `agent_graph_name`/`vars` 作为外部协议契约，并在 API 边界
+   归一化到规范 AgentGraph/Run 字段。
 
 2. JM POLL（异步）
    → runPoller 每 2s 查找本流程的 PENDING run
@@ -425,12 +463,12 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
 
 ```
 1. CONTROLLER POLL
-   → 每 10s 调用 ListFlows
-   → 对每个 tick 的 peer 快照做 hash-mod，只处理本 pod 所有的 flow
+   → 每 10s 调用 ListAgentGraphs
+   → 对每个 tick 的 peer 快照做 hash-mod，只处理本 pod 所有的 graph
    → 为这些流程注册 cron/interval trigger
    → 定义导入/更新只处理元数据，不分配 worker
-   → API/webhook/cron 创建 PENDING FlowRun
-   → reconcile 确保 flowgent-jobmanager-{namespaceId}-{flowId}
+   → API/webhook/cron 创建 PENDING GraphRun
+   → reconcile 确保 flowgent-jobmanager-{namespaceId}-{graphId}
 
 2. JM POLL
    → 专属 JM 只获取本流程 run
@@ -441,9 +479,9 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
 
 ```
 3. DAG BUILD
-   → 解析 AgentFlowSpec.Nodes + Edges
+   → 解析 AgentGraphSpec.Nodes + Edges
    → BuildGraphNodes 初始化 DAG
-   → 经 RunStateStore.SaveTask / apiserver REST 保存 task run
+   → 经 GraphRunStateStore.SaveNodeRun / apiserver REST 保存 task run
    → run.Status = RUNNING
 
 4. TOPOLOGICAL LOOP
@@ -451,7 +489,7 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
    → buildPlan → rm.Schedule → Done/Fail
    → condition 记录判断并跳过 false 分支
    → supervisor 校验 Allowlist Action JSON
-     （JobManager 尚未应用 Inject/Retry/Abort 图变更）
+     （Adaptive SubGraph 内通过 GraphPatch CAS 提交）
 
 5. RM DISPATCH
    → StandaloneRM 使用 goroutine pool，容量满返回 INSUFFICIENT_RESOURCES
@@ -464,7 +502,7 @@ Controller 发现 application Flow 存在 `PENDING`、`RUNNING` 或 `PAUSED` Run
 
 7. COMPLETION
    → IsComplete() 设置 COMPLETED；HasFailed() 设置 FAILED
-   → 经 RunStateStore.UpdateRun / apiserver REST 持久化终态
+   → 经 GraphRunStateStore.UpdateRun / apiserver REST 持久化终态
 ```
 
 TM 故障转移：TM 每 5 秒心跳；JM K8sRM 在 30 秒无心跳后认定死亡；租约到期后其他 TM
@@ -483,12 +521,12 @@ TM 故障转移：TM 每 5 秒心跳；JM K8sRM 在 30 秒无心跳后认定死�
 
 | 层次 | 事实来源 | 用途 |
 |---|---|---|
-| Run DAG | Flow 定义 + 每个 Node 最新的 NodeRun attempt | 逻辑业务进度与 Node 状态 |
+| Run DAG | AgentGraph 定义 + 每个 Node 最新的 NodeRun attempt | 逻辑业务进度与 Node 状态 |
 | Node attempts | 每次执行一个持久化 NodeRun | 精确的输入/输出/错误、重试链、时间、审计与恢复 |
 | Runtime trace | 存储在 Jaeger 的 OpenTelemetry Span | 真实跨服务调用树、事件、延迟与故障定位 |
 
 三者关系为 `DAG Node 1 → N NodeRun attempts 1 → N Spans`。Span attributes
-只携带稳定关联标识（`run.id`、`flowgent.node_id`、`flowgent.task_id`、从 1
+只携带稳定关联标识（`run.id`、`flowgent.node_instance_id`、`flowgent.node_run_id`、从 1
 开始的 `flowgent.attempt`）和有界 payload 元数据（content type、byte size、
 SHA-256、capture flag）。完整输入输出、Prompt、模型响应及任意长度预览
 **MUST NOT** 写入 Span attributes；它们属于持久化 NodeRun。未来若采用大对象

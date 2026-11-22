@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,23 +25,19 @@ type StorageManager struct {
 func NewStorageManager(cfg *config.FlowgentConfig) *StorageManager {
 	if cfg.Storage.Type == "POSTGRE" {
 		pg := cfg.Storage.Postgres
-		// Prefer explicit DSN (set via FLOWGENT__STORAGE__POSTGRES__DSN or YAML)
-		if pg.Dsn != "" {
-			pool := NewPostgresPool(context.Background(), pg.Dsn, pg.Schema)
-			if err := RunMigrationsPG(pool, "postgres"); err != nil {
-				slog.Warn("PG migrations failed (non-fatal)", "err", err)
+		dsn := pg.Dsn
+		if dsn == "" {
+			ssl := "disable"
+			if pg.UseSSL {
+				ssl = "require"
 			}
-			return &StorageManager{IStorage: &pgStorage{Pool: pool}}
+			dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+				pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, ssl)
 		}
-		ssl := "disable"
-		if pg.UseSSL {
-			ssl = "require"
-		}
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			pg.Host, pg.Port, pg.Username, pg.Password, pg.Database, ssl)
 		pool := NewPostgresPool(context.Background(), dsn, pg.Schema)
 		if err := RunMigrationsPG(pool, "postgres"); err != nil {
-			slog.Warn("PG migrations failed (non-fatal)", "err", err)
+			pool.Close()
+			panic(fmt.Sprintf("postgres migrate: %v", err))
 		}
 		return &StorageManager{IStorage: &pgStorage{Pool: pool}}
 	}

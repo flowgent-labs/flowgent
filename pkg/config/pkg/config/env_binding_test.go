@@ -11,7 +11,7 @@ import (
 func TestKeyToEnvSegment(t *testing.T) {
 	cases := map[string]string{
 		"jm_image":               "JM_IMAGE",
-		"agent_flow_id":          "AGENT_FLOW_ID",
+		"agent_graph_name":       "AGENT_GRAPH_NAME",
 		"api_server_url":         "API_SERVER_URL",
 		"max_single_payment_usd": "MAX_SINGLE_PAYMENT_USD",
 		"dsn":                    "DSN",
@@ -19,8 +19,8 @@ func TestKeyToEnvSegment(t *testing.T) {
 		"use_ssl":                "USE_SSL",
 		"controller_label":       "CONTROLLER_LABEL",
 		// non-canonical spellings still map to the same env segment
-		"jm-image":    "JM_IMAGE",
-		"agentFlowId": "AGENT_FLOW_ID",
+		"jm-image":     "JM_IMAGE",
+		"agentGraphId": "AGENT_GRAPH_ID",
 		// alphanumeric abbreviations must NOT be split around digits
 		// (a digit boundary is not a word boundary): "a2a" → "A2A", not "A_2_A".
 		"a2a":  "A2A",
@@ -72,7 +72,7 @@ func TestRelaxedBinding(t *testing.T) {
 // It specifically covers multi-word fields, which a naive __→. split would fail
 // to bind, using the canonical snake_case YAML keys:
 //   - single-word nested   (storage.postgres.dsn)
-//   - multi-word snake key  (messager.mqtt.client_id, runtime.agent_flow_id, ...)
+//   - multi-word snake key  (messager.mqtt.client_id, runtime.agent_graph_name, ...)
 func TestEnvOverrideBinding(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "flowgent.yaml")
@@ -83,7 +83,7 @@ func TestEnvOverrideBinding(t *testing.T) {
 		"runtime:\n" +
 		"  system_namespace: from-yaml\n" +
 		"  k8s_namespace: from-yaml\n" +
-		"  agent_flow_id: from-yaml\n" +
+		"  agent_graph_name: from-yaml\n" +
 		"  jm_image: from-yaml\n" +
 		"  controller_label: from-yaml\n" +
 		"storage:\n" +
@@ -106,7 +106,7 @@ func TestEnvOverrideBinding(t *testing.T) {
 	t.Setenv("FLOWGENT__RUNTIME__SYSTEM_NAMESPACE", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__K8S_NAMESPACE", "from-env")
 	t.Setenv("FLOWGENT__MESSAGER__MQTT__CLIENT_ID", "from-env")
-	t.Setenv("FLOWGENT__RUNTIME__AGENT_FLOW_ID", "from-env")
+	t.Setenv("FLOWGENT__RUNTIME__AGENT_GRAPH_NAME", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__JM_IMAGE", "from-env")
 	t.Setenv("FLOWGENT__RUNTIME__CONTROLLER_LABEL", "from-env")
 
@@ -122,7 +122,7 @@ func TestEnvOverrideBinding(t *testing.T) {
 		"runtime.system_namespace":    cfg.Runtime.SystemNamespace,
 		"runtime.k8s_namespace":       cfg.Runtime.K8sNamespace,
 		"messager.mqtt.client_id":     cfg.Messager.MQTT.ClientID,
-		"runtime.agent_flow_id":       cfg.Runtime.AgentFlowID,
+		"runtime.agent_graph_name":    cfg.Runtime.AgentGraphName,
 		"runtime.jm_image":            cfg.Runtime.JMImage,
 		"runtime.controller_label":    cfg.Runtime.ControllerLabel,
 	}

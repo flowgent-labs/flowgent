@@ -423,7 +423,7 @@
   margin-top: 12px;
 }
 
-/* Flow editor */
+/* AgentGraph editor */
 .editor-page {
   position: relative;
   display: flex;
@@ -478,10 +478,10 @@
   background: var(--surface);
   overflow: hidden;
 }
-.flow-recent-runs {
+.graph-recent-runs {
   overflow: hidden;
 }
-.flow-recent-runs > header {
+.graph-recent-runs > header {
   display: flex;
   min-height: 68px;
   align-items: center;
@@ -495,35 +495,35 @@
     transparent 55%
   );
 }
-.flow-recent-runs > header > div,
-.flow-recent-runs > header > a,
-.flow-recent-runs__actions,
-.flow-recent-runs__list article > div:first-child {
+.graph-recent-runs > header > div,
+.graph-recent-runs > header > a,
+.graph-recent-runs__actions,
+.graph-recent-runs__list article > div:first-child {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.flow-recent-runs > header h2,
-.flow-recent-runs > header p {
+.graph-recent-runs > header h2,
+.graph-recent-runs > header p {
   margin: 0;
 }
-.flow-recent-runs > header h2 {
+.graph-recent-runs > header h2 {
   font-size: 13px;
 }
-.flow-recent-runs > header p {
+.graph-recent-runs > header p {
   margin-top: 2px;
   color: var(--muted);
   font-size: 9px;
 }
-.flow-recent-runs > header > a {
+.graph-recent-runs > header > a {
   color: var(--accent);
   font-size: 10px;
   font-weight: 700;
 }
-.flow-recent-runs__list {
+.graph-recent-runs__list {
   display: grid;
 }
-.flow-recent-runs__list article {
+.graph-recent-runs__list article {
   display: grid;
   min-height: 62px;
   grid-template-columns: minmax(230px, 1fr) minmax(320px, 1.3fr) auto;
@@ -532,49 +532,49 @@
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
 }
-.flow-recent-runs__list article:last-child {
+.graph-recent-runs__list article:last-child {
   border-bottom: 0;
 }
-.flow-recent-runs__list code {
+.graph-recent-runs__list code {
   overflow: hidden;
   color: var(--text-muted);
   font-size: 9px;
   text-overflow: ellipsis;
 }
-.flow-recent-runs__list dl {
+.graph-recent-runs__list dl {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin: 0;
 }
-.flow-recent-runs__list dl div {
+.graph-recent-runs__list dl div {
   display: grid;
   gap: 2px;
 }
-.flow-recent-runs__list dt {
+.graph-recent-runs__list dt {
   color: var(--faint);
   font-size: 7px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.flow-recent-runs__list dd {
+.graph-recent-runs__list dd {
   margin: 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 9px;
 }
-.flow-recent-runs__actions a {
+.graph-recent-runs__actions a {
   padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 9px;
   font-weight: 700;
 }
-.flow-recent-runs__actions a:hover {
+.graph-recent-runs__actions a:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
-.flow-recent-runs__empty {
+.graph-recent-runs__empty {
   margin: 0;
   padding: 24px 16px;
   color: var(--muted);
@@ -675,7 +675,7 @@
   background: var(--warning-soft);
 }
 .kind-icon--map,
-.kind-icon--agentflow {
+.kind-icon--subgraph {
   color: #65c6d8;
   background: rgba(101, 198, 216, 0.1);
 }
@@ -684,15 +684,15 @@
   color: var(--muted);
   background: var(--surface-3);
 }
-.flow-canvas {
+.graph-canvas {
   position: relative;
   min-width: 0;
   background: var(--bg-elevated);
 }
-.flow-canvas .react-flow__background {
+.graph-canvas .react-flow__background {
   color: var(--border-strong);
 }
-.flow-canvas .react-flow__controls,
+.graph-canvas .react-flow__controls,
 .run-graph .react-flow__controls {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -700,42 +700,42 @@
   box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
-.flow-canvas .react-flow__controls-button,
+.graph-canvas .react-flow__controls-button,
 .run-graph .react-flow__controls-button {
   color: var(--text);
   border-color: var(--border);
   background: var(--surface);
   fill: currentColor;
 }
-.flow-canvas .react-flow__minimap,
+.graph-canvas .react-flow__minimap,
 .run-graph .react-flow__minimap {
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
 }
-.flow-canvas .react-flow__edge-path,
+.graph-canvas .react-flow__edge-path,
 .run-graph .react-flow__edge-path {
   stroke: var(--border-strong);
   stroke-width: 1.5;
 }
-.flow-canvas .react-flow__edge.selected .react-flow__edge-path {
+.graph-canvas .react-flow__edge.selected .react-flow__edge-path {
   stroke: var(--primary);
 }
-.flow-canvas .flow-edge--true .react-flow__edge-path {
+.graph-canvas .graph-edge--true .react-flow__edge-path {
   stroke: var(--primary);
 }
-.flow-canvas .flow-edge--false .react-flow__edge-path {
+.graph-canvas .graph-edge--false .react-flow__edge-path {
   stroke: var(--danger);
   stroke-dasharray: 5;
 }
-.flow-canvas .react-flow__edge-text {
+.graph-canvas .react-flow__edge-text {
   fill: var(--text-soft);
   font-size: 8px;
 }
-.flow-canvas .react-flow__edge-textbg {
+.graph-canvas .react-flow__edge-textbg {
   fill: var(--surface);
 }
-.flow-node {
+.graph-node {
   position: relative;
   width: 190px;
   min-height: 84px;
@@ -746,40 +746,40 @@
   background: linear-gradient(145deg, var(--surface), var(--surface-2));
   box-shadow: 0 7px 18px rgba(0, 0, 0, 0.18);
 }
-.flow-node.is-selected {
+.graph-node.is-selected {
   border-color: var(--primary);
   box-shadow:
     0 0 0 2px var(--primary-soft),
     0 9px 25px rgba(0, 0, 0, 0.2);
 }
-.flow-node__top {
+.graph-node__top {
   display: flex;
   align-items: center;
   gap: 7px;
   margin-bottom: 8px;
 }
-.flow-node__top .kind-icon {
+.graph-node__top .kind-icon {
   width: 23px;
   height: 23px;
 }
-.flow-node__kind {
+.graph-node__kind {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 8px;
   text-transform: uppercase;
 }
-.flow-node__signal {
+.graph-node__signal {
   width: 5px;
   height: 5px;
   margin-left: auto;
   border-radius: 50%;
   background: var(--primary);
 }
-.flow-node > strong {
+.graph-node > strong {
   display: block;
   font-size: 11px;
 }
-.flow-node > small {
+.graph-node > small {
   display: block;
   margin-top: 4px;
   color: var(--muted);
@@ -788,7 +788,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.flow-node .react-flow__handle {
+.graph-node .react-flow__handle {
   width: 8px;
   height: 8px;
   border: 2px solid var(--surface);
@@ -1869,7 +1869,7 @@
     grid-template-columns: 145px minmax(450px, 1fr);
     overflow-x: auto;
   }
-  .flow-recent-runs__list article {
+  .graph-recent-runs__list article {
     grid-template-columns: 1fr;
   }
   .inspector {
@@ -1939,7 +1939,7 @@
   .palette section button > svg {
     display: none;
   }
-  .flow-canvas {
+  .graph-canvas {
     min-height: 560px;
   }
   .inspector {
@@ -2000,7 +2000,7 @@
     display: none;
   }
 }
-.flow-repo {
+.graph-repo {
   display: grid;
   gap: 18px;
 }
@@ -2148,7 +2148,7 @@
   padding: 18px;
 }
 
-.flow-repo__header {
+.graph-repo__header {
   display: flex;
   min-height: 58px;
   align-items: end;
@@ -2157,13 +2157,13 @@
   border-bottom: 1px solid var(--border);
 }
 
-.flow-repo__header nav {
+.graph-repo__header nav {
   display: flex;
   align-items: end;
   gap: 4px;
 }
 
-.flow-repo__header nav a {
+.graph-repo__header nav a {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2172,12 +2172,12 @@
   color: var(--text-muted);
 }
 
-.flow-repo__header nav a:hover,
-.flow-repo__header nav a.active {
+.graph-repo__header nav a:hover,
+.graph-repo__header nav a.active {
   color: var(--text);
 }
 
-.flow-repo__header nav a.active {
+.graph-repo__header nav a.active {
   border-bottom-color: var(--accent);
 }
 
@@ -2214,7 +2214,7 @@
     grid-template-columns: 1fr;
   }
 
-  .flow-repo__header nav {
+  .graph-repo__header nav {
     overflow-x: auto;
   }
 }

@@ -7,10 +7,10 @@ import (
 )
 
 type WSMessage struct {
-	Type        string `json:"type"`
-	AgentFlowID string `json:"agentflow_id,omitempty"`
-	RunID       string `json:"run_id,omitempty"`
-	Data        any    `json:"data,omitempty"`
+	Type           string `json:"type"`
+	AgentGraphName string `json:"agent_graph_name,omitempty"`
+	GraphRunID     string `json:"graph_run_id,omitempty"`
+	Data           any    `json:"data,omitempty"`
 }
 
 type WSConn interface {

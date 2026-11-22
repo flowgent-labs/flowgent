@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -22,11 +23,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// RunStateStore is the narrow state interface JobMaster needs for persistence.
+var ErrRecoveryBlocked = errors.New("recovery requires reconciliation")
+
+// GraphRunStateStore is the narrow state interface JobMaster needs for persistence.
 // Implementations call the apiserver REST API (never direct DB).
-type RunStateStore interface {
-	UpdateRun(ctx context.Context, run *entities.FlowRunInfo) error
-	SaveTask(ctx context.Context, task *entities.TaskRunInfo) error
+type GraphRunStateStore interface {
+	UpdateGraphRun(ctx context.Context, run *entities.GraphRun) error
+	SaveNodeRun(ctx context.Context, noderun *entities.NodeRun) error
 }
 
 // KnowledgePostWriter creates immutable candidates. Publication remains behind
@@ -41,17 +44,24 @@ type EdgeCondition struct {
 }
 
 // JobMaster is the per-run DAG orchestrator. It builds the execution graph
-// from an FlowInfo and dispatches plans via resourcemanager.ResourceManager.Schedule().
-// Each agentflow run gets its own JobMaster instance — no shared state.
+// from an AgentGraph and dispatches plans via resourcemanager.ResourceManager.Schedule().
+// Each agentgraph run gets its own JobMaster instance — no shared state.
 type JobMaster struct {
-	state     RunStateStore
-	rm        resourcemanager.ResourceManager
-	logger    *utils.Logger
-	tracer    trace.Tracer
-	timeout   time.Duration
-	nodeLimit int
-	maxNodes  int
-	clusterID string
+	state          GraphRunStateStore
+	rm             resourcemanager.ResourceManager
+	logger         *utils.Logger
+	tracer         trace.Tracer
+	metrics        *JobManagerMetrics
+	timeout        time.Duration
+	nodeLimit      int
+	maxNodes       int
+	clusterID      string
+	maxParallelism int
+	rootGraphID    string
+	graphRevision  entities.GraphRevision
+	instancePrefix string
+	child          bool
+	slots          chan struct{}
 
 	knowledgeWriter KnowledgePostWriter
 
@@ -75,17 +85,22 @@ type JobMaster struct {
 }
 
 // NewJobMaster creates a per-run JobMaster. Config is read internally for timeout and retry limits.
-func NewJobMaster(state RunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
+func NewJobMaster(state GraphRunStateStore, rm resourcemanager.ResourceManager, logger *utils.Logger, cfg *JobManagerConfig) *JobMaster {
 	if cfg == nil {
 		cfg = &JobManagerConfig{}
 	}
-	timeout := cfg.FlowExecutionTimeout
+	timeout := cfg.AgentGraphExecutionTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
 
-	return &JobMaster{
+	parallelism := cfg.MaxConcurrentNodes
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	return &JobMaster{maxParallelism: parallelism,
 		state: state, rm: rm, logger: logger,
+		metrics: NewJobMasterMetrics(),
 		timeout: timeout, nodeLimit: cfg.MaxNodeRetries,
 		clusterID:   cfg.RuntimeClusterID,
 		nodeOutputs: make(map[string]map[string]any),
@@ -283,6 +298,21 @@ func (jm *JobMaster) dependencyStateLocked(n string) (resolved, active bool) {
 	if len(jm.deps[n]) == 0 {
 		return true, true
 	}
+	if plan := jm.planMap[n]; plan != nil && plan.Node.JoinMode == "or" {
+		allResolved := true
+		for _, dep := range jm.deps[n] {
+			if jm.completed[dep] {
+				if expected := jm.edgeConditions[dep+"->"+n]; expected == nil || jm.conditions[dep] == *expected {
+					return true, true
+				}
+			}
+			if !jm.completed[dep] && !jm.skipped[dep] {
+				allResolved = false
+			}
+		}
+		return allResolved, false
+	}
+
 	anyActive := false
 	hasDormantConditional := false
 	for _, d := range jm.deps[n] {
@@ -321,7 +351,7 @@ func (jm *JobMaster) dependencyStateLocked(n string) (resolved, active bool) {
 
 // ─── buildExecutionGraph — single pass: DAG state + ExecutionPlans ─
 
-func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) error {
+func (jm *JobMaster) buildExecutionGraph(spec *entities.AgentGraph, runID string) error {
 	if err := spec.ValidateDAG(); err != nil {
 		return err
 	}
@@ -371,22 +401,24 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 
 	for i := range spec.Nodes {
 		n := &spec.Nodes[i]
-		nodeSpec := entities.NodeSpecFromNode(n)
-		taskType, err := NodeToTaskType(nodeSpec.Kind)
-		if err != nil {
-			return err
+		graphNodeID := n.GraphNodeID
+		if graphNodeID == "" {
+			graphNodeID = n.ID
 		}
+		definition := entities.CloneGraphNode(n)
 		jm.planMap[n.ID] = &entities.ExecutionPlan{
-			PlanID:                fmt.Sprintf("plan-%s-%s", runID, n.ID),
-			AgentFlowRunID:        runID,
-			AgentFlowDefinitionID: spec.ResourceName(),
-			Namespace:             spec.Namespace,
-			RuntimeMode:           spec.RuntimeMode,
-			RuntimeClusterID:      jm.clusterID,
-			TaskID:                fmt.Sprintf("task-%s-%s", runID, n.ID),
-			TaskType:              taskType, NodeID: n.ID,
-			State: entities.TaskPending, MaxRetries: RetryMax(n.Retry),
-			NodeSpec: nodeSpec, CreatedAt: time.Now(),
+			PlanID:           executionPlanID(runID, jm.instancePrefix+n.ID),
+			GraphRunID:       runID,
+			AgentGraphName:   spec.ResourceName(),
+			AgentGraphID:     jm.rootGraphID,
+			Namespace:        spec.Namespace,
+			RuntimeMode:      spec.RuntimeMode,
+			RuntimeClusterID: jm.clusterID,
+			NodeRunID:        fmt.Sprintf("noderun-%s-%s", runID, jm.instancePrefix+n.ID),
+			NodeKind:         definition.Kind, NodeInstanceID: jm.instancePrefix + n.ID, DispatchEpoch: 1,
+			State: entities.NodeRunPending, MaxRetries: RetryMax(n.Retry),
+			GraphRevision: jm.graphRevision, SubGraphInstanceID: strings.TrimSuffix(jm.instancePrefix, "/"), GraphNodeID: graphNodeID,
+			Node: definition, CreatedAt: time.Now(),
 		}
 	}
 	return nil
@@ -394,41 +426,97 @@ func (jm *JobMaster) buildExecutionGraph(spec *entities.FlowInfo, runID string) 
 
 // ─── Execute ─────────────────────────────────────────────
 
-func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spec *entities.FlowInfo) error {
+func (jm *JobMaster) Execute(ctx context.Context, run *entities.GraphRun, spec *entities.AgentGraph) (executeErr error) {
+	metricsStarted := false
+	defer func() {
+		if !jm.child && errors.Is(executeErr, ErrRecoveryBlocked) {
+			run.Status = entities.GraphRunPaused
+			run.Error = executeErr.Error()
+			// Timeout cancellation must not discard the durable pause decision.
+			pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := jm.state.UpdateGraphRun(pauseCtx, run); err != nil {
+				executeErr = fmt.Errorf("%w; persist pause: %v", executeErr, err)
+			}
+		}
+		if metricsStarted {
+			status := run.Status
+			if executeErr != nil && status == entities.GraphRunRunning {
+				status = entities.GraphRunFailed
+				if errors.Is(executeErr, context.Canceled) {
+					status = entities.GraphRunCancelled
+				}
+			}
+			jm.metrics.RecordRunCompleted(ctx, spec.ResourceName(), string(status))
+		}
+	}()
 	if jm.tracer == nil {
 		jm.tracer = tracing.Tracer("flowgent/jobmaster")
 	}
+	if jm.metrics == nil {
+		jm.metrics = NewJobMasterMetrics()
+	}
 
+	if jm.slots == nil {
+		capacity := jm.maxParallelism
+		for _, node := range spec.Nodes {
+			if node.SubGraph != nil {
+				limit := node.SubGraph.Limits.MaxParallelism
+				if limit == 0 && node.SubGraph.Adaptive() {
+					limit = 4
+				}
+				if limit > capacity {
+					capacity = limit
+				}
+			}
+		}
+		jm.slots = make(chan struct{}, capacity)
+	}
+	jm.rootGraphID = run.AgentGraphID
+	if jm.rootGraphID == "" {
+		jm.rootGraphID = spec.ID
+	}
+	buildStarted := time.Now()
 	if err := jm.buildExecutionGraph(spec, run.ID); err != nil {
 		return fmt.Errorf("build execution graph: %w", err)
 	}
+	jm.metrics.RecordDAGBuild(ctx, spec.ResourceName(), time.Since(buildStarted))
 	jm.applySupervisorConfig(spec)
 
-	// Merge flow vars with run vars and inject built-in variables.
+	// Merge graph vars with run vars and inject built-in variables.
 	jm.resolvedVars = make(map[string]any)
 	for k, v := range spec.Vars {
 		jm.resolvedVars[k] = v
 	}
-	for k, v := range run.Vars {
+	for k, v := range run.Input {
 		jm.resolvedVars[k] = v
 	}
-	jm.resolvedVars["run_id"] = run.ID
+	jm.resolvedVars["graph_run_id"] = run.ID
 	jm.resolvedVars["namespace_id"] = spec.Namespace
-	jm.resolvedVars["flow_id"] = spec.ResourceName()
+	jm.resolvedVars["agent_graph_id"] = spec.ResourceName()
 
 	ctx, span := jm.tracer.Start(ctx, "jobmaster.execute",
 		trace.WithAttributes(
-			attribute.String("agentflow.id", spec.ResourceName()), attribute.String("run.id", run.ID),
+			attribute.String("agent_graph.name", spec.ResourceName()), attribute.String("graph_run.id", run.ID),
 			attribute.String("resource_manager", string(jm.rm.Provider())),
 			attribute.Int("node_count", len(spec.Nodes)),
 		),
 	)
 	defer span.End()
 
-	run.Status = entities.RunRunning
+	run.Status = entities.GraphRunRunning
 	now := time.Now()
-	run.StartedAt = &now
-	_ = jm.state.UpdateRun(ctx, run)
+	if run.StartedAt == nil {
+		run.StartedAt = &now
+	}
+	run.FinishedAt = nil
+	if !jm.child {
+		if err := jm.state.UpdateGraphRun(ctx, run); err != nil {
+			return err
+		}
+		jm.metrics.RecordRunStarted(ctx, spec.ResourceName())
+		metricsStarted = true
+	}
 
 	if jm.timeout > 0 {
 		var cancel context.CancelFunc
@@ -436,113 +524,209 @@ func (jm *JobMaster) Execute(ctx context.Context, run *entities.FlowRunInfo, spe
 		defer cancel()
 	}
 
-	for iteration := 1; ; iteration++ {
-		select {
-		case <-ctx.Done():
-			slog.Debug("jobmaster execute context done", "err", ctx.Err())
-			return ctx.Err()
-		default:
+	if reader, ok := jm.state.(interface {
+		ListNodeRuns(context.Context, string) ([]*entities.NodeRun, error)
+	}); ok {
+		tasks, err := reader.ListNodeRuns(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("restore node attempts: %w", err)
 		}
-		if jm.HasFailed() {
-			slog.Debug("jobmaster execute has failed", "error", jm.collectFirstError())
-			run.Status = entities.RunFailed
-			run.Error = jm.collectFirstError()
-			run.FinishedAt = TimePtr()
-			span.SetStatus(codes.Error, "failed")
-			if err := jm.state.UpdateRun(ctx, run); err != nil {
-				return err
+		latest := map[string]*entities.NodeRun{}
+		for _, t := range tasks {
+			t.Normalize()
+			if old := latest[t.NodeInstanceID]; old == nil || t.Attempt > old.Attempt {
+				latest[t.NodeInstanceID] = t
 			}
-			jm.postHandle(run, spec)
-			return nil
 		}
-		if jm.IsComplete() {
-			slog.Debug("jobmaster execute is complete")
-			run.Status = entities.RunCompleted
-			run.FinishedAt = TimePtr()
-			span.SetStatus(codes.Ok, "done")
-			if err := jm.state.UpdateRun(ctx, run); err != nil {
-				return err
-			}
-			jm.postHandle(run, spec)
-			return nil
-		}
-
-		ready := jm.Ready()
-		slog.Debug("jobmaster execute iteration", "iteration", iteration, "ready", ready,
-			"completed", len(jm.completed), "total", len(jm.nodes), "deps", jm.dumpGraphState())
-		if len(ready) == 0 {
-			// Ready may have propagated the final inactive branch to skipped.
-			// Re-enter the loop so the normal completion path persists the run.
-			if jm.IsComplete() {
-				continue
-			}
-			slog.Debug("jobmaster execute no ready nodes, breaking", "completed", len(jm.completed),
-				"failed", len(jm.failed), "skipped", len(jm.skipped), "pending", len(jm.pending))
-			break
-		}
-
-		for _, nodeID := range ready {
-			plan, ok := jm.planMap[nodeID]
-			if !ok {
-				slog.Debug("jobmaster execute plan not found", "node", nodeID)
-				continue
-			}
-
-			nodeCtx, nodeSpan := jm.tracer.Start(ctx, "jobmaster.node",
-				trace.WithAttributes(
-					attribute.String("agentflow.id", spec.ResourceName()),
-					attribute.String("run.id", run.ID),
-					attribute.String("flowgent.node_id", nodeID),
-					attribute.String("flowgent.task_type", string(plan.TaskType)),
-					attribute.String("flowgent.plan_id", plan.PlanID),
-					attribute.String("flowgent.task_id", plan.TaskID),
-				),
-			)
-
-			plan.Input = jm.resolveInput(nodeID, plan.NodeSpec.Args)
-
-			slog.Debug("jobmaster execute scheduling node", "node", nodeID, "type", plan.TaskType, "planID", plan.PlanID)
-			result, err := jm.scheduleNodeWithRetry(nodeCtx, plan)
-			if err != nil {
-				slog.Warn("jobmaster execute node failed", "node", nodeID, "err", err)
-				jm.logger.Error("node failed", "node", nodeID, "err", err)
-				jm.nodeErrors[nodeID] = err.Error()
-				nodeSpan.RecordError(err)
-				nodeSpan.SetStatus(codes.Error, "node attempts exhausted")
-				nodeSpan.End()
-				jm.Fail(nodeID)
-				continue
-			}
-
-			slog.Debug("jobmaster execute node done", "node", nodeID, "hasOutput", result.Output != nil)
-			if result.Output != nil {
-				jm.nodeOutputs[nodeID] = result.Output
-				nodeSpan.SetAttributes(attribute.Bool("flowgent.has_output", true))
-			}
-			jm.Done(nodeID)
-			nodeSpan.SetStatus(codes.Ok, "done")
-			nodeSpan.End()
-
-			if plan.TaskType == entities.TaskCondition {
-				if r, ok := result.Output["result"].(bool); ok {
-					jm.SetConditionResult(nodeID, r)
+		for id, plan := range jm.planMap {
+			if t := latest[plan.NodeInstanceID]; t != nil {
+				if t.Checkpoint != nil {
+					data, _ := json.Marshal(t.Checkpoint)
+					_ = json.Unmarshal(data, &plan.Checkpoint)
+				}
+				plan.WorkspaceVersion = t.WorkspaceVersion
+				switch t.Status {
+				case entities.NodeRunSucceeded:
+					jm.nodeOutputs[id] = t.Output
+					jm.Done(id)
+					if plan.NodeKind == entities.ConditionNode {
+						if v, ok := t.Output["result"].(bool); ok {
+							jm.SetConditionResult(id, v)
+						}
+					}
+				case entities.NodeRunWaiting:
+					if plan.NodeKind != entities.SubGraphNode {
+						return fmt.Errorf("%w: unresolved waiting noderun %s", ErrRecoveryBlocked, plan.NodeInstanceID)
+					}
+					plan.RetryCount = t.Attempt - 1
+					plan.StartedAt = t.StartedAt
+				case entities.NodeRunPending:
+					plan.RetryCount = t.Attempt - 1
+				case entities.NodeRunRunning:
+					return fmt.Errorf("%w: node %s has an unresolved running attempt", ErrRecoveryBlocked, plan.NodeInstanceID)
+				case entities.NodeRunSkipped:
+					jm.Skip(id)
+				case entities.NodeRunFailed:
+					plan.RetryCount = t.Attempt
+					plan.ParentNodeRunID = t.ID
 				}
 			}
 		}
 	}
-	slog.Debug("jobmaster execute loop exited, returning nil")
-	return nil
+	type completion struct {
+		id     string
+		result *entities.NodeResult
+		err    error
+	}
+	checkpoint := func() error {
+		if jm.child {
+			return nil
+		}
+		if writer, ok := jm.state.(interface {
+			Checkpoint(context.Context, string) error
+		}); ok {
+			return writer.Checkpoint(ctx, run.ID)
+		}
+		return nil
+	}
+	checkpointTicker := time.NewTicker(30 * time.Second)
+	defer checkpointTicker.Stop()
+	sinceCheckpoint := 0
+	recordedSkipped := map[string]bool{}
+	events := make(chan completion, jm.maxParallelism)
+	inflight := map[string]bool{}
+	workCtx, cancelWork := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() { cancelWork(); workers.Wait() }()
+	for {
+		if err := ctx.Err(); err != nil {
+			cancelWork()
+			return err
+		}
+		if jm.HasFailed() && len(inflight) == 0 {
+			run.Status = entities.GraphRunFailed
+			run.Error = jm.collectFirstError()
+			run.FinishedAt = TimePtr()
+			span.SetStatus(codes.Error, "failed")
+			if !jm.child {
+				if err := jm.state.UpdateGraphRun(ctx, run); err != nil {
+					return err
+				}
+				jm.postHandle(run, spec)
+			}
+			return nil
+		}
+		if jm.IsComplete() && len(inflight) == 0 {
+			if err := checkpoint(); err != nil {
+				return fmt.Errorf("commit graph checkpoint: %w", err)
+			}
+			run.Status = entities.GraphRunCompleted
+			run.FinishedAt = TimePtr()
+			span.SetStatus(codes.Ok, "done")
+			if !jm.child {
+				if err := jm.state.UpdateGraphRun(ctx, run); err != nil {
+					return err
+				}
+				jm.postHandle(run, spec)
+			}
+			return nil
+		}
+		ready := jm.Ready()
+		for id, skipped := range jm.skipped {
+			if skipped && !recordedSkipped[id] {
+				plan := jm.planMap[id]
+				plan.NodeRunID = taskAttemptID(plan.NodeRunID, plan.RetryCount)
+				plan.State = entities.NodeRunSkipped
+				plan.FencingToken = plan.DispatchEpoch
+				if err := jm.state.SaveNodeRun(ctx, nodeRunFromPlan(plan)); err != nil {
+					return err
+				}
+				recordedSkipped[id] = true
+			}
+		}
+
+		for _, id := range ready {
+			if inflight[id] || len(inflight) >= jm.maxParallelism || jm.HasFailed() {
+				continue
+			}
+			plan := jm.planMap[id]
+			if plan == nil {
+				return fmt.Errorf("missing execution plan %s", id)
+			}
+			plan.Input = jm.resolveInput(id, plan.Node.Args)
+			inflight[id] = true
+			workers.Add(1)
+			go func(id string, plan *entities.ExecutionPlan) {
+				defer workers.Done()
+				nodeCtx, nodeSpan := jm.tracer.Start(workCtx, "jobmaster.node", trace.WithAttributes(attribute.String("flowgent.node_instance_id", id), attribute.String("graph_run.id", run.ID)))
+				defer nodeSpan.End()
+				var result *entities.NodeResult
+				var err error
+				if plan.NodeKind == entities.SubGraphNode {
+					result, err = jm.executeSubGraph(nodeCtx, run, plan)
+				} else {
+					result, err = jm.scheduleNodeWithRetry(nodeCtx, plan)
+				}
+				events <- completion{id, result, err}
+			}(id, plan)
+		}
+		if len(inflight) == 0 {
+			if jm.IsComplete() {
+				continue
+			}
+			return fmt.Errorf("execution stalled with unresolved dependencies: %s", jm.dumpGraphState())
+		}
+		select {
+		case <-ctx.Done():
+			cancelWork()
+			return ctx.Err()
+		case <-checkpointTicker.C:
+			if err := checkpoint(); err != nil {
+				return fmt.Errorf("commit graph checkpoint: %w", err)
+			}
+		case event := <-events:
+			sinceCheckpoint++
+			if sinceCheckpoint >= 20 {
+				if err := checkpoint(); err != nil {
+					return err
+				}
+				sinceCheckpoint = 0
+			}
+			delete(inflight, event.id)
+			if errors.Is(event.err, ErrRecoveryBlocked) {
+				return event.err
+			}
+			if event.err != nil {
+				jm.nodeErrors[event.id] = event.err.Error()
+				jm.Fail(event.id)
+				continue
+			}
+			if event.result == nil {
+				jm.nodeErrors[event.id] = "missing noderun result"
+				jm.Fail(event.id)
+				continue
+			}
+			jm.nodeOutputs[event.id] = event.result.Output
+			jm.Done(event.id)
+			if jm.planMap[event.id].NodeKind == entities.ConditionNode {
+				if v, ok := event.result.Output["result"].(bool); ok {
+					jm.SetConditionResult(event.id, v)
+				}
+			}
+		}
+	}
 }
 
-func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
-	policy := jm.nodeRetryPolicy(plan.NodeSpec.Retry)
+func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.ExecutionPlan) (*entities.NodeResult, error) {
+	policy := jm.nodeRetryPolicy(plan.Node.Retry)
 	plan.MaxRetries = policy.Max
-	baseTaskID := plan.TaskID
-	previousTaskID := ""
+	baseTaskID := plan.NodeRunID
+	firstAttempt := plan.RetryCount
+	previousTaskID := plan.ParentNodeRunID
 	delay := policy.Initial
-	var lastErr error
+	var lastErr error = fmt.Errorf("persisted retry budget exhausted")
 
-	for attempt := 0; attempt <= policy.Max; attempt++ {
+	for attempt := 0; firstAttempt+attempt <= policy.Max; attempt++ {
 		if attempt > 0 {
 			if err := waitForRetry(ctx, delay); err != nil {
 				return nil, err
@@ -550,10 +734,11 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 			delay = nextRetryDelay(delay, policy)
 		}
 
-		plan.TaskID = taskAttemptID(baseTaskID, attempt)
-		plan.ParentTaskRunID = previousTaskID
-		plan.RetryCount = attempt
-		plan.State = entities.TaskPending
+		plan.NodeRunID = taskAttemptID(baseTaskID, firstAttempt+attempt)
+		plan.ParentNodeRunID = previousTaskID
+		plan.RetryCount = firstAttempt + attempt
+		plan.FencingToken = plan.DispatchEpoch
+		plan.State = entities.NodeRunPending
 		plan.Result = nil
 		plan.FinishedAt = nil
 		startedAt := time.Now().UTC()
@@ -561,28 +746,59 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 
 		attemptCtx, attemptSpan := jm.tracer.Start(ctx, "jobmaster.node.attempt",
 			trace.WithAttributes(
-				attribute.String("run.id", plan.AgentFlowRunID),
-				attribute.String("agentflow.id", plan.AgentFlowDefinitionID),
-				attribute.String("flowgent.node_id", plan.NodeID),
-				attribute.String("flowgent.task_id", plan.TaskID),
+				attribute.String("graph_run.id", plan.GraphRunID),
+				attribute.String("agent_graph.name", plan.AgentGraphName),
+				attribute.String("flowgent.node_instance_id", plan.NodeInstanceID),
+				attribute.String("flowgent.node_run_id", plan.NodeRunID),
 				attribute.String("flowgent.plan_id", plan.PlanID),
 				attribute.Int("flowgent.attempt", attempt+1),
 				attribute.Int("flowgent.max_retries", policy.Max),
 			),
 		)
 		attemptSpan.SetAttributes(tracing.PayloadAttributes("input", plan.Input)...)
-		task := taskRunFromPlan(plan)
-		if err := jm.state.SaveTask(attemptCtx, task); err != nil {
+		noderun := nodeRunFromPlan(plan)
+		if err := jm.state.SaveNodeRun(attemptCtx, noderun); err != nil {
 			attemptSpan.RecordError(err)
 			attemptSpan.SetStatus(codes.Error, "persist attempt failed")
 			attemptSpan.End()
-			return nil, fmt.Errorf("persist task attempt: %w", err)
+			if plan.SubGraphInstanceID != "" {
+				return nil, fmt.Errorf("%w: persist noderun attempt: %v", ErrRecoveryBlocked, err)
+			}
+			return nil, fmt.Errorf("persist noderun attempt: %w", err)
 		}
 
-		result, scheduleErr := jm.rm.Schedule(attemptCtx, plan)
+		var result *entities.NodeResult
+		var scheduleErr error
+		if jm.slots != nil {
+			select {
+			case jm.slots <- struct{}{}:
+			case <-attemptCtx.Done():
+				attemptSpan.End()
+				return nil, attemptCtx.Err()
+			}
+		}
+		jm.metrics.RecordPlanDispatched(attemptCtx, plan.AgentGraphName)
+		result, scheduleErr = jm.rm.Schedule(attemptCtx, plan)
+		if jm.slots != nil {
+			<-jm.slots
+		}
+		if scheduleErr == nil && result != nil && result.State == entities.NodeRunWaiting {
+			attemptSpan.End()
+			return nil, fmt.Errorf("%w: noderun yielded waiting", ErrRecoveryBlocked)
+		}
+		// A transport failure does not prove a remote tool stopped. Preserve the
+		// committed Attempt and require reconciliation rather than issue it again.
+		if plan.DispatchEpoch > 0 && scheduleErr != nil {
+			attemptSpan.RecordError(scheduleErr)
+			attemptSpan.End()
+			return nil, fmt.Errorf("%w: %v", ErrRecoveryBlocked, scheduleErr)
+		}
+		if result != nil && result.Checkpoint != nil {
+			plan.Checkpoint = result.Checkpoint
+		}
 		lastErr = scheduleErr
 		if lastErr == nil && result == nil {
-			lastErr = fmt.Errorf("task execution returned no result")
+			lastErr = fmt.Errorf("noderun execution returned no result")
 		}
 		if lastErr == nil && result.Error != "" {
 			lastErr = fmt.Errorf("%s", result.Error)
@@ -590,34 +806,39 @@ func (jm *JobMaster) scheduleNodeWithRetry(ctx context.Context, plan *entities.E
 
 		finishedAt := time.Now().UTC()
 		plan.FinishedAt = &finishedAt
-		task.FinishedAt = &finishedAt
+		noderun.FinishedAt = &finishedAt
 		if lastErr == nil {
-			plan.State = entities.Success
+			plan.State = entities.NodeRunSucceeded
 			plan.Result = result
-			task.Status = entities.Success
-			task.Output = result.Output
-			task.Error = ""
+			noderun.Status = entities.NodeRunSucceeded
+			noderun.Output = result.Output
+			noderun.Error = ""
 			attemptSpan.SetAttributes(tracing.PayloadAttributes("output", result.Output)...)
-			if err := jm.state.SaveTask(attemptCtx, task); err != nil {
+			if err := jm.state.SaveNodeRun(attemptCtx, noderun); err != nil {
 				attemptSpan.RecordError(err)
 				attemptSpan.SetStatus(codes.Error, "persist result failed")
 				attemptSpan.End()
-				return nil, fmt.Errorf("persist task result: %w", err)
+				return nil, fmt.Errorf("persist noderun result: %w", err)
 			}
+			jm.metrics.RecordPlanCompleted(attemptCtx, plan.AgentGraphName, string(noderun.Status))
 			attemptSpan.SetStatus(codes.Ok, "done")
 			attemptSpan.End()
 			return result, nil
 		}
 
-		plan.State = entities.Failed
-		plan.Result = &entities.TaskResult{Error: lastErr.Error()}
-		task.Status = entities.Failed
-		task.Error = lastErr.Error()
-		_ = jm.state.SaveTask(attemptCtx, task)
+		plan.State = entities.NodeRunFailed
+		plan.Result = &entities.NodeResult{Error: lastErr.Error()}
+		noderun.Status = entities.NodeRunFailed
+		noderun.Error = lastErr.Error()
+		if err := jm.state.SaveNodeRun(attemptCtx, noderun); err != nil {
+			attemptSpan.End()
+			return nil, fmt.Errorf("persist failed attempt: %w", err)
+		}
+		jm.metrics.RecordPlanCompleted(attemptCtx, plan.AgentGraphName, string(noderun.Status))
 		attemptSpan.RecordError(lastErr)
 		attemptSpan.SetStatus(codes.Error, "attempt failed")
 		attemptSpan.End()
-		previousTaskID = plan.TaskID
+		previousTaskID = plan.NodeRunID
 	}
 
 	return nil, fmt.Errorf("retry exhausted after %d attempt(s): %w", policy.Max+1, lastErr)
@@ -647,10 +868,15 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 		in[k] = resolveDeep(v, scope)
 	}
 	// Only inject node outputs that are actually referenced via ${node} or ${node.field}
-	// in this node's yamlInput; avoid copying ALL prior outputs into every DB task row,
+	// in this node's yamlInput; avoid copying ALL prior outputs into every DB noderun row,
 	// which can overflow PostgreSQL's 256 MiB JSONB limit for large payloads like
 	// SonarQube scan results.
 	refs := collectRefs(yamlInput)
+	if plan := jm.planMap[nodeID]; plan != nil && plan.Node != nil && plan.Node.Expression != "" {
+		for id := range collectRefs(map[string]any{"expression": plan.Node.Expression}) {
+			refs[id] = struct{}{}
+		}
+	}
 	for nid := range refs {
 		if output, ok := jm.nodeOutputs[nid]; ok {
 			in[nid] = output
@@ -659,18 +885,19 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 	return in
 }
 
-// collectRefs walks yamlInput values recursively and returns the set of
-// node-ids referenced via ${node} or ${node.field} patterns (not ${vars.x}).
+var nodeReferencePattern = regexp.MustCompile(`\$\{([^.\s{}]+)(?:[.}\s])`)
+
+// collectRefs finds node references in templates and condition expressions,
+// including comparisons inside or outside the braces (excluding ${vars.x}).
 func collectRefs(input map[string]any) map[string]struct{} {
 	refs := make(map[string]struct{})
 	var walk func(v any)
 	walk = func(v any) {
 		switch val := v.(type) {
 		case string:
-			if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") {
-				inner := val[2 : len(val)-1]
-				if parts := strings.SplitN(inner, ".", 2); len(parts) > 0 && parts[0] != "vars" {
-					refs[parts[0]] = struct{}{}
+			for _, match := range nodeReferencePattern.FindAllStringSubmatch(val, -1) {
+				if match[1] != "vars" {
+					refs[match[1]] = struct{}{}
 				}
 			}
 		case map[string]any:
@@ -736,20 +963,20 @@ var summarySecretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KE
 
 // postHandle runs asynchronously after a successfully completed run. It only
 // creates approval-bound candidates; it never publishes cross-run knowledge.
-func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowInfo) {
+func (jm *JobMaster) postHandle(run *entities.GraphRun, spec *entities.AgentGraph) {
 	if jm.knowledgeWriter == nil || run == nil || spec == nil ||
-		run.Status != entities.RunCompleted || !run.SummarizeEnabled {
+		run.Status != entities.GraphRunCompleted || !run.SummarizeEnabled {
 		return
 	}
 
 	// Snapshot fields needed by the async goroutine.
 	namespace := spec.Namespace
 	runID := run.ID
-	flowID := run.FlowID
-	if flowID == "" {
-		flowID = spec.ID
+	graphID := run.AgentGraphID
+	if graphID == "" {
+		graphID = spec.ID
 	}
-	flowName := spec.ResourceName()
+	graphName := spec.ResourceName()
 
 	// Build a snapshot of completed node outputs.
 	jm.mu.Lock()
@@ -784,14 +1011,14 @@ func (jm *JobMaster) postHandle(run *entities.FlowRunInfo, spec *entities.FlowIn
 					CreatedBy:   "service:jobmaster",
 					Description: fmt.Sprintf("Run %s node %s summary", runID, nodeID),
 				},
-				SourceRunID:    runID,
-				TargetScope:    "flow",
-				TargetFlowID:   flowID,
-				TargetFlowName: flowName,
-				Type:           "knowledge",
-				Content:        string(content),
+				SourceGraphRunID:     runID,
+				TargetScope:          "graph",
+				TargetAgentGraphID:   graphID,
+				TargetAgentGraphName: graphName,
+				Type:                 "knowledge",
+				Content:              string(content),
 				Provenance: map[string]any{
-					"origin": "built_in_summarizer", "run_id": runID, "node_key": nodeID,
+					"origin": "built_in_summarizer", "graph_run_id": runID, "node_instance_id": nodeID,
 				},
 				ExpectedRevision: 0,
 				IdempotencyKey:   fmt.Sprintf("summary:%s:%s:v1", runID, nodeID),
@@ -840,7 +1067,7 @@ func sanitizeSummaryValue(value any) (any, bool) {
 	}
 }
 
-func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
+func (jm *JobMaster) applySupervisorConfig(spec *entities.AgentGraph) {
 	for _, n := range spec.Nodes {
 		if n.Kind == entities.SupervisorNode && n.SupervisorConfig != nil && n.SupervisorConfig.MaxNodes > 0 {
 			jm.maxNodes = n.SupervisorConfig.MaxNodes
@@ -848,34 +1075,19 @@ func (jm *JobMaster) applySupervisorConfig(spec *entities.FlowInfo) {
 	}
 }
 
-// taskRunFromPlan converts an ExecutionPlan to a minimal TaskRunInfo for persistence.
-func taskRunFromPlan(plan *entities.ExecutionPlan) *entities.TaskRunInfo {
-	return &entities.TaskRunInfo{
-		BaseEntity:      entities.BaseEntity{ID: plan.TaskID},
-		RunID:           plan.AgentFlowRunID,
-		NodeKey:         plan.NodeID,
-		Attempt:         plan.RetryCount + 1,
-		Status:          plan.State,
-		Input:           plan.Input,
-		Output:          planResultOutput(plan.Result),
-		Error:           planResultError(plan.Result),
-		ExecutionID:     fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1),
-		MaxRetries:      plan.MaxRetries,
-		ParentNodeRunID: plan.ParentTaskRunID,
-		Sequence:        plan.RetryCount + 1,
-		StartedAt:       plan.StartedAt,
-		FinishedAt:      plan.FinishedAt,
-	}
+// nodeRunFromPlan converts an ExecutionPlan to a minimal NodeRun for persistence.
+func nodeRunFromPlan(plan *entities.ExecutionPlan) *entities.NodeRun {
+	return entities.NodeRunFromPlan(plan)
 }
 
-func planResultOutput(result *entities.TaskResult) map[string]any {
+func planResultOutput(result *entities.NodeResult) map[string]any {
 	if result == nil {
 		return nil
 	}
 	return result.Output
 }
 
-func planResultError(result *entities.TaskResult) string {
+func planResultError(result *entities.NodeResult) string {
 	if result == nil {
 		return ""
 	}
@@ -884,38 +1096,7 @@ func planResultError(result *entities.TaskResult) string {
 
 func taskAttemptID(baseTaskID string, attempt int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", baseTaskID, attempt)))
-	return fmt.Sprintf("task-%x", sum[:16])
-}
-
-func NodeToTaskType(nt entities.NodeType) (entities.TaskType, error) {
-	switch nt {
-	case entities.AgentNode:
-		return entities.TaskAgent, nil
-	case entities.ToolNode:
-		return entities.TaskTool, nil
-	case entities.ConditionNode:
-		return entities.TaskCondition, nil
-	case entities.CommitteeNode:
-		return entities.TaskCommittee, nil
-	case entities.SupervisorNode:
-		return entities.TaskSupervisor, nil
-	case entities.MapNode:
-		return entities.TaskMap, nil
-	case entities.HumanNode:
-		return entities.TaskHuman, nil
-	case entities.AgentFlowNode:
-		return entities.TaskSubflow, nil
-	case entities.SandboxNode:
-		return entities.TaskSandbox, nil
-	case entities.SkillNode:
-		return entities.TaskSkill, nil
-	case entities.JoinNode:
-		return entities.TaskJoin, nil
-	case entities.NoopNode:
-		return entities.TaskNoop, nil
-	default:
-		return "", fmt.Errorf("unsupported node kind %q", nt)
-	}
+	return fmt.Sprintf("noderun-%x", sum[:16])
 }
 
 func RetryMax(r *entities.RetryPolicy) int {
@@ -1012,9 +1193,9 @@ func NewJobMasterMetrics() *JobManagerMetrics {
 	m := &JobManagerMetrics{meter: tracing.Meter("flowgent/jobmaster")}
 
 	m.RunsTotal, _ = m.meter.Int64Counter("flowgent.jm.runs.total",
-		metric.WithDescription("Total agentflow runs started/finished"))
+		metric.WithDescription("Total agentgraph runs started/finished"))
 	m.RunsActive, _ = m.meter.Int64UpDownCounter("flowgent.jm.runs.active",
-		metric.WithDescription("Currently running agentflows"))
+		metric.WithDescription("Currently running agentgraphs"))
 	m.PlansDispatched, _ = m.meter.Int64Counter("flowgent.jm.plans.dispatched",
 		metric.WithDescription("ExecutionPlans enqueued to queue"))
 	m.PlansCompleted, _ = m.meter.Int64Counter("flowgent.jm.plans.completed",
@@ -1027,28 +1208,37 @@ func NewJobMasterMetrics() *JobManagerMetrics {
 	return m
 }
 
-func (m *JobManagerMetrics) RecordRunStarted(ctx context.Context, agentFlowID string) {
-	m.RunsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("agentflow_id", agentFlowID), attribute.String("status", "RUNNING")))
+func (m *JobManagerMetrics) RecordRunStarted(ctx context.Context, agentGraphID string) {
+	m.RunsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("agent_graph_name", agentGraphID), attribute.String("status", "RUNNING")))
 	m.RunsActive.Add(ctx, 1)
 }
 
-func (m *JobManagerMetrics) RecordRunCompleted(ctx context.Context, agentFlowID, status string) {
-	m.RunsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("agentflow_id", agentFlowID), attribute.String("status", status)))
+func (m *JobManagerMetrics) RecordRunCompleted(ctx context.Context, agentGraphID, status string) {
+	m.RunsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("agent_graph_name", agentGraphID), attribute.String("status", status)))
 	m.RunsActive.Add(ctx, -1)
 }
 
-func (m *JobManagerMetrics) RecordPlanDispatched(ctx context.Context, agentFlowID string) {
-	m.PlansDispatched.Add(ctx, 1, metric.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
+func (m *JobManagerMetrics) RecordPlanDispatched(ctx context.Context, agentGraphID string) {
+	m.PlansDispatched.Add(ctx, 1, metric.WithAttributes(attribute.String("agent_graph_name", agentGraphID)))
 }
 
-func (m *JobManagerMetrics) RecordPlanCompleted(ctx context.Context, agentFlowID, status string) {
-	m.PlansCompleted.Add(ctx, 1, metric.WithAttributes(attribute.String("agentflow_id", agentFlowID), attribute.String("status", status)))
+func (m *JobManagerMetrics) RecordPlanCompleted(ctx context.Context, agentGraphID, status string) {
+	m.PlansCompleted.Add(ctx, 1, metric.WithAttributes(attribute.String("agent_graph_name", agentGraphID), attribute.String("status", status)))
 }
 
 func (m *JobManagerMetrics) RecordFailover(ctx context.Context, tmID string) {
 	m.FailoverEvents.Add(ctx, 1, metric.WithAttributes(attribute.String("tm_id", tmID)))
 }
 
-func (m *JobManagerMetrics) RecordDAGBuild(ctx context.Context, agentFlowID string, dur time.Duration) {
-	m.DAGBuildDuration.Record(ctx, float64(dur.Milliseconds()), metric.WithAttributes(attribute.String("agentflow_id", agentFlowID)))
+func (m *JobManagerMetrics) RecordDAGBuild(ctx context.Context, agentGraphID string, dur time.Duration) {
+	m.DAGBuildDuration.Record(ctx, float64(dur.Milliseconds()), metric.WithAttributes(attribute.String("agent_graph_name", agentGraphID)))
+}
+
+func executionPlanID(runID, instance string) string {
+	id := fmt.Sprintf("plan-%s-%s", runID, instance)
+	if len(id) <= 96 {
+		return id
+	}
+	sum := sha256.Sum256([]byte(runID + "\x00" + instance))
+	return fmt.Sprintf("plan-%x", sum[:24])
 }

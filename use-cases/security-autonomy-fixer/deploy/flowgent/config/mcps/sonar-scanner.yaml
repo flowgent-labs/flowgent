@@ -1,0 +1,13 @@
+consoleVersion: core.flowgent.io/v1
+kind: MCP
+metadata:
+  name: sonar-scanner
+  namespace: security-fixer
+  status: active
+  description: E2E CI adapter running official SonarScanner with exact commit and CE-task correlation
+data:
+  name: sonar-scanner
+  transport: http
+  rpc_url: ${SONAR_SCANNER_MCP_URL}
+  header_refs:
+    Authorization: Bearer ${SONAR_SCANNER_API_TOKEN}

@@ -1,22 +1,22 @@
 // Package messager defines the inter-component messaging contract for Flowgent.
 //
 // All inter-component communication uses MQTT topics under the flowgent/v1/ prefix
-// with a hierarchical namespace/cluster/flow/run structure for work dispatch and a
-// namespace/flow/run structure for point-to-point callbacks and control events.
+// with a hierarchical namespace/cluster/graph/run structure for work dispatch and a
+// namespace/graph/run structure for point-to-point callbacks and control events.
 //
 // Topic hierarchy:
 //
-//	flowgent/v1/{namespaceId}/clusters/{clusterId}/flows/{flowId}/runs/{runId}/
+//	flowgent/v1/{namespaceId}/clusters/{clusterId}/agent-graphs/{graphId}/graph-runs/{runId}/
 //	  ├── exec/plans          ← JM→TM: cluster-routed dispatch       ($share/tm-{namespaceId}-{clusterId})
 //	  └── sandbox/trigger     ← TM→Sandbox: cluster-routed trigger   ($share/sandbox-{namespaceId}-{clusterId})
 //
-//	flowgent/v1/{namespaceId}/flows/{flowId}/runs/{runId}/
+//	flowgent/v1/{namespaceId}/agent-graphs/{graphId}/graph-runs/{runId}/
 //	  ├── exec/results        ← TM→JM: execution results          (point-to-point)
 //	  ├── sandbox/result      ← Sandbox→TM: execution result      (point-to-point)
 //	  ├── notify/event        ← Publisher→Notifier                ($share/notify-pool)
 //	  └── notify/result       ← Notifier→Publisher                (point-to-point)
 //
-//	flowgent/v1/{namespaceId}/flows/{flowId}/
+//	flowgent/v1/{namespaceId}/agent-graphs/{graphId}/
 //	  └── ctrl/jm/create      ← Controller→JM leader
 //	flowgent/v1/heartbeat/{tmId}  ← TM→JM: liveness signals
 package messager
@@ -44,38 +44,38 @@ const (
 // Shared-subscription variants prepend $share/{group}/ for load-balanced
 // consumption across multiple pods.
 
-// ExecPlansTopic builds the cluster-routed JM→TM dispatch topic. Flow and Run
+// ExecPlansTopic builds the cluster-routed JM→TM dispatch topic. AgentGraph and Run
 // remain in the path for observability while cluster is the consumer boundary.
-func ExecPlansTopic(namespaceID, clusterID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/clusters/%s/flows/%s/runs/%s/exec/plans", TopicPrefix, namespaceID, clusterID, flowID, runID)
+func ExecPlansTopic(namespaceID, clusterID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/agent-graphs/%s/graph-runs/%s/exec/plans", TopicPrefix, namespaceID, clusterID, graphID, runID)
 }
 
 // SharedExecPlans load-balances only within one runtime cluster.
 func SharedExecPlans(namespaceID, clusterID string) string {
 	group := fmt.Sprintf("tm-%s-%s", namespaceID, clusterID)
-	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/flows/+/runs/+/exec/plans", group, TopicPrefix, namespaceID, clusterID)
+	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/agent-graphs/+/graph-runs/+/exec/plans", group, TopicPrefix, namespaceID, clusterID)
 }
 
 // ExecResultsTopic builds the topic for TM→JM execution result callback.
-func ExecResultsTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/exec/results", TopicPrefix, namespaceID, flowID, runID)
+func ExecResultsTopic(namespaceID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/graph-runs/%s/exec/results", TopicPrefix, namespaceID, graphID, runID)
 }
 
 // SandboxTriggerTopic builds the topic for TM→Sandbox script trigger dispatch.
 // Sandbox pods subscribe with SharedSandboxTrigger() for load-balanced consumption.
-func SandboxTriggerTopic(namespaceID, clusterID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/clusters/%s/flows/%s/runs/%s/sandbox/trigger", TopicPrefix, namespaceID, clusterID, flowID, runID)
+func SandboxTriggerTopic(namespaceID, clusterID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/clusters/%s/agent-graphs/%s/graph-runs/%s/sandbox/trigger", TopicPrefix, namespaceID, clusterID, graphID, runID)
 }
 
 // SharedSandboxTrigger load-balances only within one runtime cluster.
 func SharedSandboxTrigger(namespaceID, clusterID string) string {
 	group := fmt.Sprintf("sandbox-%s-%s", namespaceID, clusterID)
-	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/flows/+/runs/+/sandbox/trigger", group, TopicPrefix, namespaceID, clusterID)
+	return fmt.Sprintf("$share/%s/%s/%s/clusters/%s/agent-graphs/+/graph-runs/+/sandbox/trigger", group, TopicPrefix, namespaceID, clusterID)
 }
 
 // SandboxResultTopic builds the topic for Sandbox→TM result callback.
-func SandboxResultTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/sandbox/result", TopicPrefix, namespaceID, flowID, runID)
+func SandboxResultTopic(namespaceID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/graph-runs/%s/sandbox/result", TopicPrefix, namespaceID, graphID, runID)
 }
 
 // HeartbeatTopic builds the topic for TM→JM liveness heartbeat.
@@ -101,24 +101,24 @@ func RuntimeReadyWildcard(namespaceID, clusterID, role string) string {
 }
 
 // CtrlJMCreateTopic builds the topic for Controller→JM dedicated JM creation.
-func CtrlJMCreateTopic(namespaceID, flowID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/ctrl/jm/create", TopicPrefix, namespaceID, flowID)
+func CtrlJMCreateTopic(namespaceID, graphID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/ctrl/jm/create", TopicPrefix, namespaceID, graphID)
 }
 
 // NotifyEventTopic builds the topic for publisher→Notifier event dispatch.
 // Notifier pods subscribe with SharedNotifyEvent() for load-balanced consumption.
-func NotifyEventTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/event", TopicPrefix, namespaceID, flowID, runID)
+func NotifyEventTopic(namespaceID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/graph-runs/%s/notify/event", TopicPrefix, namespaceID, graphID, runID)
 }
 
 // SharedNotifyEvent is the $share subscription for notifier pods.
 func SharedNotifyEvent() string {
-	return "$share/notify-pool/" + TopicPrefix + "/+/flows/+/runs/+/notify/event"
+	return "$share/notify-pool/" + TopicPrefix + "/+/agent-graphs/+/graph-runs/+/notify/event"
 }
 
 // NotifyResultTopic builds the topic for Notifier→Publisher delivery confirmation.
-func NotifyResultTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/notify/result", TopicPrefix, namespaceID, flowID, runID)
+func NotifyResultTopic(namespaceID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/graph-runs/%s/notify/result", TopicPrefix, namespaceID, graphID, runID)
 }
 
 // NotifyPodWSTopic builds the topic for cross-pod WebSocket message routing.
@@ -133,7 +133,7 @@ func NotifyPodWSWildcard(podID string) string {
 
 // NotifyQueueWildcard builds the wildcard subscription for notifier queue consumers.
 func NotifyQueueWildcard() string {
-	return "$share/notify-pool/" + TopicPrefix + "/+/flows/+/runs/+/notify/event"
+	return "$share/notify-pool/" + TopicPrefix + "/+/agent-graphs/+/graph-runs/+/notify/event"
 }
 
 // ─── InterMessage ──────────────────────────────────────────────
@@ -149,48 +149,48 @@ type InterMessage struct {
 //
 // Apiserver publishes lifecycle events after successful DB writes. Controller
 // subscribes via SharedCtrlEvents() for hash-mod-shard dispatching. Events use
-// InterMessage with a JSON-encoded FlowEvent or RunEvent payload.
+// InterMessage with a JSON-encoded AgentGraphEvent or RunEvent payload.
 
-// CtrlFlowUpdatedTopic is published by apiserver after flow create/update/reload.
-func CtrlFlowUpdatedTopic(namespaceID, flowID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/updated", TopicPrefix, namespaceID, flowID)
+// CtrlAgentGraphUpdatedTopic is published by apiserver after graph create/update/reload.
+func CtrlAgentGraphUpdatedTopic(namespaceID, graphID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/ctrl/graph/updated", TopicPrefix, namespaceID, graphID)
 }
 
-// CtrlFlowDeletedTopic is published by apiserver after flow deletion.
-func CtrlFlowDeletedTopic(namespaceID, flowID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/ctrl/flow/deleted", TopicPrefix, namespaceID, flowID)
+// CtrlAgentGraphDeletedTopic is published by apiserver after graph deletion.
+func CtrlAgentGraphDeletedTopic(namespaceID, graphID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/ctrl/graph/deleted", TopicPrefix, namespaceID, graphID)
 }
 
 // CtrlRunCreatedTopic is published by apiserver after a new PENDING run is created.
-func CtrlRunCreatedTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/created", TopicPrefix, namespaceID, flowID, runID)
+func CtrlRunCreatedTopic(namespaceID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/graph-runs/%s/ctrl/graph-run/created", TopicPrefix, namespaceID, graphID, runID)
 }
 
 // CtrlRunStatusTopic is published by apiserver after a run status changes.
-func CtrlRunStatusTopic(namespaceID, flowID, runID string) string {
-	return fmt.Sprintf("%s/%s/flows/%s/runs/%s/ctrl/run/status", TopicPrefix, namespaceID, flowID, runID)
+func CtrlRunStatusTopic(namespaceID, graphID, runID string) string {
+	return fmt.Sprintf("%s/%s/agent-graphs/%s/graph-runs/%s/ctrl/graph-run/status", TopicPrefix, namespaceID, graphID, runID)
 }
 
 // SharedCtrlEvents is the $share subscription for controller pods.
 func SharedCtrlEvents() string {
-	return "$share/ctrl-pool/" + TopicPrefix + "/+/flows/+/ctrl/#"
+	return "$share/ctrl-pool/" + TopicPrefix + "/+/agent-graphs/+/ctrl/#"
 }
 
-// FlowEvent is published by apiserver when a flow definition changes.
-type FlowEvent struct {
-	EventType string `json:"event_type"` // CREATED | UPDATED | DELETED
-	FlowID    string `json:"flow_id"`
-	Namespace string `json:"namespace_id"`
-	Version   int64  `json:"version,omitempty"`
+// AgentGraphEvent is published by apiserver when a graph definition changes.
+type AgentGraphEvent struct {
+	EventType    string `json:"event_type"` // CREATED | UPDATED | DELETED
+	AgentGraphID string `json:"agent_graph_id"`
+	Namespace    string `json:"namespace_id"`
+	Version      int64  `json:"version,omitempty"`
 }
 
 // RunEvent is published by apiserver when a run lifecycle changes.
 type RunEvent struct {
-	EventType string `json:"event_type"` // CREATED | STATUS_CHANGED
-	RunID     string `json:"run_id"`
-	FlowID    string `json:"flow_id"`
-	Namespace string `json:"namespace_id"`
-	Status    string `json:"status"`
+	EventType    string `json:"event_type"` // CREATED | STATUS_CHANGED
+	GraphRunID   string `json:"graph_run_id"`
+	AgentGraphID string `json:"agent_graph_id"`
+	Namespace    string `json:"namespace_id"`
+	Status       string `json:"status"`
 }
 
 // ─── Heartbeat ─────────────────────────────────────────────────

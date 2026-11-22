@@ -9,10 +9,10 @@ import (
 
 type CommitteeExecutor struct{}
 
-func (e *CommitteeExecutor) TaskType() entities.TaskType { return entities.TaskCommittee }
+func (e *CommitteeExecutor) NodeKind() entities.NodeKind { return entities.CommitteeNode }
 
-func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
-	strategy := plan.NodeSpec.Strategy
+func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
+	strategy := plan.Node.Strategy
 	decisionType := "majority"
 	if strategy != nil {
 		if t, ok := strategy["type"].(string); ok {
@@ -24,8 +24,13 @@ func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.Executio
 	approveCount := 0
 	totalCount := len(votes)
 	for _, v := range votes {
-		if m, ok := v.(map[string]any); ok {
-			if dec, ok := m["decision"].(bool); ok && dec {
+		switch vote := v.(type) {
+		case bool:
+			if vote {
+				approveCount++
+			}
+		case map[string]any:
+			if dec, ok := vote["decision"].(bool); ok && dec {
 				approveCount++
 			}
 		}
@@ -44,13 +49,14 @@ func (e *CommitteeExecutor) Execute(ctx context.Context, plan *entities.Executio
 	default:
 		approved = approveCount > totalCount/2
 	}
+	approved = totalCount > 0 && approved
 
 	confidence := 0.0
 	if totalCount > 0 {
 		confidence = float64(approveCount) / float64(totalCount)
 	}
 
-	return &entities.TaskResult{Output: map[string]any{
+	return &entities.NodeResult{Output: map[string]any{
 		"decision":   approved,
 		"confidence": confidence,
 		"approve":    approveCount,

@@ -19,7 +19,7 @@ type GeminiProvider struct {
 }
 
 func newGeminiProvider(p *entities.LlmProviderInfo) *GeminiProvider {
-	p.NormalizeAliases()
+	p.Normalize()
 	apiKey := p.ApiKey
 	timeout := defaultTimeout
 	if d, err := time.ParseDuration(p.Timeout); err == nil && d > 0 {

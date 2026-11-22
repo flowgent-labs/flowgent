@@ -15,7 +15,7 @@ Engine publisher ──notify event/MQTT──► Notifier ──► Slack / ema
 
 ## Delivery and Discovery
 
-Bridges internal agentflow events to external communication channels.
+Bridges internal agentgraph events to external communication channels.
 
 ### Architecture
 
@@ -27,7 +27,7 @@ Bridges internal agentflow events to external communication channels.
   │  │ Consumer         │  │ Scanner (5s)   │  │
   │  │ Topic: /flowgent/│  │ GET /approvals │  │
   │  │ notify/queue/    │  │ via API Server │  │
-  │  │ {namespace}/{flow}  │  └───────┬────────┘  │
+  │  │ {namespace}/{graph}  │  └───────┬────────┘  │
   │  └────────┬─────────┘          │           │
   │           └──────────┬─────────┘           │
   │                      ▼                     │
@@ -42,7 +42,7 @@ Bridges internal agentflow events to external communication channels.
 
 ### Queue Consumer
 
-MQTT shared subscription per namespace+flow: `flowgent/v1/{namespace}/flows/{flow}/runs/{run}/notify/event`.
+MQTT shared subscription per namespace+graph: `flowgent/v1/{namespace}/agent-graphs/{graph}/graph-runs/{run}/notify/event`.
 Messages load-balanced across notifier pods via `$share/notify-pool`. Each message
 dispatched to configured channels for that namespace.
 

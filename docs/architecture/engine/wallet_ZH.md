@@ -37,6 +37,25 @@ Flowgent 旧 Policy Ledger 当成真实支付授权事实源。
 批准不等于执行成功。Flowgent 支付节点 **MUST** 核对 AgentVault Execution/Settlement
 结果，并在释放下游节点前持久化幂等副作用引用。
 
+## SDK 接入位置（目标）
+
+| Flowgent 边界 | AgentVault 接入 | 职责 |
+|---|---|---|
+| A2A Server | Payee SDK | 拦截入站请求、发起支付挑战并验证收款，再放行业务操作。 |
+| 独立生成的 MCP Server | Payee SDK | 生成的 Tool Handler 执行前完成收款检查。 |
+| TaskManager 中的外部 A2A/MCP 客户端 | Payer SDK | 拦截支付挑战，调用 AgentVault 授权付款，携带凭据重试请求。 |
+| 独立 AgentVault Service | SDK 后端 | 拥有支付策略、审批、托管、验证及结算。 |
+
+mcpfather 根据 Flowgent OpenAPI/Swagger 生成独立 MCP 服务。该服务使用必要的
+授权调用 Flowgent HTTP API，不直接拥有业务数据，也不是内嵌于 Flowgent 的 MCP
+进程。Envoy 路由受保护的 Flowgent、协议和 AgentVault API；AuthGuard 访问检查
+与支付收款是两个独立门禁。受保护的 SDK 后端调用也经过这些网关路由；图中的支付
+依赖线不逐一重复网关跳转。
+
+SDK 位于 Flowgent 服务端或客户端边界。图中的支付区表示集成职责，不表示
+AgentVault 拥有 A2A/MCP 的部署。当前 Flowgent 运行时尚未实现这些 SDK 路径及生成的
+MCP 端点；现有 A2A Server 也未安装 Payee SDK 中间件。下文的旧 Signer 不是 Payer SDK。
+
 ## 旧 Client（已实现但处于过渡期）
 
 当前 `pkg/core/pkg/client/signclient` 发送有界 JSON `SignRequest` 并接收
@@ -78,6 +97,10 @@ JobManager、Notifier 和管理路径 **MUST NOT** 打开旧签名 Transport；
 完成它也是本次迁移的一部分。
 
 ## 独立生命周期
+
+支付 E2E 基础设施（包括 Anvil、x402 Facilitator 与 Solana）归属独立 AgentVault
+仓库的 `use-cases/marketpulse-feed-subscription/e2e/deploy/`。Flowgent **MUST NOT**
+维护重复的支付测试部署，也不得将其纳入自身 all-in-one 部署。
 
 AgentVault 命令 **MUST** 经过自身 Makefile；Flowgent 根 Makefile **MUST NOT** 代理：
 

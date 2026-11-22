@@ -5,8 +5,11 @@ import { createBrowserRouter, Navigate, Outlet, useParams, useRouteError } from 
 import { Button, LoadingState } from '../shared/components/ui'
 import { useAppStore } from './store'
 import { AppShell } from './shell'
-import { FlowRepoLayout } from '../features/flows/flow-repo-layout'
-import { FlowSettingsLayout, NamespaceSettingsLayout } from '../features/settings/settings-layouts'
+import { AgentGraphRepoLayout } from '../features/agent-graphs/graph-repo-layout'
+import {
+  AgentGraphSettingsLayout,
+  NamespaceSettingsLayout,
+} from '../features/settings/settings-layouts'
 import { RuntimeConfigPage } from '../features/settings/runtime-config-page'
 
 const DashboardPage = lazy(() =>
@@ -14,24 +17,30 @@ const DashboardPage = lazy(() =>
     default: module.DashboardPage,
   })),
 )
-const FlowsPage = lazy(() =>
-  import('../features/flows/flows-page').then((module) => ({ default: module.FlowsPage })),
-)
-const FlowEditorPage = lazy(() =>
-  import('../features/flows/flow-editor-page').then((module) => ({
-    default: module.FlowEditorPage,
+const AgentGraphsPage = lazy(() =>
+  import('../features/agent-graphs/agent-graphs-page').then((module) => ({
+    default: module.AgentGraphsPage,
   })),
 )
-const RunsPage = lazy(() =>
-  import('../features/runs/runs-page').then((module) => ({ default: module.RunsPage })),
+const AgentGraphEditorPage = lazy(() =>
+  import('../features/agent-graphs/graph-editor-page').then((module) => ({
+    default: module.AgentGraphEditorPage,
+  })),
 )
-const RunDetailPage = lazy(() =>
-  import('../features/runs/run-detail-page').then((module) => ({
-    default: module.RunDetailPage,
+const GraphRunsPage = lazy(() =>
+  import('../features/graph-runs/graph-runs-page').then((module) => ({
+    default: module.GraphRunsPage,
+  })),
+)
+const GraphRunDetailPage = lazy(() =>
+  import('../features/graph-runs/run-detail-page').then((module) => ({
+    default: module.GraphRunDetailPage,
   })),
 )
 const TrackingPage = lazy(() =>
-  import('../features/runs/tracking-page').then((module) => ({ default: module.TrackingPage })),
+  import('../features/graph-runs/tracking-page').then((module) => ({
+    default: module.TrackingPage,
+  })),
 )
 const MemoryPage = lazy(() =>
   import('../features/memory/memory-page').then((module) => ({ default: module.MemoryPage })),
@@ -65,9 +74,9 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: page(<DashboardPage />) },
-      { path: 'flows', element: page(<FlowsPage />) },
-      { path: 'flows/new', element: page(<FlowEditorPage />) },
-      { path: 'runs', element: page(<RunsPage />) },
+      { path: 'agent-graphs', element: page(<AgentGraphsPage />) },
+      { path: 'agent-graphs/new', element: page(<AgentGraphEditorPage />) },
+      { path: 'graph-runs', element: page(<GraphRunsPage />) },
       { path: 'memory', element: <Navigate to="/memory/namespace" replace /> },
       { path: 'memory/:scope', element: page(<MemoryPage />) },
       { path: 'agents', element: page(<AgentsPage />) },
@@ -98,28 +107,28 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: ':namespaceId/:flowId',
+        path: ':namespaceId/:graphId',
         element: <NamespaceRouteScope />,
         children: [
           {
-            element: <FlowRepoLayout />,
+            element: <AgentGraphRepoLayout />,
             children: [
-              { index: true, element: page(<FlowEditorPage />) },
-              { path: 'runs', element: page(<RunsPage />) },
-              { path: 'runs/:runId', element: page(<RunDetailPage />) },
-              { path: 'runs/:runId/tracking', element: page(<TrackingPage />) },
+              { index: true, element: page(<AgentGraphEditorPage />) },
+              { path: 'graph-runs', element: page(<GraphRunsPage />) },
+              { path: 'graph-runs/:graphRunId', element: page(<GraphRunDetailPage />) },
+              { path: 'graph-runs/:graphRunId/tracking', element: page(<TrackingPage />) },
               {
                 path: 'settings',
-                element: <FlowSettingsLayout />,
+                element: <AgentGraphSettingsLayout />,
                 children: [
                   { index: true, element: <Navigate to="environment" replace /> },
                   {
                     path: 'environment',
-                    element: page(<RuntimeConfigPage scope="flow" section="environment" />),
+                    element: page(<RuntimeConfigPage scope="graph" section="environment" />),
                   },
                   {
                     path: 'secrets',
-                    element: page(<RuntimeConfigPage scope="flow" section="secrets" />),
+                    element: page(<RuntimeConfigPage scope="graph" section="secrets" />),
                   },
                 ],
               },

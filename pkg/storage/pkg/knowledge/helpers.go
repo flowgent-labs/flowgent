@@ -38,9 +38,9 @@ func normalizedTopK(value int) int {
 }
 
 func normalizeKnowledgeScope(entry *entities.KnowledgeEntry) (string, string, string, error) {
-	flowKey := strings.TrimSpace(entry.FlowName)
-	if flowKey == "" {
-		flowKey = strings.TrimSpace(entry.FlowID)
+	graphKey := strings.TrimSpace(entry.AgentGraphName)
+	if graphKey == "" {
+		graphKey = strings.TrimSpace(entry.AgentGraphID)
 	}
 	scope := strings.ToLower(strings.TrimSpace(entry.Scope))
 	if scope == "" && entry.Metadata != nil {
@@ -52,20 +52,20 @@ func normalizeKnowledgeScope(entry *entities.KnowledgeEntry) (string, string, st
 	}
 	switch scope {
 	case "namespace":
-		if flowKey != "" || entry.RunID != "" {
-			return "", "", "", fmt.Errorf("namespace knowledge cannot reference flow_id or run_id")
+		if graphKey != "" || entry.GraphRunID != "" {
+			return "", "", "", fmt.Errorf("namespace knowledge cannot reference agent_graph_id or graph_run_id")
 		}
 		return scope, "", "", nil
-	case "flow":
-		if flowKey == "" || entry.RunID != "" {
-			return "", "", "", fmt.Errorf("flow knowledge requires flow_id and forbids run_id")
+	case "graph":
+		if graphKey == "" || entry.GraphRunID != "" {
+			return "", "", "", fmt.Errorf("graph knowledge requires agent_graph_id and forbids graph_run_id")
 		}
-		return scope, flowKey, "", nil
+		return scope, graphKey, "", nil
 	case "run":
-		if flowKey == "" || entry.RunID == "" {
-			return "", "", "", fmt.Errorf("run knowledge requires flow_id and run_id")
+		if graphKey == "" || entry.GraphRunID == "" {
+			return "", "", "", fmt.Errorf("run knowledge requires agent_graph_id and graph_run_id")
 		}
-		return scope, flowKey, entry.RunID, nil
+		return scope, graphKey, entry.GraphRunID, nil
 	default:
 		return "", "", "", fmt.Errorf("invalid knowledge scope %q", entry.Scope)
 	}
@@ -104,7 +104,7 @@ func candidateDocumentTitle(candidate *entities.KnowledgeCandidate) string {
 	if candidate == nil {
 		return "Run summary"
 	}
-	return "Run " + candidate.SourceRunID + " summary"
+	return "Run " + candidate.SourceGraphRunID + " summary"
 }
 
 func stringSlice(value any) []string {

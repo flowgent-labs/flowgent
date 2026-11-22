@@ -33,7 +33,7 @@ func TestNotifierClientUsesDefaultNamespaceAndDecodesPage(t *testing.T) {
 
 func TestFlowgentClientTriggerRunDecodesAcknowledgement(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/team-a/flows/flow-a/trigger" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/team-a/agent-graphs/graph-a/trigger" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		var payload struct {
@@ -47,7 +47,7 @@ func TestFlowgentClientTriggerRunDecodesAcknowledgement(t *testing.T) {
 			t.Fatalf("payload = %+v", payload)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"run_id":"run-a","status":"PENDING","namespace":"team-a","flow_id":"flow-a"}`))
+		_, _ = w.Write([]byte(`{"graph_run_id":"run-a","status":"PENDING","namespace":"team-a","agent_graph_id":"graph-a"}`))
 	}))
 	defer server.Close()
 
@@ -55,14 +55,14 @@ func TestFlowgentClientTriggerRunDecodesAcknowledgement(t *testing.T) {
 	result, err := client.TriggerRun(
 		context.Background(),
 		"team-a",
-		"flow-a",
+		"graph-a",
 		map[string]any{"proof": "a2a"},
 		entities.TriggerInfo{Type: "a2a", Source: "admin"},
 	)
 	if err != nil {
 		t.Fatalf("TriggerRun() error = %v", err)
 	}
-	if result.RunID != "run-a" || result.Status != entities.RunPending || result.Namespace != "team-a" || result.FlowID != "flow-a" {
+	if result.GraphRunID != "run-a" || result.Status != entities.GraphRunPending || result.Namespace != "team-a" || result.AgentGraphID != "graph-a" {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -71,12 +71,12 @@ func TestFlowgentClientNormalizesCanonicalRunResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/team-a/runs":
-			_, _ = w.Write([]byte(`{"id":"created","flow_id":"flow-identity","flow_name":"flow-a","flow_revision":7,"input":{"proof":"create"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/runs/fetched":
-			_, _ = w.Write([]byte(`{"id":"fetched","flow_id":"flow-identity","flow_name":"flow-a","flow_revision":7,"input":{"proof":"get"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/runs":
-			_, _ = w.Write([]byte(`{"items":[{"id":"listed","flow_id":"flow-identity","flow_name":"flow-a","flow_revision":7,"input":{"proof":"list"}}],"total_count":1,"request":{"page":1,"size":20},"total_pages":1}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/team-a/graph-runs":
+			_, _ = w.Write([]byte(`{"id":"created","agent_graph_id":"graph-identity","agent_graph_name":"graph-a","agent_graph_revision":7,"input":{"proof":"create"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/graph-runs/fetched":
+			_, _ = w.Write([]byte(`{"id":"fetched","agent_graph_id":"graph-identity","agent_graph_name":"graph-a","agent_graph_revision":7,"input":{"proof":"get"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/graph-runs":
+			_, _ = w.Write([]byte(`{"items":[{"id":"listed","agent_graph_id":"graph-identity","agent_graph_name":"graph-a","agent_graph_revision":7,"input":{"proof":"list"}}],"total_count":1,"request":{"page":1,"size":20},"total_pages":1}`))
 		default:
 			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.String())
 		}
@@ -84,41 +84,41 @@ func TestFlowgentClientNormalizesCanonicalRunResponses(t *testing.T) {
 	defer server.Close()
 
 	client := NewFlowgentClient(server.URL)
-	created, err := client.CreateRun(context.Background(), "team-a", &entities.FlowRunInfo{})
+	created, err := client.CreateGraphRun(context.Background(), "team-a", &entities.GraphRun{})
 	if err != nil {
-		t.Fatalf("CreateRun() error = %v", err)
+		t.Fatalf("CreateGraphRun() error = %v", err)
 	}
-	assertRunAliases(t, created, "create")
+	assertGraphRunFields(t, created, "create")
 
-	fetched, err := client.GetRun(context.Background(), "team-a", "fetched")
+	fetched, err := client.GetGraphRun(context.Background(), "team-a", "fetched")
 	if err != nil {
-		t.Fatalf("GetRun() error = %v", err)
+		t.Fatalf("GetGraphRun() error = %v", err)
 	}
-	assertRunAliases(t, fetched, "get")
+	assertGraphRunFields(t, fetched, "get")
 
-	page, err := client.ListRuns(context.Background(), "team-a", "", "", "", "", 0, 0)
+	page, err := client.ListGraphRuns(context.Background(), "team-a", "", "", "", "", 0, 0)
 	if err != nil {
-		t.Fatalf("ListRuns() error = %v", err)
+		t.Fatalf("ListGraphRuns() error = %v", err)
 	}
 	if len(page.Items) != 1 {
-		t.Fatalf("ListRuns() items = %d", len(page.Items))
+		t.Fatalf("ListGraphRuns() items = %d", len(page.Items))
 	}
-	assertRunAliases(t, page.Items[0], "list")
+	assertGraphRunFields(t, page.Items[0], "list")
 }
 
-func assertRunAliases(t *testing.T, run *entities.FlowRunInfo, proof string) {
+func assertGraphRunFields(t *testing.T, run *entities.GraphRun, proof string) {
 	t.Helper()
 	if run == nil {
 		t.Fatal("run is nil")
 	}
-	if run.FlowName != "flow-a" || run.AgentFlowID != "flow-a" {
-		t.Fatalf("flow aliases = name %q, legacy %q", run.FlowName, run.AgentFlowID)
+	if run.AgentGraphName != "graph-a" {
+		t.Fatalf("graph name = %q (expected %q)", run.AgentGraphName, run.AgentGraphName)
 	}
-	if run.FlowRevision != 7 || run.Version != 7 {
-		t.Fatalf("revision aliases = revision %d, version %d", run.FlowRevision, run.Version)
+	if run.AgentGraphRevision != 7 {
+		t.Fatalf("revision = %d (expected %d)", run.AgentGraphRevision, run.AgentGraphRevision)
 	}
-	if run.Input["proof"] != proof || run.Vars["proof"] != proof {
-		t.Fatalf("input aliases = input %+v, vars %+v", run.Input, run.Vars)
+	if run.Input["proof"] != proof {
+		t.Fatalf("input = %+v (expected %+v)", run.Input, run.Input)
 	}
 }
 
@@ -127,28 +127,28 @@ func TestFlowgentClientNormalizesNodeRunTransport(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/team-a/runs/run-a/node-runs",
-			r.Method == http.MethodPut && r.URL.Path == "/api/v1/team-a/runs/run-a/node-runs/task-a":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/team-a/graph-runs/run-a/node-runs",
+			r.Method == http.MethodPut && r.URL.Path == "/api/v1/team-a/graph-runs/run-a/node-runs/noderun-a":
 			requests++
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode node run request: %v", err)
 			}
-			if body["run_id"] != "run-a" || body["node_key"] != "node-a" ||
+			if body["graph_run_id"] != "run-a" || body["node_instance_id"] != "node-a" ||
 				body["execution_id"] != "exec-a" || body["parent_node_run_id"] != "parent-a" ||
 				body["attempt"] != float64(2) {
 				t.Fatalf("canonical node run body = %+v", body)
 			}
-			for _, legacy := range []string{"agentflow_run_id", "node_id", "exec_id", "parent_task_run_id"} {
+			for _, legacy := range []string{"unexpected_legacy_id", "exec_id"} {
 				if _, found := body[legacy]; found {
-					t.Fatalf("legacy field %q crossed HTTP boundary: %+v", legacy, body)
+					t.Fatalf("removed field %q crossed HTTP boundary: %+v", legacy, body)
 				}
 			}
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/runs/run-a/node-runs":
-			_, _ = w.Write([]byte(`[{"id":"task-a","run_id":"run-a","node_key":"node-a","attempt":2,"execution_id":"exec-a","parent_node_run_id":"parent-a","status":"SUCCESS"}]`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/runs/run-a/node-runs/task-a":
-			_, _ = w.Write([]byte(`{"id":"task-a","run_id":"run-a","node_key":"node-a","attempt":2,"execution_id":"exec-a","parent_node_run_id":"parent-a","status":"SUCCESS"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/graph-runs/run-a/node-runs":
+			_, _ = w.Write([]byte(`[{"id":"noderun-a","graph_run_id":"run-a","node_instance_id":"node-a","attempt":2,"execution_id":"exec-a","parent_node_run_id":"parent-a","status":"SUCCESS"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/team-a/graph-runs/run-a/node-runs/noderun-a":
+			_, _ = w.Write([]byte(`{"id":"noderun-a","graph_run_id":"run-a","node_instance_id":"node-a","attempt":2,"execution_id":"exec-a","parent_node_run_id":"parent-a","status":"SUCCESS"}`))
 		default:
 			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.String())
 		}
@@ -156,44 +156,44 @@ func TestFlowgentClientNormalizesNodeRunTransport(t *testing.T) {
 	defer server.Close()
 
 	client := NewFlowgentClient(server.URL)
-	legacy := &entities.TaskRunInfo{
-		BaseEntity:     entities.BaseEntity{ID: "task-a"},
-		AgentFlowRunID: "run-a", NodeID: "node-a", RetryCount: 1,
-		ExecID: "exec-a", ParentTaskRunID: "parent-a", Status: entities.Success,
+	node := &entities.NodeRun{
+		BaseEntity: entities.BaseEntity{ID: "noderun-a"},
+		GraphRunID: "run-a", NodeInstanceID: "node-a", Attempt: 2,
+		ExecutionID: "exec-a", ParentNodeRunID: "parent-a", Status: entities.NodeRunSucceeded,
 	}
-	if err := client.CreateTaskRun(context.Background(), "team-a", "run-a", legacy); err != nil {
-		t.Fatalf("CreateTaskRun() error = %v", err)
+	if err := client.CreateNodeRun(context.Background(), "team-a", "run-a", node); err != nil {
+		t.Fatalf("CreateNodeRun() error = %v", err)
 	}
-	if err := client.UpdateTaskRun(context.Background(), "team-a", "run-a", "task-a", legacy); err != nil {
-		t.Fatalf("UpdateTaskRun() error = %v", err)
+	if err := client.UpdateNodeRun(context.Background(), "team-a", "run-a", "noderun-a", node); err != nil {
+		t.Fatalf("UpdateNodeRun() error = %v", err)
 	}
 	if requests != 2 {
 		t.Fatalf("node run write requests = %d", requests)
 	}
 
-	items, err := client.ListTaskRuns(context.Background(), "team-a", "run-a")
+	items, err := client.ListNodeRuns(context.Background(), "team-a", "run-a")
 	if err != nil || len(items) != 1 {
-		t.Fatalf("ListTaskRuns() items=%d error=%v", len(items), err)
+		t.Fatalf("ListNodeRuns() items=%d error=%v", len(items), err)
 	}
-	assertTaskAliases(t, items[0])
-	fetched, err := client.GetTaskRun(context.Background(), "team-a", "run-a", "task-a")
+	assertNodeRunFields(t, items[0])
+	fetched, err := client.GetNodeRun(context.Background(), "team-a", "run-a", "noderun-a")
 	if err != nil {
-		t.Fatalf("GetTaskRun() error = %v", err)
+		t.Fatalf("GetNodeRun() error = %v", err)
 	}
-	assertTaskAliases(t, fetched)
+	assertNodeRunFields(t, fetched)
 }
 
-func assertTaskAliases(t *testing.T, task *entities.TaskRunInfo) {
+func assertNodeRunFields(t *testing.T, noderun *entities.NodeRun) {
 	t.Helper()
-	if task == nil {
-		t.Fatal("task is nil")
+	if noderun == nil {
+		t.Fatal("noderun is nil")
 	}
-	if task.RunID != "run-a" || task.AgentFlowRunID != "run-a" ||
-		task.NodeKey != "node-a" || task.NodeID != "node-a" ||
-		task.ExecutionID != "exec-a" || task.ExecID != "exec-a" ||
-		task.ParentNodeRunID != "parent-a" || task.ParentTaskRunID != "parent-a" ||
-		task.Attempt != 2 || task.RetryCount != 1 {
-		t.Fatalf("node run aliases = %+v", task)
+	if noderun.GraphRunID != "run-a" ||
+		noderun.NodeInstanceID != "node-a" ||
+		noderun.ExecutionID != "exec-a" ||
+		noderun.ParentNodeRunID != "parent-a" ||
+		noderun.Attempt != 2 || (noderun.Attempt-1) != 1 {
+		t.Fatalf("node run aliases = %+v", noderun)
 	}
 }
 
@@ -235,9 +235,9 @@ func TestFlowgentClientNormalizesCanonicalRuntimeResources(t *testing.T) {
 func TestRunStateClientForwardsJobMasterLifecycleTimestamps(t *testing.T) {
 	started := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
 	finished := started.Add(time.Minute)
-	var received entities.RunLifecycleUpdate
+	var received entities.GraphRunLifecycleUpdate
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/tenant-a/runs/run-a" {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/tenant-a/graph-runs/run-a" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
@@ -247,15 +247,15 @@ func TestRunStateClientForwardsJobMasterLifecycleTimestamps(t *testing.T) {
 	}))
 	defer server.Close()
 
-	state := &RunStateClient{Client: NewFlowgentClient(server.URL), Namespace: "tenant-a"}
-	err := state.UpdateRun(context.Background(), &entities.FlowRunInfo{
+	state := &GraphRunStateClient{Client: NewFlowgentClient(server.URL), Namespace: "tenant-a"}
+	err := state.UpdateGraphRun(context.Background(), &entities.GraphRun{
 		BaseEntity: entities.BaseEntity{ID: "run-a"},
-		Status:     entities.RunCompleted, StartedAt: &started, FinishedAt: &finished,
+		Status:     entities.GraphRunCompleted, StartedAt: &started, FinishedAt: &finished,
 	})
 	if err != nil {
-		t.Fatalf("UpdateRun() error = %v", err)
+		t.Fatalf("UpdateGraphRun() error = %v", err)
 	}
-	if received.Status != entities.RunCompleted || !received.StartedAt.Equal(started) || !received.FinishedAt.Equal(finished) {
+	if received.Status != entities.GraphRunCompleted || !received.StartedAt.Equal(started) || !received.FinishedAt.Equal(finished) {
 		t.Fatalf("received = %+v", received)
 	}
 }

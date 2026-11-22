@@ -28,7 +28,7 @@ func (s *MCPPostgresStore) Get(ctx context.Context, namespace, name string) (*en
 	lookup.IDCol = "name"
 	item, err := lookup.GetScoped(ctx, namespace, name)
 	if err == nil {
-		item.NormalizeAliases()
+		item.Normalize()
 	}
 	return item, err
 }
@@ -36,13 +36,13 @@ func (s *MCPPostgresStore) List(ctx context.Context, namespace string, req entit
 	page, err := s.inner.SelectScoped(ctx, namespace, req)
 	if err == nil {
 		for _, item := range page.Items {
-			item.NormalizeAliases()
+			item.Normalize()
 		}
 	}
 	return page, err
 }
 func (s *MCPPostgresStore) Save(ctx context.Context, e *entities.McpInfo) error {
-	e.NormalizeAliases()
+	e.Normalize()
 	if e.RowVersion == 0 {
 		e.RowVersion = 1
 	}

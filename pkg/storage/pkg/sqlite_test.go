@@ -5,9 +5,9 @@ package storage_test
 //
 // This file exercises the modular per-entity SQLite stores directly — the
 // monolithic Store type these tests originally targeted (NewSQLiteStore with
-// CreateFlowRun/GetFlowRun/... methods) was removed when the codebase moved
-// to one repository implementation per entity under storage/pkg/{flow,flowrun,
-// task,approval,...} (see "Enforce apiserver-only DB access pattern"
+// CreateGraphRun/GetGraphRun/... methods) was removed when the codebase moved
+// to one repository implementation per entity under storage/pkg/{graph,graphrun,
+// noderun,approval,...} (see "Enforce apiserver-only DB access pattern"
 // refactor).
 
 import (
@@ -19,10 +19,10 @@ import (
 
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	storage "github.com/flowgent-labs/flowgent/storage/pkg"
+	graph "github.com/flowgent-labs/flowgent/storage/pkg/agentgraph"
 	"github.com/flowgent-labs/flowgent/storage/pkg/approval"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flow"
-	"github.com/flowgent-labs/flowgent/storage/pkg/flowrun"
-	"github.com/flowgent-labs/flowgent/storage/pkg/task"
+	"github.com/flowgent-labs/flowgent/storage/pkg/graphrun"
+	noderun "github.com/flowgent-labs/flowgent/storage/pkg/noderun"
 )
 
 func TestSQLiteConn_Init(t *testing.T) {
@@ -33,25 +33,25 @@ func TestSQLiteConn_Init(t *testing.T) {
 	}
 }
 
-func seedSQLiteFlow(t *testing.T, conn *sql.DB, namespace, name string) {
+func seedSQLiteAgentGraph(t *testing.T, conn *sql.DB, namespace, name string) {
 	t.Helper()
-	if err := flow.NewFlowSQLiteStore(conn).CreateSpec(context.Background(), &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: name, Namespace: namespace}, Kind: "flow",
+	if err := graph.NewAgentGraphSQLiteStore(conn).CreateSpec(context.Background(), &entities.AgentGraph{Name: name,
+		BaseEntity: entities.BaseEntity{ID: name, Namespace: namespace}, Kind: "graph",
 	}, "test", "run fixture"); err != nil {
-		t.Fatalf("seed flow %s/%s: %v", namespace, name, err)
+		t.Fatalf("seed graph %s/%s: %v", namespace, name, err)
 	}
 }
 
-func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
+func TestSQLiteStore_GraphRunCRUD(t *testing.T) {
 	conn := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
-	s := flowrun.NewFlowRunSQLiteStore(conn)
-	seedSQLiteFlow(t, conn, "default", "test-flow")
+	s := graphrun.NewGraphRunSQLiteStore(conn)
+	seedSQLiteAgentGraph(t, conn, "default", "test-graph")
 
-	run := &entities.FlowRunInfo{
-		BaseEntity:  entities.BaseEntity{Namespace: "default"},
-		AgentFlowID: "test-flow", Version: 1, Status: entities.RunPending,
+	run := &entities.GraphRun{
+		BaseEntity:     entities.BaseEntity{Namespace: "default"},
+		AgentGraphName: "test-graph", AgentGraphRevision: 1, Status: entities.GraphRunPending,
 	}
 	run.SetTrigger(entities.TriggerInfo{Type: "manual", Source: "ut"})
 	if err := s.Create(ctx, run); err != nil {
@@ -65,20 +65,20 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.AgentFlowID != "test-flow" {
-		t.Errorf("expected test-flow, got %s", got.AgentFlowID)
+	if got.AgentGraphName != "test-graph" {
+		t.Errorf("expected test-graph, got %s", got.AgentGraphName)
 	}
 
-	run.Status = entities.RunRunning
+	run.Status = entities.GraphRunRunning
 	if err := s.Update(ctx, run); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	got, _ = s.Get(ctx, run.ID)
-	if got.Status != entities.RunRunning {
+	if got.Status != entities.GraphRunRunning {
 		t.Errorf("expected RUNNING after update, got %s", got.Status)
 	}
 
-	page, err := s.List(ctx, flowrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
+	page, err := s.List(ctx, graphrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
 	if err != nil {
 		t.Fatalf("Select: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 		t.Fatalf("Cancel: %v", err)
 	}
 	got, _ = s.Get(ctx, run.ID)
-	if got.Status != entities.RunCancelled {
+	if got.Status != entities.GraphRunCancelled {
 		t.Errorf("expected CANCELLED after Cancel, got %s", got.Status)
 	}
 
@@ -100,7 +100,7 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	if _, err := s.Get(ctx, run.ID); err == nil {
 		t.Fatalf("Get returned soft-deleted run")
 	}
-	page, err = s.List(ctx, flowrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
+	page, err = s.List(ctx, graphrun.ListFilter{Namespace: "default", Page: entities.PageRequest{Page: 1, Size: 100}})
 	if err != nil {
 		t.Fatalf("Select after delete: %v", err)
 	}
@@ -109,62 +109,62 @@ func TestSQLiteStore_FlowRunCRUD(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_TaskRunCRUD(t *testing.T) {
+func TestSQLiteStore_NodeRunCRUD(t *testing.T) {
 	conn := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
-	frStore := flowrun.NewFlowRunSQLiteStore(conn)
-	tpStore := task.NewTaskSQLiteStore(conn)
-	seedSQLiteFlow(t, conn, "default", "f1")
+	frStore := graphrun.NewGraphRunSQLiteStore(conn)
+	tpStore := noderun.NewNodeRunSQLiteStore(conn)
+	seedSQLiteAgentGraph(t, conn, "default", "f1")
 
-	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
+	run := &entities.GraphRun{AgentGraphName: "f1", AgentGraphRevision: 1, Status: entities.GraphRunPending}
 	if err := frStore.Create(ctx, run); err != nil {
-		t.Fatalf("Create flow run: %v", err)
+		t.Fatalf("Create graph run: %v", err)
 	}
 
-	task := &entities.TaskRunInfo{
-		BaseEntity:     entities.BaseEntity{ID: "task-run-stable-id"},
-		AgentFlowRunID: run.ID, NodeID: "node-1", Status: entities.TaskPending,
-		ExecID: "exec-001", MaxRetries: 3, StartedAt: ptrTime(time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC)),
+	noderun := &entities.NodeRun{
+		BaseEntity: entities.BaseEntity{ID: "noderun-run-stable-id"},
+		GraphRunID: run.ID, NodeInstanceID: "node-1", Status: entities.NodeRunPending,
+		ExecutionID: "exec-001", MaxRetries: 3, StartedAt: ptrTime(time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC)),
 	}
-	if err := tpStore.CreateTaskRun(ctx, task); err != nil {
-		t.Fatalf("CreateTaskRun: %v", err)
+	if err := tpStore.CreateNodeRun(ctx, noderun); err != nil {
+		t.Fatalf("CreateNodeRun: %v", err)
 	}
-	if task.ID != "task-run-stable-id" {
-		t.Fatalf("caller-provided TaskRun ID was replaced: %q", task.ID)
+	if noderun.ID != "noderun-run-stable-id" {
+		t.Fatalf("caller-provided NodeRun ID was replaced: %q", noderun.ID)
 	}
 
-	got, err := tpStore.Get(ctx, task.ID)
+	got, err := tpStore.Get(ctx, noderun.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.NodeID != "node-1" {
-		t.Errorf("expected node-1, got %s", got.NodeID)
+	if got.NodeInstanceID != "node-1" {
+		t.Errorf("expected node-1, got %s", got.NodeInstanceID)
 	}
 	if got.StartedAt == nil || got.StartedAt.Year() != 2026 {
-		t.Fatalf("SQLite TaskRun started_at was not decoded: %v", got.StartedAt)
+		t.Fatalf("SQLite NodeRun started_at was not decoded: %v", got.StartedAt)
 	}
 
-	task.Status = entities.Success
-	task.Output = map[string]any{"result": "ok"}
-	if err := tpStore.UpdateTaskRun(ctx, task); err != nil {
-		t.Fatalf("UpdateTaskRun: %v", err)
+	noderun.Status = entities.NodeRunSucceeded
+	noderun.Output = map[string]any{"result": "ok"}
+	if err := tpStore.UpdateNodeRun(ctx, noderun); err != nil {
+		t.Fatalf("UpdateNodeRun: %v", err)
 	}
 
-	tasks, err := tpStore.ListByFlowRun(ctx, run.ID)
+	tasks, err := tpStore.ListByGraphRun(ctx, run.ID)
 	if err != nil {
-		t.Fatalf("ListByFlowRun: %v", err)
+		t.Fatalf("ListByGraphRun: %v", err)
 	}
 	if len(tasks) != 1 {
-		t.Errorf("expected 1 task, got %d", len(tasks))
+		t.Errorf("expected 1 noderun, got %d", len(tasks))
 	}
 
-	gotByExec, err := tpStore.GetByExecID(ctx, "exec-001")
+	gotByExec, err := tpStore.GetByExecutionID(ctx, "exec-001")
 	if err != nil {
-		t.Fatalf("GetByExecID: %v", err)
+		t.Fatalf("GetByExecutionID: %v", err)
 	}
-	if gotByExec.ExecID != "exec-001" {
-		t.Errorf("expected exec-001, got %s", gotByExec.ExecID)
+	if gotByExec.ExecutionID != "exec-001" {
+		t.Errorf("expected exec-001, got %s", gotByExec.ExecutionID)
 	}
 }
 
@@ -174,22 +174,22 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 	conn := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
-	frStore := flowrun.NewFlowRunSQLiteStore(conn)
-	tpStore := task.NewTaskSQLiteStore(conn)
+	frStore := graphrun.NewGraphRunSQLiteStore(conn)
+	tpStore := noderun.NewNodeRunSQLiteStore(conn)
 	apStore := approval.NewApprovalSQLiteStore(conn)
-	seedSQLiteFlow(t, conn, "default", "f1")
+	seedSQLiteAgentGraph(t, conn, "default", "f1")
 
-	run := &entities.FlowRunInfo{AgentFlowID: "f1", Version: 1, Status: entities.RunPending}
+	run := &entities.GraphRun{AgentGraphName: "f1", AgentGraphRevision: 1, Status: entities.GraphRunPending}
 	if err := frStore.Create(ctx, run); err != nil {
-		t.Fatalf("Create flow run: %v", err)
+		t.Fatalf("Create graph run: %v", err)
 	}
-	task := &entities.TaskRunInfo{AgentFlowRunID: run.ID, NodeID: "human", Status: entities.TaskPending, ExecID: "e1"}
-	if err := tpStore.CreateTaskRun(ctx, task); err != nil {
-		t.Fatalf("Create task run: %v", err)
+	noderun := &entities.NodeRun{GraphRunID: run.ID, NodeInstanceID: "human", Status: entities.NodeRunPending, ExecutionID: "e1"}
+	if err := tpStore.CreateNodeRun(ctx, noderun); err != nil {
+		t.Fatalf("Create noderun run: %v", err)
 	}
 
 	appr := &entities.ApprovalInfo{
-		TaskRunID: task.ID, AgentFlowRunID: run.ID, Status: "PENDING", Timeout: 1 * time.Hour,
+		NodeRunID: noderun.ID, GraphRunID: run.ID, Status: "PENDING", Timeout: 1 * time.Hour,
 	}
 	if err := apStore.CreateApproval(ctx, appr); err != nil {
 		t.Fatalf("CreateApproval: %v", err)
@@ -230,33 +230,33 @@ func TestSQLiteStore_HumanApprovalCRUD(t *testing.T) {
 	}
 }
 
-func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
+func TestSQLiteStore_AgentGraphCRUD(t *testing.T) {
 	conn := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
-	s := flow.NewFlowSQLiteStore(conn)
+	s := graph.NewAgentGraphSQLiteStore(conn)
 
 	const namespace = "team-a"
-	if err := s.SaveSpec(ctx, &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "flow-1", Namespace: namespace},
+	if err := s.SaveSpec(ctx, &entities.AgentGraph{Name: "graph-1",
+		BaseEntity: entities.BaseEntity{ID: "graph-1", Namespace: namespace},
 	}, "test", "initial"); err != nil {
 		t.Fatalf("SaveSpec: %v", err)
 	}
 
-	got, err := s.Get(ctx, namespace, "flow-1")
+	got, err := s.Get(ctx, namespace, "graph-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Version != 1 {
-		t.Errorf("expected v1, got %d", got.Version)
+	if got.Revision != 1 {
+		t.Errorf("expected v1, got %d", got.Revision)
 	}
 
-	gotVer, err := s.GetVersion(ctx, namespace, "flow-1", 1)
+	gotVer, err := s.GetVersion(ctx, namespace, "graph-1", 1)
 	if err != nil {
 		t.Fatalf("GetVersion: %v", err)
 	}
-	if gotVer.FlowName != "flow-1" || gotVer.FlowID == "flow-1" {
-		t.Errorf("expected stable ID plus name flow-1, got id=%s name=%s", gotVer.FlowID, gotVer.FlowName)
+	if gotVer.AgentGraphName != "graph-1" || gotVer.AgentGraphID == "graph-1" {
+		t.Errorf("expected stable ID plus name graph-1, got id=%s name=%s", gotVer.AgentGraphID, gotVer.AgentGraphName)
 	}
 
 	page, err := s.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 100})
@@ -267,26 +267,26 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 		t.Errorf("expected at least 1 def, got %d", page.TotalCount)
 	}
 
-	if err := s.SaveSpec(ctx, &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "flow-1", Namespace: "team-b"},
+	if err := s.SaveSpec(ctx, &entities.AgentGraph{Name: "graph-1",
+		BaseEntity: entities.BaseEntity{ID: "graph-1", Namespace: "team-b"},
 	}, "test", "same ID in another namespace"); err != nil {
 		t.Fatalf("SaveSpec cross namespace: %v", err)
 	}
-	if _, err := s.GetSpec(ctx, "team-b", "flow-1"); err != nil {
+	if _, err := s.GetSpec(ctx, "team-b", "graph-1"); err != nil {
 		t.Fatalf("GetSpec cross namespace: %v", err)
 	}
 
-	if err := s.Delete(ctx, namespace, "flow-1"); err != nil {
+	if err := s.Delete(ctx, namespace, "graph-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := s.Get(ctx, namespace, "flow-1"); err == nil {
-		t.Fatalf("Get returned soft-deleted flow")
+	if _, err := s.Get(ctx, namespace, "graph-1"); err == nil {
+		t.Fatalf("Get returned soft-deleted graph")
 	}
-	if _, err := s.GetVersion(ctx, namespace, "flow-1", 1); err == nil {
-		t.Fatalf("GetVersion returned soft-deleted flow")
+	if _, err := s.GetVersion(ctx, namespace, "graph-1", 1); err == nil {
+		t.Fatalf("GetVersion returned soft-deleted graph")
 	}
-	if _, err := s.GetSpec(ctx, namespace, "flow-1"); err == nil {
-		t.Fatalf("GetSpec returned soft-deleted flow")
+	if _, err := s.GetSpec(ctx, namespace, "graph-1"); err == nil {
+		t.Fatalf("GetSpec returned soft-deleted graph")
 	}
 	page, err = s.Select(ctx, namespace, entities.PageRequest{Page: 1, Size: 100})
 	if err != nil {
@@ -296,49 +296,49 @@ func TestSQLiteStore_AgentFlowDefinitionCRUD(t *testing.T) {
 		t.Fatalf("expected no active defs after delete, got %d", page.TotalCount)
 	}
 
-	if err := s.SaveSpec(ctx, &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "flow-1", Namespace: namespace},
+	if err := s.SaveSpec(ctx, &entities.AgentGraph{Name: "graph-1",
+		BaseEntity: entities.BaseEntity{ID: "graph-1", Namespace: namespace},
 	}, "test", "restore"); err != nil {
 		t.Fatalf("SaveSpec restore: %v", err)
 	}
-	if _, err := s.GetSpec(ctx, namespace, "flow-1"); err != nil {
+	if _, err := s.GetSpec(ctx, namespace, "graph-1"); err != nil {
 		t.Fatalf("GetSpec after restore: %v", err)
 	}
-	if _, err := s.GetSpec(ctx, "team-b", "flow-1"); err != nil {
+	if _, err := s.GetSpec(ctx, "team-b", "graph-1"); err != nil {
 		t.Fatalf("other namespace was affected by delete/restore: %v", err)
 	}
 }
 
-func TestSQLiteStore_FlowNameContract(t *testing.T) {
+func TestSQLiteStore_AgentGraphNameContract(t *testing.T) {
 	conn := storage.NewSQLiteConn(context.Background(), t.TempDir())
 	defer conn.Close()
 	ctx := context.Background()
-	s := flow.NewFlowSQLiteStore(conn)
+	s := graph.NewAgentGraphSQLiteStore(conn)
 
-	first := &entities.FlowInfo{
+	first := &entities.AgentGraph{Name: "Security_Fixer",
 		BaseEntity: entities.BaseEntity{ID: "Security_Fixer", Namespace: "team-a"},
-		Kind:       "flow",
+		Kind:       "graph",
 	}
 	if err := s.CreateSpec(ctx, first, "test", "create"); err != nil {
 		t.Fatalf("CreateSpec: %v", err)
 	}
-	if err := s.CreateSpec(ctx, first, "test", "duplicate"); !errors.Is(err, flow.ErrAlreadyExists) {
+	if err := s.CreateSpec(ctx, first, "test", "duplicate"); !errors.Is(err, graph.ErrAlreadyExists) {
 		t.Fatalf("duplicate CreateSpec error = %v, want ErrAlreadyExists", err)
 	}
-	caseVariant := &entities.FlowInfo{
+	caseVariant := &entities.AgentGraph{Name: "security_fixer",
 		BaseEntity: entities.BaseEntity{ID: "security_fixer", Namespace: "team-a"},
-		Kind:       "flow",
+		Kind:       "graph",
 	}
-	if err := s.CreateSpec(ctx, caseVariant, "test", "case duplicate"); !errors.Is(err, flow.ErrAlreadyExists) {
+	if err := s.CreateSpec(ctx, caseVariant, "test", "case duplicate"); !errors.Is(err, graph.ErrAlreadyExists) {
 		t.Fatalf("case-insensitive duplicate error = %v, want ErrAlreadyExists", err)
 	}
 	caseVariant.Namespace = "team-b"
 	if err := s.CreateSpec(ctx, caseVariant, "test", "other namespace"); err != nil {
 		t.Fatalf("same name in another namespace: %v", err)
 	}
-	if err := s.SaveSpec(ctx, &entities.FlowInfo{
-		BaseEntity: entities.BaseEntity{ID: "1-invalid", Namespace: "team-a"}, Kind: "flow",
+	if err := s.SaveSpec(ctx, &entities.AgentGraph{Name: "1-invalid",
+		BaseEntity: entities.BaseEntity{ID: "1-invalid", Namespace: "team-a"}, Kind: "graph",
 	}, "test", "invalid"); err == nil {
-		t.Fatal("SaveSpec accepted an invalid flow name")
+		t.Fatal("SaveSpec accepted an invalid graph name")
 	}
 }

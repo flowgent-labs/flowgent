@@ -1,0 +1,85 @@
+{{- if .Values.runtime }}
+apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: {{ .Values.runtime.notification_receiver | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  type: Opaque
+  stringData:
+    token: {{ .Values.runtime.token | toJson }}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: {{ .Values.runtime.parameter_5 | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  data:
+    server.py: {{ .Values.runtime.parameter_6 | toJson }}
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: {{ .Values.runtime.notification_receiver | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: {{ .Values.runtime.notification_receiver | toJson }}
+    template:
+      metadata:
+        labels: {{ .Values.runtime.parameter_7 | toJson }}
+      spec:
+        volumes:
+        - name: script
+          configMap:
+            name: {{ .Values.runtime.parameter_5 | toJson }}
+        containers:
+        - name: receiver
+          image: {{ .Values.runtime.mock_notification_image | toJson }}
+          imagePullPolicy: IfNotPresent
+          command:
+          - python3
+          - /opt/e2e/server.py
+          volumeMounts:
+          - name: script
+            mountPath: /opt/e2e/server.py
+            subPath: server.py
+            readOnly: true
+          env:
+          - name: EXPECTED_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.runtime.notification_receiver | toJson }}
+                key: token
+          ports:
+          - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: {{ .Values.runtime.notification_receiver | toJson }}
+    namespace: {{ .Values.runtime.namespace | toJson }}
+    labels: {{ .Values.runtime.labels | toJson }}
+  spec:
+    selector:
+      app: {{ .Values.runtime.notification_receiver | toJson }}
+    ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+{{- end }}

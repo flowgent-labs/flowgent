@@ -22,7 +22,7 @@ import (
 // --- Canonical single-resource parsing ---
 
 // replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
-// Unknown patterns (flow template vars, DAG references) are left unchanged.
+// Unknown patterns (graph template vars, DAG references) are left unchanged.
 func replaceEnvVars(s string) string {
 	re := regexp.MustCompile(`\$\{([^}]+)\}`)
 	return re.ReplaceAllStringFunc(s, func(match string) string {
@@ -37,7 +37,7 @@ func replaceEnvVars(s string) string {
 // ParseResourceImport parses the single canonical
 // {consoleVersion, kind, metadata, data} resource envelope.
 // replaceEnvVars substitutes ${VAR} patterns only when VAR exists in the environment.
-// Unknown patterns (flow template vars, DAG references) are left unchanged.
+// Unknown patterns (graph template vars, DAG references) are left unchanged.
 func ParseResourceImport(raw []byte, _ string) (*ResourceImport, bool) {
 	// Runtime credential resources persist environment references. Expanding
 	// them here would copy plaintext secrets into the database and make safe API
@@ -356,33 +356,33 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		}
 		fmt.Printf("  OK LLMProvider: %s\n", p.Name)
 
-	case "flow":
-		var spec entities.FlowInfo
+	case "agentgraph":
+		var spec entities.AgentGraph
 		if err := parseSpec(ri.Data, &spec); err != nil {
-			fmt.Printf("Error parsing Flow spec in %s: %v\n", filePath, err)
+			fmt.Printf("Error parsing AgentGraph spec in %s: %v\n", filePath, err)
 			return false
 		}
-		if spec.ID == "" && ri.metadataName() != "" {
-			spec.ID = ri.metadataName()
+		if spec.Name == "" {
+			spec.Name = ri.metadataName()
 		}
 		if spec.Kind == "" {
-			spec.Kind = "flow"
+			spec.Kind = "graph"
 		}
 		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)
 		if err := spec.ValidateDAG(); err != nil {
-			fmt.Printf("Error validating Flow %s: %v\n", spec.ID, err)
+			fmt.Printf("Error validating AgentGraph %s: %v\n", spec.ID, err)
 			return false
 		}
-		if err := ls.flows.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
-			fmt.Printf("Error saving Flow %s: %v\n", spec.ID, err)
+		if err := ls.graphs.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
+			fmt.Printf("Error saving AgentGraph %s: %v\n", spec.ID, err)
 			return false
 		}
-		fmt.Printf("  OK Flow: %s\n", spec.ID)
+		fmt.Printf("  OK AgentGraph: %s\n", spec.ID)
 
-	case "flowrun":
-		var run entities.FlowRunInfo
+	case "graphrun":
+		var run entities.GraphRun
 		if err := parseSpec(ri.Data, &run); err != nil {
-			fmt.Printf("Error parsing FlowRun spec in %s: %v\n", filePath, err)
+			fmt.Printf("Error parsing GraphRun spec in %s: %v\n", filePath, err)
 			return false
 		}
 		if run.ID == "" {
@@ -392,19 +392,19 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		run.UpdatedAt = time.Now()
 		applyWrapperMeta(ri, &run.BaseEntity, &run.Labels, fc.namespace)
 		if err := ls.runs.Create(fc.ctx, &run); err != nil {
-			fmt.Printf("Error saving FlowRun %s: %v\n", run.ID, err)
+			fmt.Printf("Error saving GraphRun %s: %v\n", run.ID, err)
 			return false
 		}
-		fmt.Printf("  OK FlowRun: %s\n", run.ID)
+		fmt.Printf("  OK GraphRun: %s\n", run.ID)
 
 	case "skill":
-		var spec entities.FlowInfo
+		var spec entities.AgentGraph
 		if err := parseSpec(ri.Data, &spec); err != nil {
 			fmt.Printf("Error parsing Skill spec in %s: %v\n", filePath, err)
 			return false
 		}
-		if spec.ID == "" && ri.metadataName() != "" {
-			spec.ID = ri.metadataName()
+		if spec.Name == "" {
+			spec.Name = ri.metadataName()
 		}
 		spec.Kind = "skill"
 		applyWrapperMeta(ri, &spec.BaseEntity, &spec.Labels, fc.namespace)
@@ -412,7 +412,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 			fmt.Printf("Error validating Skill %s: %v\n", spec.ID, err)
 			return false
 		}
-		if err := ls.flows.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
+		if err := ls.graphs.SaveSpec(fc.ctx, &spec, "import", "imported from "+filePath); err != nil {
 			fmt.Printf("Error saving Skill %s: %v\n", spec.ID, err)
 			return false
 		}
@@ -445,7 +445,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 		fmt.Printf("  OK NotifyChannel: %s\n", ch.Name)
 
 	default:
-		fmt.Printf("Unknown kind %q in %s — expected Agent|MCP|LLMProvider|Flow|FlowRun|NotifyChannel|Skill\n", ri.Kind, filePath)
+		fmt.Printf("Unknown kind %q in %s — expected Agent|MCP|LLMProvider|AgentGraph|GraphRun|NotifyChannel|Skill\n", ri.Kind, filePath)
 		return false
 	}
 	return true
@@ -454,7 +454,7 @@ func (fc *FlowgentConsole) ImportResource(ri *ResourceImport, filePath string) b
 // --- Bulk import ---
 
 // ImportAll imports all resources from an ExportData structure into the
-// database. Returns counts: [llms, channels, mcps, skills, agents, flows, runs].
+// database. Returns counts: [llms, channels, mcps, skills, agents, graphs, runs].
 func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 	ls := fc.getStores()
 	counts := make([]int, 7)
@@ -528,7 +528,7 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 			sp.ID = uuid.New().String()
 		}
 		sp.Namespace = fc.namespace
-		if err := ls.flows.SaveSpec(fc.ctx, &sp, "import", "imported from file"); err != nil {
+		if err := ls.graphs.SaveSpec(fc.ctx, &sp, "import", "imported from file"); err != nil {
 			return counts, fmt.Errorf("skill %s: %w", sp.ID, err)
 		}
 		counts[3]++
@@ -546,22 +546,22 @@ func (fc *FlowgentConsole) ImportAll(data *ExportData) ([]int, error) {
 		}
 		counts[4]++
 	}
-	for _, spec := range data.AgentFlows {
+	for _, spec := range data.AgentGraphs {
 		sp := spec
 		if sp.ID == "" {
 			sp.ID = uuid.New().String()
 		}
 		sp.Namespace = fc.namespace
 		if sp.Kind == "" {
-			sp.Kind = "flow"
+			sp.Kind = "graph"
 		}
-		if err := ls.flows.SaveSpec(fc.ctx, &sp, "import", "imported from file"); err != nil {
-			return counts, fmt.Errorf("flow %s: %w", sp.ID, err)
+		if err := ls.graphs.SaveSpec(fc.ctx, &sp, "import", "imported from file"); err != nil {
+			return counts, fmt.Errorf("graph %s: %w", sp.ID, err)
 		}
 		counts[5]++
 	}
-	for i := range data.FlowRuns {
-		run := &data.FlowRuns[i]
+	for i := range data.GraphRuns {
+		run := &data.GraphRuns[i]
 		run.Namespace = fc.namespace
 		run.CreatedAt = time.Now()
 		run.UpdatedAt = time.Now()
@@ -610,7 +610,7 @@ func (fc *FlowgentConsole) ImportFile(filePath string, extraArgs []string) bool 
 		fmt.Printf("Error importing: %v\n", err)
 		return false
 	}
-	fmt.Printf("Imported from %s (%d llms, %d channels, %d mcps, %d skills, %d agents, %d flows, %d runs)\n",
+	fmt.Printf("Imported from %s (%d llms, %d channels, %d mcps, %d skills, %d agents, %d graphs, %d runs)\n",
 		filePath, counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6])
 	return true
 }

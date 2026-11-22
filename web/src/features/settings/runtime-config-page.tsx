@@ -7,7 +7,7 @@ import { Button, ErrorState, LoadingState, PageHeader } from '../../shared/compo
 import type { RuntimeConfigView } from '../../core/domain/types'
 import { useAppStore } from '../../app/store'
 
-type RuntimeConfigScope = 'namespace' | 'flow'
+type RuntimeConfigScope = 'namespace' | 'graph'
 type RuntimeConfigSection = 'environment' | 'secrets'
 type EnvironmentRow = { id: string; key: string; value: string }
 
@@ -20,16 +20,16 @@ export function RuntimeConfigPage({
   scope: RuntimeConfigScope
   section: RuntimeConfigSection
 }) {
-  const { namespaceId = '', flowId = '' } = useParams()
+  const { namespaceId = '', graphId = '' } = useParams()
   const locale = useAppStore((state) => state.locale)
   const repositories = useRepositories()
   const queryClient = useQueryClient()
-  const queryKey = [namespaceId, 'runtime-config', scope, scope === 'flow' ? flowId : namespaceId]
+  const queryKey = [namespaceId, 'runtime-config', scope, scope === 'graph' ? graphId : namespaceId]
   const query = useQuery({
     queryKey,
     queryFn: ({ signal }) =>
-      scope === 'flow'
-        ? repositories.runtimeConfig.getFlow(namespaceId, flowId, signal)
+      scope === 'graph'
+        ? repositories.runtimeConfig.getAgentGraph(namespaceId, graphId, signal)
         : repositories.runtimeConfig.getNamespace(namespaceId, signal),
   })
   const updateCached = (view: RuntimeConfigView) => queryClient.setQueryData(queryKey, view)
@@ -43,7 +43,7 @@ export function RuntimeConfigPage({
       key={JSON.stringify(query.data.local.environment)}
       scope={scope}
       namespace={namespaceId}
-      flowId={flowId}
+      graphId={graphId}
       view={query.data}
       locale={locale}
       onSaved={updateCached}
@@ -52,7 +52,7 @@ export function RuntimeConfigPage({
     <SecretSettings
       scope={scope}
       namespace={namespaceId}
-      flowId={flowId}
+      graphId={graphId}
       view={query.data}
       locale={locale}
       onSaved={updateCached}
@@ -63,7 +63,7 @@ export function RuntimeConfigPage({
 function EnvironmentSettings({
   scope,
   namespace,
-  flowId,
+  graphId,
   view,
   locale,
   onSaved,
@@ -79,8 +79,8 @@ function EnvironmentSettings({
   const [validation, setValidation] = useState('')
   const save = useMutation({
     mutationFn: (environment: Record<string, string>) =>
-      scope === 'flow'
-        ? repositories.runtimeConfig.updateFlowEnvironment(namespace, flowId, environment)
+      scope === 'graph'
+        ? repositories.runtimeConfig.updateAgentGraphEnvironment(namespace, graphId, environment)
         : repositories.runtimeConfig.updateNamespaceEnvironment(namespace, environment),
     onSuccess: onSaved,
   })
@@ -108,19 +108,19 @@ function EnvironmentSettings({
   return (
     <div className="page-stack" data-testid={`${scope}-environment-settings`}>
       <PageHeader
-        eyebrow={scope === 'flow' ? 'FLOW SETTINGS' : 'NAMESPACE SETTINGS'}
+        eyebrow={scope === 'graph' ? 'FLOW SETTINGS' : 'NAMESPACE SETTINGS'}
         title={locale === 'zh' ? '环境变量' : 'Environment variables'}
         description={
-          scope === 'flow'
+          scope === 'graph'
             ? locale === 'zh'
-              ? 'Flow 自动继承 namespace 公共变量；同名 Flow 值优先。'
-              : 'This Flow inherits namespace values automatically; local values win on conflicts.'
+              ? 'AgentGraph 自动继承 namespace 公共变量；同名 AgentGraph 值优先。'
+              : 'This AgentGraph inherits namespace values automatically; local values win on conflicts.'
             : locale === 'zh'
-              ? '这些公共变量会被 namespace 中的 Flow 自动继承。'
-              : 'These common values are inherited by every Flow in this namespace.'
+              ? '这些公共变量会被 namespace 中的 AgentGraph 自动继承。'
+              : 'These common values are inherited by every AgentGraph in this namespace.'
         }
       />
-      {scope === 'flow' && <InheritanceNotice locale={locale} />}
+      {scope === 'graph' && <InheritanceNotice locale={locale} />}
       <section className="surface runtime-config-card">
         <header className="surface__header">
           <div>
@@ -195,7 +195,7 @@ function EnvironmentSettings({
 function SecretSettings({
   scope,
   namespace,
-  flowId,
+  graphId,
   view,
   locale,
   onSaved,
@@ -206,8 +206,8 @@ function SecretSettings({
   const [validation, setValidation] = useState('')
   const update = useMutation({
     mutationFn: (payload: { secrets?: Record<string, string>; clear_secret_keys?: string[] }) =>
-      scope === 'flow'
-        ? repositories.runtimeConfig.updateFlowSecrets(namespace, flowId, payload)
+      scope === 'graph'
+        ? repositories.runtimeConfig.updateAgentGraphSecrets(namespace, graphId, payload)
         : repositories.runtimeConfig.updateNamespaceSecrets(namespace, payload),
     onSuccess: (saved) => {
       setKey('')
@@ -231,13 +231,13 @@ function SecretSettings({
   return (
     <div className="page-stack" data-testid={`${scope}-secret-settings`}>
       <PageHeader
-        eyebrow={scope === 'flow' ? 'FLOW SETTINGS' : 'NAMESPACE SETTINGS'}
+        eyebrow={scope === 'graph' ? 'FLOW SETTINGS' : 'NAMESPACE SETTINGS'}
         title={locale === 'zh' ? '密钥' : 'Secrets'}
         description={
-          scope === 'flow'
+          scope === 'graph'
             ? locale === 'zh'
-              ? 'Flow 继承 namespace 密钥；本地同名密钥覆盖继承值。'
-              : 'This Flow inherits namespace secrets; a local key overrides the inherited value.'
+              ? 'AgentGraph 继承 namespace 密钥；本地同名密钥覆盖继承值。'
+              : 'This AgentGraph inherits namespace secrets; a local key overrides the inherited value.'
             : locale === 'zh'
               ? '密钥使用认证加密存储，只能写入或替换，无法从 UI 读回。'
               : 'Secrets are authenticated-encrypted at rest and are write-only in the UI.'
@@ -251,7 +251,7 @@ function SecretSettings({
             : 'The API returns configured key names only—never plaintext or encrypted envelopes.'}
         </span>
       </section>
-      {scope === 'flow' && <InheritanceNotice locale={locale} />}
+      {scope === 'graph' && <InheritanceNotice locale={locale} />}
       <section className="surface runtime-config-card">
         <header className="surface__header">
           <div>
@@ -300,7 +300,7 @@ function SecretSettings({
                 onClick={() => update.mutate({ clear_secret_keys: [secretKey] })}
                 disabled={update.isPending}
               >
-                {scope === 'flow'
+                {scope === 'graph'
                   ? locale === 'zh'
                     ? '移除覆盖'
                     : 'Remove override'
@@ -320,7 +320,7 @@ function SecretSettings({
 interface RuntimeConfigContentProps {
   scope: RuntimeConfigScope
   namespace: string
-  flowId: string
+  graphId: string
   view: RuntimeConfigView
   locale: 'en' | 'zh'
   onSaved: (view: RuntimeConfigView) => void
@@ -332,8 +332,8 @@ function InheritanceNotice({ locale }: { locale: 'en' | 'zh' }) {
       <ShieldCheck size={17} />
       <span>
         {locale === 'zh'
-          ? '继承是动态解析的；namespace 更新会作用于未覆盖该键的所有 Flow。'
-          : 'Inheritance is resolved dynamically; namespace changes reach every Flow that has not overridden the key.'}
+          ? '继承是动态解析的；namespace 更新会作用于未覆盖该键的所有 AgentGraph。'
+          : 'Inheritance is resolved dynamically; namespace changes reach every AgentGraph that has not overridden the key.'}
       </span>
     </section>
   )
@@ -380,7 +380,7 @@ function EffectiveConfiguration({
               <code>{key}</code>
               <span>{value}</span>
               <small>
-                {scope === 'flow' && !localKeys.has(key)
+                {scope === 'graph' && !localKeys.has(key)
                   ? locale === 'zh'
                     ? '继承自 namespace'
                     : 'Inherited from namespace'

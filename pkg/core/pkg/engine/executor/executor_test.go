@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flowgent-labs/flowgent/core/pkg/client"
@@ -19,8 +20,8 @@ const testNamespace = "test-namespace"
 func TestConditionExecutor_True(t *testing.T) {
 	e := &ConditionExecutor{}
 	plan := &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Expression: "${input.result == true}"},
-		Input:    map[string]any{"result": true},
+		Node:  &entities.GraphNode{Expression: "${input.result == true}"},
+		Input: map[string]any{"result": true},
 	}
 	result, err := e.Execute(context.Background(), plan, map[string]map[string]any{"input": plan.Input})
 	if err != nil {
@@ -34,7 +35,7 @@ func TestConditionExecutor_True(t *testing.T) {
 func TestConditionExecutor_False(t *testing.T) {
 	e := &ConditionExecutor{}
 	plan := &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Expression: "false"},
+		Node: &entities.GraphNode{Expression: "false"},
 	}
 	result, _ := e.Execute(context.Background(), plan, nil)
 	if result.Output["result"] != false {
@@ -44,8 +45,8 @@ func TestConditionExecutor_False(t *testing.T) {
 
 func TestConditionExecutor_TaskType(t *testing.T) {
 	e := &ConditionExecutor{}
-	if e.TaskType() != entities.TaskCondition {
-		t.Error("wrong task type for ConditionExecutor")
+	if e.NodeKind() != entities.ConditionNode {
+		t.Error("wrong noderun type for ConditionExecutor")
 	}
 }
 
@@ -53,8 +54,8 @@ func TestConditionExecutor_TaskType(t *testing.T) {
 
 func TestNoopExecutor(t *testing.T) {
 	e := &NoopExecutor{}
-	if e.TaskType() != entities.TaskNoop {
-		t.Error("wrong task type")
+	if e.NodeKind() != entities.NoopNode {
+		t.Error("wrong noderun type")
 	}
 	result, err := e.Execute(context.Background(), nil, nil)
 	if err != nil {
@@ -75,8 +76,8 @@ func TestNoopExecutor(t *testing.T) {
 
 func TestMapExecutor(t *testing.T) {
 	e := &MapExecutor{}
-	if e.TaskType() != entities.TaskMap {
-		t.Error("wrong task type")
+	if e.NodeKind() != entities.MapNode {
+		t.Error("wrong noderun type")
 	}
 	result, _ := e.Execute(context.Background(), nil, nil)
 	if result.Output["status"] != "dispatched" {
@@ -88,8 +89,8 @@ func TestMapExecutor(t *testing.T) {
 
 func TestJoinExecutor(t *testing.T) {
 	e := &JoinExecutor{}
-	if e.TaskType() != entities.TaskJoin {
-		t.Error("wrong task type")
+	if e.NodeKind() != entities.JoinNode {
+		t.Error("wrong noderun type")
 	}
 	result, _ := e.Execute(context.Background(), &entities.ExecutionPlan{
 		Input: map[string]any{"results": []any{
@@ -105,11 +106,11 @@ func TestJoinExecutor(t *testing.T) {
 
 func TestCommitteeExecutor_Majority(t *testing.T) {
 	e := &CommitteeExecutor{}
-	if e.TaskType() != entities.TaskCommittee {
-		t.Error("wrong task type")
+	if e.NodeKind() != entities.CommitteeNode {
+		t.Error("wrong noderun type")
 	}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}},
+		Node: &entities.GraphNode{Strategy: map[string]any{"type": "majority"}},
 		Input: map[string]any{"votes": []any{
 			map[string]any{"decision": true},
 			map[string]any{"decision": true},
@@ -127,7 +128,7 @@ func TestCommitteeExecutor_Majority(t *testing.T) {
 func TestCommitteeExecutor_Unanimous_Fail(t *testing.T) {
 	e := &CommitteeExecutor{}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "unanimous"}},
+		Node: &entities.GraphNode{Strategy: map[string]any{"type": "unanimous"}},
 		Input: map[string]any{"votes": []any{
 			map[string]any{"decision": true},
 			map[string]any{"decision": true},
@@ -145,14 +146,37 @@ func TestCommitteeExecutor_Unanimous_Fail(t *testing.T) {
 func TestCommitteeExecutor_EmptyVotes(t *testing.T) {
 	e := &CommitteeExecutor{}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}},
-		Input:    map[string]any{},
+		Node:  &entities.GraphNode{Strategy: map[string]any{"type": "majority"}},
+		Input: map[string]any{},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Output["decision"] != false {
 		t.Error("empty votes should reject")
+	}
+}
+
+func TestCommitteeExecutorBooleanVotesAndEmptyUnanimous(t *testing.T) {
+	for _, test := range []struct {
+		name, strategy string
+		votes          []any
+		approved       bool
+		count          int
+	}{
+		{"boolean majority", "majority", []any{true, false, true}, true, 2},
+		{"mixed votes", "majority", []any{true, map[string]any{"decision": true}, false}, true, 2},
+		{"empty unanimous", "unanimous", nil, false, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := (&CommitteeExecutor{}).Execute(t.Context(), &entities.ExecutionPlan{
+				Node:  &entities.GraphNode{Strategy: map[string]any{"type": test.strategy}},
+				Input: map[string]any{"votes": test.votes},
+			}, nil)
+			if err != nil || result.Output["decision"] != test.approved || result.Output["approve"] != test.count || result.Output["total"] != len(test.votes) {
+				t.Fatalf("committee result = %+v, %v", result, err)
+			}
+		})
 	}
 }
 
@@ -168,13 +192,13 @@ func (m *mockHumanStore) CreateApproval(_ context.Context, a *entities.ApprovalI
 func TestHumanExecutor(t *testing.T) {
 	store := &mockHumanStore{}
 	e := NewHumanExecutor(store)
-	if e.TaskType() != entities.TaskHuman {
-		t.Error("wrong task type")
+	if e.NodeKind() != entities.HumanNode {
+		t.Error("wrong noderun type")
 	}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		AgentFlowRunID: "run-1",
-		TaskID:         "task-1",
-		NodeSpec: &entities.NodeSpec{
+		GraphRunID: "run-1",
+		NodeRunID:  "noderun-1",
+		Node: &entities.GraphNode{
 			Approval: &entities.HumanApprovalConfig{},
 		},
 	}, nil)
@@ -189,22 +213,25 @@ func TestHumanExecutor(t *testing.T) {
 	}
 }
 
-// ── Subflow ──────────────────────────────────────────
+// ── SubGraph ──────────────────────────────────────────
 
-func TestSubflowExecutor(t *testing.T) {
-	e := &SubflowExecutor{}
-	if e.TaskType() != entities.TaskSubflow {
-		t.Error("wrong task type")
+func TestSubGraphExecutor(t *testing.T) {
+	e := &SubGraphExecutor{}
+	if e.NodeKind() != entities.SubGraphNode {
+		t.Error("wrong noderun type")
 	}
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{AgentFlowID: "sub-fix"},
-		Input:    map[string]any{"repo": "test"},
+		Node:  &entities.GraphNode{SubGraph: &entities.SubGraphConfig{Ref: "sub-fix"}},
+		Input: map[string]any{"repo": "test"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.State != entities.NodeRunWaiting {
+		t.Fatal("subgraph handoff must not report terminal success")
+	}
 	if result.Output["status"] != "dispatched" {
-		t.Error("subflow should return dispatched")
+		t.Error("subgraph should return dispatched")
 	}
 }
 
@@ -239,7 +266,7 @@ func (c *retryLLM) Generate(_ context.Context, _, _, _ string, _ float64, _ int)
 func agentServer(agents []*entities.AgentInfo) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, a := range agents {
-			if r.URL.Path == "/api/v1/"+testNamespace+"/agents/"+a.Name {
+			if strings.HasSuffix(r.URL.Path, "/agents/"+a.Name) {
 				json.NewEncoder(w).Encode(a)
 				return
 			}
@@ -252,15 +279,15 @@ func agentServer(agents []*entities.AgentInfo) *httptest.Server {
 
 func TestToolExecutor_TaskType(t *testing.T) {
 	e := NewToolExecutor(mcp.NewMcpManager(client.NewGenericHttpClient(0)), client.NewGenericHttpClient(0))
-	if e.TaskType() != entities.TaskTool {
-		t.Error("wrong task type")
+	if e.NodeKind() != entities.ToolNode {
+		t.Error("wrong noderun type")
 	}
 }
 
 func TestToolExecutor_MissingTool(t *testing.T) {
 	e := NewToolExecutor(mcp.NewMcpManager(client.NewGenericHttpClient(0)), client.NewGenericHttpClient(0))
 	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Tool: "nonexistent"},
+		Node: &entities.GraphNode{Tool: "nonexistent"},
 	}, nil)
 	if err == nil {
 		t.Fatal("expected error for missing tool")
@@ -280,7 +307,7 @@ func TestSupervisorExecutor_ValidAction(t *testing.T) {
 	e := NewSupervisorExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{
+		Node: &entities.GraphNode{
 			Agent: "supervisor",
 			SupervisorConfig: &entities.SupervisorConfig{
 				AllowedActions: []string{"continue", "retry", "abort"},
@@ -306,7 +333,7 @@ func TestSupervisorExecutor_DisallowedAction(t *testing.T) {
 	e := NewSupervisorExecutor(llm, apiClient, testNamespace)
 
 	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{
+		Node: &entities.GraphNode{
 			Agent: "supervisor",
 			SupervisorConfig: &entities.SupervisorConfig{
 				AllowedActions: []string{"continue", "retry"},
@@ -329,7 +356,7 @@ func TestSupervisorExecutor_DefaultContinue(t *testing.T) {
 	e := NewSupervisorExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{
+		Node: &entities.GraphNode{
 			Agent: "supervisor",
 			SupervisorConfig: &entities.SupervisorConfig{
 				AllowedActions: []string{"continue", "retry"},
@@ -357,8 +384,8 @@ func TestAgentExecutor_Success(t *testing.T) {
 	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Agent: "issue-detector"},
-		Input:    map[string]any{"repo": "test"},
+		Node:  &entities.GraphNode{Agent: "issue-detector"},
+		Input: map[string]any{"repo": "test"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -391,7 +418,7 @@ func TestAgentExecutor_SchemaValidation_Pass(t *testing.T) {
 	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Agent: "reviewer"},
+		Node: &entities.GraphNode{Agent: "reviewer"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +456,7 @@ func TestAgentExecutor_SchemaValidation_Retry(t *testing.T) {
 	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Agent: "reviewer"},
+		Node: &entities.GraphNode{Agent: "reviewer"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +480,7 @@ func TestAgentExecutor_JSONPreamble(t *testing.T) {
 	e := NewAgentExecutor(llm, apiClient, testNamespace)
 
 	result, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Agent: "security-reviewer"},
+		Node: &entities.GraphNode{Agent: "security-reviewer"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -470,7 +497,7 @@ func TestAgentExecutor_NotFound(t *testing.T) {
 
 	e := NewAgentExecutor(nil, apiClient, testNamespace)
 	_, err := e.Execute(context.Background(), &entities.ExecutionPlan{
-		NodeSpec: &entities.NodeSpec{Agent: "nonexistent"},
+		Node: &entities.GraphNode{Agent: "nonexistent"},
 	}, nil)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
@@ -486,18 +513,18 @@ func TestTaskExecutorRouter(t *testing.T) {
 	router.Register(&MapExecutor{})
 	router.Register(&JoinExecutor{})
 	router.Register(&CommitteeExecutor{})
-	router.Register(&SubflowExecutor{})
+	router.Register(&SubGraphExecutor{})
 
 	tests := []struct {
-		taskType entities.TaskType
+		taskType entities.NodeKind
 		plan     *entities.ExecutionPlan
 	}{
-		{entities.TaskCondition, &entities.ExecutionPlan{TaskType: entities.TaskCondition, NodeSpec: &entities.NodeSpec{Expression: "true"}}},
-		{entities.TaskNoop, &entities.ExecutionPlan{TaskType: entities.TaskNoop}},
-		{entities.TaskMap, &entities.ExecutionPlan{TaskType: entities.TaskMap}},
-		{entities.TaskJoin, &entities.ExecutionPlan{TaskType: entities.TaskJoin, Input: map[string]any{}}},
-		{entities.TaskCommittee, &entities.ExecutionPlan{TaskType: entities.TaskCommittee, NodeSpec: &entities.NodeSpec{Strategy: map[string]any{"type": "majority"}}, Input: map[string]any{"votes": []any{map[string]any{"decision": true}}}}},
-		{entities.TaskSubflow, &entities.ExecutionPlan{TaskType: entities.TaskSubflow, NodeSpec: &entities.NodeSpec{AgentFlowID: "test-flow"}}},
+		{entities.ConditionNode, &entities.ExecutionPlan{NodeKind: entities.ConditionNode, Node: &entities.GraphNode{Expression: "true"}}},
+		{entities.NoopNode, &entities.ExecutionPlan{NodeKind: entities.NoopNode}},
+		{entities.MapNode, &entities.ExecutionPlan{NodeKind: entities.MapNode}},
+		{entities.JoinNode, &entities.ExecutionPlan{NodeKind: entities.JoinNode, Input: map[string]any{}}},
+		{entities.CommitteeNode, &entities.ExecutionPlan{NodeKind: entities.CommitteeNode, Node: &entities.GraphNode{Strategy: map[string]any{"type": "majority"}}, Input: map[string]any{"votes": []any{map[string]any{"decision": true}}}}},
+		{entities.SubGraphNode, &entities.ExecutionPlan{NodeKind: entities.SubGraphNode, Node: &entities.GraphNode{SubGraph: &entities.SubGraphConfig{Ref: "test-graph"}}}},
 	}
 
 	for _, tt := range tests {
@@ -513,10 +540,10 @@ func TestTaskExecutorRouter(t *testing.T) {
 func TestTaskExecutorRouter_UnknownType(t *testing.T) {
 	router := NewTaskExecutorRouter()
 	_, err := router.Execute(context.Background(), &entities.ExecutionPlan{
-		TaskType: entities.TaskType("unknown"),
+		NodeKind: entities.NodeKind("unknown"),
 	}, nil)
 	if err == nil {
-		t.Fatal("expected error for unknown task type")
+		t.Fatal("expected error for unknown noderun type")
 	}
 }
 

@@ -95,6 +95,15 @@ func TestEvalCondition_BoolDirect(t *testing.T) {
 	}
 }
 
+func TestEvalCondition_CompletionString(t *testing.T) {
+	for _, resolution := range []string{"complete", "partial", "none", "max_iterations_reached"} {
+		scope := map[string]map[string]any{"compare-results": {"resolution": resolution}}
+		if got := EvalCondition("${compare-results.resolution == complete}", scope); got != (resolution == "complete") {
+			t.Errorf("resolution %q: condition = %t", resolution, got)
+		}
+	}
+}
+
 func TestEvalCondition_Empty(t *testing.T) {
 	if EvalCondition("", nil) {
 		t.Error("empty expression should be false")

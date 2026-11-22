@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1640" viewBox="0 0 2400 1640" role="img" aria-labelledby="title desc"><title id="title">Flowgent | Logical Call Architecture</title><desc id="desc">Flowgent architecture with four responsibility zones: Browser and Application UI, AuthGuard access control, Flowgent orchestration, and AgentVault payment integration. Payee SDKs intercept inbound collection requests at A2A and generated MCP servers. The Payer SDK intercepts outbound A2A and MCP payment requests. Dagger marks integration work that has not shipped.</desc><metadata>Flowgent architecture / 2026-11-16</metadata><defs>
+<marker id="arrow-call" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#f0f1df"/></marker>
+<marker id="arrow-control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#b8c4ed"/></marker>
+<marker id="arrow-state" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#9fd7d3"/></marker>
+<marker id="arrow-planned" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#e9b681"/></marker>
+</defs><style>text{font-family:"Chalkboard SE","Trebuchet MS",sans-serif}path,rect{stroke-linecap:round;stroke-linejoin:round}path{vector-effect:non-scaling-stroke}</style><rect width="2400" height="1640" fill="#182c24"/>
+<g id="zone-browser-ui" data-control-zone="browser-ui"><rect x="40" y="150" width="430" height="290" rx="18" fill="#252f47" fill-opacity=".42" stroke="#b8c4ed" stroke-width="2" stroke-dasharray="10 8"/></g>
+<g id="zone-authguard" data-control-zone="authguard"><rect x="520" y="150" width="1050" height="290" rx="18" fill="#302c44" fill-opacity=".42" stroke="#cec1ed" stroke-width="2" stroke-dasharray="10 8"/></g>
+<g id="zone-agentvault" data-control-zone="agentvault"><rect x="1630" y="150" width="730" height="950" rx="18" fill="#3d2c21" fill-opacity=".42" stroke="#e9b681" stroke-width="2" stroke-dasharray="10 8"/></g>
+<g id="zone-flowgent-core" data-control-zone="flowgent-core"><rect x="40" y="500" width="1530" height="820" rx="18" fill="#203c2a" fill-opacity=".42" stroke="#b6d8aa" stroke-width="2" stroke-dasharray="10 8"/></g>
+<g id="web-console" data-component="web-console" data-kind="ui"><rect x="70" y="220" width="370" height="195" rx="11" fill="#252f47" stroke="#b8c4ed" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="envoy" data-component="envoy" data-kind="auth"><rect x="560" y="220" width="430" height="140" rx="11" fill="#302c44" stroke="#cec1ed" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="authguard" data-component="authguard" data-kind="auth"><rect x="1060" y="220" width="470" height="140" rx="11" fill="#302c44" stroke="#cec1ed" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="external-clients" data-component="external-clients" data-kind="external"><rect x="1660" y="32" width="660" height="78" rx="11" fill="#252f47" stroke="#b8c4ed" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="a2a-payee" data-component="a2a-payee" data-kind="core"><rect x="1680" y="275" width="300" height="165" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="mcp-payee" data-component="mcp-payee" data-kind="core"><rect x="2020" y="275" width="300" height="165" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="agentvault-service" data-component="agentvault-service" data-kind="payment"><rect x="1740" y="580" width="520" height="140" rx="11" fill="#3d2c21" stroke="#e9b681" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="payer-sdk" data-component="payer-sdk" data-kind="payment"><rect x="1740" y="885" width="520" height="120" rx="11" fill="#3d2c21" stroke="#e9b681" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="external-services" data-component="external-services" data-kind="external"><rect x="1680" y="1160" width="640" height="140" rx="11" fill="#252f47" stroke="#b8c4ed" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="definitions" data-component="definitions" data-kind="core"><rect x="80" y="580" width="380" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="run" data-component="run" data-kind="core"><rect x="580" y="580" width="400" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="schedule" data-component="schedule" data-kind="core"><rect x="1080" y="580" width="400" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="context" data-component="context" data-kind="data"><rect x="80" y="815" width="400" height="135" rx="11" fill="#1c3838" stroke="#9fd7d3" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="approval" data-component="approval" data-kind="core"><rect x="580" y="815" width="400" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="execute" data-component="execute" data-kind="core"><rect x="1080" y="835" width="400" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="result" data-component="result" data-kind="core"><rect x="580" y="1030" width="400" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="terminal" data-component="terminal" data-kind="core"><rect x="80" y="1030" width="380" height="135" rx="11" fill="#203c2a" stroke="#b6d8aa" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<g id="delivery" data-component="delivery" data-kind="data"><rect x="80" y="1225" width="1400" height="65" rx="11" fill="#1c3838" stroke="#9fd7d3" stroke-width="1.6" stroke-dasharray="7 6"/></g>
+<path d="M440 300L560 300" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="ui-gateway" d="M440 300L560 300" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)" marker-start="url(#arrow-call)"/>
+<path d="M990 285L1060 285" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="gateway-authguard" d="M990 285L1060 285" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)" marker-start="url(#arrow-call)"/>
+<path d="M1660 72L1595 72L1595 400L850 400L850 360" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="external-client-ingress" d="M1660 72L1595 72L1595 400L850 400L850 360" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M1830 440L1830 580" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="a2a-collection" d="M1830 440L1830 580" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path d="M2170 440L2170 580" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="mcp-collection" d="M2170 440L2170 580" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path d="M1975 885L1975 720" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="payer-authorization" d="M1975 885L1975 720" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path d="M2000 1005L2000 1160" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="outbound-service-call" d="M2000 1005L2000 1160" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path d="M760 360L760 470L2300 470" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-protected-rail" d="M760 360L760 470L2300 470" fill="none" stroke="#f0f1df" stroke-width="2.2"/>
+<path d="M760 470L420 470L420 580" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="resource-api-route" d="M760 470L420 470L420 580" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M1945 470L1945 440" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-a2a-route" d="M1945 470L1945 440" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M2250 470L2250 440" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-mcp-route" d="M2250 470L2250 440" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)"/>
+<path d="M2300 470L2300 650L2260 650" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-agentvault-route" d="M2300 470L2300 650L2260 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M1680 350L1610 350L1610 760L1015 760L1015 650L980 650" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-a2a-business" d="M1680 350L1610 350L1610 760L1015 760L1015 650L980 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M2320 350L2335 350L2335 118L1035 118L1035 390L970 390L970 360" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-mcp-business" d="M2320 350L2335 350L2335 118L1035 118L1035 390L970 390L970 360" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)"/>
+<path d="M460 650L580 650" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="definitions-to-run" d="M460 650L580 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M980 650L1080 650" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="run-to-schedule" d="M980 650L1080 650" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M1280 715L1280 835" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="dispatch" d="M1280 715L1280 835" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M480 885L520 885L520 995L1200 995L1200 970" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="context-to-execution" d="M480 885L520 885L520 995L1200 995L1200 970" fill="none" stroke="#9fd7d3" stroke-width="2.2" stroke-dasharray="2 6" marker-end="url(#arrow-state)"/>
+<path d="M980 875L1045 875L1045 790L1360 790L1360 715" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="approval-to-scheduler" d="M980 875L1045 875L1045 790L1360 790L1360 715" fill="none" stroke="#b8c4ed" stroke-width="2.2" stroke-dasharray="8 6" marker-end="url(#arrow-control)"/>
+<path d="M1080 925L1025 925L1025 1100L980 1100" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="execute-result" d="M1080 925L1025 925L1025 1100L980 1100" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M980 1070L1005 1070L1005 745L1200 745L1200 715" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="next-node" d="M980 1070L1005 1070L1005 745L1200 745L1200 715" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M580 1100L460 1100" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="terminal-run" d="M580 1100L460 1100" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M780 1165L780 1225" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="result-events" d="M780 1165L780 1225" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M270 1165L270 1225" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="terminal-events" d="M270 1165L270 1225" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<path d="M1480 925L1590 925L1590 945L1740 945" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="logical-outbound-payment" d="M1480 925L1590 925L1590 945L1740 945" fill="none" stroke="#e9b681" stroke-width="2.2" stroke-dasharray="12 5 2 5" marker-end="url(#arrow-planned)" marker-start="url(#arrow-planned)"/>
+<path d="M1480 1255L1550 1255L1550 445L920 445L920 360" fill="none" stroke="#182c24" stroke-width="7"/>
+<path data-graph="ui-event-delivery" d="M1480 1255L1550 1255L1550 445L920 445L920 360" fill="none" stroke="#f0f1df" stroke-width="2.2" marker-end="url(#arrow-call)"/>
+<text x="40" y="54" font-size="35" fill="#f0f1df" font-weight="700" text-anchor="start">Flowgent | Logical Call Architecture</text>
+<text x="40" y="96" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Solid: service calls   /   Dashed: resource control   /   Dotted: state or files   /   † Planned integration</text>
+<text x="65" y="187" font-size="25" fill="#b8c4ed" font-weight="650" text-anchor="start">Browser / Application UI</text>
+<text x="88" y="254" font-size="24" fill="#b8c4ed" font-weight="650" text-anchor="start">Flowgent Web Console</text>
+<text x="88" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentGraphs / GraphRuns</text>
+<text x="88" y="313" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Agents / MCPs / Skills</text>
+<text x="88" y="341" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Notifications / Sandbox pools†</text>
+<text x="88" y="369" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Resource CRUD / Run control</text>
+<text x="545" y="187" font-size="25" fill="#cec1ed" font-weight="650" text-anchor="start">AuthGuard | Access Control</text>
+<text x="578" y="254" font-size="24" fill="#cec1ed" font-weight="650" text-anchor="start">Envoy Gateway</text>
+<text x="578" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">All protected API routes</text>
+<text x="578" y="313" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Authentication / policy enforcement</text>
+<text x="1078" y="254" font-size="24" fill="#cec1ed" font-weight="650" text-anchor="start">AuthGuard</text>
+<text x="1078" y="285" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Identity / authorization decisions</text>
+<text x="1078" y="313" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Signed access context</text>
+<text x="1678" y="66" font-size="24" fill="#b8c4ed" font-weight="650" text-anchor="start">External A2A / MCP Clients</text>
+<rect x="451.2" y="261" width="97.5" height="25" rx="4" fill="#182c24"/>
+<text x="500" y="278" font-size="17" fill="#f0f1df" font-weight="400" text-anchor="middle">API / UI</text>
+<rect x="1152.8" y="381" width="194.4" height="26" rx="4" fill="#182c24"/>
+<text x="1250" y="399" font-size="18" fill="#f0f1df" font-weight="400" text-anchor="middle">A2A / MCP ingress</text>
+<text x="1655" y="187" font-size="25" fill="#e9b681" font-weight="650" text-anchor="start">AgentVault | Payment Integration</text>
+<text x="1655" y="216" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">SDK attachment points; AgentVault remains a separate service</text>
+<text x="1660" y="250" font-size="17" fill="#e9b681" font-weight="600" text-anchor="start">RECEIVE PAYMENTS</text>
+<text x="1698" y="309" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">A2A Server</text>
+<text x="1698" y="340" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Flowgent submodule</text>
+<text x="1698" y="368" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Task / Run requests</text>
+<text x="1698" y="396" font-size="20" fill="#e9b681" font-weight="400" text-anchor="start">Payee SDK†: enforce payment</text>
+<text x="2038" y="309" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">MCP Server†</text>
+<text x="2038" y="340" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">mcpfather-generated</text>
+<text x="2038" y="368" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">OpenAPI / Swagger → MCP</text>
+<text x="2038" y="396" font-size="19" fill="#e9b681" font-weight="400" text-anchor="start">Payee SDK†: enforce payment</text>
+<text x="1758" y="614" font-size="24" fill="#e9b681" font-weight="650" text-anchor="start">AgentVault Service</text>
+<text x="1758" y="645" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Payment policy / custody / settlement</text>
+<text x="1758" y="673" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Verify collection; authorize payment</text>
+<text x="1660" y="850" font-size="17" fill="#e9b681" font-weight="600" text-anchor="start">MAKE PAYMENTS</text>
+<text x="1758" y="919" font-size="24" fill="#e9b681" font-weight="650" text-anchor="start">AgentVault Payer SDK†</text>
+<text x="1758" y="950" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Intercept outbound A2A / MCP calls</text>
+<text x="1758" y="978" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Handle payment challenge, proof and retry</text>
+<text x="1698" y="1194" font-size="24" fill="#b8c4ed" font-weight="650" text-anchor="start">External A2A / MCP Services</text>
+<text x="1698" y="1225" font-size="22" fill="#bdd0bf" font-weight="400" text-anchor="start">Independent service providers</text>
+<text x="1698" y="1253" font-size="22" fill="#bdd0bf" font-weight="400" text-anchor="start">Paid requests carry AgentVault payment proof</text>
+<rect x="1851.8" y="527" width="276.5" height="26" rx="4" fill="#182c24"/>
+<text x="1990" y="545" font-size="18" fill="#e9b681" font-weight="400" text-anchor="middle">Verify / collect payment†</text>
+<rect x="1878.4" y="781" width="193.3" height="27" rx="4" fill="#182c24"/>
+<text x="1975" y="800" font-size="19" fill="#e9b681" font-weight="400" text-anchor="middle">Authorize / pay†</text>
+<rect x="1854.6" y="1061" width="290.8" height="27" rx="4" fill="#182c24"/>
+<text x="2000" y="1080" font-size="19" fill="#e9b681" font-weight="400" text-anchor="middle">HTTP 402 / proof / retry†</text>
+<text x="65" y="537" font-size="25" fill="#b6d8aa" font-weight="650" text-anchor="start">Flowgent | Orchestration</text>
+<text x="98" y="614" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">1  Resources / Revisions</text>
+<text x="98" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">AgentGraph / Agent / Skill definitions</text>
+<text x="98" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Immutable content / secret references</text>
+<text x="598" y="614" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">2  Admit a Run</text>
+<text x="598" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Validate references / input / namespace</text>
+<text x="598" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Pin AgentGraph revision / runtime / pool†</text>
+<text x="1098" y="614" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">3  Schedule Nodes</text>
+<text x="1098" y="645" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">Controller maintains runtimes</text>
+<text x="1098" y="673" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">JobManager resolves ready DAG nodes</text>
+<text x="98" y="849" font-size="24" fill="#9fd7d3" font-weight="650" text-anchor="start">Execution Context</text>
+<text x="98" y="880" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Instructions + authorized knowledge</text>
+<text x="98" y="908" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Per-attempt memory / checkpoint</text>
+<text x="598" y="849" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">Approval Gate</text>
+<text x="598" y="880" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Pending decision pauses the node</text>
+<text x="598" y="908" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Allow / reject / expire; one decision</text>
+<text x="1098" y="869" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">4  Execute a Node</text>
+<text x="1098" y="900" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">TaskManager selects an executor</text>
+<text x="1098" y="928" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Agent / tool / control / Sandbox†</text>
+<text x="598" y="1064" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">5  Commit the Result</text>
+<text x="598" y="1095" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">API persists NodeRun / Attempt state</text>
+<text x="598" y="1123" font-size="20" fill="#bdd0bf" font-weight="400" text-anchor="start">MQTT returns NodeResult to JM</text>
+<text x="98" y="1064" font-size="24" fill="#b6d8aa" font-weight="650" text-anchor="start">6  Finish the Run</text>
+<text x="98" y="1095" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Complete / fail / cancel</text>
+<text x="98" y="1123" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Release application JM / TM</text>
+<text x="98" y="1151" font-size="19" fill="#bdd0bf" font-weight="400" text-anchor="start">Keep referenced Sandbox pool†</text>
+<text x="98" y="1259" font-size="24" fill="#9fd7d3" font-weight="650" text-anchor="start">Delivery / Observability</text>
+<text x="430" y="1266" font-size="21" fill="#bdd0bf" font-weight="400" text-anchor="start">Notifier → channels / UI · correlate traces, metrics and logs by Run / Attempt</text>
+<rect x="1041.7" y="451" width="496.5" height="27" rx="4" fill="#182c24"/>
+<text x="1290" y="470" font-size="19" fill="#f0f1df" font-weight="400" text-anchor="middle">Protected resource / protocol / payment APIs</text>
+<rect x="1171.8" y="741" width="276.5" height="26" rx="4" fill="#182c24"/>
+<text x="1310" y="759" font-size="18" fill="#f0f1df" font-weight="400" text-anchor="middle">Authorized Run operations</text>
+<rect x="1134.7" y="101" width="310.7" height="25" rx="4" fill="#182c24"/>
+<text x="1290" y="118" font-size="17" fill="#e9b681" font-weight="400" text-anchor="middle">Generated MCP → protected REST</text>
+<rect x="1223.8" y="790" width="112.3" height="26" rx="4" fill="#182c24"/>
+<text x="1280" y="808" font-size="18" fill="#f0f1df" font-weight="400" text-anchor="middle">MQTT plan</text>
+<rect x="713.0" y="976" width="173.9" height="26" rx="4" fill="#182c24"/>
+<text x="800" y="994" font-size="18" fill="#9fd7d3" font-weight="400" text-anchor="middle">Context via API</text>
+<rect x="1117.7" y="772" width="204.7" height="26" rx="4" fill="#182c24"/>
+<text x="1220" y="790" font-size="18" fill="#b8c4ed" font-weight="400" text-anchor="middle">Approval / wake-up</text>
+<rect x="1038.4" y="726" width="143.1" height="26" rx="4" fill="#182c24"/>
+<text x="1110" y="744" font-size="18" fill="#f0f1df" font-weight="400" text-anchor="middle">Next / retry</text>
+<rect x="1502.5" y="892" width="214.9" height="26" rx="4" fill="#182c24"/>
+<text x="1610" y="910" font-size="18" fill="#e9b681" font-weight="400" text-anchor="middle">External A2A / MCP†</text>
+<rect x="1147.6" y="428" width="184.7" height="25" rx="4" fill="#182c24"/>
+<text x="1240" y="445" font-size="17" fill="#f0f1df" font-weight="400" text-anchor="middle">WebSocket updates</text>
+<text x="40" y="1400" font-size="20" fill="#f0f1df" font-weight="650" text-anchor="start">Abbreviations</text>
+<text x="40" y="1428" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">UI: User Interface   |   API: Application Programming Interface   |   CRUD: Create, Read, Update, Delete   |   DAG: Directed Acyclic Graph   |   LLM: Large Language Model</text>
+<text x="40" y="1453" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">A2A: Agent-to-Agent   |   MCP: Model Context Protocol   |   SDK: Software Development Kit   |   REST: Representational State Transfer</text>
+<text x="40" y="1478" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">MQTT: Message Queuing Telemetry Transport   |   SQL: Structured Query Language   |   HTTP: Hypertext Transfer Protocol   |   JM / TM: JobManager / TaskManager</text>
+<text x="40" y="1512" font-size="18" fill="#e9b681" font-weight="400" text-anchor="start">† Planned: Payee/Payer SDKs, the generated MCP endpoint and fixed Sandbox pools. Current code retains legacy signing and JM-owned Sandbox workers.</text>
+<text x="40" y="1539" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">SDKs run in Flowgent endpoints or clients. All protected HTTP calls reuse Envoy routes; SDK service arrows omit that repeated gateway hop.</text>
+<text x="40" y="1566" font-size="18" fill="#bdd0bf" font-weight="400" text-anchor="start">Run snapshots are recorded; full revision enforcement and automatic checkpoint reload are incomplete.</text>
+</svg>

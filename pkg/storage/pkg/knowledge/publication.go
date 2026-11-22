@@ -23,16 +23,16 @@ func candidateType(value string) (string, string, error) {
 
 func candidateRequest(candidate *entities.KnowledgeCandidate) map[string]any {
 	return map[string]any{
-		"candidate_id":       candidate.ID,
-		"source_run_id":      candidate.SourceRunID,
-		"target_scope":       candidate.TargetScope,
-		"target_flow_id":     nilIfEmpty(candidate.TargetFlowID),
-		"target_document_id": nilIfEmpty(candidate.TargetDocumentID),
-		"type":               candidate.Type,
-		"content":            candidate.Content,
-		"content_hash":       candidate.ContentHash,
-		"expected_revision":  candidate.ExpectedRevision,
-		"provenance":         candidate.Provenance,
+		"candidate_id":          candidate.ID,
+		"source_graph_run_id":   candidate.SourceGraphRunID,
+		"target_scope":          candidate.TargetScope,
+		"target_agent_graph_id": nilIfEmpty(candidate.TargetAgentGraphID),
+		"target_document_id":    nilIfEmpty(candidate.TargetDocumentID),
+		"type":                  candidate.Type,
+		"content":               candidate.Content,
+		"content_hash":          candidate.ContentHash,
+		"expected_revision":     candidate.ExpectedRevision,
+		"provenance":            candidate.Provenance,
 	}
 }
 
@@ -57,15 +57,15 @@ func validateCandidate(candidate *entities.KnowledgeCandidate) error {
 		return fmt.Errorf("candidate is required")
 	}
 	candidate.Namespace = defaultString(strings.TrimSpace(candidate.Namespace), "default")
-	candidate.SourceRunID = strings.TrimSpace(candidate.SourceRunID)
+	candidate.SourceGraphRunID = strings.TrimSpace(candidate.SourceGraphRunID)
 	candidate.TargetScope = strings.ToLower(strings.TrimSpace(candidate.TargetScope))
 	candidate.Type = strings.ToLower(strings.TrimSpace(candidate.Type))
 	candidate.Content = strings.TrimSpace(candidate.Content)
-	if candidate.SourceRunID == "" || candidate.Content == "" {
-		return fmt.Errorf("source_run_id and content are required")
+	if candidate.SourceGraphRunID == "" || candidate.Content == "" {
+		return fmt.Errorf("source_graph_run_id and content are required")
 	}
-	if candidate.TargetScope != "namespace" && candidate.TargetScope != "flow" {
-		return fmt.Errorf("target_scope must be namespace or flow")
+	if candidate.TargetScope != "namespace" && candidate.TargetScope != "graph" {
+		return fmt.Errorf("target_scope must be namespace or graph")
 	}
 	if _, _, err := candidateType(candidate.Type); err != nil {
 		return err
@@ -77,8 +77,8 @@ func validateCandidate(candidate *entities.KnowledgeCandidate) error {
 		return fmt.Errorf("expected_revision cannot be negative")
 	}
 	if candidate.IdempotencyKey == "" {
-		candidate.IdempotencyKey = "summary:" + candidate.SourceRunID + ":" + canonicalHash(map[string]any{
-			"scope": candidate.TargetScope, "flow": candidate.TargetFlowID,
+		candidate.IdempotencyKey = "summary:" + candidate.SourceGraphRunID + ":" + canonicalHash(map[string]any{
+			"scope": candidate.TargetScope, "graph": candidate.TargetAgentGraphID,
 			"document": candidate.TargetDocumentID, "type": candidate.Type,
 			"content": candidate.Content,
 		})
@@ -91,9 +91,9 @@ func validateCandidate(candidate *entities.KnowledgeCandidate) error {
 }
 
 func candidateMatches(existing, requested *entities.KnowledgeCandidate) bool {
-	return existing.SourceRunID == requested.SourceRunID &&
+	return existing.SourceGraphRunID == requested.SourceGraphRunID &&
 		existing.TargetScope == requested.TargetScope &&
-		existing.TargetFlowID == requested.TargetFlowID &&
+		existing.TargetAgentGraphID == requested.TargetAgentGraphID &&
 		existing.TargetDocumentID == requested.TargetDocumentID &&
 		existing.Type == requested.Type && existing.ContentHash == requested.ContentHash &&
 		existing.ExpectedRevision == requested.ExpectedRevision

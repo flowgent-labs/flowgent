@@ -34,6 +34,7 @@ func startA2AService(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer startOTELTracing(cfg, "flowgent-a2a")()
 
 	if !cfg.A2A.Enabled {
 		log.Println("A2A is disabled in config")

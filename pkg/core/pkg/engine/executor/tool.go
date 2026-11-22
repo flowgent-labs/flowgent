@@ -19,9 +19,9 @@ func NewToolExecutor(mcpMgr *mcp.McpManager, httpClient model.IFlowgentAPIClient
 	return &ToolExecutor{mcpMgr: mcpMgr, httpClient: httpClient}
 }
 
-func (e *ToolExecutor) TaskType() entities.TaskType { return entities.TaskTool }
+func (e *ToolExecutor) NodeKind() entities.NodeKind { return entities.ToolNode }
 
-func (e *ToolExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.TaskResult, error) {
+func (e *ToolExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan, scope map[string]map[string]any) (*entities.NodeResult, error) {
 	toolName := "call"
 	if action, ok := plan.Input["action"].(string); ok {
 		toolName = action
@@ -37,9 +37,9 @@ func (e *ToolExecutor) Execute(ctx context.Context, plan *entities.ExecutionPlan
 		inputCopy = make(map[string]any)
 	}
 
-	out, err := e.mcpMgr.CallTool(ctx, plan.NodeSpec.Tool, toolName, inputCopy)
+	out, err := e.mcpMgr.CallTool(ctx, plan.Node.Tool, toolName, inputCopy)
 	if err != nil {
 		return nil, err
 	}
-	return &entities.TaskResult{Output: out}, nil
+	return &entities.NodeResult{Output: out}, nil
 }

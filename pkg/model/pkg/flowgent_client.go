@@ -18,7 +18,7 @@ import (
 //   - X402PaymentHttpClient — wraps GenericHttpClient with x402 payment handling
 type IFlowgentAPIClient interface {
 	// Do executes an HTTP request. If the implementation is x402-aware and
-	// the server returns 402 Payment Required, the payment flow is handled
+	// the server returns 402 Payment Required, the payment graph is handled
 	// transparently and the final response (after payment) is returned.
 	Do(req *http.Request) (*http.Response, error)
 

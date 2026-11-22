@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/config/pkg/config"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	sandboxpkg "github.com/flowgent-labs/flowgent/sandbox/pkg"
 )
@@ -55,6 +56,7 @@ func startSandboxService() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer startOTELTracing(svcCfg, "flowgent-sandbox")()
 
 	podName := os.Getenv("POD_NAME")
 	if podName == "" {
@@ -82,6 +84,7 @@ func startSandboxService() error {
 	runner := sandboxpkg.NewFlowgentSandboxManager(podName, queue, "", workspace, svcCfg.Sandbox.Policy)
 	runner.SetSlots(svcCfg.Sandbox.Deployment.SlotsPerPod)
 	runner.SetScope(namespaceID, clusterID)
+	runner.SetCheckpointWriter(client.NewFlowgentClient(svcCfg.Runtime.APIServerURL))
 	if svcCfg.Sandbox.Deployment.Enabled {
 		runner.SetDistributed(true)
 	}

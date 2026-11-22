@@ -108,7 +108,7 @@ func TestParseGitea(t *testing.T) {
 // "no events list = match any event from that provider" rule and
 // case-insensitivity.
 func TestMatchesWebhookTrigger(t *testing.T) {
-	spec := &entities.FlowInfo{
+	spec := &entities.AgentGraph{
 		Triggers: []entities.TriggerDef{
 			{Type: "schedule", Cron: "0 0 * * *"},
 			{Type: "webhook", Provider: "github", Events: []string{"push", "pull_request"}},
@@ -136,9 +136,9 @@ func TestMatchesWebhookTrigger(t *testing.T) {
 }
 
 // TestWebhookVars verifies event routing fields are overlaid onto a copy of
-// the flow's static vars without mutating the flow spec.
+// the graph's static vars without mutating the graph spec.
 func TestWebhookVars(t *testing.T) {
-	spec := &entities.FlowInfo{Vars: map[string]any{"repo": "rengine", "max_iterations": 3}}
+	spec := &entities.AgentGraph{Vars: map[string]any{"repo": "rengine", "max_iterations": 3}}
 	evt := WebhookEvent{Provider: "github", Event: "pull_request", Repo: "wl4g/rengine", Ref: "fix/x", CommitSHA: "sha1", PRNumber: 4}
 	vars := webhookVars(spec, evt)
 
@@ -148,8 +148,8 @@ func TestWebhookVars(t *testing.T) {
 	if vars["commit_sha"] != "sha1" || vars["ref"] != "fix/x" || vars["pr_number"] != 4 {
 		t.Errorf("event routing vars not overlaid: %+v", vars)
 	}
-	// The flow's own Vars map must not be mutated.
+	// The graph's own Vars map must not be mutated.
 	if _, ok := spec.Vars["commit_sha"]; ok {
-		t.Error("webhookVars mutated the flow spec's Vars map")
+		t.Error("webhookVars mutated the graph spec's Vars map")
 	}
 }

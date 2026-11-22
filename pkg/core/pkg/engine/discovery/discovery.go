@@ -17,8 +17,8 @@
 //
 //	Controller sharding:
 //	  1. Discover total controller pods
-//	  2. Each pod computes shard(flow_id) = hash(flow_id) % totalPods
-//	  3. Only process flows in own shard
+//	  2. Each pod computes shard(agent_graph_id) = hash(agent_graph_id) % totalPods
+//	  3. Only process graphs in own shard
 //
 //	TaskManager peers:
 //	  1. Discover all TM pods

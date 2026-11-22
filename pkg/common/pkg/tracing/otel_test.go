@@ -1,9 +1,44 @@
 package tracing
 
 import (
+	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
+
+func TestPrometheusExportsRealOTelCountersWithoutTraceCollector(t *testing.T) {
+	provider, err := NewProvider(t.Context(), "fixture", "test", &OTELConfig{Enabled: false}, &MetricsConfig{Enabled: true, Prometheus: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetMeterProvider(metricnoop.NewMeterProvider())
+		otel.SetTracerProvider(tracenoop.NewTracerProvider())
+	})
+	counter, err := Meter("fixture").Int64Counter("flowgent.fixture.executions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter.Add(t.Context(), 3, metric.WithAttributes(attribute.String("agent_graph_name", "repair")))
+	for _, accept := range []string{"", "application/openmetrics-text;version=1.0.0;escaping=allow-utf-8"} {
+		request := httptest.NewRequest("GET", "/metrics", nil)
+		request.Header.Set("Accept", accept)
+		response := httptest.NewRecorder()
+		provider.MetricsHandler.ServeHTTP(response, request)
+		if response.Code != 200 || !strings.Contains(response.Body.String(), `flowgent_fixture_executions_total{`) || !strings.Contains(response.Body.String(), `agent_graph_name="repair"`) || !strings.Contains(response.Body.String(), `} 3`) {
+			t.Fatalf("OTel counter was not exported with stable names for Accept %q: %s", accept, response.Body.String())
+		}
+	}
+}
 
 func TestNormalizeOTLPHTTPConfig(t *testing.T) {
 	endpoint, timeout, err := normalizeOTLPHTTPConfig(nil)

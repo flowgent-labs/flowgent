@@ -2,14 +2,14 @@ package entities
 
 import "time"
 
-// RunTrace is the normalized tracing response returned by the API Server.
+// GraphRunTrace is the normalized tracing response returned by the API Server.
 // It intentionally models OpenTelemetry concepts instead of exposing the
 // storage-specific Jaeger Query API response to clients.
-type RunTrace struct {
-	RunID     string      `json:"run_id"`
-	Source    string      `json:"source"`
-	FetchedAt time.Time   `json:"fetched_at"`
-	Traces    []TraceInfo `json:"traces"`
+type GraphRunTrace struct {
+	GraphRunID string      `json:"graph_run_id"`
+	Source     string      `json:"source"`
+	FetchedAt  time.Time   `json:"fetched_at"`
+	Traces     []TraceInfo `json:"traces"`
 }
 
 // TraceInfo contains all spans that belong to one W3C trace.
@@ -23,8 +23,8 @@ type TraceInfo struct {
 }
 
 // TraceSpan is the backend-neutral span shape consumed by the web console.
-// Task input/output remains in TaskRunInfo and is correlated through the
-// flowgent.task_id and flowgent.attempt attributes.
+// Task input/output remains in NodeRun and is correlated through the
+// flowgent.node_run_id and flowgent.attempt attributes.
 type TraceSpan struct {
 	TraceID        string         `json:"trace_id"`
 	SpanID         string         `json:"span_id"`

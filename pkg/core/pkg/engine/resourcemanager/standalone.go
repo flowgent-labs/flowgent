@@ -63,7 +63,7 @@ func (s *StandaloneResourceManager) Validate(ctx context.Context) error {
 
 // Schedule acquires a slot (non-blocking), executes the plan via the local TM.
 // Returns INSUFFICIENT_RESOURCES if all local slots are occupied.
-func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
+func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.NodeResult, error) {
 	select {
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()
@@ -71,15 +71,15 @@ func (s *StandaloneResourceManager) Schedule(ctx context.Context, plan *entities
 		return nil, fmt.Errorf("INSUFFICIENT_RESOURCES: all %d local slots occupied", s.poolSize)
 	}
 
-	slog.Debug("local rm schedule", "plan", plan.PlanID, "node", plan.NodeID)
+	slog.Debug("local rm schedule", "plan", plan.PlanID, "node", plan.NodeInstanceID)
 
-	task := &entities.TaskRunInfo{
-		RunID: plan.AgentFlowRunID, NodeKey: plan.NodeID, Attempt: plan.RetryCount + 1,
-		Status: entities.TaskPending, ExecutionID: plan.PlanID,
+	noderun := &entities.NodeRun{
+		GraphRunID: plan.GraphRunID, NodeInstanceID: plan.NodeInstanceID, Attempt: plan.RetryCount + 1,
+		Status: entities.NodeRunPending, ExecutionID: plan.PlanID,
 	}
-	result, err := s.tm.ExecutePlan(ctx, plan, task)
+	result, err := s.tm.ExecutePlan(ctx, plan, noderun)
 	if err != nil {
-		return &entities.TaskResult{Error: err.Error()}, nil
+		return &entities.NodeResult{Error: err.Error()}, nil
 	}
 	return result, nil
 }

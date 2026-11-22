@@ -10,12 +10,12 @@ import (
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 )
 
-// fakeTaskState is a no-op taskmanager.TaskStateStore for unit tests that
-// don't exercise persistence (TM/RM call SaveTask unconditionally — see
+// fakeTaskState is a no-op taskmanager.NodeRunStateStore for unit tests that
+// don't exercise persistence (TM/RM call SaveNodeRun unconditionally — see
 // taskmanager.go — so a nil interface would panic).
 type fakeTaskState struct{}
 
-func (fakeTaskState) SaveTask(ctx context.Context, task *entities.TaskRunInfo) error { return nil }
+func (fakeTaskState) SaveNodeRun(ctx context.Context, noderun *entities.NodeRun) error { return nil }
 
 func TestNewResourceManagerRejectsMissingOrUnknownProvider(t *testing.T) {
 	for name, cfg := range map[string]*ResourceManagerConfig{
@@ -85,9 +85,9 @@ func TestStandaloneResourceManager_Schedule_Noop(t *testing.T) {
 	}
 
 	plan := &entities.ExecutionPlan{
-		PlanID: "p1", AgentFlowRunID: "r1", NodeID: "n1",
-		TaskType: entities.TaskNoop,
-		NodeSpec: &entities.NodeSpec{ID: "n1", Kind: entities.NoopNode},
+		PlanID: "p1", GraphRunID: "r1", NodeInstanceID: "n1",
+		NodeKind: entities.NoopNode,
+		Node:     &entities.GraphNode{ID: "n1", Kind: entities.NoopNode},
 	}
 	result, err := rm.Schedule(context.Background(), plan)
 	if err != nil {
@@ -107,9 +107,9 @@ func TestStandaloneResourceManagerPreservesExecutorFailure(t *testing.T) {
 	}
 
 	result, err := rm.Schedule(context.Background(), &entities.ExecutionPlan{
-		PlanID: "sandbox-plan", AgentFlowRunID: "run-1", NodeID: "sandbox-node",
-		TaskType: entities.TaskSandbox,
-		NodeSpec: &entities.NodeSpec{
+		PlanID: "sandbox-plan", GraphRunID: "run-1", NodeInstanceID: "sandbox-node",
+		NodeKind: entities.SandboxNode,
+		Node: &entities.GraphNode{
 			ID: "sandbox-node", Kind: entities.SandboxNode, Runtime: "bash", Script: "exit 0",
 		},
 	})
@@ -130,9 +130,9 @@ func TestStandaloneResourceManager_Schedule_ConcurrentSlots(t *testing.T) {
 	}
 
 	plan := &entities.ExecutionPlan{
-		PlanID: "p1", AgentFlowRunID: "r1", NodeID: "n1",
-		TaskType: entities.TaskNoop,
-		NodeSpec: &entities.NodeSpec{ID: "n1", Kind: entities.NoopNode},
+		PlanID: "p1", GraphRunID: "r1", NodeInstanceID: "n1",
+		NodeKind: entities.NoopNode,
+		Node:     &entities.GraphNode{ID: "n1", Kind: entities.NoopNode},
 	}
 	// Should schedule same plan twice without blocking (pool=2)
 	result, err := rm.Schedule(context.Background(), plan)

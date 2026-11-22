@@ -1,16 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { flowPath, flowRunPath, flowSettingsPath, namespaceSettingsPath } from './paths'
+import { matchRoutes } from 'react-router-dom'
+import { graphPath, graphRunPath, graphSettingsPath, namespaceSettingsPath } from './paths'
+import { router } from './router'
 
 describe('canonical resource paths', () => {
-  it('uses GitHub-style namespace/flow paths', () => {
-    expect(flowPath('Acme_Team', 'Security-Fixer')).toBe('/Acme_Team/Security-Fixer')
-    expect(flowRunPath('Acme_Team', 'Security-Fixer', 'run 1', '/tracking')).toBe(
-      '/Acme_Team/Security-Fixer/runs/run%201/tracking',
+  it('matches catalog and create links without treating them as a foreign namespace', () => {
+    for (const path of ['/agent-graphs', '/agent-graphs/new']) {
+      const match = matchRoutes(router.routes, path)?.at(-1)
+      expect(match?.route.path).toBe(path.slice(1))
+      expect(match?.params).toEqual({})
+    }
+  })
+
+  it('uses GitHub-style namespace/graph paths', () => {
+    expect(graphPath('Acme_Team', 'Security-Fixer')).toBe('/Acme_Team/Security-Fixer')
+    expect(graphRunPath('Acme_Team', 'Security-Fixer', 'run 1', '/tracking')).toBe(
+      '/Acme_Team/Security-Fixer/graph-runs/run%201/tracking',
     )
-    expect(flowSettingsPath('Acme_Team', 'Security-Fixer')).toBe(
+    expect(graphSettingsPath('Acme_Team', 'Security-Fixer')).toBe(
       '/Acme_Team/Security-Fixer/settings',
     )
-    expect(flowSettingsPath('Acme_Team', 'Security-Fixer', 'environment')).toBe(
+    expect(graphSettingsPath('Acme_Team', 'Security-Fixer', 'environment')).toBe(
       '/Acme_Team/Security-Fixer/settings/environment',
     )
   })

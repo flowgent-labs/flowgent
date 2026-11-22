@@ -8,7 +8,7 @@
 [![Helm](https://img.shields.io/badge/deploy-Helm-0F1689?logo=helm)](https://helm.sh/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-*A distributed enterprise AgentFlow orchestration engine for predictable,
+*A distributed enterprise AgentGraph orchestration engine for predictable,
 auditable AI automation. Flowgent combines declarative DAG execution with
 bounded LLM autonomy and Flink-style runtime clusters, so teams can operate
 long-running AI workflows without surrendering deterministic control.*
@@ -21,13 +21,13 @@ repository query when enabled.
 
 ## Features
 
-- **Declarative AgentFlow execution** — YAML-defined DAGs combine twelve node
+- **Declarative AgentGraph execution** — YAML-defined DAGs combine twelve node
   types, deterministic fan-out/fan-in, conditions, human gates, retries, and
-  bounded subflow composition.
+  bounded subgraph composition.
 - **Bounded AI autonomy** — `agent` and `supervisor` nodes add LLM reasoning;
   supervisor actions are restricted to `continue`, `retry`, `inject`, and
   `abort` with explicit quotas.
-- **Durable and inspectable state** — Flow, run, task, approval, configuration,
+- **Durable and inspectable state** — AgentGraph, run, task, approval, configuration,
   and artifact metadata are persisted through the API Server. Every state
   transition can be traced and replayed safely.
 - **Flink-style runtime isolation** — application mode creates a JobManager per
@@ -74,9 +74,9 @@ flowchart LR
     Web --> API
     API --> DB
     API -->|lifecycle events| MQ
-    API -->|flow and run API| Controller
+    API -->|graph and run API| Controller
     Controller -->|create / remove| JM
-    API -->|run and flow API| JM
+    API -->|run and graph API| JM
     JM -->|execution plans| MQ
     MQ --> TM
     TM -->|task state| API
@@ -101,8 +101,8 @@ The architecture has deliberate ownership boundaries:
 | Key custody | External Wallet | Flowgent can request a bounded digest signature but never receives a private key or deploys the Wallet service. |
 
 See the [engine architecture](docs/architecture/overview.md)
-([中文](docs/architecture/overview_ZH.md)), [AgentFlow model](docs/architecture/agent-flow.md)
-([中文](docs/architecture/agent-flow_ZH.md)), and [AuthGuard integration boundary](docs/architecture/authguard-integration.md)
+([中文](docs/architecture/overview_ZH.md)), [AgentGraph model](docs/architecture/agent-graph.md)
+([中文](docs/architecture/agent-graph_ZH.md)), and [AuthGuard integration boundary](docs/architecture/authguard-integration.md)
 ([中文](docs/architecture/authguard-integration_ZH.md)) for the full contracts.
 
 ## Quick Start
@@ -135,12 +135,12 @@ curl -fsS http://127.0.0.1:9999/_/openapi.yaml
 curl -fsS http://127.0.0.1:9992/.well-known/agent.json
 ```
 
-Use the console to import versioned AgentFlow resources; credentials remain in
+Use the console to import versioned AgentGraph resources; credentials remain in
 the deployment secret or runtime environment, never in manifests.
 
 ```bash
 ./bin/flowgent-core console -c etc/flowgent.yaml -- import \
-  use-cases/security-autonomy-fixer/e2e/config
+  use-cases/security-autonomy-fixer/deploy/flowgent/config
 ```
 
 ### Test
@@ -194,16 +194,51 @@ helm upgrade --install flowgent \
   --version "$FLOWGENT_VERSION" \
   --namespace "$FLOWGENT_NAMESPACE" --create-namespace \
   --set runtime.resourceOwner=flowgent-production \
+  --set postgresql.enabled=false \
+  --set emqx.enabled=false \
   --set storage.type=POSTGRE \
   --set storage.postgres.dsn='postgres://flowgent:change-me@postgres:5432/flowgent?sslmode=require' \
   --set messaging.mqtt.broker='tcp://emqx:1883'
 ```
 
-For development, all-in-one mode uses SQLite and an in-memory queue. For a
+Standalone all-in-one mode can use SQLite and an in-memory queue. For a
 distributed deployment, use PostgreSQL and MQTT, configure the namespace and
 runtime resource limits, and supply provider, MCP, notifier, and artifact
 credentials through the runtime secret contract. Do not place secrets in Helm
-values, AgentFlow YAML, or the web application.
+values, AgentGraph YAML, or the web application.
+
+### Docker Compose and managed middleware
+
+The canonical local stack is [`deploy/docker/docker-compose.yaml`](deploy/docker/docker-compose.yaml).
+It uses the same backend image for all-in-one and distributed commands, built
+from [`deploy/docker/Dockerfile`](deploy/docker/Dockerfile).
+
+```bash
+make build:image
+# Starts Flowgent/Web and the default managed middleware.
+docker compose -f deploy/docker/docker-compose.yaml up -d --no-build
+```
+
+PostgreSQL, Redis, EMQX, Jaeger, Prometheus and Envoy are enabled by default.
+In Helm, set the corresponding `postgresql.enabled`, `redis.enabled`,
+`emqx.enabled`, `jaeger.enabled`, `prometheus.enabled` or `envoy.enabled` to
+`false` for externally managed services. Supply `storage.postgres.dsn` (or
+`postgresql.externalSecret`), `messaging.mqtt.broker` (or `emqx.externalSecret`)
+and `jaeger.collectorEndpoint`/`jaeger.queryEndpoint` as applicable. To use Redis,
+set `cache.provider=Redis`; external Redis uses `cache.redis.nodes` and
+`redis.externalSecret` (key `password`).
+
+In Compose, use `POSTGRES_ENABLED=0`, `REDIS_ENABLED=0`, `EMQX_ENABLED=0`,
+`JAEGER_ENABLED=0`, `PROMETHEUS_ENABLED=0` and `ENVOY_ENABLED=0` to disable
+individual managed services. External connections use `POSTGRES_DSN`,
+`MQTT_BROKER`, `OTLP_ENDPOINT` and `JAEGER_QUERY_ENDPOINT`; custom collector and
+proxy files use `PROMETHEUS_CONFIG` and `ENVOY_CONFIG`. AuthGuard remains opt-in
+(`AUTHGUARD_ENABLED=1` with `AUTHGUARD_CONFIG` in Compose).
+
+Use-case mocks belong under `use-cases/<case>/deploy/mock-xxx-service/`.
+Application manifests belong under `deploy/flowgent/config/` inside each case.
+Use cases inherit the formal middleware definitions rather than maintaining
+separate deployment charts or images for them.
 
 ### AuthGuard topology
 
@@ -234,9 +269,9 @@ contract.
 
 ## Administration and Integration
 
-### Create and operate an AgentFlow
+### Create and operate an AgentGraph
 
-AgentFlows, agents, MCP connections, LLM providers, skills, notification
+AgentGraphs, agents, MCP connections, LLM providers, skills, notification
 channels, and runtime configuration use versioned console resource envelopes.
 Import them through the console, observe execution through the Web UI and
 OpenTelemetry, and use the API or human gates to drive run lifecycle.
@@ -244,13 +279,13 @@ OpenTelemetry, and use the API or human gates to drive run lifecycle.
 ```bash
 # Import a directory of reviewed resources.
 ./bin/flowgent-core console -c etc/flowgent.yaml -- import \
-  use-cases/security-autonomy-fixer/e2e/config/agents/
+  use-cases/security-autonomy-fixer/deploy/flowgent/config/agents/
 
 # Export a backup from the configured environment.
 ./bin/flowgent-core console -c etc/flowgent.yaml -- export --output flowgent-export.yaml
 ```
 
-Every business integration belongs in its owning AgentFlow configuration. MCP
+Every business integration belongs in its owning AgentGraph configuration. MCP
 transport is HTTP-only; TaskManager Pods do not execute arbitrary stdio MCP
 binaries. Keep provider tokens, Git credentials, and notification secrets in
 the deployment's secret boundary.
@@ -273,7 +308,7 @@ for a multinational financial organization.
 
 - [Documentation index](docs/index.md) · [中文](docs/index_ZH.md)
 - [Distributed engine architecture](docs/architecture/overview.md) · [中文](docs/architecture/overview_ZH.md)
-- [AgentFlow application architecture](docs/architecture/agent-flow.md) · [中文](docs/architecture/agent-flow_ZH.md)
+- [AgentGraph application architecture](docs/architecture/agent-graph.md) · [中文](docs/architecture/agent-graph_ZH.md)
 - [AuthGuard integration boundary](docs/architecture/authguard-integration.md) · [中文](docs/architecture/authguard-integration_ZH.md)
 - [Security Autonomy Fixer reference application](use-cases/security-autonomy-fixer/README.md) · [中文](use-cases/security-autonomy-fixer/README_ZH.md)
 - [Web console architecture](web/README.md)

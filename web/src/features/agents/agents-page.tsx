@@ -256,7 +256,7 @@ function AgentDrawer({
       open={open}
       title={isNew ? t('agents.new') : (agent?.name ?? '')}
       onClose={() => {
-        if (!isDirty || window.confirm(t('flows.unsaved'))) onClose()
+        if (!isDirty || window.confirm(t('graphs.unsaved'))) onClose()
       }}
       footer={
         <>

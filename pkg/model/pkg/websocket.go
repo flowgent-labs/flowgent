@@ -18,9 +18,9 @@ const (
 
 // WSMessage is the JSON envelope pushed to WebSocket clients.
 type WSMessage struct {
-	Type        WSMessageType  `json:"type"`
-	AgentFlowID string         `json:"agentflow_id,omitempty"`
-	RunID       string         `json:"run_id,omitempty"`
-	TaskID      string         `json:"task_id,omitempty"`
-	Payload     map[string]any `json:"payload"`
+	Type           WSMessageType  `json:"type"`
+	AgentGraphName string         `json:"agent_graph_name,omitempty"`
+	GraphRunID     string         `json:"graph_run_id,omitempty"`
+	NodeRunID      string         `json:"node_run_id,omitempty"`
+	Payload        map[string]any `json:"payload"`
 }

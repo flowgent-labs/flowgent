@@ -14,7 +14,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/providers'
-import { flowRunPath } from '../../app/paths'
+import { graphRunPath } from '../../app/paths'
 import {
   EmptyState,
   ErrorState,
@@ -23,7 +23,7 @@ import {
   StatusBadge,
 } from '../../shared/components/ui'
 import { LineChartView, type LineChartSeries } from '../../shared/components/line-chart'
-import type { RunStatus } from '../../core/domain/types'
+import type { GraphRunStatus } from '../../core/domain/types'
 import { useAppStore } from '../../app/store'
 
 const ranges = [
@@ -45,7 +45,7 @@ export function DashboardPage() {
   })
   const runs = useQuery({
     queryKey: [namespace, 'runs', 'dashboard'],
-    queryFn: ({ signal }) => repositories.runs.list(namespace, { page: 1, size: 100 }, signal),
+    queryFn: ({ signal }) => repositories.graphRuns.list(namespace, { page: 1, size: 100 }, signal),
     refetchInterval: 15_000,
   })
   const data = metrics.data
@@ -71,7 +71,7 @@ export function DashboardPage() {
   )
 
   const goToRuns = useCallback(
-    (status?: RunStatus) => navigate(`/runs${status ? `?status=${status}` : ''}`),
+    (status?: GraphRunStatus) => navigate(`/graph-runs${status ? `?status=${status}` : ''}`),
     [navigate],
   )
   const handleLegendSelect = useCallback(
@@ -211,13 +211,15 @@ export function DashboardPage() {
                         type="button"
                         className="activity-row"
                         key={run.id}
-                        onClick={() => navigate(flowRunPath(namespace, run.flow_name, run.id))}
+                        onClick={() =>
+                          navigate(graphRunPath(namespace, run.agent_graph_name, run.id))
+                        }
                       >
                         <span className="activity-row__icon activity-row__icon--danger">
                           <XCircle size={16} />
                         </span>
                         <span className="activity-row__copy">
-                          <strong>{run.flow_name}</strong>
+                          <strong>{run.agent_graph_name}</strong>
                           <span>{run.error || t('dashboard.executionFailed')}</span>
                         </span>
                         <span className="activity-row__meta">
@@ -246,15 +248,17 @@ export function DashboardPage() {
                         type="button"
                         className="activity-row"
                         key={run.id}
-                        onClick={() => navigate(flowRunPath(namespace, run.flow_name, run.id))}
+                        onClick={() =>
+                          navigate(graphRunPath(namespace, run.agent_graph_name, run.id))
+                        }
                       >
                         <span className="activity-row__icon">
                           <Clock3 size={16} />
                         </span>
                         <span className="activity-row__copy">
-                          <strong>{run.flow_name}</strong>
+                          <strong>{run.agent_graph_name}</strong>
                           <span>
-                            {run.trigger_type || 'manual'} · v{run.flow_revision}
+                            {run.trigger_type || 'manual'} · v{run.agent_graph_revision}
                           </span>
                         </span>
                         <span className="activity-row__meta">

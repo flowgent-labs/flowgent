@@ -1,0 +1,6 @@
+mgmt:
+  otel:
+    sample_rate: 1.0
+  metrics:
+    enabled: true
+    prometheus: true

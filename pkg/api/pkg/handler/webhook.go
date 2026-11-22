@@ -25,16 +25,16 @@ var webhookTracer = tracing.Tracer("flowgent/api/webhook")
 const maxWebhookBody = 1 << 20
 
 // WebhookHandler receives SCM (GitHub / GitLab / Gitea) webhook deliveries at
-// POST /api/v1/webhook/{provider} and turns them into flow runs.
+// POST /api/v1/webhook/{provider} and turns them into graph runs.
 //
 // This is the sync half of Phase 1 (docs/01-L1-Engine-Architecture.md §2.4
 // Path A): it normalizes each provider's differently-shaped request body into
-// a single canonical WebhookEvent, finds every flow that declares a matching
+// a single canonical WebhookEvent, finds every graph that declares a matching
 // `triggers: [{type: webhook, provider: ..., events: [...]}]`, and — for each
-// match — creates a PENDING FlowRunInfo (persisted to PG by the sole DB
+// match — creates a PENDING GraphRun (persisted to PG by the sole DB
 // client) and publishes an `ctrl/run/created` lifecycle event on MQTT. From
-// there execution is fully async: the flow's dedicated JM run-poller picks up
-// the PENDING run, JobMaster parses the DAG, and dispatches top-level task
+// there execution is fully async: the graph's dedicated JM run-poller picks up
+// the PENDING run, JobMaster parses the DAG, and dispatches top-level noderun
 // plans to the TM in topological order (§3.4).
 //
 // The handler is deliberately provider-agnostic downstream of parseEvent: all
@@ -42,17 +42,17 @@ const maxWebhookBody = 1 << 20
 // new provider is a single new case, never a change to the trigger/dispatch
 // logic.
 type WebhookHandler struct {
-	trigger          *FlowDefHandler
+	trigger          *AgentGraphHandler
 	logger           *utils.Logger
 	defaultNamespace string
 }
 
-// NewWebhookHandler wires a WebhookHandler to the shared FlowDefHandler (which
-// owns the flow cache + run store + MQTT publisher used to actually create the
+// NewWebhookHandler wires a WebhookHandler to the shared AgentGraphHandler (which
+// owns the graph cache + run store + MQTT publisher used to actually create the
 // run). defaultNamespace is the namespace runs are created under when a provider
 // payload can't be attributed to a specific namespace (SCM webhooks are not
 // namespace-scoped in the URL).
-func NewWebhookHandler(trigger *FlowDefHandler, logger *utils.Logger, defaultNamespace string) *WebhookHandler {
+func NewWebhookHandler(trigger *AgentGraphHandler, logger *utils.Logger, defaultNamespace string) *WebhookHandler {
 	return &WebhookHandler{
 		trigger:          trigger,
 		logger:           logger,
@@ -152,12 +152,12 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// dispatch finds every cached flow with a matching webhook trigger and creates
+// dispatch finds every cached graph with a matching webhook trigger and creates
 // a PENDING run for it, returning the created run IDs.
 func (h *WebhookHandler) dispatch(ctx context.Context, evt WebhookEvent) []string {
-	flows := h.trigger.AgentFlows()
+	graphs := h.trigger.AgentGraphs()
 	var runIDs []string
-	for _, spec := range flows {
+	for _, spec := range graphs {
 		if spec == nil || !matchesWebhookTrigger(spec, evt) {
 			continue
 		}
@@ -182,26 +182,26 @@ func (h *WebhookHandler) dispatch(ctx context.Context, evt WebhookEvent) []strin
 		runID, err := h.trigger.CreateRunFromTrigger(ctx, spec.ID, namespace, vars, trig)
 		if err != nil {
 			h.logger.Warn("webhook: failed to create run",
-				"provider", evt.Provider, "event", evt.Event, "flow_id", spec.ID, "error", err)
+				"provider", evt.Provider, "event", evt.Event, "agent_graph_id", spec.ID, "error", err)
 			continue
 		}
-		h.logger.Info("webhook triggered flow run",
+		h.logger.Info("webhook triggered graph run",
 			"provider", evt.Provider, "event", evt.Event, "repo", evt.Repo,
-			"flow_id", spec.ID, "run_id", runID)
+			"agent_graph_id", spec.ID, "graph_run_id", runID)
 		runIDs = append(runIDs, runID)
 	}
 	if len(runIDs) == 0 {
-		slog.Debug("webhook matched no flow trigger",
+		slog.Debug("webhook matched no graph trigger",
 			"provider", evt.Provider, "event", evt.Event, "repo", evt.Repo)
 	}
 	return runIDs
 }
 
 // webhookVars overlays the incoming event's routing fields onto a copy of the
-// flow's own default vars, so a webhook-triggered run can reference
+// graph's own default vars, so a webhook-triggered run can reference
 // ${vars.commit_sha} / ${vars.ref} / ${vars.pr_number} etc. without clobbering
-// the flow's static configuration.
-func webhookVars(spec *entities.FlowInfo, evt WebhookEvent) map[string]any {
+// the graph's static configuration.
+func webhookVars(spec *entities.AgentGraph, evt WebhookEvent) map[string]any {
 	vars := make(map[string]any, len(spec.Vars)+6)
 	for k, v := range spec.Vars {
 		vars[k] = v
@@ -223,10 +223,10 @@ func webhookVars(spec *entities.FlowInfo, evt WebhookEvent) map[string]any {
 	return vars
 }
 
-// matchesWebhookTrigger reports whether a flow declares a webhook trigger for
+// matchesWebhookTrigger reports whether a graph declares a webhook trigger for
 // this event's provider and (if the trigger constrains events) event name.
 // A trigger with no `events` list matches any event from that provider.
-func matchesWebhookTrigger(spec *entities.FlowInfo, evt WebhookEvent) bool {
+func matchesWebhookTrigger(spec *entities.AgentGraph, evt WebhookEvent) bool {
 	for _, t := range spec.Triggers {
 		if !strings.EqualFold(t.Type, "webhook") {
 			continue

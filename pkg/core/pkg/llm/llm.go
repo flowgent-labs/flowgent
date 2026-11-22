@@ -37,7 +37,7 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 		dbProviders, err := loader.ListProviders(context.Background())
 		if err == nil {
 			for _, dbp := range dbProviders {
-				dbp.NormalizeAliases()
+				dbp.Normalize()
 				slog.Debug("llm loaded provider", "id", dbp.ID, "name", dbp.Name, "type", dbp.Type, "status", dbp.Status, "keyConfigured", dbp.KeyConfigured || dbp.ApiKeyEnv != "" || dbp.ApiKey != "")
 				if dbp.Status != "ACTIVE" || dbp.ID == "" {
 					slog.Debug("llm skip provider", "id", dbp.ID, "status", dbp.Status)
@@ -55,7 +55,7 @@ func NewLlmProviderManager(loader LlmProviderLoader) *LlmProviderManager {
 }
 
 func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
-	dbP.NormalizeAliases()
+	dbP.Normalize()
 	reference := dbP.ApiKey
 	if dbP.ApiKeyEnv != "" {
 		reference = secretref.Prefix + dbP.ApiKeyEnv
@@ -80,7 +80,7 @@ func (m *LlmProviderManager) registerDB(dbP entities.LlmProviderInfo) {
 }
 
 func newProvider(p *entities.LlmProviderInfo) ILlmProvider {
-	p.NormalizeAliases()
+	p.Normalize()
 	providerType := p.Type
 	switch {
 	case strings.EqualFold(providerType, "anthropic"):

@@ -2,14 +2,20 @@ package tracing
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/otlptranslator"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otelexport "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -22,6 +28,7 @@ import (
 type Provider struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *sdkmetric.MeterProvider
+	MetricsHandler http.Handler
 }
 
 // NewProvider initializes OTEL tracing and metrics from config.
@@ -30,13 +37,6 @@ type Provider struct {
 // OTLP/HTTP endpoint at localhost:4318.
 func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *OTELConfig, metricsCfg *MetricsConfig) (*Provider, error) {
 	endpoint, exportTimeout, err := normalizeOTLPHTTPConfig(otelCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	exp, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpointURL(endpoint),
-		otlptracehttp.WithTimeout(exportTimeout))
 	if err != nil {
 		return nil, err
 	}
@@ -62,23 +62,48 @@ func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *OTELC
 		sampleRate = otelCfg.SampleRate
 	}
 
-	tracerProvider := sdktrace.NewTracerProvider(
+	traceOptions := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(sampleRate)),
-		sdktrace.WithBatcher(exp),
-	)
-	_, startupSpan := tracerProvider.Tracer("flowgent/otel").Start(ctx, "otel.startup")
-	startupSpan.End()
-	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := tracerProvider.ForceFlush(flushCtx); err != nil {
-		_ = tracerProvider.Shutdown(context.Background())
-		return nil, err
+	}
+	traceEnabled := otelCfg == nil || otelCfg.Enabled
+	if traceEnabled {
+		exp, err := otlptracehttp.New(ctx,
+			otlptracehttp.WithEndpointURL(endpoint),
+			otlptracehttp.WithTimeout(exportTimeout))
+		if err != nil {
+			return nil, err
+		}
+		traceOptions = append(traceOptions, sdktrace.WithBatcher(exp))
+	} else {
+		traceOptions = append(traceOptions, sdktrace.WithSampler(sdktrace.NeverSample()))
+	}
+	tracerProvider := sdktrace.NewTracerProvider(traceOptions...)
+	if traceEnabled {
+		_, startupSpan := tracerProvider.Tracer("flowgent/otel").Start(ctx, "otel.startup")
+		startupSpan.End()
+		// The batch exporter retries asynchronously. Collector startup must not
+		// disable the service's metrics or block control-plane readiness.
 	}
 
-	meterProvider := sdkmetric.NewMeterProvider(
-		sdkmetric.WithResource(res),
-	)
+	meterOptions := []sdkmetric.Option{sdkmetric.WithResource(res)}
+	var metricsHandler http.Handler
+	if metricsCfg != nil && metricsCfg.Enabled && metricsCfg.Prometheus {
+		registry := prometheus.NewRegistry()
+		// Keep query names stable when Prometheus negotiates UTF-8 exposition.
+		exporter, err := otelexport.New(
+			otelexport.WithRegisterer(registry),
+			otelexport.WithTranslationStrategy(otlptranslator.UnderscoreEscapingWithSuffixes),
+		)
+		if err != nil {
+			_ = tracerProvider.Shutdown(context.Background())
+			return nil, err
+		}
+		meterOptions = append(meterOptions, sdkmetric.WithReader(exporter))
+		metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(meterOptions...)
 
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetMeterProvider(meterProvider)
@@ -90,6 +115,7 @@ func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *OTELC
 	return &Provider{
 		TracerProvider: tracerProvider,
 		MeterProvider:  meterProvider,
+		MetricsHandler: metricsHandler,
 	}, nil
 }
 
@@ -128,10 +154,14 @@ func normalizeOTLPHTTPConfig(cfg *OTELConfig) (string, time.Duration, error) {
 func (p *Provider) Shutdown(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if p.TracerProvider != nil {
-		return p.TracerProvider.Shutdown(ctx)
+	var errs []error
+	if p.MeterProvider != nil {
+		errs = append(errs, p.MeterProvider.Shutdown(ctx))
 	}
-	return nil
+	if p.TracerProvider != nil {
+		errs = append(errs, p.TracerProvider.Shutdown(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 // ─── Component helpers ──────────────────────────────────────────

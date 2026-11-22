@@ -39,7 +39,7 @@ export const nodeKinds = [
   'tool',
   'skill',
   'map',
-  'agentflow',
+  'subgraph',
   'condition',
   'committee',
   'human',
@@ -51,7 +51,7 @@ export const nodeKinds = [
 
 export type NodeKind = (typeof nodeKinds)[number]
 
-export interface FlowNode {
+export interface GraphNode {
   id: string
   kind: NodeKind
   solution?: string
@@ -64,7 +64,7 @@ export interface FlowNode {
   strategy?: Record<string, unknown>
   args?: Record<string, unknown>
   retry?: { max: number; initial?: string; max_delay?: string; factor?: number }
-  node?: FlowNode
+  node?: GraphNode
   concurrency?: number
   approval?: { timeout?: string; on_approve?: string; on_reject?: string }
   supervisor_config?: {
@@ -73,7 +73,7 @@ export interface FlowNode {
     max_injections?: number
     allowed_actions?: string[]
   }
-  agentflow?: string
+  subgraph?: SubGraphConfig
   output_schema?: Record<string, unknown>
   runtime?: string
   script?: string
@@ -83,7 +83,7 @@ export interface FlowNode {
   workspace?: string
 }
 
-export interface FlowEdge {
+export interface GraphEdge {
   from: string
   to: string
   condition?: boolean
@@ -97,7 +97,7 @@ export interface RuntimeResources {
   sandbox?: { cpu?: string; memory?: string }
 }
 
-export interface Flow extends BaseEntity {
+export interface AgentGraph extends BaseEntity {
   name: string
   revision: number
   summarize_enabled: boolean
@@ -106,8 +106,8 @@ export interface Flow extends BaseEntity {
   input_schema?: Record<string, unknown>
   output_schema?: Record<string, unknown>
   vars?: Record<string, unknown>
-  nodes: FlowNode[]
-  edges: FlowEdge[]
+  nodes: GraphNode[]
+  edges: GraphEdge[]
   triggers?: Array<{ type: string; cron?: string; provider?: string; events?: string[] }>
   sandbox_policy?: Record<string, unknown>
   runtime_mode: RuntimeMode
@@ -116,16 +116,28 @@ export interface Flow extends BaseEntity {
   labels?: Record<string, string>
 }
 
-export type RunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | 'CANCELLED'
-export type TaskStatus =
-  'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'WAITING_HUMAN' | 'SKIPPED' | 'RETRYING'
+export type GraphRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | 'CANCELLED'
+export type NodeRunStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'WAITING_HUMAN'
+  | 'WAITING'
+  | 'SKIPPED'
+  | 'RETRYING'
 
-export interface FlowRun extends BaseEntity {
-  flow_id: string
-  flow_name: string
-  flow_revision_id: string
-  flow_revision: number
-  status: RunStatus
+export interface GraphRun extends BaseEntity {
+  snapshot: AgentGraph
+  node_runs?: NodeRun[]
+  subgraphs?: Record<string, SubGraph>
+  state_version?: number
+  last_event_seq?: number
+  agent_graph_id: string
+  agent_graph_name: string
+  agent_graph_revision_id: string
+  agent_graph_revision: number
+  status: GraphRunStatus
   input: Record<string, unknown>
   output: Record<string, unknown>
   error: string
@@ -142,12 +154,17 @@ export interface FlowRun extends BaseEntity {
   runtime_mode: RuntimeMode
 }
 
-export interface TaskRun extends BaseEntity {
-  run_id: string
-  node_key: string
+export interface NodeRun extends BaseEntity {
+  graph_node_id?: string
+  subgraph_instance_id?: string
+  graph_revision?: number
+  dispatch_epoch?: number
+  workspace_snapshot?: WorkspaceSnapshot
+  graph_run_id: string
+  node_instance_id: string
   attempt: number
   agent_revision_id?: string
-  status: TaskStatus
+  status: NodeRunStatus
   input: Record<string, unknown>
   output: Record<string, unknown>
   error: string
@@ -167,7 +184,7 @@ export interface TaskRun extends BaseEntity {
 }
 
 export interface HumanApproval extends BaseEntity {
-  run_id?: string
+  graph_run_id?: string
   node_run_id?: string
   type: 'human_gate' | 'tool_call' | 'payment' | 'knowledge_publish' | 'instruction_publish'
   subject_type: string
@@ -213,8 +230,8 @@ export interface TraceInfo {
   spans: TraceSpan[]
 }
 
-export interface RunTrace {
-  run_id: string
+export interface GraphRunTrace {
+  graph_run_id: string
   source: string
   fetched_at: string
   traces: TraceInfo[]
@@ -243,7 +260,7 @@ export interface KnowledgeEntry extends BaseEntity {
   metadata: Record<string, unknown>
 }
 
-export type MemoryScope = 'namespace' | 'flow' | 'run'
+export type MemoryScope = 'namespace' | 'graph' | 'run'
 
 export interface McpServer extends BaseEntity {
   name: string
@@ -323,16 +340,16 @@ export interface NotificationDelivery {
   result_topic: string
 }
 
-export interface RunFilters {
+export interface GraphRunFilters {
   page?: number
   size?: number
-  status?: RunStatus
+  status?: GraphRunStatus
   runtimeMode?: RuntimeMode
-  flowId?: string
+  graphId?: string
   search?: string
 }
 
-export interface RunMetrics {
+export interface GraphRunMetrics {
   total: number
   running: number
   completed: number
@@ -349,4 +366,60 @@ export interface RunMetrics {
     failed: number
     average_duration_ms: number
   }>
+}
+
+export interface SubGraphConfig {
+  ref: string
+  mode?: 'static' | 'adaptive'
+  supervisor?: string
+  mutation?: { allow: string[] }
+  limits?: {
+    max_created_nodes?: number
+    max_parallelism?: number
+    max_patches?: number
+    max_depth?: number
+    max_active_duration?: string
+  }
+}
+
+export interface WorkspaceSnapshot {
+  id: string
+  ref: string
+  sha256: string
+  base_commit?: string
+  created_at: string
+}
+export interface SubGraph {
+  instance_id: string
+  revision: number
+  config: SubGraphConfig
+  graph: AgentGraph
+  sealed: boolean
+  created_nodes: number
+  patches: number
+}
+export interface GraphPatch {
+  id: string
+  graph_run_id: string
+  subgraph_instance_id: string
+  expected_revision: number
+  operations: Array<{
+    kind: string
+    node_id?: string
+    node?: GraphNode
+    from?: string
+    to?: string
+    remove?: boolean
+  }>
+}
+export interface GraphCheckpoint {
+  id: string
+  graph_run_id: string
+  event_seq: number
+  state_version: number
+  snapshot: AgentGraph
+  subgraphs?: Record<string, SubGraph>
+  node_runs: NodeRun[]
+  sha256: string
+  created_at: string
 }

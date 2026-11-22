@@ -1,52 +1,119 @@
-{{- if .Values.application.enabled }}
 {{- if .Values.postgresql.enabled }}
+{{- $pg := .Values.postgresql }}
+{{- $name := $pg.name | default (printf "%s-postgresql" (include "flowgent.fullname" .)) }}
+{{- $ns := $pg.namespace | default .Release.Namespace }}
+{{- $labels := merge (dict "app.kubernetes.io/instance" $name "app.kubernetes.io/component" "postgresql") ($pg.labels | default dict) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name | toJson }}
+  namespace: {{ $ns | toJson }}
+  labels: {{ $labels | toJson }}
+type: Opaque
+stringData:
+  POSTGRES_USER: {{ $pg.username | toJson }}
+  POSTGRES_PASSWORD: {{ $pg.password | toJson }}
+  POSTGRES_DB: {{ $pg.database | toJson }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "flowgent.fullname" . }}-postgresql
-  labels:
-    {{- include "flowgent.labels" . | nindent 4 }}
-    app.kubernetes.io/component: postgresql
+  name: {{ $name | toJson }}
+  namespace: {{ $ns | toJson }}
+  labels: {{ $labels | toJson }}
 spec:
-  ports:
-    - port: 5432
+  type: {{ $pg.service.type }}
   selector:
-    app.kubernetes.io/component: postgresql
+    app.kubernetes.io/instance: {{ $name | toJson }}
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: postgres
+    {{- if eq $pg.service.type "NodePort" }}
+    nodePort: {{ $pg.service.nodePort }}
+    {{- end }}
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: {{ include "flowgent.fullname" . }}-postgresql
-  labels:
-    {{- include "flowgent.labels" . | nindent 4 }}
-    app.kubernetes.io/component: postgresql
+  name: {{ $name | toJson }}
+  namespace: {{ $ns | toJson }}
+  labels: {{ $labels | toJson }}
 spec:
+  serviceName: {{ $name | toJson }}
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/component: postgresql
+      app.kubernetes.io/instance: {{ $name | toJson }}
   template:
     metadata:
-      labels:
-        app.kubernetes.io/component: postgresql
+      labels: {{ $labels | toJson }}
     spec:
+      {{- with $pg.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
-        - name: postgresql
-          image: registry.cn-shenzhen.aliyuncs.com/wl4g/bitnami_postgresql:18.3
-          env:
-            - name: POSTGRESQL_USERNAME
-              value: "flowgent"
-            - name: POSTGRESQL_PASSWORD
-              value: "flowgent"
-            - name: POSTGRESQL_DATABASE
-              value: "flowgent"
-          ports:
-            - containerPort: 5432
-          volumeMounts:
-            - name: data
-              mountPath: /bitnami/postgresql
-      volumes:
+      - name: postgres
+        image: {{ $pg.containerImage | toJson }}
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - secretRef:
+            name: {{ $name | toJson }}
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - name: postgres
+          containerPort: 5432
+        # Initdb and crash recovery must finish before liveness can restart PG.
+        startupProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
+          periodSeconds: 3
+          timeoutSeconds: 2
+          failureThreshold: 100
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 5
+          periodSeconds: 3
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 750m
+            memory: 1Gi
+        volumeMounts:
         - name: data
-          emptyDir: {}
-{{- end }}
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels: {{ $labels | toJson }}
+    spec:
+      {{- with $pg.persistence.storageClass }}
+      storageClassName: {{ . | quote }}
+      {{- end }}
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: {{ $pg.persistence.size }}
 {{- end }}

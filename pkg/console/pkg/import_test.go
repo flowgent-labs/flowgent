@@ -8,13 +8,47 @@ import (
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/secretbox"
+	"github.com/flowgent-labs/flowgent/config/pkg/config"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
+	"github.com/google/uuid"
 )
+
+func TestImportCanonicalGraphAndDistinctSkillsByMetadataName(t *testing.T) {
+	fc, err := NewFlowgentConsole(&config.FlowgentConfig{
+		Storage: config.StorageConfig{Type: "SQLITE", SQLite: config.SQLiteConfig{Dir: t.TempDir()}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fc.Close() })
+	for _, resource := range []struct{ kind, name string }{
+		{"AgentGraph", "repair"}, {"Skill", "sub-fix"}, {"Skill", "nexus-retrieval"},
+	} {
+		raw := []byte("consoleVersion: core.flowgent.io/v1\nkind: " + resource.kind +
+			"\nmetadata: {name: " + resource.name + ", namespace: team}\ndata:\n  nodes: [{id: end, kind: noop}]\n  edges: []\n")
+		parsed, ok := ParseResourceImport(raw, "yaml")
+		if !ok || !fc.ImportResource(parsed, resource.name+".yaml") {
+			t.Fatalf("import failed: %s %s", resource.kind, resource.name)
+		}
+		fc.SetNamespace("team")
+		saved, err := fc.GetAgentGraph(resource.name)
+		if err != nil || saved == nil || saved.Name != resource.name {
+			t.Fatalf("resource not retrievable by name: %+v, %v", saved, err)
+		}
+		if _, err := uuid.Parse(saved.ID); err != nil {
+			t.Fatalf("stable ID is not a UUID: %q", saved.ID)
+		}
+	}
+	skills, err := fc.ListSkills()
+	if err != nil || len(skills) != 2 {
+		t.Fatalf("distinct imported skills = %d, %v", len(skills), err)
+	}
+}
 
 func TestParseResourceImportAcceptsOnlyCanonicalEnvelope(t *testing.T) {
 	canonical := []byte(`
 consoleVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata:
   name: example
   namespace: default
@@ -33,15 +67,15 @@ data:
 
 	invalid := map[string][]byte{
 		"apiVersion alias": []byte(`apiVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata: {name: example}
 data: {id: example}`),
 		"spec payload": []byte(`consoleVersion: core.flowgent.io/v1
-kind: Flow
+kind: AgentGraph
 metadata: {name: example}
 spec: {id: example}`),
 		"unknown version": []byte(`consoleVersion: core.flowgent.io/v2
-kind: Flow
+kind: AgentGraph
 metadata: {name: example}
 data: {id: example}`),
 	}
@@ -55,8 +89,8 @@ data: {id: example}`),
 }
 
 func TestParseSpecRejectsUnknownFields(t *testing.T) {
-	var flow entities.FlowInfo
-	err := parseSpec([]byte(`{"id":"example","nodes":[],"edges":[],"spec":{}}`), &flow)
+	var graph entities.AgentGraph
+	err := parseSpec([]byte(`{"id":"example","nodes":[],"edges":[],"spec":{}}`), &graph)
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("expected unknown field rejection, got %v", err)
 	}

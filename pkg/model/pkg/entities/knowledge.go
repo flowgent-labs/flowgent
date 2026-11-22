@@ -18,9 +18,9 @@ type KnowledgeEntry struct {
 	SourceRef          string         `json:"source_ref" db:"-"`
 	SourceRevision     string         `json:"source_revision,omitempty" db:"-"`
 	Scope              string         `json:"scope" db:"-"`
-	FlowID             string         `json:"flow_id,omitempty" db:"-"`
-	FlowName           string         `json:"flow_name,omitempty" db:"-"`
-	RunID              string         `json:"run_id,omitempty" db:"-"`
+	AgentGraphID       string         `json:"agent_graph_id,omitempty" db:"-"`
+	AgentGraphName     string         `json:"agent_graph_name,omitempty" db:"-"`
+	GraphRunID         string         `json:"graph_run_id,omitempty" db:"-"`
 	ACLRef             string         `json:"acl_ref,omitempty" db:"-"`
 	Classification     string         `json:"classification,omitempty" db:"-"`
 	HeadingPath        string         `json:"heading_path,omitempty" db:"-"`
@@ -47,9 +47,9 @@ type KnowledgeDocument struct {
 	SourceID          string `json:"source_id"`
 	DocumentKey       string `json:"document_key"`
 	Scope             string `json:"scope"`
-	FlowID            string `json:"flow_id,omitempty"`
-	FlowName          string `json:"flow_name,omitempty" db:"-"`
-	RunID             string `json:"run_id,omitempty"`
+	AgentGraphID      string `json:"agent_graph_id,omitempty"`
+	AgentGraphName    string `json:"agent_graph_name,omitempty" db:"-"`
+	GraphRunID        string `json:"graph_run_id,omitempty"`
 	ExternalID        string `json:"external_id,omitempty"`
 	SourceURI         string `json:"source_uri,omitempty"`
 	ACLRef            string `json:"acl_ref,omitempty"`
@@ -104,29 +104,29 @@ type KnowledgeEmbedding struct {
 
 type KnowledgeCandidate struct {
 	BaseEntity
-	SourceRunID      string         `json:"source_run_id"`
-	TargetScope      string         `json:"target_scope"`
-	TargetFlowID     string         `json:"target_flow_id,omitempty"`
-	TargetFlowName   string         `json:"target_flow_name,omitempty" db:"-"`
-	TargetDocumentID string         `json:"target_document_id,omitempty"`
-	Type             string         `json:"type"`
-	Content          string         `json:"content"`
-	ContentHash      string         `json:"content_hash"`
-	Provenance       map[string]any `json:"provenance"`
-	ExpectedRevision int64          `json:"expected_revision"`
-	ApprovalID       string         `json:"approval_id"`
-	IdempotencyKey   string         `json:"idempotency_key"`
+	SourceGraphRunID     string         `json:"source_graph_run_id"`
+	TargetScope          string         `json:"target_scope"`
+	TargetAgentGraphID   string         `json:"target_agent_graph_id,omitempty"`
+	TargetAgentGraphName string         `json:"target_agent_graph_name,omitempty" db:"-"`
+	TargetDocumentID     string         `json:"target_document_id,omitempty"`
+	Type                 string         `json:"type"`
+	Content              string         `json:"content"`
+	ContentHash          string         `json:"content_hash"`
+	Provenance           map[string]any `json:"provenance"`
+	ExpectedRevision     int64          `json:"expected_revision"`
+	ApprovalID           string         `json:"approval_id"`
+	IdempotencyKey       string         `json:"idempotency_key"`
 }
 
 // KnowledgeSearchRequest is the input for semantic or keyword knowledge search.
 type KnowledgeSearchRequest struct {
-	Query      string    `json:"query"`
-	Embedding  []float32 `json:"embedding,omitempty"`
-	ProfileKey string    `json:"profile_key,omitempty"`
-	TopK       int       `json:"top_k"`
-	Tags       []string  `json:"tags,omitempty"`
-	Scope      string    `json:"scope,omitempty"`
-	FlowID     string    `json:"flow_id,omitempty"`
-	FlowName   string    `json:"flow_name,omitempty"`
-	RunID      string    `json:"run_id,omitempty"`
+	Query          string    `json:"query"`
+	Embedding      []float32 `json:"embedding,omitempty"`
+	ProfileKey     string    `json:"profile_key,omitempty"`
+	TopK           int       `json:"top_k"`
+	Tags           []string  `json:"tags,omitempty"`
+	Scope          string    `json:"scope,omitempty"`
+	AgentGraphID   string    `json:"agent_graph_id,omitempty"`
+	AgentGraphName string    `json:"agent_graph_name,omitempty"`
+	GraphRunID     string    `json:"graph_run_id,omitempty"`
 }

@@ -11,33 +11,28 @@
 |---|---|---|
 | Security | [AuthGuard 集成](architecture/authguard-integration_ZH.md) | Gateway 信任边界、adapters SDK 与 Repository SQL Scope |
 | L1 引擎 | [引擎总览](architecture/overview_ZH.md) | 跨组件调用、状态与消息契约、部署及共享模块 |
+| L1 视图 | [物理调用图](architecture/assets/flowgent—physical-architecture.svg) · [逻辑调用图](architecture/assets/flowgent-logical-architecture.svg) | 组件归属、调用协议与执行生命周期；待迁移边界标记 † |
 | 数据 | [持久数据生命周期](architecture/data-lifecycle_ZH.md) | 稳定身份、不可变版本、快照、知识/向量检索、执行记忆与统一审批 |
 | L1 引擎 | [API Server](architecture/engine/apiserver_ZH.md) | 外部业务状态网关与规范 REST API |
-| L1 引擎 | [Controller](architecture/engine/controller_ZH.md) | 活跃 Run 的 JobManager 协调 |
+| L1 引擎 | [Controller](architecture/engine/controller_ZH.md) | 活跃 Run 的 JobManager 协调；目标 Sandbox 固定池归属 |
 | L1 引擎 | [Runtime Clusters](architecture/engine/runtime-clusters_ZH.md) | Flink 风格 application/session 运行时隔离 |
 | L1 引擎 | [JobManager](architecture/engine/jobmanager_ZH.md) | DAG scheduling 与 runtime ownership |
 | L1 引擎 | [TaskManager](architecture/engine/taskmanager_ZH.md) | Slot execution 与 executor routing |
-| L1 引擎 | [Sandbox](architecture/engine/sandbox_ZH.md) | 隔离脚本执行 |
+| L1 引擎 | [Sandbox](architecture/engine/sandbox_ZH.md) | Controller 管理的固定池（已确认设计，待代码迁移） |
 | L1 引擎 | [Notifier](architecture/engine/notifier_ZH.md) | Delivery 与 UI event 边界 |
 | L1 引擎 | [AgentVault / x402](architecture/engine/wallet_ZH.md) | 外部托管边界与尚未完成的旧客户端集成迁移 |
-| L2 AgentFlow | [AgentFlow 应用架构](architecture/agent-flow_ZH.md) | 通用 DAG 模型、能力、限制与编排实践 |
+| L2 AgentGraph | [AgentGraph 应用架构](architecture/agent-graph_ZH.md) | 通用 DAG 模型、能力、限制与编排实践 |
 
 ## 应用
 
 每个应用在 `use-cases/{use-case}/README.md` 中归口自己的 Nodes、Edges、
 Integrations、Limits 与 Verification；可执行资源与其放在同一用例目录。
-共享 DAG 语义归属 [AgentFlow 应用架构](architecture/agent-flow_ZH.md)。
+共享 DAG 语义归属 [AgentGraph 应用架构](architecture/agent-graph_ZH.md)。
 
 | 应用 | 范围 | 入口 |
 |---|---|---|
-| Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/e2e/config/flows/security-autonomy-fixer.yaml) |
-| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/e2e/config/flows/autotest-generation-v1.yaml) |
-
-## 运维
-
-| 文档 | 范围 |
-|---|---|
-| [依赖镜像](runbooks/build-dependency-images_ZH.md) | 构建和运行本地 Facilitator、EVM 与 Solana 镜像 |
+| Security Autonomy Fixer | 从 SonarQube 修复到 GitHub 交付及修改后验证；29 Nodes/33 Edges DAG | [设计与 E2E](../use-cases/security-autonomy-fixer/README.md) · [中文](../use-cases/security-autonomy-fixer/README_ZH.md) · [Manifest](../use-cases/security-autonomy-fixer/deploy/flowgent/config/agent-graphs/security-autonomy-fixer.yaml) |
+| AutoTest Generation | 由 Confluence 驱动，为 Spring Boot、Flask 与 React 生成测试；18 Nodes/22 Edges Draft | [设计](../use-cases/autotest-generator/README.md) · [中文](../use-cases/autotest-generator/README_ZH.md) · [Manifest](../use-cases/autotest-generator/deploy/flowgent/config/agent-graphs/autotest-generation-v1.yaml) |
 
 ## 开发与历史
 
@@ -63,11 +58,11 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 ## 维护规则
 
 - 当前行为 **MUST** 写入拥有该行为的现行设计文档。
-- 通用 AgentFlow 语义 **MUST** 保留在 `architecture/`；应用专属 Nodes、Edges、
+- 通用 AgentGraph 语义 **MUST** 保留在 `architecture/`；应用专属 Nodes、Edges、
   Integrations 与 E2E 证据 **MUST** 保留在所属的
   `use-cases/{use-case}/README.md`。
-- 每个真实应用 **MUST** 提供 `README.md` 和 `README_ZH.md`；其 Flow、Agent 与
-  MCP Definition **MUST** 在 `use-cases/{use-case}/config/` 下保持自包含，运行凭据
+- 每个真实应用 **MUST** 提供 `README.md` 和 `README_ZH.md`；其 AgentGraph、Agent 与
+  MCP Definition **MUST** 在 `use-cases/{use-case}/deploy/flowgent/config/` 下保持自包含，运行凭据
   **MUST** 保留在 Manifest 之外。
 - 每个设计概念 **MUST** 只有一个规范归属位置；其他文档 **MUST** 通过链接引用，禁止复制。
 - 设计文档 **MUST** 明确区分已实现行为、保留设计和已知限制。
@@ -78,3 +73,6 @@ Integrations、Limits 与 Verification；可执行资源与其放在同一用例
 - **MUST NOT** 创建空分类目录或推测性的占位文档。
 - 文档变更只有在链接和标题验证通过后，才能视为完成；现行及活跃文档还
   **MUST** 验证双语配对。
+
+Use-case E2E 范围与运行时阻塞：[review](development/use-cases-review_ZH.md)、
+[精简缺口记录](development/e2e-runtime-gaps.md)。

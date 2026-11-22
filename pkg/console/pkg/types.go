@@ -10,13 +10,13 @@ const ConsoleAPIVersion = "core.flowgent.io/v1"
 
 // ExportData is the root structure for import/export of all resources.
 type ExportData struct {
-	LLMs       []entities.LlmProviderInfo   `json:"llms" yaml:"llms"`
-	Channels   []entities.NotifyChannelInfo `json:"channels" yaml:"channels"`
-	MCPs       []entities.McpInfo           `json:"mcps" yaml:"mcps"`
-	Skills     []entities.FlowInfo          `json:"skills" yaml:"skills"`
-	AgentDefs  []entities.AgentInfo         `json:"agentDefs" yaml:"agentDefs"`
-	AgentFlows []entities.FlowInfo          `json:"agentFlows" yaml:"agentFlows"`
-	FlowRuns   []entities.FlowRunInfo       `json:"flowRuns" yaml:"flowRuns"`
+	LLMs        []entities.LlmProviderInfo   `json:"llms" yaml:"llms"`
+	Channels    []entities.NotifyChannelInfo `json:"channels" yaml:"channels"`
+	MCPs        []entities.McpInfo           `json:"mcps" yaml:"mcps"`
+	Skills      []entities.AgentGraph        `json:"skills" yaml:"skills"`
+	AgentDefs   []entities.AgentInfo         `json:"agentDefs" yaml:"agentDefs"`
+	AgentGraphs []entities.AgentGraph        `json:"agentGraphs" yaml:"agentGraphs"`
+	GraphRuns   []entities.GraphRun          `json:"graphRuns" yaml:"graphRuns"`
 }
 
 // ResourceMetadata holds the metadata block common to all console resources.
@@ -31,7 +31,7 @@ type ResourceMetadata struct {
 // ResourceImport is the canonical single-resource envelope:
 //
 //	consoleVersion: core.flowgent.io/v1
-//	kind: Agent|Flow|FlowRun|MCP|LLMProvider|NotifyChannel|Skill
+//	kind: Agent|AgentGraph|GraphRun|MCP|LLMProvider|NotifyChannel|Skill
 //	metadata:
 //	  name: xxx
 //	  namespace: default

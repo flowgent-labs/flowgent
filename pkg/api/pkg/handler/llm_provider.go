@@ -77,7 +77,7 @@ func normalizeLlmSecret(p *entities.LlmProviderInfo) error {
 }
 
 func normalizeLlmIdentity(p *entities.LlmProviderInfo) error {
-	p.NormalizeAliases()
+	p.Normalize()
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" {
 		p.Name = strings.TrimSpace(p.Provider)

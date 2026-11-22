@@ -32,7 +32,7 @@ type LlmProviderInfo struct {
 	Labels        map[string]string `json:"labels,omitempty" yaml:"labels,omitempty" db:"-"`
 }
 
-func (p *LlmProviderInfo) NormalizeAliases() {
+func (p *LlmProviderInfo) Normalize() {
 	if p.Name == "" {
 		p.Name = p.Provider
 	}

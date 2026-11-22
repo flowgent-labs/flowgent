@@ -2,20 +2,20 @@ import { ApiClient, namespacePath } from './client'
 import type {
   AgentRepository,
   AnalyticsRepository,
-  FlowRepository,
+  AgentGraphRepository,
   KnowledgeRepository,
   LlmRepository,
   McpRepository,
   NotificationRepository,
   RuntimeSkillRepository,
   SkillRepository,
-  RunRepository,
+  GraphRunRepository,
   TraceRepository,
 } from '../domain/repositories'
 import type {
   Agent,
-  Flow,
-  FlowRun,
+  AgentGraph,
+  GraphRun,
   HumanApproval,
   KnowledgeEntry,
   LlmProvider,
@@ -23,11 +23,11 @@ import type {
   NotificationChannel,
   NotificationDelivery,
   Page,
-  RunFilters,
-  RunMetrics,
-  RunTrace,
+  GraphRunFilters,
+  GraphRunMetrics,
+  GraphRunTrace,
   SkillDefinition,
-  TaskRun,
+  NodeRun,
 } from '../domain/types'
 
 function queryString(input: Record<string, string | number | undefined>): string {
@@ -55,41 +55,47 @@ function withoutAuditFields<T extends object>(
   return payload
 }
 
-export class HttpFlowRepository implements FlowRepository {
+export class HttpAgentGraphRepository implements AgentGraphRepository {
   constructor(private readonly api: ApiClient) {}
 
-  list(namespace: string, signal?: AbortSignal): Promise<Flow[]> {
-    return this.api.request<Flow[]>(namespacePath(namespace, 'flows'), {
+  list(namespace: string, signal?: AbortSignal): Promise<AgentGraph[]> {
+    return this.api.request<AgentGraph[]>(namespacePath(namespace, 'agent-graphs'), {
       signal,
     })
   }
 
   get(namespace: string, id: string, signal?: AbortSignal) {
-    return this.api.request<Flow>(namespacePath(namespace, `flows/${encodeURIComponent(id)}`), {
-      signal,
-    })
+    return this.api.request<AgentGraph>(
+      namespacePath(namespace, `agent-graphs/${encodeURIComponent(id)}`),
+      {
+        signal,
+      },
+    )
   }
 
-  save(namespace: string, flow: Flow, isNew: boolean) {
+  save(namespace: string, graph: AgentGraph, isNew: boolean) {
     const path = namespacePath(
       namespace,
-      isNew ? 'flows' : `flows/${encodeURIComponent(flow.name)}`,
+      isNew ? 'agent-graphs' : `agent-graphs/${encodeURIComponent(graph.name)}`,
     )
-    return this.api.request<Flow>(path, {
+    return this.api.request<AgentGraph>(path, {
       method: isNew ? 'POST' : 'PUT',
-      body: JSON.stringify(withoutAuditFields(flow)),
+      body: JSON.stringify(withoutAuditFields(graph)),
     })
   }
 
   remove(namespace: string, id: string) {
-    return this.api.request<void>(namespacePath(namespace, `flows/${encodeURIComponent(id)}`), {
-      method: 'DELETE',
-    })
+    return this.api.request<void>(
+      namespacePath(namespace, `agent-graphs/${encodeURIComponent(id)}`),
+      {
+        method: 'DELETE',
+      },
+    )
   }
 
   async trigger(namespace: string, id: string, vars: Record<string, unknown>) {
-    const result = await this.api.request<{ run_id: string }>(
-      namespacePath(namespace, `flows/${encodeURIComponent(id)}/trigger`),
+    const result = await this.api.request<{ graph_run_id: string }>(
+      namespacePath(namespace, `agent-graphs/${encodeURIComponent(id)}/trigger`),
       {
         method: 'POST',
         body: JSON.stringify({
@@ -98,21 +104,21 @@ export class HttpFlowRepository implements FlowRepository {
         }),
       },
     )
-    return result.run_id
+    return result.graph_run_id
   }
 }
 
 export class HttpRuntimeSkillRepository implements RuntimeSkillRepository {
   constructor(private readonly api: ApiClient) {}
 
-  list(namespace: string, signal?: AbortSignal): Promise<Flow[]> {
-    return this.api.request<Flow[]>(namespacePath(namespace, 'skills'), {
+  list(namespace: string, signal?: AbortSignal): Promise<AgentGraph[]> {
+    return this.api.request<AgentGraph[]>(namespacePath(namespace, 'skills'), {
       signal,
     })
   }
 
-  save(namespace: string, skill: Flow, isNew: boolean) {
-    return this.api.request<Flow>(
+  save(namespace: string, skill: AgentGraph, isNew: boolean) {
+    return this.api.request<AgentGraph>(
       namespacePath(namespace, isNew ? 'skills' : `skills/${encodeURIComponent(skill.id)}`),
       {
         method: isNew ? 'POST' : 'PUT',
@@ -128,59 +134,59 @@ export class HttpRuntimeSkillRepository implements RuntimeSkillRepository {
   }
 }
 
-export class HttpRunRepository implements RunRepository {
+export class HttpGraphRunRepository implements GraphRunRepository {
   constructor(private readonly api: ApiClient) {}
 
-  list(namespace: string, filters: RunFilters = {}, signal?: AbortSignal) {
+  list(namespace: string, filters: GraphRunFilters = {}, signal?: AbortSignal) {
     const query = queryString({
       page: filters.page ?? 1,
       size: filters.size ?? 100,
       status: filters.status,
       runtime_mode: filters.runtimeMode,
-      flow_id: filters.flowId,
+      agent_graph_id: filters.graphId,
     })
-    const resource = filters.flowId
-      ? `flows/${encodeURIComponent(filters.flowId)}/runs${query}`
-      : `runs${query}`
-    return this.api.request<Page<FlowRun>>(namespacePath(namespace, resource), { signal })
+    const resource = `graph-runs${query}`
+    return this.api.request<Page<GraphRun>>(namespacePath(namespace, resource), { signal })
   }
-  get(namespace: string, id: string, flowId?: string, signal?: AbortSignal) {
-    return this.api.request<FlowRun>(namespacePath(namespace, runResource(id, flowId)), { signal })
+  get(namespace: string, id: string, graphId?: string, signal?: AbortSignal) {
+    return this.api.request<GraphRun>(namespacePath(namespace, runResource(id, graphId)), {
+      signal,
+    })
   }
-  tasks(namespace: string, id: string, flowId?: string, signal?: AbortSignal) {
-    return this.api.request<TaskRun[]>(
-      namespacePath(namespace, `${runResource(id, flowId)}/node-runs`),
+  nodeRuns(namespace: string, id: string, graphId?: string, signal?: AbortSignal) {
+    return this.api.request<NodeRun[]>(
+      namespacePath(namespace, `${runResource(id, graphId)}/node-runs`),
       { signal },
     )
   }
-  approvals(namespace: string, id: string, flowId?: string, signal?: AbortSignal) {
+  approvals(namespace: string, id: string, graphId?: string, signal?: AbortSignal) {
     return this.api.request<HumanApproval[]>(
-      namespacePath(namespace, `${runResource(id, flowId)}/approvals`),
+      namespacePath(namespace, `${runResource(id, graphId)}/approvals`),
       { signal },
     )
   }
   async resolveApproval(
     namespace: string,
-    runId: string,
+    graphRunId: string,
     approvalId: string,
     decision: 'approve' | 'reject',
-    flowId?: string,
+    graphId?: string,
   ) {
     await this.api.request<{ status: string }>(
       namespacePath(
         namespace,
-        `${runResource(runId, flowId)}/approvals/${encodeURIComponent(approvalId)}/${decision}`,
+        `${runResource(graphRunId, graphId)}/approvals/${encodeURIComponent(approvalId)}/${decision}`,
       ),
       { method: 'POST', body: JSON.stringify({}) },
     )
   }
-  cancel(namespace: string, id: string, flowId?: string) {
-    return this.api.request<void>(namespacePath(namespace, `${runResource(id, flowId)}/cancel`), {
+  cancel(namespace: string, id: string, graphId?: string) {
+    return this.api.request<void>(namespacePath(namespace, `${runResource(id, graphId)}/cancel`), {
       method: 'POST',
     })
   }
-  remove(namespace: string, id: string, flowId?: string) {
-    return this.api.request<void>(namespacePath(namespace, runResource(id, flowId)), {
+  remove(namespace: string, id: string, graphId?: string) {
+    return this.api.request<void>(namespacePath(namespace, runResource(id, graphId)), {
       method: 'DELETE',
     })
   }
@@ -189,25 +195,26 @@ export class HttpRunRepository implements RunRepository {
 export class HttpTraceRepository implements TraceRepository {
   constructor(private readonly api: ApiClient) {}
 
-  getRunTrace(namespace: string, runId: string, flowId?: string, signal?: AbortSignal) {
-    return this.api.request<RunTrace>(
-      namespacePath(namespace, `${runResource(runId, flowId)}/trace`),
+  getGraphRunTrace(namespace: string, graphRunId: string, graphId?: string, signal?: AbortSignal) {
+    return this.api.request<GraphRunTrace>(
+      namespacePath(namespace, `${runResource(graphRunId, graphId)}/trace`),
       { signal },
     )
   }
 }
 
-function runResource(runId: string, flowId?: string): string {
-  const run = encodeURIComponent(runId)
-  return flowId ? `flows/${encodeURIComponent(flowId)}/runs/${run}` : `runs/${run}`
+function runResource(graphRunId: string, graphId?: string): string {
+  const run = encodeURIComponent(graphRunId)
+  void graphId
+  return `graph-runs/${run}`
 }
 
 export class HttpAnalyticsRepository implements AnalyticsRepository {
   constructor(private readonly api: ApiClient) {}
   metrics(namespace: string, hours: number, signal?: AbortSignal) {
     const buckets = hours <= 24 ? Math.min(hours, 12) : 14
-    return this.api.request<RunMetrics>(
-      namespacePath(namespace, `runs/metrics${queryString({ hours, buckets })}`),
+    return this.api.request<GraphRunMetrics>(
+      namespacePath(namespace, `graph-runs/metrics${queryString({ hours, buckets })}`),
       { signal },
     )
   }
@@ -215,7 +222,7 @@ export class HttpAnalyticsRepository implements AnalyticsRepository {
 
 export class HttpKnowledgeRepository implements KnowledgeRepository {
   constructor(private readonly api: ApiClient) {}
-  async list(namespace: string, scope: 'namespace' | 'flow' | 'run', signal?: AbortSignal) {
+  async list(namespace: string, scope: 'namespace' | 'graph' | 'run', signal?: AbortSignal) {
     const response = await this.api.request<Page<KnowledgeEntry>>(
       namespacePath(namespace, `knowledge${queryString({ scope, page: 1, size: 500 })}`),
       { signal },

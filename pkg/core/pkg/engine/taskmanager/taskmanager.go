@@ -2,6 +2,7 @@ package taskmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,10 +25,10 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// TaskStateStore is the narrow state interface TM workers need for persistence.
+// NodeRunStateStore is the narrow state interface TM workers need for persistence.
 // Implementations call the apiserver REST API (never direct DB).
-type TaskStateStore interface {
-	SaveTask(ctx context.Context, task *entities.TaskRunInfo) error
+type NodeRunStateStore interface {
+	SaveNodeRun(ctx context.Context, noderun *entities.NodeRun) error
 }
 
 // TaskManagerConfig is the startup configuration for a TaskManager.
@@ -35,7 +36,7 @@ type TaskManagerConfig struct {
 	ID                       string
 	SlotCount                int
 	Messager                 messager.IMessager
-	State                    TaskStateStore
+	State                    NodeRunStateStore
 	ApprovalInfo             executor.HumanApprovalStore
 	APIServerURL             string // API server URL for runtime resource resolution
 	Namespace                string // default namespace for API calls
@@ -56,7 +57,7 @@ type TaskManager struct {
 	slotWorkers       []*SlotWorker
 	router            *executor.TaskExecutorRouter
 	queue             messager.IMessager
-	state             TaskStateStore
+	state             NodeRunStateStore
 	metrics           *TaskManagerMetrics
 	logger            *utils.Logger
 	namespace         string
@@ -93,7 +94,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 		if mcps, err := mcpLoader.ListMCPs(context.Background()); err == nil {
 			slog.Info("taskmanager loaded MCP servers", "count", len(mcps))
 			for _, m := range mcps {
-				m.NormalizeAliases()
+				m.Normalize()
 				slog.Info("taskmanager MCP candidate", "name", m.Name, "enabled", m.Enabled, "transport", m.Transport)
 				if !m.Enabled || m.Name == "" {
 					slog.Info("taskmanager skip MCP", "name", m.Name, "enabled", m.Enabled)
@@ -137,7 +138,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 	router.Register(&executor.CommitteeExecutor{})
 	router.Register(&executor.MapExecutor{})
 	router.Register(&executor.JoinExecutor{})
-	router.Register(&executor.SubflowExecutor{})
+	router.Register(&executor.SubGraphExecutor{})
 	router.Register(executor.NewHumanExecutor(cfg.ApprovalInfo))
 	router.Register(&executor.NoopExecutor{})
 	router.Register(&executor.SkillExecutor{})
@@ -170,6 +171,7 @@ func NewTaskManager(cfg *TaskManagerConfig) (*TaskManager, error) {
 		embeddedRunner := sandbox.NewFlowgentSandboxManager(
 			cfg.ID+"-sb", cfg.SandboxMessager, "", cfg.SandboxWorkspace, cfg.SandboxPolicy)
 		embeddedRunner.SetScope(cfg.Namespace, cfg.RuntimeClusterID)
+		embeddedRunner.SetCheckpointWriter(apiClient)
 		go func() {
 			slog.Info("embedded sandbox runner started", "id", embeddedRunner.GetID())
 			if err := embeddedRunner.Start(context.Background()); err != nil {
@@ -190,7 +192,7 @@ func (tm *TaskManager) Start(ctx context.Context) error {
 	// Readiness is emitted only after every slot handler is registered. The
 	// JobManager waits for this scoped lease before publishing the first plan.
 	startHeartbeat(ctx, tm.ID, tm.namespace, tm.runtimeClusterID, tm.queue, tm.heartbeatInterval)
-	tm.logger.Info("task manager started", "id", tm.ID, "slots", len(tm.slotWorkers))
+	tm.logger.Info("noderun manager started", "id", tm.ID, "slots", len(tm.slotWorkers))
 	return nil
 }
 
@@ -204,56 +206,99 @@ func (tm *TaskManager) Stop() {
 }
 
 // ExecutePlan executes a single ExecutionPlan via the router.
-func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.ExecutionPlan, task *entities.TaskRunInfo) (*entities.TaskResult, error) {
-	if task == nil {
-		task = &entities.TaskRunInfo{}
+func (tm *TaskManager) ExecutePlan(ctx context.Context, plan *entities.ExecutionPlan, noderun *entities.NodeRun) (*entities.NodeResult, error) {
+	if noderun == nil {
+		noderun = &entities.NodeRun{}
 	}
-	if task.ID == "" {
-		task.BaseEntity.ID = plan.TaskID
+	if noderun.ID == "" {
+		noderun.BaseEntity.ID = plan.NodeRunID
 	}
-	task.RunID = plan.AgentFlowRunID
-	task.NodeKey = plan.NodeID
-	task.Input = plan.Input
-	task.Attempt = plan.RetryCount + 1
-	task.MaxRetries = plan.MaxRetries
-	task.ExecutionID = fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1)
-	task.Sequence = plan.RetryCount + 1
-	task.NormalizeAliases()
+	noderun.GraphRunID = plan.GraphRunID
+	noderun.NodeInstanceID = plan.NodeInstanceID
+	noderun.GraphRevision = plan.GraphRevision
+	noderun.SubGraphInstanceID = plan.SubGraphInstanceID
+	noderun.GraphNodeID = plan.GraphNodeID
+	noderun.NodeInstanceID = plan.NodeInstanceID
+	noderun.DispatchEpoch = plan.DispatchEpoch
+	noderun.FencingToken = plan.FencingToken
+	noderun.Metadata = map[string]any{"node": plan.Node}
+	noderun.Input = plan.Input
+	noderun.Attempt = plan.RetryCount + 1
+	noderun.MaxRetries = plan.MaxRetries
+	noderun.ExecutionID = fmt.Sprintf("%s-attempt-%d", plan.PlanID, plan.RetryCount+1)
+	noderun.Sequence = plan.RetryCount + 1
+	noderun.Normalize()
 	startedAt := time.Now().UTC()
 	if plan.StartedAt != nil {
 		startedAt = *plan.StartedAt
 	} else {
 		plan.StartedAt = &startedAt
 	}
-	task.StartedAt = &startedAt
+	noderun.StartedAt = &startedAt
+	noderun.Status = entities.NodeRunRunning
+	plan.State = entities.NodeRunRunning
+	if tm.state != nil {
+		if err := tm.state.SaveNodeRun(ctx, noderun); err != nil {
+			return nil, err
+		}
+	}
 	scope := map[string]map[string]any{"input": plan.Input}
 	result, err := tm.router.Execute(ctx, plan, scope)
 	if err != nil {
-		task.Status = entities.Failed
-		task.Error = err.Error()
+		noderun.Status = entities.NodeRunFailed
+		noderun.Error = err.Error()
 		now := time.Now().UTC()
-		task.FinishedAt = &now
+		noderun.FinishedAt = &now
 		plan.FinishedAt = &now
 		if tm.state != nil {
-			_ = tm.state.SaveTask(ctx, task)
+			if saveErr := tm.state.SaveNodeRun(ctx, noderun); saveErr != nil {
+				return nil, fmt.Errorf("persist noderun result: %w", saveErr)
+			}
 		}
 		return nil, err
 	}
 	if result == nil {
 		return nil, fmt.Errorf("executor returned no result")
 	}
-	task.Output = result.Output
-	task.Error = result.Error
+	noderun.WorkspaceSnapshot = result.WorkspaceSnapshot
+	if result.WorkspaceSnapshot != nil {
+		noderun.WorkspaceVersion = result.WorkspaceSnapshot.ID
+	}
+	plan.Result = result
+	if result.Checkpoint != nil {
+		plan.Checkpoint = result.Checkpoint
+		data, _ := json.Marshal(result.Checkpoint)
+		_ = json.Unmarshal(data, &noderun.Checkpoint)
+	}
+	noderun.Output = result.Output
+	noderun.Error = result.Error
+	if result.State == entities.NodeRunWaiting {
+		noderun.Status = entities.NodeRunWaiting
+		noderun.FinishedAt = nil
+		plan.FinishedAt = nil
+		if tm.state != nil {
+			if err := tm.state.SaveNodeRun(ctx, noderun); err != nil {
+				return nil, err
+			}
+		}
+		return result, nil
+	}
 	if result.Error != "" {
-		task.Status = entities.Failed
+		noderun.Status = entities.NodeRunFailed
 	} else {
-		task.Status = entities.Success
+		noderun.Status = entities.NodeRunSucceeded
 	}
 	now := time.Now().UTC()
-	task.FinishedAt = &now
+	noderun.FinishedAt = &now
 	plan.FinishedAt = &now
 	if tm.state != nil {
-		_ = tm.state.SaveTask(ctx, task)
+		if saveErr := tm.state.SaveNodeRun(ctx, noderun); saveErr != nil {
+			return nil, fmt.Errorf("persist noderun result: %w", saveErr)
+		}
+	}
+	if noderun.Status == entities.NodeRunSucceeded {
+		slog.Info("taskmanager noderun succeeded", "tm_id", tm.ID, "plan_id", plan.PlanID,
+			"node_run_id", noderun.ID, "node_instance_id", plan.NodeInstanceID)
 	}
 	return result, nil
 }
@@ -283,6 +328,6 @@ func NewTaskManagerMetrics() *TaskManagerMetrics {
 	return m
 }
 
-func taskTypeAttr(t entities.TaskType) attribute.KeyValue {
-	return attribute.String("task_type", string(t))
+func taskTypeAttr(t entities.NodeKind) attribute.KeyValue {
+	return attribute.String("node_kind", string(t))
 }

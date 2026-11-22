@@ -14,6 +14,7 @@ import (
 
 	"github.com/flowgent-labs/flowgent/cache/pkg"
 	"github.com/flowgent-labs/flowgent/common/pkg/resourceid"
+	"github.com/flowgent-labs/flowgent/core/pkg/client"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
 	messager "github.com/flowgent-labs/flowgent/messager/pkg"
 	"github.com/flowgent-labs/flowgent/model/pkg"
@@ -55,9 +56,11 @@ type RMState struct {
 // the current TM/sandbox replica counts and slot allocation without querying K8s.
 // execResult is the TM→JM result published to exec/results.
 type execResult struct {
+	NodeRunID      string         `json:"node_run_id"`
+	NodeInstanceID string         `json:"node_instance_id"`
+	DispatchEpoch  int64          `json:"dispatch_epoch"`
 	PlanID         string         `json:"plan_id"`
-	AgentFlowRunID string         `json:"agentflow_run_id"`
-	NodeID         string         `json:"node_id"`
+	GraphRunID     string         `json:"graph_run_id"`
 	State          string         `json:"state"`
 	Output         map[string]any `json:"output,omitempty"`
 	Error          string         `json:"error,omitempty"`
@@ -113,8 +116,8 @@ type KubernetesResourceManager struct {
 	nodeSelector             map[string]string
 	ownerNamespaceID         string
 	runtimeClusterID         string
-	ownerFlowID              string
-	ownerRunID               string
+	ownerAgentGraphID        string
+	ownerGraphRunID          string
 	runtimeMode              entities.RuntimeMode
 	ownerJobManagerName      string
 	ownerJobManagerNamespace string
@@ -129,8 +132,8 @@ type KubernetesResourceManager struct {
 const (
 	LabelNamespaceID               = "flowgent.io/namespace"
 	LabelRuntimeClusterID          = "flowgent.io/runtime-cluster"
-	LabelFlowID                    = "flowgent.io/flow"
-	LabelRunID                     = "flowgent.io/run"
+	LabelAgentGraphID              = "flowgent.io/graph"
+	LabelGraphRunID                = "flowgent.io/run"
 	LabelRuntimeMode               = "flowgent.io/runtime-mode"
 	LabelManagedBy                 = "flowgent.io/managed-by"
 	LabelParentJobManager          = "flowgent.io/parent-jobmanager"
@@ -239,8 +242,8 @@ func NewKubernetesResourceManager(cfg *ResourceManagerConfig) (*KubernetesResour
 		nodeSelector:             cfg.NodeSelector,
 		ownerNamespaceID:         cfg.OwnerNamespaceID,
 		runtimeClusterID:         cfg.RuntimeClusterID,
-		ownerFlowID:              cfg.OwnerFlowID,
-		ownerRunID:               cfg.OwnerRunID,
+		ownerAgentGraphID:        cfg.OwnerAgentGraphID,
+		ownerGraphRunID:          cfg.OwnerGraphRunID,
 		runtimeMode:              cfg.RuntimeMode,
 		ownerJobManagerName:      cfg.OwnerJobManagerName,
 		ownerJobManagerNamespace: cfg.OwnerJobManagerNamespace,
@@ -346,7 +349,7 @@ func (s *KubernetesResourceManager) waitForRuntimeReady(ctx context.Context, rol
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("%s worker subscription not ready for %s/%s", role, defaultIfEmpty(s.ownerNamespaceID, "default"), s.ownerFlowID)
+			return fmt.Errorf("%s worker subscription not ready for %s/%s", role, defaultIfEmpty(s.ownerNamespaceID, "default"), s.ownerAgentGraphID)
 		case <-signal:
 		}
 	}
@@ -366,7 +369,7 @@ func (s *KubernetesResourceManager) Start(ctx context.Context) {
 		"slots_per_tm", s.slotsPerTM, "idle_timeout", s.idleTimeout)
 }
 
-func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.TaskResult, error) {
+func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities.ExecutionPlan) (*entities.NodeResult, error) {
 	if s.q == nil {
 		return nil, fmt.Errorf("kubernetes rm: queue not set")
 	}
@@ -388,7 +391,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	if err := s.waitForRuntimeReady(ctx, "taskmanager"); err != nil {
 		return nil, fmt.Errorf("kubernetes rm taskmanager readiness: %w", err)
 	}
-	if plan.TaskType == entities.TaskSandbox && s.sandboxEnabled {
+	if plan.NodeKind == entities.SandboxNode && s.sandboxEnabled {
 		atomic.AddInt64(&s.sandboxPendingTriggers, 1)
 		defer atomic.AddInt64(&s.sandboxPendingTriggers, -1)
 		if err := s.ensureRuntimeReadySubscription(ctx, "sandbox"); err != nil {
@@ -402,7 +405,7 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 		}
 	}
 
-	runID := plan.AgentFlowRunID
+	runID := plan.GraphRunID
 	resultCh := make(chan execResult, 1)
 
 	// Subscribe to exec/results for this run (once) and register the plan's
@@ -410,16 +413,22 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 	s.runResultsMu.Lock()
 	if s.runResults[runID] == nil {
 		s.runResults[runID] = make(map[string]chan execResult)
-		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.Namespace, plan.AgentFlowDefinitionID, runID),
+		s.q.Subscribe(ctx, messager.ExecResultsTopic(plan.Namespace, plan.AgentGraphID, runID),
 			func(topic string, payload []byte) {
 				var er execResult
 				if err := json.Unmarshal(payload, &er); err != nil {
 					return
 				}
 				s.runResultsMu.Lock()
-				ch, ok := s.runResults[runID][er.NodeID]
+				key := er.NodeRunID
+				if key != "" {
+					key = fmt.Sprintf("%s:%d", key, er.DispatchEpoch)
+				} else {
+					key = er.NodeInstanceID
+				}
+				ch, ok := s.runResults[runID][key]
 				if ok {
-					delete(s.runResults[runID], er.NodeID)
+					delete(s.runResults[runID], key)
 				}
 				s.runResultsMu.Unlock()
 				if ok {
@@ -430,35 +439,76 @@ func (s *KubernetesResourceManager) Schedule(ctx context.Context, plan *entities
 				}
 			})
 	}
-	s.runResults[runID][plan.NodeID] = resultCh
+	resultKey := plan.NodeInstanceID
+	if plan.DispatchEpoch > 0 {
+		resultKey = fmt.Sprintf("%s:%d", plan.NodeRunID, plan.DispatchEpoch)
+	}
+	s.runResults[runID][resultKey] = resultCh
 	s.runResultsMu.Unlock()
 
 	plan.TraceContext = make(map[string]string)
 	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(plan.TraceContext))
 	payload, _ := json.Marshal(plan)
-	if err := s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentFlowDefinitionID, runID), &messager.InterMessage{
-		ID: plan.PlanID,
-		Headers: map[string]string{
-			"task_run_id": plan.AgentFlowRunID,
-			"node_id":     plan.NodeID,
-		},
-		Payload: payload,
-	}); err != nil {
-		s.runResultsMu.Lock()
-		delete(s.runResults[runID], plan.NodeID)
-		s.runResultsMu.Unlock()
-		return nil, fmt.Errorf("kubernetes rm publish: %w", err)
+	var publishErr error
+	if plan.DispatchEpoch > 0 {
+		if s.apiServerURL == "" {
+			return nil, fmt.Errorf("durable dispatch requires API Server")
+		}
+		publishErr = client.NewFlowgentClient(s.apiServerURL).DispatchPlan(ctx, plan.Namespace, plan)
+		if publishErr != nil {
+			s.runResultsMu.Lock()
+			delete(s.runResults[runID], resultKey)
+			s.runResultsMu.Unlock()
+			return nil, publishErr
+		}
+	} else {
+		publishErr = s.q.Publish(ctx, messager.ExecPlansTopic(plan.Namespace, plan.RuntimeClusterID, plan.AgentGraphID, runID), &messager.InterMessage{
+			ID: plan.PlanID,
+			Headers: map[string]string{
+				"node_run_id":      plan.GraphRunID,
+				"node_instance_id": plan.NodeInstanceID,
+			},
+			Payload: payload,
+		})
+		if publishErr != nil {
+			s.runResultsMu.Lock()
+			delete(s.runResults[runID], resultKey)
+			s.runResultsMu.Unlock()
+			return nil, fmt.Errorf("kubernetes rm publish: %w", publishErr)
+		}
+
 	}
 
-	// Wait for the actual execution result from the TM.
-	select {
-	case <-ctx.Done():
-		s.runResultsMu.Lock()
-		delete(s.runResults[runID], plan.NodeID)
-		s.runResultsMu.Unlock()
-		return nil, fmt.Errorf("kubernetes rm: plan %s timed out waiting for TM result", plan.PlanID)
-	case er := <-resultCh:
-		return &entities.TaskResult{Output: er.Output, Error: er.Error}, nil
+	readCommitted := func() (*entities.NodeResult, bool) {
+		if s.apiServerURL == "" || plan.DispatchEpoch == 0 {
+			return nil, false
+		}
+		noderun, err := client.NewFlowgentClient(s.apiServerURL).GetNodeRun(ctx, plan.Namespace, runID, plan.NodeRunID)
+		if err == nil && noderun.NodeInstanceID == plan.NodeInstanceID && noderun.DispatchEpoch == plan.DispatchEpoch && (noderun.Status == entities.NodeRunSucceeded || noderun.Status == entities.NodeRunFailed) {
+			return noderun.Result(), true
+		}
+		return nil, false
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	defer func() { s.runResultsMu.Lock(); delete(s.runResults[runID], resultKey); s.runResultsMu.Unlock() }()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("kubernetes rm: plan %s timed out waiting for TM result", plan.PlanID)
+		case er := <-resultCh:
+			if plan.DispatchEpoch > 0 {
+				if result, ok := readCommitted(); ok {
+					return result, nil
+				}
+				continue
+			}
+			return &entities.NodeResult{Output: er.Output, Error: er.Error}, nil
+		case <-ticker.C:
+			if result, ok := readCommitted(); ok {
+				return result, nil
+			}
+		}
 	}
 }
 
@@ -937,11 +987,11 @@ func (s *KubernetesResourceManager) tmLabels() map[string]string {
 	if s.runtimeMode != "" {
 		labels[LabelRuntimeMode] = string(s.runtimeMode)
 	}
-	if s.ownerFlowID != "" {
-		labels[LabelFlowID] = s.ownerFlowID
+	if s.ownerAgentGraphID != "" {
+		labels[LabelAgentGraphID] = s.ownerAgentGraphID
 	}
-	if s.ownerRunID != "" {
-		labels[LabelRunID] = s.ownerRunID
+	if s.ownerGraphRunID != "" {
+		labels[LabelGraphRunID] = s.ownerGraphRunID
 	}
 	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels
@@ -964,11 +1014,11 @@ func (s *KubernetesResourceManager) sandboxLabels() map[string]string {
 	if s.runtimeMode != "" {
 		labels[LabelRuntimeMode] = string(s.runtimeMode)
 	}
-	if s.ownerFlowID != "" {
-		labels[LabelFlowID] = s.ownerFlowID
+	if s.ownerAgentGraphID != "" {
+		labels[LabelAgentGraphID] = s.ownerAgentGraphID
 	}
-	if s.ownerRunID != "" {
-		labels[LabelRunID] = s.ownerRunID
+	if s.ownerGraphRunID != "" {
+		labels[LabelGraphRunID] = s.ownerGraphRunID
 	}
 	labels[LabelManagedBy] = defaultIfEmpty(s.managedByLabelValue, LabelValueRuntimeCluster)
 	return labels

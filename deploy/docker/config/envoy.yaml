@@ -1,0 +1,38 @@
+static_resources:
+  listeners:
+  - name: http
+    address:
+      socket_address: {address: 0.0.0.0, port_value: 8080}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: flowgent
+          route_config:
+            name: flowgent
+            virtual_hosts:
+            - name: flowgent
+              domains: ["*"]
+              routes:
+              - match: {prefix: /api/}
+                route: {cluster: api}
+              - match: {prefix: /}
+                route: {cluster: web}
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+  - name: api
+    type: STRICT_DNS
+    connect_timeout: 2s
+    load_assignment:
+      cluster_name: api
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: flowgent, port_value: 9999}}}}]}]
+  - name: web
+    type: STRICT_DNS
+    connect_timeout: 2s
+    load_assignment:
+      cluster_name: web
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: web, port_value: 8080}}}}]}]

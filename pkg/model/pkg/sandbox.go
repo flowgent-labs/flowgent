@@ -1,5 +1,7 @@
 package model
 
+import "encoding/json"
+
 // SandboxResources defines CPU/memory limits for a sandbox execution or pod.
 type SandboxResources struct {
 	CPU    string `json:"cpu,omitempty" yaml:"cpu,omitempty"`
@@ -9,10 +11,16 @@ type SandboxResources struct {
 // SandboxTrigger is the message published from SandboxExecutor (TM side) to
 // SandboxRunner pods via MQTT.
 type SandboxTrigger struct {
+	AgentGraphName   string            `json:"agent_graph_name"`
+	Checkpoint       json.RawMessage   `json:"checkpoint,omitempty"`
+	Attempt          int               `json:"attempt"`
+	NodeRunID        string            `json:"node_run_id"`
+	NodeInstanceID   string            `json:"node_instance_id"`
+	DispatchEpoch    int64             `json:"dispatch_epoch"`
 	Namespace        string            `json:"namespace_id,omitempty"`
 	RuntimeClusterID string            `json:"runtime_cluster_id"`
-	FlowID           string            `json:"flow_id"`
-	RunID            string            `json:"run_id"`
+	AgentGraphID     string            `json:"agent_graph_id"`
+	GraphRunID       string            `json:"graph_run_id"`
 	PlanID           string            `json:"plan_id"`
 	ScriptPath       string            `json:"script_path"`
 	Runtime          string            `json:"runtime"`
@@ -52,19 +60,19 @@ type NetworkPolicy struct {
 	Denied  []string `json:"denied,omitempty" yaml:"denied,omitempty"`
 }
 
-// SandboxPolicyOverride allows per-flow or per-node policy overrides.
+// SandboxPolicyOverride allows per-graph or per-node policy overrides.
 type SandboxPolicyOverride struct {
 	Network   *NetworkPolicy    `json:"network,omitempty" yaml:"network,omitempty"`
 	Timeout   string            `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	Resources *SandboxResources `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
-func EffectiveNetworkPolicy(global *NetworkPolicy, flowOverride, nodeOverride *NetworkPolicy) *NetworkPolicy {
+func EffectiveNetworkPolicy(global *NetworkPolicy, graphOverride, nodeOverride *NetworkPolicy) *NetworkPolicy {
 	if nodeOverride != nil {
 		return nodeOverride
 	}
-	if flowOverride != nil {
-		return flowOverride
+	if graphOverride != nil {
+		return graphOverride
 	}
 	if global != nil {
 		return global
@@ -72,12 +80,12 @@ func EffectiveNetworkPolicy(global *NetworkPolicy, flowOverride, nodeOverride *N
 	return &NetworkPolicy{Mode: "none"}
 }
 
-func EffectiveTimeout(globalDefault, globalMax, flowTimeout, nodeTimeout string) string {
+func EffectiveTimeout(globalDefault, globalMax, graphTimeout, nodeTimeout string) string {
 	if nodeTimeout != "" {
 		return nodeTimeout
 	}
-	if flowTimeout != "" {
-		return flowTimeout
+	if graphTimeout != "" {
+		return graphTimeout
 	}
 	if globalDefault != "" {
 		return globalDefault
@@ -85,12 +93,12 @@ func EffectiveTimeout(globalDefault, globalMax, flowTimeout, nodeTimeout string)
 	return "120s"
 }
 
-func EffectiveResources(globalDefault, globalMax, flowRes, nodeRes *SandboxResources) *SandboxResources {
+func EffectiveResources(globalDefault, globalMax, graphRes, nodeRes *SandboxResources) *SandboxResources {
 	if nodeRes != nil {
 		return nodeRes
 	}
-	if flowRes != nil {
-		return flowRes
+	if graphRes != nil {
+		return graphRes
 	}
 	if globalDefault != nil {
 		return globalDefault

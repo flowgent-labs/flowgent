@@ -1,0 +1,6 @@
+services:
+  ldap:
+    image: ${E2E_IMAGE_LDAP}
+    volumes:
+    - ${FLOWGENT_E2E_CASE_DIR}/reports/.state/docker/ldap-config.cfg:/app/config/config.cfg:ro
+    platform: ${E2E_PLATFORM_LDAP}

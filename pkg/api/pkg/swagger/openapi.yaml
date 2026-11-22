@@ -8,47 +8,47 @@ info:
 servers:
   - url: /api/v1
 paths:
-  /{namespace}/flows:
+  /{namespace}/agent-graphs:
     get:
-      operationId: listFlows
-      summary: List stable Flows at their current revision
+      operationId: listAgentGraphs
+      summary: List stable AgentGraphs at their current revision
       parameters: [{ $ref: '#/components/parameters/Namespace' }]
       responses:
-        '200': { $ref: '#/components/responses/FlowList' }
+        '200': { $ref: '#/components/responses/AgentGraphList' }
     post:
-      operationId: createFlow
-      summary: Create a Flow and immutable revision 1
+      operationId: createAgentGraph
+      summary: Create a AgentGraph and immutable revision 1
       parameters: [{ $ref: '#/components/parameters/Namespace' }]
-      requestBody: { $ref: '#/components/requestBodies/Flow' }
+      requestBody: { $ref: '#/components/requestBodies/AgentGraph' }
       responses:
-        '201': { $ref: '#/components/responses/Flow' }
-  /{namespace}/flows/{flow_name}:
+        '201': { $ref: '#/components/responses/AgentGraph' }
+  /{namespace}/agent-graphs/{agent_graph_name}:
     parameters:
       - { $ref: '#/components/parameters/Namespace' }
-      - { $ref: '#/components/parameters/FlowName' }
+      - { $ref: '#/components/parameters/AgentGraphName' }
     get:
-      operationId: getFlow
-      summary: Get a Flow by its namespace-local name
+      operationId: getAgentGraph
+      summary: Get a AgentGraph by its namespace-local name
       responses:
-        '200': { $ref: '#/components/responses/Flow' }
+        '200': { $ref: '#/components/responses/AgentGraph' }
     put:
-      operationId: reviseFlow
-      summary: Save a new immutable Flow revision
-      requestBody: { $ref: '#/components/requestBodies/Flow' }
+      operationId: reviseAgentGraph
+      summary: Save a new immutable AgentGraph revision
+      requestBody: { $ref: '#/components/requestBodies/AgentGraph' }
       responses:
-        '200': { $ref: '#/components/responses/Flow' }
+        '200': { $ref: '#/components/responses/AgentGraph' }
     delete:
-      operationId: deleteFlow
-      summary: Retire a Flow
+      operationId: deleteAgentGraph
+      summary: Retire a AgentGraph
       responses:
-        '204': { description: Flow retired }
-  /{namespace}/flows/{flow_name}/trigger:
+        '204': { description: AgentGraph retired }
+  /{namespace}/agent-graphs/{agent_graph_name}/trigger:
     post:
-      operationId: triggerFlow
-      summary: Create a Run locked to the current Flow revision
+      operationId: triggerAgentGraph
+      summary: Create a GraphRun locked to the current AgentGraph revision
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { $ref: '#/components/parameters/FlowName' }
+        - { $ref: '#/components/parameters/AgentGraphName' }
       requestBody:
         required: true
         content:
@@ -56,14 +56,14 @@ paths:
             schema: { $ref: '#/components/schemas/TriggerRequest' }
       responses:
         '200':
-          description: Run accepted
+          description: GraphRun accepted
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TriggerResult' }
 
-  /{namespace}/runs:
+  /{namespace}/graph-runs:
     get:
-      operationId: listRuns
+      operationId: listGraphRuns
       summary: List Runs
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
@@ -72,7 +72,7 @@ paths:
         - { name: status, in: query, schema: { type: string } }
         - { name: runtime_mode, in: query, schema: { type: string, enum: [application, session] } }
         - { name: k8s_namespace, in: query, schema: { type: string } }
-        - { name: flow_id, in: query, schema: { type: string } }
+        - { name: agent_graph_id, in: query, schema: { type: string } }
       responses:
         '200':
           description: Paginated Runs
@@ -80,73 +80,73 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RunPage' }
     post:
-      operationId: createRun
-      summary: Create a Run using explicit stable Flow and revision IDs
+      operationId: createGraphRun
+      summary: Create a GraphRun using explicit stable AgentGraph and revision IDs
       parameters: [{ $ref: '#/components/parameters/Namespace' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/Run' }
+            schema: { $ref: '#/components/schemas/GraphRun' }
       responses:
         '201':
-          description: Run created
+          description: GraphRun created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Run' }
-  /{namespace}/runs/metrics:
+              schema: { $ref: '#/components/schemas/GraphRun' }
+  /{namespace}/graph-runs/metrics:
     get:
-      operationId: getRunMetrics
-      summary: Aggregate Run status and duration buckets
+      operationId: getGraphRunMetrics
+      summary: Aggregate GraphRun status and duration buckets
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
         - { name: hours, in: query, schema: { type: integer, minimum: 1, maximum: 720, default: 24 } }
         - { name: buckets, in: query, schema: { type: integer, minimum: 1, maximum: 120, default: 12 } }
       responses:
         '200':
-          description: Run metrics
+          description: GraphRun metrics
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/RunMetrics' }
-  /{namespace}/runs/{run_id}:
+              schema: { $ref: '#/components/schemas/GraphRunMetrics' }
+  /{namespace}/graph-runs/{graph_run_id}:
     parameters:
       - { $ref: '#/components/parameters/Namespace' }
-      - { $ref: '#/components/parameters/RunID' }
+      - { $ref: '#/components/parameters/GraphRunID' }
     get:
-      operationId: getRun
-      summary: Get a Run and its locked context snapshot
+      operationId: getGraphRun
+      summary: Get a GraphRun and its locked context snapshot
       responses:
-        '200': { $ref: '#/components/responses/Run' }
+        '200': { $ref: '#/components/responses/GraphRun' }
     put:
-      operationId: updateRunLifecycle
+      operationId: updateGraphRunLifecycle
       summary: Persist a narrow JobManager lifecycle transition
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/RunLifecycleUpdate' }
+            schema: { $ref: '#/components/schemas/GraphRunLifecycleUpdate' }
       responses:
-        '200': { description: Run lifecycle updated }
+        '200': { description: GraphRun lifecycle updated }
     delete:
-      operationId: deleteRun
-      summary: Delete a Run owned by the namespace
+      operationId: deleteGraphRun
+      summary: Delete a GraphRun owned by the namespace
       responses:
-        '204': { description: Run deleted }
-  /{namespace}/runs/{run_id}/cancel:
+        '204': { description: GraphRun deleted }
+  /{namespace}/graph-runs/{graph_run_id}/cancel:
     post:
-      operationId: cancelRun
+      operationId: cancelGraphRun
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { $ref: '#/components/parameters/RunID' }
+        - { $ref: '#/components/parameters/GraphRunID' }
       responses:
         '200': { description: Cancellation recorded }
-  /{namespace}/runs/{run_id}/node-runs:
+  /{namespace}/graph-runs/{graph_run_id}/node-runs:
     parameters:
       - { $ref: '#/components/parameters/Namespace' }
-      - { $ref: '#/components/parameters/RunID' }
+      - { $ref: '#/components/parameters/GraphRunID' }
     get:
       operationId: listNodeRuns
-      summary: List all node attempts for a Run
+      summary: List all node attempts for a GraphRun
       responses:
         '200':
           description: NodeRun attempts
@@ -163,10 +163,10 @@ paths:
             schema: { $ref: '#/components/schemas/NodeRun' }
       responses:
         '201': { $ref: '#/components/responses/NodeRun' }
-  /{namespace}/runs/{run_id}/node-runs/{node_run_id}:
+  /{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}:
     parameters:
       - { $ref: '#/components/parameters/Namespace' }
-      - { $ref: '#/components/parameters/RunID' }
+      - { $ref: '#/components/parameters/GraphRunID' }
       - { $ref: '#/components/parameters/NodeRunID' }
     get:
       operationId: getNodeRun
@@ -182,13 +182,13 @@ paths:
             schema: { $ref: '#/components/schemas/NodeRun' }
       responses:
         '200': { description: NodeRun updated }
-  /{namespace}/runs/{run_id}/approvals:
+  /{namespace}/graph-runs/{graph_run_id}/approvals:
     parameters:
       - { $ref: '#/components/parameters/Namespace' }
-      - { $ref: '#/components/parameters/RunID' }
+      - { $ref: '#/components/parameters/GraphRunID' }
     get:
       operationId: listRunApprovals
-      summary: List pending approvals owned by a Run
+      summary: List pending approvals owned by a GraphRun
       responses:
         '200':
           description: Pending approvals
@@ -196,7 +196,7 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Approval' } }
     post:
-      operationId: createRunApproval
+      operationId: createGraphRunApproval
       summary: Create a frozen, hash-bound approval request
       requestBody:
         required: true
@@ -205,18 +205,18 @@ paths:
             schema: { $ref: '#/components/schemas/Approval' }
       responses:
         '201': { $ref: '#/components/responses/Approval' }
-  /{namespace}/runs/{run_id}/approvals/{approval_id}/{decision}:
+  /{namespace}/graph-runs/{graph_run_id}/approvals/{approval_id}/{decision}:
     post:
       operationId: resolveRunApproval
       summary: Make an immutable approval decision
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { $ref: '#/components/parameters/RunID' }
+        - { $ref: '#/components/parameters/GraphRunID' }
         - { $ref: '#/components/parameters/ApprovalID' }
         - { name: decision, in: path, required: true, schema: { type: string, enum: [approve, reject] } }
       responses:
         '200': { description: Approval resolved or identical callback replayed }
-        '404': { description: Approval is outside the owned Run }
+        '404': { description: Approval is outside the owned GraphRun }
         '409': { description: Conflicting terminal decision or stale publication baseline }
         '410': { description: Approval expired }
   /{namespace}/approvals:
@@ -428,7 +428,7 @@ paths:
       summary: List only approved, published Knowledge
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { name: scope, in: query, schema: { type: string, enum: [namespace, flow, run] } }
+        - { name: scope, in: query, schema: { type: string, enum: [namespace, graph, run] } }
         - { name: tags, in: query, schema: { type: string } }
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/Size' }
@@ -501,29 +501,29 @@ paths:
       requestBody: { $ref: '#/components/requestBodies/RuntimeSecrets' }
       responses:
         '200': { $ref: '#/components/responses/RuntimeConfig' }
-  /{namespace}/flows/{flow_id}/runtime-config:
+  /{namespace}/agent-graphs/{agent_graph_id}/runtime-config:
     get:
-      operationId: getFlowRuntimeConfig
+      operationId: getGraphRuntimeConfig
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { $ref: '#/components/parameters/FlowID' }
+        - { $ref: '#/components/parameters/AgentGraphID' }
       responses:
         '200': { $ref: '#/components/responses/RuntimeConfig' }
-  /{namespace}/flows/{flow_id}/runtime-config/environment:
+  /{namespace}/agent-graphs/{agent_graph_id}/runtime-config/environment:
     put:
-      operationId: updateFlowEnvironment
+      operationId: updateAgentGraphEnvironment
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { $ref: '#/components/parameters/FlowID' }
+        - { $ref: '#/components/parameters/AgentGraphID' }
       requestBody: { $ref: '#/components/requestBodies/RuntimeEnvironment' }
       responses:
         '200': { $ref: '#/components/responses/RuntimeConfig' }
-  /{namespace}/flows/{flow_id}/runtime-config/secrets:
+  /{namespace}/agent-graphs/{agent_graph_id}/runtime-config/secrets:
     put:
-      operationId: updateFlowSecrets
+      operationId: updateAgentGraphSecrets
       parameters:
         - { $ref: '#/components/parameters/Namespace' }
-        - { $ref: '#/components/parameters/FlowID' }
+        - { $ref: '#/components/parameters/AgentGraphID' }
       requestBody: { $ref: '#/components/requestBodies/RuntimeSecrets' }
       responses:
         '200': { $ref: '#/components/responses/RuntimeConfig' }
@@ -531,7 +531,7 @@ paths:
   /webhook/{provider}:
     post:
       operationId: receiveWebhook
-      summary: Normalize an SCM webhook and trigger matching Flows
+      summary: Normalize an SCM webhook and trigger matching AgentGraphs
       parameters:
         - { name: provider, in: path, required: true, schema: { type: string, enum: [github, gitlab, gitea] } }
       requestBody:
@@ -540,6 +540,147 @@ paths:
             schema: { type: object }
       responses:
         '202': { description: Webhook accepted }
+
+  /{namespace}/graph-runs/{graph_run_id}/snapshot:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+    get:
+      operationId: getGraphRunSnapshot
+      summary: Get the immutable closed AgentGraph snapshot
+      responses:
+        '200':
+          description: Get the immutable closed AgentGraph snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentGraph' }
+  /{namespace}/graph-runs/{graph_run_id}/checkpoints:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+    post:
+      operationId: createGraphCheckpoint
+      summary: Commit a consistent GraphCheckpoint
+      responses:
+        '201':
+          description: Commit a consistent GraphCheckpoint
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphCheckpoint' }
+  /{namespace}/graph-runs/{graph_run_id}/recovery:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+    get:
+      operationId: getGraphRecovery
+      summary: Recover the latest valid checkpoint and committed NodeRun state
+      responses:
+        '200':
+          description: Recover the latest valid checkpoint and committed NodeRun state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphRecovery' }
+  /{namespace}/graph-runs/{graph_run_id}/graph-patches:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+    post:
+      operationId: applyGraphPatch
+      summary: Atomically commit a SubGraph patch at the expected GraphRevision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GraphPatch' }
+      responses:
+        '200':
+          description: Atomically commit a SubGraph patch at the expected GraphRevision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubGraph' }
+  /{namespace}/graph-runs/{graph_run_id}/subgraphs/initialize:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+    post:
+      operationId: initializeSubGraph
+      summary: Initialize a pinned static or adaptive SubGraph
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubGraphInitialize' }
+      responses:
+        '200':
+          description: Initialize a pinned static or adaptive SubGraph
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubGraph' }
+  /{namespace}/graph-runs/{graph_run_id}/agents/{agent_name}:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+      - { name: agent_name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGraphRunAgentSnapshot
+      summary: Get the immutable agent revision pinned to this GraphRun
+      responses:
+        '200':
+          description: Get the immutable agent revision pinned to this GraphRun
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+  /{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/checkpoint:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+      - { $ref: '#/components/parameters/NodeRunID' }
+    put:
+      operationId: commitNodeCheckpoint
+      summary: Commit an owned NodeRun context and workspace checkpoint
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NodeCheckpointCommit' }
+      responses:
+        '204':
+          description: Commit an owned NodeRun context and workspace checkpoint
+  /{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/sandbox-dispatch:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+      - { $ref: '#/components/parameters/NodeRunID' }
+    post:
+      operationId: dispatchSandbox
+      summary: Persist a Sandbox handoff and transactional Outbox
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SandboxDispatch' }
+      responses:
+        '204':
+          description: Persist a Sandbox handoff and transactional Outbox
+  /{namespace}/graph-runs/{graph_run_id}/node-runs/{node_run_id}/sandbox-result:
+    parameters:
+      - { $ref: '#/components/parameters/Namespace' }
+      - { $ref: '#/components/parameters/GraphRunID' }
+      - { $ref: '#/components/parameters/NodeRunID' }
+    post:
+      operationId: commitSandboxResult
+      summary: Commit a verified workspace result before notification
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NodeResult' }
+      responses:
+        '204':
+          description: Commit a verified workspace result before notification
 
 components:
   parameters:
@@ -553,18 +694,18 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
-    FlowName:
-      name: flow_name
+    AgentGraphName:
+      name: agent_graph_name
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
-    FlowID:
-      name: flow_id
+    AgentGraphID:
+      name: agent_graph_id
       in: path
       required: true
       schema: { type: string }
-    RunID:
-      name: run_id
+    GraphRunID:
+      name: graph_run_id
       in: path
       required: true
       schema: { type: string }
@@ -588,11 +729,11 @@ components:
       schema: { type: integer, minimum: 1, default: 50 }
 
   requestBodies:
-    Flow:
+    AgentGraph:
       required: true
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Flow' }
+          schema: { $ref: '#/components/schemas/AgentGraph' }
     Agent:
       required: true
       content:
@@ -639,15 +780,15 @@ components:
           schema: { $ref: '#/components/schemas/RuntimeSecretUpdate' }
 
   responses:
-    Flow:
-      description: Flow at its current revision
-      content: { application/json: { schema: { $ref: '#/components/schemas/Flow' } } }
-    FlowList:
-      description: Flow list
-      content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Flow' } } } }
-    Run:
-      description: Run
-      content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } }
+    AgentGraph:
+      description: AgentGraph at its current revision
+      content: { application/json: { schema: { $ref: '#/components/schemas/AgentGraph' } } }
+    AgentGraphList:
+      description: AgentGraph list
+      content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AgentGraph' } } } }
+    GraphRun:
+      description: GraphRun
+      content: { application/json: { schema: { $ref: '#/components/schemas/GraphRun' } } }
     NodeRun:
       description: NodeRun
       content: { application/json: { schema: { $ref: '#/components/schemas/NodeRun' } } }
@@ -707,7 +848,7 @@ components:
         updated_by: { type: string, readOnly: true }
         row_version: { type: integer, format: int64, readOnly: true }
         metadata: { type: object }
-    Flow:
+    AgentGraph:
       allOf:
         - { $ref: '#/components/schemas/AuditFields' }
         - type: object
@@ -716,12 +857,12 @@ components:
             name: { type: string, pattern: '^[A-Za-z0-9_-]+$' }
             revision: { type: integer, format: int64, minimum: 1, readOnly: true }
             summarize_enabled: { type: boolean, default: false }
-            kind: { type: string, enum: [flow] }
+            kind: { type: string, enum: [graph] }
             description: { type: string }
             input_schema: { type: object }
             output_schema: { type: object }
             vars: { type: object }
-            nodes: { type: array, items: { type: object } }
+            nodes: { type: array, items: { $ref: '#/components/schemas/GraphNode' } }
             edges: { type: array, items: { type: object } }
             runtime_mode: { type: string, enum: [application, session] }
             resources: { type: object }
@@ -738,22 +879,27 @@ components:
             payload: { type: object }
     TriggerResult:
       type: object
-      required: [run_id, flow_id, status, namespace]
+      required: [graph_run_id, agent_graph_id, status, namespace]
       properties:
-        run_id: { type: string }
-        flow_id: { type: string, description: Namespace-local Flow name }
+        graph_run_id: { type: string }
+        agent_graph_id: { type: string, description: Namespace-local AgentGraph name }
         status: { type: string, enum: [PENDING] }
         namespace: { type: string }
-    Run:
+    GraphRun:
       allOf:
         - { $ref: '#/components/schemas/AuditFields' }
         - type: object
-          required: [flow_id, flow_revision_id, status, context_snapshot, summarize_enabled]
+          required: [agent_graph_id, agent_graph_revision_id, status, context_snapshot, summarize_enabled]
           properties:
-            flow_id: { type: string, description: Stable Flow ID }
-            flow_name: { type: string, readOnly: true }
-            flow_revision_id: { type: string }
-            flow_revision: { type: integer, format: int64, readOnly: true }
+            snapshot: { $ref: '#/components/schemas/AgentGraph' }
+            node_runs: { type: array, items: { $ref: '#/components/schemas/NodeRun' } }
+            subgraphs: { type: object, additionalProperties: { $ref: '#/components/schemas/SubGraph' } }
+            state_version: { type: integer, format: int64 }
+            last_event_seq: { type: integer, format: int64 }
+            agent_graph_id: { type: string, description: Stable AgentGraph ID }
+            agent_graph_name: { type: string, readOnly: true }
+            agent_graph_revision_id: { type: string }
+            agent_graph_revision: { type: integer, format: int64, readOnly: true }
             status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED, PAUSED, CANCELLED] }
             input: { type: object }
             output: { type: object }
@@ -765,7 +911,7 @@ components:
             started_at: { type: [string, 'null'], format: date-time }
             finished_at: { type: [string, 'null'], format: date-time }
             runtime_mode: { type: string, enum: [application, session] }
-    RunLifecycleUpdate:
+    GraphRunLifecycleUpdate:
       type: object
       additionalProperties: false
       required: [status]
@@ -778,10 +924,15 @@ components:
       allOf:
         - { $ref: '#/components/schemas/AuditFields' }
         - type: object
-          required: [run_id, node_key, attempt, status]
+          required: [graph_run_id, node_instance_id, attempt, status]
           properties:
-            run_id: { type: string }
-            node_key: { type: string }
+            graph_node_id: { type: string }
+            subgraph_instance_id: { type: string }
+            graph_revision: { type: integer, format: int64 }
+            dispatch_epoch: { type: integer, format: int64 }
+            workspace_snapshot: { $ref: '#/components/schemas/WorkspaceSnapshot' }
+            graph_run_id: { type: string }
+            node_instance_id: { type: string }
             attempt: { type: integer, minimum: 1 }
             agent_revision_id: { type: string }
             status: { type: string }
@@ -804,7 +955,7 @@ components:
         - type: object
           required: [type, subject_type, subject_id, request, request_hash, status, idempotency_key]
           properties:
-            run_id: { type: string }
+            graph_run_id: { type: string }
             node_run_id: { type: string }
             type: { type: string, enum: [human_gate, tool_call, payment, knowledge_publish, instruction_publish] }
             subject_type: { type: string }
@@ -924,10 +1075,10 @@ components:
             source: { type: string }
             source_ref: { type: string }
             source_revision: { type: string }
-            scope: { type: string, enum: [namespace, flow, run] }
-            flow_id: { type: string }
-            flow_name: { type: string }
-            run_id: { type: string }
+            scope: { type: string, enum: [namespace, graph, run] }
+            agent_graph_id: { type: string }
+            agent_graph_name: { type: string }
+            graph_run_id: { type: string }
             acl_ref: { type: string }
             classification: { type: string }
             heading_path: { type: string }
@@ -939,12 +1090,12 @@ components:
       allOf:
         - { $ref: '#/components/schemas/AuditFields' }
         - type: object
-          required: [source_run_id, target_scope, type, content, provenance, expected_revision, idempotency_key]
+          required: [source_graph_run_id, target_scope, type, content, provenance, expected_revision, idempotency_key]
           properties:
-            source_run_id: { type: string }
-            target_scope: { type: string, enum: [namespace, flow] }
-            target_flow_id: { type: string }
-            target_flow_name: { type: string }
+            source_graph_run_id: { type: string }
+            target_scope: { type: string, enum: [namespace, graph] }
+            target_agent_graph_id: { type: string }
+            target_agent_graph_name: { type: string }
             target_document_id: { type: string }
             type: { type: string, enum: [knowledge, instruction] }
             content: { type: string }
@@ -961,11 +1112,11 @@ components:
         profile_key: { type: string }
         top_k: { type: integer, minimum: 1 }
         tags: { type: array, items: { type: string } }
-        scope: { type: string, enum: [namespace, flow, run] }
-        flow_id: { type: string }
-        flow_name: { type: string }
-        run_id: { type: string }
-    RunMetricBucket:
+        scope: { type: string, enum: [namespace, graph, run] }
+        agent_graph_id: { type: string }
+        agent_graph_name: { type: string }
+        graph_run_id: { type: string }
+    GraphRunMetricBucket:
       type: object
       properties:
         start_time: { type: string, format: date-time }
@@ -974,7 +1125,7 @@ components:
         completed: { type: integer }
         failed: { type: integer }
         average_duration_ms: { type: integer, format: int64 }
-    RunMetrics:
+    GraphRunMetrics:
       type: object
       properties:
         total: { type: integer }
@@ -985,7 +1136,7 @@ components:
         success_rate: { type: number }
         failure_rate: { type: number }
         average_duration_ms: { type: integer, format: int64 }
-        buckets: { type: array, items: { $ref: '#/components/schemas/RunMetricBucket' } }
+        buckets: { type: array, items: { $ref: '#/components/schemas/GraphRunMetricBucket' } }
     PageEnvelope:
       type: object
       properties:
@@ -996,7 +1147,7 @@ components:
       allOf:
         - { $ref: '#/components/schemas/PageEnvelope' }
         - type: object
-          properties: { items: { type: array, items: { $ref: '#/components/schemas/Run' } } }
+          properties: { items: { type: array, items: { $ref: '#/components/schemas/GraphRun' } } }
     AgentPage:
       allOf:
         - { $ref: '#/components/schemas/PageEnvelope' }
@@ -1042,3 +1193,125 @@ components:
       properties:
         secrets: { type: object, writeOnly: true, additionalProperties: { type: string, minLength: 1, maxLength: 65536 } }
         clear_secret_keys: { type: array, uniqueItems: true, items: { type: string } }
+
+    GraphNode:
+      type: object
+      required: [id, kind]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [agent, tool, skill, map, subgraph, condition, committee, human, supervisor, sandbox, join, noop] }
+        subgraph: { $ref: '#/components/schemas/SubGraphConfig' }
+        args: { type: object }
+        retry: { type: object }
+        script: { type: string }
+        runtime: { type: string }
+        workspace: { type: string }
+        agent: { type: string }
+        tool: { type: string }
+    SubGraphConfig:
+      type: object
+      required: [ref]
+      properties:
+        ref: { type: string }
+        mode: { type: string, enum: [static, adaptive], default: static }
+        supervisor: { type: string }
+        contract: { type: object }
+        mutation: { type: object }
+        limits: { type: object }
+        safepoint: { type: object }
+        definition_snapshot: { $ref: '#/components/schemas/AgentGraph', readOnly: true }
+        definition_revision_id: { type: string, readOnly: true }
+    SubGraph:
+      type: object
+      required: [instance_id, revision, config, graph, sealed]
+      properties:
+        instance_id: { type: string }
+        revision: { type: integer, format: int64, description: Runtime GraphRevision of this SubGraph }
+        config: { $ref: '#/components/schemas/SubGraphConfig' }
+        graph: { $ref: '#/components/schemas/AgentGraph' }
+        sealed: { type: boolean }
+    SubGraphInitialize:
+      type: object
+      additionalProperties: false
+      required: [instance_id]
+      properties:
+        instance_id: { type: string }
+    GraphPatch:
+      type: object
+      additionalProperties: false
+      required: [id, graph_run_id, subgraph_instance_id, expected_revision, operations]
+      properties:
+        id: { type: string }
+        graph_run_id: { type: string }
+        subgraph_instance_id: { type: string }
+        expected_revision: { type: integer, format: int64 }
+        operations:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [append, replace_pending, cancel_pending, update_pending_edges, seal] }
+              node_instance_id: { type: string }
+              node: { $ref: '#/components/schemas/GraphNode' }
+              from: { type: string }
+              to: { type: string }
+              remove: { type: boolean }
+    WorkspaceSnapshot:
+      type: object
+      required: [id, ref, sha256, created_at]
+      properties:
+        id: { type: string }
+        ref: { type: string }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        base_commit: { type: string }
+        created_at: { type: string, format: date-time }
+    GraphCheckpoint:
+      type: object
+      required: [id, graph_run_id, event_seq, state_version, snapshot, node_runs, sha256]
+      properties:
+        id: { type: string }
+        graph_run_id: { type: string }
+        event_seq: { type: integer, format: int64 }
+        state_version: { type: integer, format: int64 }
+        snapshot: { $ref: '#/components/schemas/AgentGraph' }
+        subgraphs: { type: object, additionalProperties: { $ref: '#/components/schemas/SubGraph' } }
+        node_runs: { type: array, items: { $ref: '#/components/schemas/NodeRun' } }
+        sha256: { type: string }
+        created_at: { type: string, format: date-time }
+    GraphRecovery:
+      type: object
+      properties:
+        checkpoint: { $ref: '#/components/schemas/GraphCheckpoint' }
+        snapshot: { $ref: '#/components/schemas/AgentGraph' }
+        node_runs: { type: array, items: { $ref: '#/components/schemas/NodeRun' } }
+        subgraphs: { type: object, additionalProperties: { $ref: '#/components/schemas/SubGraph' } }
+        rejected_checkpoints: { type: array, items: { type: string } }
+    NodeCheckpointCommit:
+      type: object
+      additionalProperties: false
+      required: [dispatch_epoch, checkpoint]
+      properties:
+        dispatch_epoch: { type: integer, format: int64 }
+        checkpoint: { type: object }
+    SandboxDispatch:
+      type: object
+      required: [namespace_id, graph_run_id, node_run_id, dispatch_epoch, script_path]
+      properties:
+        namespace_id: { type: string }
+        agent_graph_id: { type: string }
+        agent_graph_name: { type: string }
+        graph_run_id: { type: string }
+        node_run_id: { type: string }
+        dispatch_epoch: { type: integer, format: int64 }
+        script_path: { type: string }
+        checkpoint: { type: object }
+    NodeResult:
+      type: object
+      required: [node_run_id, dispatch_epoch]
+      properties:
+        node_run_id: { type: string }
+        dispatch_epoch: { type: integer, format: int64 }
+        error: { type: string }
+        output: { type: object }
+        checkpoint: { type: object }
+        workspace_snapshot: { $ref: '#/components/schemas/WorkspaceSnapshot' }

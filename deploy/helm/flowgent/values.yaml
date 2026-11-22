@@ -23,18 +23,36 @@ application:
 # ═══════════════════════════════════════════════════════════════
 
 postgresql:
-  enabled: false          # true = deploy PG in-cluster
-  externalSecret: ""      # name of existing secret with key "url"
-  # When enabled, the secret is auto-created. Internal only — no passwords here.
+  enabled: true
+  containerImage: registry.cn-shenzhen.aliyuncs.com/wl4g/pgvector_pgvector:pg16
+  name: ""
+  namespace: ""
+  labels: {}
+  username: flowgent
+  password: flowgent
+  database: flowgent
+  service: {type: ClusterIP, nodePort: 32432}
+  persistence: {size: 4Gi, storageClass: ""}
+  externalSecret: ""
+  # Official Debian PostgreSQL/pgvector images use UID/GID 999. Start as the
+  # database user; kubelet manages volume ownership without a root/gosu hop.
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
 
 emqx:
-  enabled: false           # true = deploy EMQX in-cluster
-  externalSecret: ""       # name of existing secret with key "broker"
-  maxPacketSize: "8MB"     # supports large DAG payloads such as source-file context
+  enabled: true
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/emqx_emqx:5.5.0-elixir-amd64
+  erlangFlags: ""
+  externalSecret: ""
+  maxPacketSize: "8MB"
 
 redis:
-  enabled: false           # true = deploy Redis in-cluster
-  externalSecret: ""       # name of existing secret with key "nodes"
+  enabled: true
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g-k8s/bitnami_redis-cluster:7.0.14
+  externalSecret: ""
 
 # ═══════════════════════════════════════════════════════════════
 # Jaeger — Distributed Tracing (OTEL Collector)
@@ -43,6 +61,7 @@ jaeger:
   enabled: true             # true = deploy Jaeger all-in-one in-cluster
   mode: all-in-one          # all-in-one | distributed (TODO)
   image: registry.cn-shenzhen.aliyuncs.com/wl4g/jaegertracing_all-in-one:1.76.0
+  collectorEndpoint: ""     # OTLP HTTP endpoint when enabled=false
   queryEndpoint: ""         # required when enabled=false, e.g. https://jaeger.example.com
   service:
     otlpGrpc: 4317
@@ -54,7 +73,7 @@ jaeger:
 
 # ── Storage — persistent data backend
 storage:
-  type: SQLITE                 # SQLITE | POSTGRE
+  type: POSTGRE                # SQLITE | POSTGRE
   postgres:
     # External DSN. The E2E deployer supplies this when PostgreSQL is external.
     dsn: ""
@@ -65,7 +84,7 @@ storage:
     inlineMaxBytes: 262144
     maxPayloadBytes: 67108864
     compression: gzip          # none | gzip
-    prefix: flowgent/task-runs
+    prefix: flowgent/node-runs
     putTimeout: 30s
     getTimeout: 30s
     verifyChecksum: true
@@ -167,7 +186,7 @@ web:
     limits:   { cpu: "250m", memory: "256Mi" }
 
 # ═══════════════════════════════════════════════════════════════
-# Controller — Distributed Sharded Flow Driver
+# Controller — Distributed Sharded AgentGraph Driver
 # ═══════════════════════════════════════════════════════════════
 controller:
   replicas: 2
@@ -262,7 +281,7 @@ notifier:
 # Includes runtime modes, namespace isolation, credential paths, and secrets.
 #
 # namespacePrefix MUST match between the apiserver (Trigger routing) and the
-# Controller (per-namespace JM Deployment namespace placement — every flow's
+# Controller (per-namespace JM Deployment namespace placement — every graph's
 # dedicated JM Deployment lives in its namespace's shared K8s namespace,
 # "{namespacePrefix}{namespaceID}") — see pkg/controller/pkg/controller.go
 # runtimeNamespace contract.
@@ -293,7 +312,7 @@ runtime:
         server_bind: "0.0.0.0:6669"
       otel:
         enabled: true
-        endpoint: "{{ include "flowgent.fullname" . }}-jaeger.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.jaeger.service.otlpHttp }}"
+        endpoint: {{ ternary (printf "http://%s-jaeger.%s.svc.cluster.local:%v" (include "flowgent.fullname" .) .Release.Namespace .Values.jaeger.service.otlpHttp) .Values.jaeger.collectorEndpoint .Values.jaeger.enabled | quote }}
         protocol: "http/protobuf"
         sample_rate: 1.0
         {{- if .Values.jaeger.enabled }}
@@ -305,7 +324,8 @@ runtime:
         query_lookback: "24h"
         query_limit: 20
       metrics:
-        enabled: false
+        enabled: true
+        prometheus: true
     logging:
       mode: JSON
       level: DEBUG
@@ -317,7 +337,23 @@ runtime:
       region: {{ $middleware.adapter.resource.region | quote }}
       tenant: {{ $middleware.adapter.resource.tenant | quote }}
     cache:
-      provider: Memory
+      provider: {{ .Values.cache.provider | quote }}
+      redis:
+        {{- if .Values.cache.redis.nodes }}
+        nodes: {{ .Values.cache.redis.nodes | toJson }}
+        {{- else if .Values.redis.enabled }}
+        nodes:
+          {{- $redisName := printf "%s-redis" (include "flowgent.fullname" .) }}
+          {{- range $i := until 3 }}
+          - {{ printf "redis://%s-%d.%s:6379" $redisName $i $redisName | quote }}
+          {{- end }}
+        {{- else }}
+        nodes: []
+        {{- end }}
+        username: {{ .Values.cache.redis.username | quote }}
+        password: "${FLOWGENT_REDIS_PASSWORD}"
+        connection_timeout: 3000
+        response_timeout: 6000
       memory:
         initial_capacity: 32
         max_capacity: 65535
@@ -339,12 +375,12 @@ runtime:
       postgres:
         host: "{{ include "flowgent.fullname" . }}-postgresql.{{ .Release.Namespace }}.svc.cluster.local"
         port: 5432
-        database: flowgent
+        database: {{ .Values.postgresql.database | quote }}
         {{- if .Values.storage.postgres.schema }}
         schema: {{ .Values.storage.postgres.schema | quote }}
         {{- end }}
-        username: flowgent
-        password: flowgent
+        username: {{ .Values.postgresql.username | quote }}
+        password: {{ .Values.postgresql.password | quote }}
         min_connections: 2
         max_connections: 20
       {{- end }}
@@ -353,7 +389,7 @@ runtime:
         inline_max_bytes: {{ int64 .Values.storage.artifacts.inlineMaxBytes }}
         max_payload_bytes: {{ int64 .Values.storage.artifacts.maxPayloadBytes }}
         compression: {{ .Values.storage.artifacts.compression | default "gzip" | quote }}
-        prefix: {{ .Values.storage.artifacts.prefix | default "flowgent/task-runs" | quote }}
+        prefix: {{ .Values.storage.artifacts.prefix | default "flowgent/node-runs" | quote }}
         put_timeout: {{ .Values.storage.artifacts.putTimeout | default "30s" | quote }}
         get_timeout: {{ .Values.storage.artifacts.getTimeout | default "30s" | quote }}
         verify_checksum: {{ .Values.storage.artifacts.verifyChecksum }}
@@ -368,13 +404,13 @@ runtime:
           credentials_file: {{ .Values.storage.artifacts.gcs.credentialsFile | default "" | quote }}
           anonymous: {{ .Values.storage.artifacts.gcs.anonymous }}
     orchestration:
-      max_concurrent_flows: 10
-      flow_execution_timeout: "30m"
+      max_concurrent_graphs: 10
+      graph_execution_timeout: "30m"
       max_node_retries: 3
     messager:
       type: {{ .Values.messaging.type | quote }}
       mqtt:
-        broker: "tcp://{{ include "flowgent.fullname" . }}-emqx.{{ .Release.Namespace }}.svc.cluster.local:1883"
+        broker: {{ include "flowgent.mqttBroker" . | quote }}
         client_id: "flowgent"
     lock:
       provider: {{ .Values.lock.provider | default (ternary "postgres" "memory" (eq (.Values.storage.type | default "SQLITE") "POSTGRE")) | quote }}
@@ -493,12 +529,12 @@ runtime:
     defaultNamespace: "default"
     namespacePrefix: "flowgent-"
   # Credential file paths mounted in pods (K8s Secrets).
-  # Hierarchy: flow-level overrides namespace-level.
+  # Hierarchy: graph-level overrides namespace-level.
   credentialPaths:
     basePath: "/var/flowgent"
 
   # Session Runtime — Helm-deployed Flink-style shared runtime cluster.
-  # Flows with runtime_mode=session are consumed by this JobManager and execute
+  # AgentGraphs with runtime_mode=session are consumed by this JobManager and execute
   # only on TM/Sandbox pods carrying this clusterId.
   session:
     enabled: true
@@ -529,8 +565,8 @@ runtime:
           cpu: "500m"
           memory: "512Mi"
 
-  # Application Runtime Defaults — per-FlowRun runtime clusters created by the
-  # Controller. Flow YAML top-level resources may override only pod sizes.
+  # Application Runtime Defaults — per-GraphRun runtime clusters created by the
+  # Controller. AgentGraph YAML top-level resources may override only pod sizes.
   application:
     jobmanager:
       resources:
@@ -667,3 +703,32 @@ authguard-middleware:
           hostnames: []
     authz:
       enabled: true
+
+# Prometheus: disable when using an external collector.
+prometheus:
+  enabled: true
+  name: ""
+  namespace: ""
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/prom_prometheus:v3.5.0
+  labels: {}
+  watchedNamespaces: []
+  configuration: "" # Optional full prometheus.yaml; default scrapes API management port.
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+
+# Plain HTTP ingress; disable when AuthGuard's Envoy Gateway owns ingress.
+envoy:
+  enabled: true
+  image: registry.cn-shenzhen.aliyuncs.com/wl4g/envoyproxy_envoy:distroless-v1.36.4
+  service: {port: 8080}
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 250m, memory: 128Mi}
+
+# Set provider=Redis to use managed Redis or explicit external node URLs.
+cache:
+  provider: Memory
+  redis:
+    nodes: []
+    username: default
