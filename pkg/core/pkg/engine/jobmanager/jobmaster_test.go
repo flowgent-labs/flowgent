@@ -3,18 +3,48 @@ package jobmanager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/flowgent-labs/flowgent/common/pkg/tracing"
 	"github.com/flowgent-labs/flowgent/common/pkg/utils"
 	"github.com/flowgent-labs/flowgent/core/pkg/engine"
+	"github.com/flowgent-labs/flowgent/core/pkg/engine/executor"
 	"github.com/flowgent-labs/flowgent/model/pkg/entities"
 	"go.opentelemetry.io/otel"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func TestConditionDispatchIncludesOnlyReferencedAncestorOutputs(t *testing.T) {
+	for _, expression := range []string{"${committee.decision} == true", "${committee.decision == true}", "${committee.decision}"} {
+		for _, decision := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/%t", expression, decision), func(t *testing.T) {
+				jm := NewJobMaster(nil, nil, nil, nil)
+				graph := &entities.AgentGraph{Name: "conditions", BaseEntity: entities.BaseEntity{ID: "graph", Namespace: "test"},
+					Nodes: []entities.GraphNode{{ID: "committee", Kind: entities.NoopNode}, {ID: "supervisor", Kind: entities.NoopNode}, {ID: "check", Kind: entities.ConditionNode, Expression: expression}},
+					Edges: []entities.GraphEdge{{From: "committee", To: "supervisor"}, {From: "supervisor", To: "check"}},
+				}
+				if err := jm.buildExecutionGraph(graph, "run"); err != nil {
+					t.Fatal(err)
+				}
+				jm.nodeOutputs["committee"] = map[string]any{"decision": decision}
+				jm.nodeOutputs["unrelated"] = map[string]any{"large_scan": "not needed by this condition"}
+				plan := jm.planMap["check"]
+				plan.Input = jm.resolveInput("check", plan.Node.Args)
+				if len(plan.Input) != 1 || plan.Input["committee"] == nil {
+					t.Fatalf("condition input contains missing or unrelated outputs: %+v", plan.Input)
+				}
+				result, err := (&executor.ConditionExecutor{}).Execute(t.Context(), plan, map[string]map[string]any{"input": plan.Input})
+				if err != nil || result.Output["result"] != decision {
+					t.Fatalf("dispatched condition = %+v, %v; want %t", result, err, decision)
+				}
+			})
+		}
+	}
+}
 
 func TestExecuteRecordsActualRunAndAttemptCounters(t *testing.T) {
 	reader := sdkmetric.NewManualReader()

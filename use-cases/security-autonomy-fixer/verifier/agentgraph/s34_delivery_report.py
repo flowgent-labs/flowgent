@@ -155,6 +155,9 @@ class E2ES34DeliveryReportVerifier(BaseVerifier):
         compared = c.require_output(tasks_by_node, "compare-results")
         if not compared:
             raise AssertionError("Re-scan comparison has no output evidence")
+        complete = c.require_output(tasks_by_node, "fix-complete").get("result")
+        if type(complete) is not bool or complete != (compared.get("resolution") == "complete"):
+            raise AssertionError("Completion routing differs from the persisted re-scan comparison")
         return 5, 5
 
     @staticmethod

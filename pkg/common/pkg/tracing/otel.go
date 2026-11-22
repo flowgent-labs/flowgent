@@ -11,6 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/otlptranslator"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -89,7 +90,11 @@ func NewProvider(ctx context.Context, svcName, svcVersion string, otelCfg *OTELC
 	var metricsHandler http.Handler
 	if metricsCfg != nil && metricsCfg.Enabled && metricsCfg.Prometheus {
 		registry := prometheus.NewRegistry()
-		exporter, err := otelexport.New(otelexport.WithRegisterer(registry))
+		// Keep query names stable when Prometheus negotiates UTF-8 exposition.
+		exporter, err := otelexport.New(
+			otelexport.WithRegisterer(registry),
+			otelexport.WithTranslationStrategy(otlptranslator.UnderscoreEscapingWithSuffixes),
+		)
 		if err != nil {
 			_ = tracerProvider.Shutdown(context.Background())
 			return nil, err

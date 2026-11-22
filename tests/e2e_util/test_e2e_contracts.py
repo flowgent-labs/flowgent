@@ -23,6 +23,16 @@ CASE = ROOT / "use-cases/security-autonomy-fixer"
 
 
 class GitHubWorkflowContractTests(unittest.TestCase):
+    def test_real_pr_delivery_is_serialized_across_backends(self):
+        import yaml
+
+        jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+        docker = jobs["e2e-docker"]["concurrency"]
+        kubernetes = jobs["e2e-kubernetes"]["concurrency"]
+        self.assertEqual(docker, kubernetes)
+        self.assertEqual(docker["group"], "security-autonomy-rengine-pr-4")
+        self.assertIs(docker["cancel-in-progress"], False)
+
     def test_complete_remediation_uses_the_official_llm_provider(self):
         import shlex
         import yaml
@@ -951,6 +961,16 @@ class VerticalScenarioContractTests(unittest.TestCase):
                          {"${review-security}", "${review-quality}", "${review-arch}"})
         self.assertEqual(supervisor["args"]["patches"], "${generate-fixes.patches}")
         self.assertEqual(supervisor["supervisor_config"]["allowed_actions"], ["continue"])
+
+    def test_delivery_commits_use_the_required_conventional_prefix(self):
+        from verifier.agentgraph import SecurityAutonomyFixture
+
+        nodes = SecurityAutonomyFixture.load_graph_from_yaml()["nodes"]
+        for node in nodes:
+            if node["id"] in {"commit-fixes", "commit-to-existing"}:
+                message = node["args"]["message"]
+                self.assertTrue(message.startswith("fix: [Security Fix] "))
+                self.assertNotIn("Co-Authored-By:", message)
 
     def test_missing_human_gate_cannot_pass_a_false_condition(self):
         from verifier.agentgraph.s33_remediation import E2ES33RemediationVerifier

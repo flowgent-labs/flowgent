@@ -29,10 +29,14 @@ func TestPrometheusExportsRealOTelCountersWithoutTraceCollector(t *testing.T) {
 		t.Fatal(err)
 	}
 	counter.Add(t.Context(), 3, metric.WithAttributes(attribute.String("agent_graph_name", "repair")))
-	response := httptest.NewRecorder()
-	provider.MetricsHandler.ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
-	if response.Code != 200 || !strings.Contains(response.Body.String(), `flowgent_fixture_executions_total{`) || !strings.Contains(response.Body.String(), `agent_graph_name="repair"`) || !strings.Contains(response.Body.String(), `} 3`) {
-		t.Fatalf("OTel counter was not exported: %s", response.Body.String())
+	for _, accept := range []string{"", "application/openmetrics-text;version=1.0.0;escaping=allow-utf-8"} {
+		request := httptest.NewRequest("GET", "/metrics", nil)
+		request.Header.Set("Accept", accept)
+		response := httptest.NewRecorder()
+		provider.MetricsHandler.ServeHTTP(response, request)
+		if response.Code != 200 || !strings.Contains(response.Body.String(), `flowgent_fixture_executions_total{`) || !strings.Contains(response.Body.String(), `agent_graph_name="repair"`) || !strings.Contains(response.Body.String(), `} 3`) {
+			t.Fatalf("OTel counter was not exported with stable names for Accept %q: %s", accept, response.Body.String())
+		}
 	}
 }
 

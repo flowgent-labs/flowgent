@@ -872,6 +872,11 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 	// which can overflow PostgreSQL's 256 MiB JSONB limit for large payloads like
 	// SonarQube scan results.
 	refs := collectRefs(yamlInput)
+	if plan := jm.planMap[nodeID]; plan != nil && plan.Node != nil && plan.Node.Expression != "" {
+		for id := range collectRefs(map[string]any{"expression": plan.Node.Expression}) {
+			refs[id] = struct{}{}
+		}
+	}
 	for nid := range refs {
 		if output, ok := jm.nodeOutputs[nid]; ok {
 			in[nid] = output
@@ -880,18 +885,19 @@ func (jm *JobMaster) resolveInput(nodeID string, yamlInput map[string]any) map[s
 	return in
 }
 
-// collectRefs walks yamlInput values recursively and returns the set of
-// node-ids referenced via ${node} or ${node.field} patterns (not ${vars.x}).
+var nodeReferencePattern = regexp.MustCompile(`\$\{([^.\s{}]+)(?:[.}\s])`)
+
+// collectRefs finds node references in templates and condition expressions,
+// including comparisons inside or outside the braces (excluding ${vars.x}).
 func collectRefs(input map[string]any) map[string]struct{} {
 	refs := make(map[string]struct{})
 	var walk func(v any)
 	walk = func(v any) {
 		switch val := v.(type) {
 		case string:
-			if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") {
-				inner := val[2 : len(val)-1]
-				if parts := strings.SplitN(inner, ".", 2); len(parts) > 0 && parts[0] != "vars" {
-					refs[parts[0]] = struct{}{}
+			for _, match := range nodeReferencePattern.FindAllStringSubmatch(val, -1) {
+				if match[1] != "vars" {
+					refs[match[1]] = struct{}{}
 				}
 			}
 		case map[string]any:

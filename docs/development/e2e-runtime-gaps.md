@@ -6,7 +6,8 @@ Missing execution evidence must fail validation.
 - **Metrics plumbing implemented:** the existing OTel MeterProvider uses the
   official Prometheus reader/exporter, and daemon management listeners expose
   `/metrics` when enabled. JobMaster records actual run transitions and persisted
-  attempt results through its existing instruments. Unit tests exercise the
+  attempt results through its existing instruments. Prometheus names use explicit
+  underscore escaping for both legacy and UTF-8 format negotiation. Unit tests exercise the
   real exporter and management listener; E2E still requires exact execution-derived
   counters from the deployed Prometheus service.
 - **Checkpoint/recovery:** snapshot capture exists, but execution can still

@@ -506,7 +506,7 @@ data:
       branch: fix/flowgent_sec_auto_fix
       files: ${generate-fixes.files}
       message: |
-        [Security Fix] Auto-generated security fix
+        fix: [Security Fix] Auto-generated security fix
 
         Issues addressed:
         ${aggregate-issues.issues}
@@ -547,7 +547,7 @@ data:
       branch: fix/flowgent_sec_auto_fix
       files: ${generate-fixes.files}
       message: |
-        [Security Fix] Additional auto-generated security fixes
+        fix: [Security Fix] Additional auto-generated security fixes
 
         Issues addressed:
         ${aggregate-issues.issues}
@@ -628,7 +628,7 @@ data:
       - remaining_issues
   - id: fix-complete
     kind: condition
-    expression: ${compare-results.resolution} == 'complete' || ${compare-results.resolution} == 'max_iterations_reached'
+    expression: ${compare-results.resolution == complete}
   - id: remediation-incomplete
     kind: noop
   - id: summary-report
